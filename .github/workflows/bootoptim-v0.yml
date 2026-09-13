@@ -4,17 +4,19 @@ on:
   push:
     branches:
       - "agent151/bootoptim-launch-interposer-v0-20260913"
+      - "agent152/deterministic-classpath-hidden-preflight-20260913"
   pull_request:
     paths:
       - "bootoptim-v0/**"
       - "crates/command/**"
+      - "crates/backend/src/launch/**"
       - ".github/workflows/bootoptim-v0.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: bootoptim-v0-agent151
+  group: bootoptim-v0-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -45,6 +47,22 @@ jobs:
 
       - name: Test standalone interposer
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc
+
+      - name: Test deterministic library order
+        shell: pwsh
+        run: cargo test -p backend bootoptim_library_order_tests --frozen --target x86_64-pc-windows-msvc
+
+      - name: Repeat deterministic order in independent processes
+        shell: pwsh
+        run: |
+          1..3 | ForEach-Object {
+            cargo test -p backend deterministic_across_equivalent_collections --frozen --target x86_64-pc-windows-msvc
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Test hidden preflight pipe semantics
+        shell: pwsh
+        run: cargo test -p command bootoptim_windows_preflight_tests --frozen --target x86_64-pc-windows-msvc
 
       - name: Build standalone interposer
         run: cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml --release --locked --target x86_64-pc-windows-msvc
