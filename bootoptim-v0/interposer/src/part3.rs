@@ -4,7 +4,9 @@ fn try_lock(path: &Path) -> io::Result<Option<LockGuard>> {
         use std::os::windows::fs::OpenOptionsExt;
         match OpenOptions::new().create(true).read(true).write(true).share_mode(0).open(path) {
             Ok(file) => Ok(Some(LockGuard { _file: file })),
-            Err(e) if matches!(e.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::WouldBlock) => Ok(None),
+            Err(e) if matches!(e.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::WouldBlock)
+                || e.raw_os_error() == Some(32)
+                || e.raw_os_error() == Some(33) => Ok(None),
             Err(e) => Err(e),
         }
     }
