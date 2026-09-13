@@ -56,7 +56,7 @@ mod config_identity_tests {
     }
 
     #[test]
-    fn unknown_or_ambiguous_properties_and_moreculling_toml_remain_raw() {
+    fn unknown_or_ambiguous_properties_remain_raw_and_moreculling_is_strict() {
         let d = temp_dir("raw-fallback");
         let unknown = "config/other.properties";
         let u1 = pack_artifact(&d, unknown, b"#Sun Sep 13\nenabled=true\n");
@@ -75,10 +75,15 @@ mod config_identity_tests {
         assert_eq!(malformed_artifact.sha256, sha256_hex(malformed), "malformed properties must fall back to raw");
 
         let toml = "config/moreculling.toml";
-        let t1 = pack_artifact(&d, toml, b"[modCompatibility]\na=true\nb=false\n");
-        let t2 = pack_artifact(&d, toml, b"[modCompatibility]\nb=false\na=true\n");
-        assert_ne!(t1.sha256, t2.sha256, "MoreCulling TOML remains raw pending exact byte/source proof");
-        let bad_toml = b"[modCompatibility\na=true\n";
+        let prefix = b"version = 1\ncloudCulling = true\n\n";
+        let first = [prefix.as_slice(), b"[modCompatibility]\ntfmg = true\nldlib2 = true\n"].concat();
+        let reordered = [prefix.as_slice(), b"[modCompatibility]\nldlib2 = true\ntfmg = true\n"].concat();
+        let t1 = pack_artifact(&d, toml, &first);
+        let t2 = pack_artifact(&d, toml, &reordered);
+        assert_eq!(t1.sha256, t2.sha256, "only the exact final MoreCulling boolean-map entry order is neutral");
+        let changed = [prefix.as_slice(), b"[modCompatibility]\nldlib2 = true\ntfmg = false\n"].concat();
+        assert_ne!(t1.sha256, pack_artifact(&d, toml, &changed).sha256, "MoreCulling effective values must invalidate");
+        let bad_toml = b"[modCompatibility]\na = true\n# comment makes this parser fail closed\n";
         let bad = pack_artifact(&d, toml, bad_toml);
         assert_eq!(bad.sha256, sha256_hex(bad_toml), "malformed TOML must remain raw");
         let _ = fs::remove_dir_all(d);

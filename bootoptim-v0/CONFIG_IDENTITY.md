@@ -30,16 +30,18 @@ For Drippy Loading Screen 3.1.2 / Minecraft 1.21.1, the official `v3-1.21.1` sou
 - https://github.com/MINEZ/DrippyLoadingScreen/blob/v3-1.21.1/earlywindow/src/main/java/de/keksuccino/drippyloadingscreen/earlywindow/window/DrippyEarlyWindowProvider.java
 - https://github.com/MINEZ/DrippyLoadingScreen/blob/v3-1.21.1/neoforge/src/main/java/de/keksuccino/drippyloadingscreen/neoforge/EarlyLoadingEditorScreen.java
 
-## MoreCulling stays raw
+## MoreCulling exact-map identity exception
 
-`config/moreculling.toml` is **not** canonicalized. The 1.21.1 source deserializes `modCompatibility` into `Object2BooleanOpenHashMap`, and the config UI iterates `object2BooleanEntrySet()` directly to construct its visible compatibility entries. Consequently map iteration order is observable in the UI; without the two exact physical before/after files, the reported order-only hypothesis cannot be proven safe. Generic TOML sorting or reserialization is prohibited here, so any MoreCulling byte change continues to invalidate the plan.
+`config/moreculling.toml` is never rewritten, copied, repaired or normalized on disk. The preflight only accepts the exact observed MoreCulling 1.0.8 shape: ASCII/LF input; an otherwise raw byte-sensitive prefix; exactly one final `[modCompatibility]` table; and non-duplicate lowercase/digit/underscore keys with literal `true` or `false` values. It fingerprints that final table as an unordered boolean mapping. The raw order remains in the file, so the MoreCulling UI retains precisely its stock order for that run.
 
-- https://github.com/FxMorin/MoreCulling/blob/1.21.1/src/main/java/ca/fxco/moreculling/config/MoreCullingConfig.java
-- https://github.com/FxMorin/MoreCulling/blob/1.21.1/src/main/java/ca/fxco/moreculling/MoreCulling.java
-- https://github.com/FxMorin/MoreCulling/blob/1.21.1/src/main/java/ca/fxco/moreculling/config/ModMenuConfig.java
+This recognizes the physically observed `tfmg`/`ldlib2` permutation without excluding values: a changed boolean, key addition/removal, preceding byte, comment, extra table, CRLF, whitespace variation, escape or malformed input falls back to raw hashing and invalidates the plan. This is identity comparison only, not a generic TOML parser or canonicalizer.
+
+The two physical copies from the test pack were equal except for that table's `tfmg = true` / `ldlib2 = true` ordering. The MoreCulling UI does iterate the map directly, which is why this exception must not reorder the file itself.
+
+- https://github.com/FxMorin/MoreCulling/tree/v1.0.8
 
 ## Validation boundary
 
-Tests require generated Properties comments and the Drippy timestamp to be identity-neutral only on the exact authorized paths; effective values remain invalidating. Unknown paths, lookalike nested paths, malformed/escaped/duplicate Properties syntax, malformed TOML, and MoreCulling ordering stay raw. Plan tests also retain invalidation for Java, classpath, mods, resource-pack selection, and effective configuration.
+Tests require generated Properties comments and the Drippy timestamp to be identity-neutral only on the exact authorized paths; effective values remain invalidating. Unknown paths, lookalike nested paths, malformed/escaped/duplicate Properties syntax, malformed TOML, and every MoreCulling shape outside the exact final boolean-map subset stay raw. Plan tests also retain invalidation for Java, classpath, mods, resource-pack selection, and effective configuration.
 
-A hosted test pass establishes only implementation behavior. The next physical gate remains two otherwise-identical `plan` launches producing `MATCH`, followed by verification of stock fallback. Because MoreCulling intentionally remains raw, a repeated byte rewrite there is a **NO-GO blocker** until its exact delta can be attributed safely. No AppCDS archive generation/consumption or TTMM claim is authorized by this work.
+A hosted test pass establishes only implementation behavior. The next physical gate remains two otherwise-identical `plan` launches producing `MATCH`, followed by verification of stock fallback. The proven MoreCulling ordering permutation is neutral only through the exact-map exception above; all other rewrites remain a **NO-GO blocker**. No AppCDS archive generation/consumption or TTMM claim is authorized by this work.

@@ -12,6 +12,8 @@ fn pack_input_artifact(instance_dir: &Path, path: &Path) -> io::Result<Artifact>
         canonical_simple_properties(&fs::read(path)?, false)
     } else if relative_components_equal(relative, &["config", "drippyloadingscreen", "early_window_reference.properties"]) {
         canonical_simple_properties(&fs::read(path)?, true)
+    } else if relative_components_equal(relative, &["config", "moreculling.toml"]) {
+        canonical_moreculling_mod_compatibility(&fs::read(path)?)
     } else {
         None
     };
@@ -31,6 +33,62 @@ fn pack_input_artifact(instance_dir: &Path, path: &Path) -> io::Result<Artifact>
             sha256: hash_file(path)?,
         })
     }
+}
+
+// This deliberately recognizes only the exact, observed MoreCulling 1.0.8
+// layout. It does not parse or reserialize TOML and never writes the source
+// file: the prefix stays byte-sensitive, while the final boolean table is
+// treated as an unordered key/value mapping. Any comments, extra table,
+// duplicate, escape, non-ASCII character or unexpected value falls back to a
+// raw hash in pack_input_artifact.
+fn canonical_moreculling_mod_compatibility(bytes: &[u8]) -> Option<Vec<u8>> {
+    if !bytes.is_ascii() || !bytes.ends_with(b"\n") {
+        return None;
+    }
+    let text = std::str::from_utf8(bytes).ok()?;
+    let mut before_table = Vec::new();
+    let mut values = BTreeMap::<String, bool>::new();
+    let mut found_table = false;
+
+    for line in text.strip_suffix('\n')?.split('\n') {
+        if !found_table {
+            if line == "[modCompatibility]" {
+                found_table = true;
+            } else {
+                before_table.push(line);
+            }
+            continue;
+        }
+
+        let (key, value) = line.split_once(" = ")?;
+        if key.is_empty()
+            || !key.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
+            || values.contains_key(key)
+        {
+            return None;
+        }
+        let value = match value {
+            "true" => true,
+            "false" => false,
+            _ => return None,
+        };
+        values.insert(key.to_owned(), value);
+    }
+    if !found_table || values.is_empty() {
+        return None;
+    }
+
+    let mut canonical = Vec::new();
+    for line in before_table {
+        canonical.extend_from_slice(line.as_bytes());
+        canonical.push(b'\n');
+    }
+    canonical.extend_from_slice(b"[modCompatibility]\n");
+    for (key, value) in values {
+        canonical.extend_from_slice(key.as_bytes());
+        canonical.extend_from_slice(if value { b" = true\n" } else { b" = false\n" });
+    }
+    Some(canonical)
 }
 
 fn relative_components_equal(path: &Path, expected: &[&str]) -> bool {
