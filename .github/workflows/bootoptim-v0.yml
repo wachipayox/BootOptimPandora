@@ -10,6 +10,10 @@ on:
       - "crates/command/**"
       - ".github/workflows/bootoptim-v0.yml"
 
+concurrency:
+  group: bootoptim-v0-agent151
+  cancel-in-progress: true
+
 jobs:
   windows-v0:
     runs-on: windows-latest
