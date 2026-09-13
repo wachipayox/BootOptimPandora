@@ -16,18 +16,34 @@ mod config_identity_tests {
     }
 
     #[test]
-    fn authorized_properties_canonicalize_comments_and_only_drippy_timestamp() {
+    fn authorized_properties_canonicalize_comments_and_real_options_still_invalidate() {
         let d = temp_dir("authorized");
-        for relative in [
-            "config/asyncparticles/asyncparticles-mixin.properties",
-            "config/fabric/indigo-renderer.properties",
-            "config/iris.properties",
-        ] {
-            let a = pack_artifact(&d, relative, b"#generated\n#Sun Sep 13 20:00:00 CEST 2026\nenabled=true\nquality=2\n");
-            let b = pack_artifact(&d, relative, b"#generated\n#Mon Sep 14 20:00:00 CEST 2026\nquality=2\nenabled=true\n");
-            assert_eq!(a.sha256, b.sha256, "authorized Java Properties mapping must ignore comments/order");
-            let changed = pack_artifact(&d, relative, b"#generated\nenabled=false\nquality=2\n");
-            assert_ne!(a.sha256, changed.sha256, "effective property value must invalidate");
+        let cases: [(&str, &[u8], &[u8], &[u8]); 3] = [
+            (
+                "config/asyncparticles/asyncparticles-mixin.properties",
+                b"#AsyncParticles\n#Sun Sep 13 20:00:00 CEST 2026\nversion=3\nsafeBlockEntityMap=false\n",
+                b"#AsyncParticles\n#Mon Sep 14 20:00:00 CEST 2026\nsafeBlockEntityMap=false\nversion=3\n",
+                b"#AsyncParticles\nversion=3\nsafeBlockEntityMap=true\n",
+            ),
+            (
+                "config/fabric/indigo-renderer.properties",
+                b"#Indigo properties file\n#Sun Sep 13 20:00:00 CEST 2026\ndebug-compare-lighting=auto\nambient-occlusion-mode=hybrid\n",
+                b"#Indigo properties file\n#Mon Sep 14 20:00:00 CEST 2026\nambient-occlusion-mode=hybrid\ndebug-compare-lighting=auto\n",
+                b"#Indigo properties file\nambient-occlusion-mode=hybrid\ndebug-compare-lighting=true\n",
+            ),
+            (
+                "config/iris.properties",
+                b"#Iris\n#Sun Sep 13 20:00:00 CEST 2026\nenableShaders=true\nmaxShadowRenderDistance=32\n",
+                b"#Iris\n#Mon Sep 14 20:00:00 CEST 2026\nmaxShadowRenderDistance=32\nenableShaders=true\n",
+                b"#Iris\nenableShaders=false\nmaxShadowRenderDistance=32\n",
+            ),
+        ];
+        for (relative, first, rewritten, effective_change) in cases {
+            let a = pack_artifact(&d, relative, first);
+            let b = pack_artifact(&d, relative, rewritten);
+            assert_eq!(a.sha256, b.sha256, "authorized Java Properties comment/order rewrite must be identity-neutral");
+            let changed = pack_artifact(&d, relative, effective_change);
+            assert_ne!(a.sha256, changed.sha256, "real effective property value must invalidate");
         }
 
         let relative = "config/drippyloadingscreen/early_window_reference.properties";
@@ -48,10 +64,10 @@ mod config_identity_tests {
         assert_ne!(u1.sha256, u2.sha256, "unknown properties path must stay raw");
 
         let authorized = "config/iris.properties";
-        let duplicate = b"#Sun Sep 13\nenabled=true\nenabled=true\n";
+        let duplicate = b"#Sun Sep 13\nenableShaders=true\nenableShaders=true\n";
         let duplicate_artifact = pack_artifact(&d, authorized, duplicate);
         assert_eq!(duplicate_artifact.sha256, sha256_hex(duplicate), "duplicate key must fall back to raw");
-        let escaped = b"#Sun Sep 13\npath=a\\ b\n";
+        let escaped = b"#Sun Sep 13\nshaderPack=a\\ b\n";
         let escaped_artifact = pack_artifact(&d, authorized, escaped);
         assert_eq!(escaped_artifact.sha256, sha256_hex(escaped), "escaped syntax must fall back to raw");
         let malformed = b"#Sun Sep 13\nnot-a-property-line\n";
@@ -82,7 +98,7 @@ mod config_identity_tests {
         fs::write(&mod_jar, b"mod-v1").unwrap();
         fs::create_dir_all(d.join("config/fabric")).unwrap();
         let config = d.join("config/fabric/indigo-renderer.properties");
-        fs::write(&config, b"#Sun Sep 13 20:00:00 CEST 2026\nenabled=true\n").unwrap();
+        fs::write(&config, b"#Indigo properties file\n#Sun Sep 13 20:00:00 CEST 2026\nambient-occlusion-mode=hybrid\ndebug-compare-lighting=auto\n").unwrap();
         fs::write(d.join("options.txt"), b"resourcePacks:[\"vanilla\"]\nincompatibleResourcePacks:[]\n").unwrap();
         let launcher = d.join("Pandora.exe");
         fs::write(&launcher, b"launcher").unwrap();
@@ -102,13 +118,13 @@ mod config_identity_tests {
         let config = d.join("config/fabric/indigo-renderer.properties");
         let p1 = build_launch_plan(&parsed).unwrap();
 
-        fs::write(&config, b"#Mon Sep 14 20:00:00 CEST 2026\nenabled=true\n").unwrap();
+        fs::write(&config, b"#Indigo properties file\n#Mon Sep 14 20:00:00 CEST 2026\ndebug-compare-lighting=auto\nambient-occlusion-mode=hybrid\n").unwrap();
         let comment_only = build_launch_plan(&parsed).unwrap();
-        assert_eq!(p1.sha256, comment_only.sha256, "generated comment alone must not change plan identity");
+        assert_eq!(p1.sha256, comment_only.sha256, "generated comment/order rewrite alone must not change plan identity");
 
-        fs::write(&config, b"#Mon Sep 14\nenabled=false\n").unwrap();
+        fs::write(&config, b"#Indigo properties file\nambient-occlusion-mode=hybrid\ndebug-compare-lighting=true\n").unwrap();
         assert_ne!(p1.sha256, build_launch_plan(&parsed).unwrap().sha256);
-        fs::write(&config, b"#Sun Sep 13\nenabled=true\n").unwrap();
+        fs::write(&config, b"#Indigo properties file\nambient-occlusion-mode=hybrid\ndebug-compare-lighting=auto\n").unwrap();
 
         fs::write(&mod_jar, b"mod-v2").unwrap();
         assert_ne!(p1.sha256, build_launch_plan(&parsed).unwrap().sha256);
