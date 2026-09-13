@@ -23,8 +23,8 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
     }
 
     let mut mods = Vec::new();
-    let mut mods_valid = true;
     let mods_dir = parsed.instance_dir.join("mods");
+    let mut mods_valid = mods_dir.is_dir();
     if mods_dir.is_dir() {
         let mut paths = Vec::new();
         match fs::read_dir(&mods_dir) {
@@ -47,7 +47,23 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
                 Err(_) => mods_valid = false,
             }
         }
+        if mods.is_empty() {
+            mods_valid = false;
+        }
     }
+
+    // A local dynamic archive must also be invalidated when launch-affecting
+    // pack configuration changes between training and consumption. This is a
+    // strong local snapshot, not a trusted distribution/repair manifest.
+    let (pack_inputs, pack_inputs_valid) = collect_pack_inputs(&parsed.instance_dir);
+    let resource_pack_selection_sha256 = resource_pack_selection_fingerprint(&parsed.instance_dir).ok();
+    let pack_manifest_sha256 = if mods_valid && pack_inputs_valid {
+        resource_pack_selection_sha256.as_deref().map(|selection| {
+            pack_manifest_digest(&mods, &pack_inputs, selection)
+        })
+    } else {
+        None
+    };
 
     let helper_path = env::current_exe().ok();
     let helper_artifact = helper_path.as_ref().and_then(|p| artifact_from_path("helper", p).ok());
@@ -76,6 +92,9 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
         && release_hash.is_some()
         && classpath_valid
         && mods_valid
+        && pack_inputs_valid
+        && pack_manifest_sha256.is_some()
+        && resource_pack_selection_sha256.is_some()
         && helper_artifact.is_some()
         && launcher_artifact.is_some()
         && !has_agent
@@ -109,6 +128,9 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
     out.push_str("  ],\n");
     push_artifact_array(&mut out, "classpath", &classpath, true);
     push_artifact_array(&mut out, "mods", &mods, true);
+    push_artifact_array(&mut out, "pack_inputs", &pack_inputs, true);
+    push_json_opt_str(&mut out, "pack_manifest_sha256", pack_manifest_sha256.as_deref(), 2, true);
+    push_json_opt_str(&mut out, "resource_pack_selection_sha256", resource_pack_selection_sha256.as_deref(), 2, true);
     let mut components = Vec::new();
     if let Some(a) = launcher_artifact { components.push(a); }
     if let Some(a) = helper_artifact { components.push(a); }
@@ -125,6 +147,98 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
     let bytes = out.into_bytes();
     let sha256 = sha256_hex(&bytes);
     Ok(LaunchPlan { bytes, sha256, eligible })
+}
+
+fn collect_pack_inputs(instance_dir: &Path) -> (Vec<Artifact>, bool) {
+    const ROOTS: &[&str] = &["config", "defaultconfigs", "kubejs", "scripts"];
+    let mut paths = Vec::new();
+    let mut valid = true;
+
+    for root_name in ROOTS {
+        let root = instance_dir.join(root_name);
+        if !root.exists() {
+            continue;
+        }
+        if !root.is_dir() {
+            valid = false;
+            continue;
+        }
+        if collect_regular_tree(&root, &mut paths).is_err() {
+            valid = false;
+        }
+    }
+
+    paths.sort_by_key(|p| encode_os(p.as_os_str()).encoded_hex);
+    let mut artifacts = Vec::with_capacity(paths.len());
+    for path in paths {
+        match artifact_from_path("pack-input", &path) {
+            Ok(artifact) => artifacts.push(artifact),
+            Err(_) => valid = false,
+        }
+    }
+    (artifacts, valid)
+}
+
+fn collect_regular_tree(root: &Path, paths: &mut Vec<PathBuf>) -> io::Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "pack input symlink/reparse point"));
+        }
+        if file_type.is_dir() {
+            collect_regular_tree(&entry.path(), paths)?;
+        } else if file_type.is_file() {
+            paths.push(entry.path());
+        } else {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported pack input type"));
+        }
+    }
+    Ok(())
+}
+
+fn resource_pack_selection_fingerprint(instance_dir: &Path) -> io::Result<String> {
+    let options = fs::read_to_string(instance_dir.join("options.txt"))?;
+    let mut values = BTreeMap::new();
+    for line in options.lines() {
+        if let Some((key, value)) = line.split_once(':') {
+            if key == "resourcePacks" || key == "incompatibleResourcePacks" {
+                values.insert(key.to_string(), value.to_string());
+            }
+        }
+    }
+    if !values.contains_key("resourcePacks") {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "options missing resourcePacks"));
+    }
+    let mut canonical = String::new();
+    for key in ["resourcePacks", "incompatibleResourcePacks"] {
+        if let Some(value) = values.get(key) {
+            canonical.push_str(key);
+            canonical.push('=');
+            canonical.push_str(value);
+            canonical.push('\n');
+        }
+    }
+    Ok(sha256_hex(canonical.as_bytes()))
+}
+
+fn pack_manifest_digest(mods: &[Artifact], pack_inputs: &[Artifact], resource_selection_sha256: &str) -> String {
+    let mut canonical = String::new();
+    canonical.push_str("schema=1\n");
+    for artifact in mods.iter().chain(pack_inputs.iter()) {
+        canonical.push_str(artifact.role);
+        canonical.push('|');
+        canonical.push_str(&artifact.path.encoded_hex);
+        canonical.push('|');
+        canonical.push_str(&artifact.size.to_string());
+        canonical.push('|');
+        canonical.push_str(&artifact.sha256);
+        canonical.push('\n');
+    }
+    canonical.push_str("resource_pack_selection_sha256=");
+    canonical.push_str(resource_selection_sha256);
+    canonical.push('\n');
+    sha256_hex(canonical.as_bytes())
 }
 
 fn persist_plan_and_compare(cache_dir: &Path, bytes: &[u8], sha: &str) -> io::Result<bool> {
