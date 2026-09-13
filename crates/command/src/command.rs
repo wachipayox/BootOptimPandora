@@ -7,6 +7,12 @@ use crate::{process::PandoraProcess, spawner::SpawnType};
 const BOOTOPTIM_PANDORA_UPSTREAM: &str = "4eb6c7849561151695288443c106519774ee05ea";
 
 #[derive(Debug)]
+struct BootOptimTraining {
+    metadata: PathBuf,
+    completion: PathBuf,
+}
+
+#[derive(Debug)]
 pub struct PandoraCommand {
     pub(crate) executable: PandoraArg,
     pub(crate) args: Vec<PandoraArg>,
@@ -80,17 +86,27 @@ impl PandoraCommand {
     }
 
     pub async fn spawn(mut self) -> std::io::Result<PandoraChild> {
-        let training_marker = self.maybe_bootoptim_prepare();
+        let training = self.maybe_bootoptim_prepare();
         let result = crate::spawner::spawn(self, SpawnType::Normal)
             .await
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "spawning thread has shutdown"))
             .flatten();
-        if result.is_err() {
-            if let Some(path) = training_marker {
-                let _ = std::fs::remove_file(path);
+
+        match result {
+            Ok(mut child) => {
+                if let Some(training) = training {
+                    child.process.set_bootoptim_completion_marker(training.completion);
+                }
+                Ok(child)
+            }
+            Err(error) => {
+                if let Some(training) = training {
+                    let _ = std::fs::remove_file(training.metadata);
+                    let _ = std::fs::remove_file(training.completion);
+                }
+                Err(error)
             }
         }
-        result
     }
 
     pub async fn spawn_elevated(self) -> std::io::Result<PandoraProcess> {
@@ -108,7 +124,7 @@ impl PandoraCommand {
             .flatten()
     }
 
-    fn maybe_bootoptim_prepare(&mut self) -> Option<PathBuf> {
+    fn maybe_bootoptim_prepare(&mut self) -> Option<BootOptimTraining> {
         let helper = std::env::var_os("BOOTOPTIM_LAUNCH_INTERPOSER")?;
         let helper = PathBuf::from(helper);
         if !helper.is_file() {
@@ -187,12 +203,17 @@ impl PandoraCommand {
             "TRAIN" => {
                 let cache_dir = instance_dir.join(".bootoptim").join("appcds");
                 let training = cache_dir.join("training.jsa");
+                let completion = cache_dir.join("training.complete");
+                let _ = std::fs::remove_file(&completion);
                 self.prepend_bootoptim_flags(vec![
                     OsString::from("-Xshare:auto"),
                     bootoptim_os_flag("-XX:ArchiveClassesAtExit=", &training),
                 ]);
                 log::info!("BOOTOPTIM_INTERPOSER status=generating activation=training");
-                Some(cache_dir.join("training.meta"))
+                Some(BootOptimTraining {
+                    metadata: cache_dir.join("training.meta"),
+                    completion,
+                })
             }
             _ => None,
         }
