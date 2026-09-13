@@ -1,0 +1,42 @@
+name: BootOptim launch interposer
+
+on:
+  push:
+    branches: ["agent151/bootoptim-launch-interposer-v0"]
+  pull_request:
+    paths:
+      - "bootoptim-launch-interposer/**"
+      - ".github/workflows/bootoptim-interposer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: bootoptim-launch-interposer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: bootoptim-launch-interposer
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test
+        run: cargo test
+      - name: Build release
+        run: cargo build --release
+      - name: Hash artifact
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash target/release/bootoptim-launch-interposer.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  bootoptim-launch-interposer.exe" | Set-Content -Encoding ascii target/release/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bootoptim-launch-interposer-windows-x86_64
+          path: |
+            bootoptim-launch-interposer/target/release/bootoptim-launch-interposer.exe
+            bootoptim-launch-interposer/target/release/SHA256SUMS.txt
+          if-no-files-found: error
