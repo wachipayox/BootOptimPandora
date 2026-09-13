@@ -182,19 +182,34 @@ fn collect_pack_inputs(instance_dir: &Path) -> (Vec<Artifact>, bool) {
 fn collect_regular_tree(root: &Path, paths: &mut Vec<PathBuf>) -> io::Result<()> {
     for entry in fs::read_dir(root)? {
         let entry = entry?;
+        let path = entry.path();
         let file_type = entry.file_type()?;
-        if file_type.is_symlink() {
+        if file_type.is_symlink() || is_windows_reparse_point(&path)? {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "pack input symlink/reparse point"));
         }
         if file_type.is_dir() {
-            collect_regular_tree(&entry.path(), paths)?;
+            collect_regular_tree(&path, paths)?;
         } else if file_type.is_file() {
-            paths.push(entry.path());
+            paths.push(path);
         } else {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported pack input type"));
         }
     }
     Ok(())
+}
+
+fn is_windows_reparse_point(path: &Path) -> io::Result<bool> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        Ok(fs::symlink_metadata(path)?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Ok(false)
+    }
 }
 
 fn resource_pack_selection_fingerprint(instance_dir: &Path) -> io::Result<String> {
