@@ -4,7 +4,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -36,6 +36,23 @@ impl CacheState {
             Self::Ready => "READY",
             Self::Stale => "STALE",
             Self::Failed => "FAILED",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrepareDecision {
+    Stock,
+    Train,
+    Ready,
+}
+
+impl PrepareDecision {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Stock => "STOCK",
+            Self::Train => "TRAIN",
+            Self::Ready => "READY",
         }
     }
 }
@@ -104,24 +121,21 @@ fn main() {
         Ok(v) => v,
         Err(_) => {
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=invalid-control-args");
-            std::process::exit(2);
+            println!("STOCK");
+            return;
         }
     };
 
-    let code = match run(&parsed) {
-        Ok(code) => code,
+    match prepare_launch(&parsed) {
+        Ok(decision) => println!("{}", decision.as_str()),
         Err(_) => {
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=helper-error");
-            spawn_java(&parsed.java_exe, &parsed.java_args, &[])
-                .ok()
-                .and_then(|status| status.code())
-                .unwrap_or(1)
+            println!("STOCK");
         }
-    };
-    std::process::exit(code);
+    }
 }
 
-fn run(parsed: &ParsedArgs) -> io::Result<i32> {
+fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
     let mode = match env::var("BOOTOPTIM_APPCDS_MODE").ok().as_deref() {
         Some("auto") => Mode::Auto,
         _ => Mode::Plan,
@@ -135,82 +149,114 @@ fn run(parsed: &ParsedArgs) -> io::Result<i32> {
 
     if mode == Mode::Plan {
         eprintln!("BOOTOPTIM_INTERPOSER status=plan-only deterministic={}", if stable { "true" } else { "false" });
-        return Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?));
+        return Ok(PrepareDecision::Stock);
     }
 
     if !cfg!(windows) {
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=appcds-windows-only-v0");
-        return Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?));
+        return Ok(PrepareDecision::Stock);
     }
 
     if !stable {
         write_state(&cache_dir, CacheState::Absent, "plan-not-yet-proven")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=plan-not-yet-proven");
-        return Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?));
+        return Ok(PrepareDecision::Stock);
     }
 
     if !plan.eligible {
         write_state(&cache_dir, CacheState::Failed, "identity-ineligible")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=identity-ineligible");
-        return Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?));
+        return Ok(PrepareDecision::Stock);
     }
 
     let Some(_lock) = try_lock(&cache_dir.join("cache.lock"))? else {
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=lock-busy");
-        return Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?));
+        return Ok(PrepareDecision::Stock);
     };
 
-    let (state, ready_meta) = classify_cache(&cache_dir, &plan.sha256)?;
-
+    let (state, _) = classify_cache(&cache_dir, &plan.sha256)?;
     match state {
         CacheState::Ready => {
-            let ready_path = cache_dir.join("ready.jsa");
+            cleanup_training_files(&cache_dir);
             write_state(&cache_dir, CacheState::Ready, "identity-match")?;
-            let flags = shared_archive_flags(CacheState::Ready, &ready_path);
             eprintln!("BOOTOPTIM_INTERPOSER status=ready activation=enabled");
-            Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &flags)?))
-        }
-        CacheState::Absent => {
-            let staging = cache_dir.join(format!("staging-{}.jsa", unique_suffix()));
-            write_state(&cache_dir, CacheState::Generating, "training")?;
-            let flags = vec![
-                OsString::from("-Xshare:auto"),
-                os_flag("-XX:ArchiveClassesAtExit=", &staging),
-            ];
-            eprintln!("BOOTOPTIM_INTERPOSER status=generating activation=training");
-            let status = spawn_java(&parsed.java_exe, &parsed.java_args, &flags)?;
-            if status.success() && staging.is_file() && fs::metadata(&staging).map(|m| m.len()).unwrap_or(0) > 0 {
-                match promote_archive(&cache_dir, &staging, &plan.sha256) {
-                    Ok(_) => {
-                        write_state(&cache_dir, CacheState::Ready, "promotion-complete")?;
-                        eprintln!("BOOTOPTIM_INTERPOSER status=ready promotion=complete");
-                    }
-                    Err(_) => {
-                        let _ = fs::remove_file(&staging);
-                        write_state(&cache_dir, CacheState::Failed, "promotion-failed")?;
-                        eprintln!("BOOTOPTIM_INTERPOSER status=failed reason=promotion-failed");
-                    }
-                }
-            } else {
-                let _ = fs::remove_file(&staging);
-                write_state(&cache_dir, CacheState::Failed, "training-incomplete")?;
-                eprintln!("BOOTOPTIM_INTERPOSER status=failed reason=training-incomplete");
-            }
-            Ok(exit_code(status))
+            return Ok(PrepareDecision::Ready);
         }
         CacheState::Stale => {
-            let _ = ready_meta;
             write_state(&cache_dir, CacheState::Stale, "identity-mismatch")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=stale");
-            Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?))
+            return Ok(PrepareDecision::Stock);
         }
         CacheState::Failed | CacheState::Generating => {
             cleanup_orphan_staging(&cache_dir)?;
             write_state(&cache_dir, CacheState::Failed, "incomplete-or-failed")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=failed-state");
-            Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?))
+            return Ok(PrepareDecision::Stock);
+        }
+        CacheState::Absent => {}
+    }
+
+    let training_meta = cache_dir.join("training.meta");
+    let training_archive = cache_dir.join("training.jsa");
+    if training_meta.is_file() {
+        let pending_plan = read_training_plan(&training_meta)?;
+        if pending_plan != plan.sha256 {
+            write_state(&cache_dir, CacheState::Stale, "training-plan-mismatch")?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-plan-mismatch");
+            return Ok(PrepareDecision::Stock);
+        }
+
+        if !training_archive.is_file() {
+            write_state(&cache_dir, CacheState::Generating, "training-pending")?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-pending");
+            return Ok(PrepareDecision::Stock);
+        }
+
+        if fs::metadata(&training_archive)?.len() == 0 {
+            write_state(&cache_dir, CacheState::Failed, "training-empty")?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-empty");
+            return Ok(PrepareDecision::Stock);
+        }
+
+        promote_archive(&cache_dir, &training_archive, &plan.sha256)?;
+        let _ = fs::remove_file(&training_meta);
+        write_state(&cache_dir, CacheState::Ready, "promotion-complete")?;
+        eprintln!("BOOTOPTIM_INTERPOSER status=ready promotion=complete");
+        return Ok(PrepareDecision::Ready);
+    }
+
+    if training_archive.exists() {
+        write_state(&cache_dir, CacheState::Failed, "orphan-training-archive")?;
+        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=orphan-training-archive");
+        return Ok(PrepareDecision::Stock);
+    }
+
+    write_atomic_replace(&training_meta, format!("schema={}\nplan_sha256={}\n", SCHEMA_VERSION, plan.sha256).as_bytes())?;
+    write_state(&cache_dir, CacheState::Generating, "training")?;
+    eprintln!("BOOTOPTIM_INTERPOSER status=generating activation=training");
+    Ok(PrepareDecision::Train)
+}
+
+fn read_training_plan(path: &Path) -> io::Result<String> {
+    let text = fs::read_to_string(path)?;
+    let mut schema_ok = false;
+    let mut plan = None;
+    for line in text.lines() {
+        if line == format!("schema={}", SCHEMA_VERSION) {
+            schema_ok = true;
+        } else if let Some(value) = line.strip_prefix("plan_sha256=") {
+            plan = Some(value.to_string());
         }
     }
+    if !schema_ok {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "training schema"));
+    }
+    plan.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "training plan"))
+}
+
+fn cleanup_training_files(cache_dir: &Path) {
+    let _ = fs::remove_file(cache_dir.join("training.meta"));
+    let _ = fs::remove_file(cache_dir.join("training.jsa"));
 }
 
 fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
@@ -241,18 +287,4 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
     let java_args = args.get(i + 1..).unwrap_or_default().to_vec();
     let instance_dir = instance_dir.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing instance"))?;
     Ok(ParsedArgs { instance_dir, launcher_exe, upstream_commit, java_exe, java_args })
-}
-
-fn spawn_java(java_exe: &OsStr, args: &[OsString], prefix: &[OsString]) -> io::Result<ExitStatus> {
-    let mut cmd = Command::new(java_exe);
-    cmd.args(prefix);
-    cmd.args(args);
-    cmd.stdin(Stdio::inherit());
-    cmd.stdout(Stdio::inherit());
-    cmd.stderr(Stdio::inherit());
-    cmd.status()
-}
-
-fn exit_code(status: ExitStatus) -> i32 {
-    status.code().unwrap_or(1)
 }
