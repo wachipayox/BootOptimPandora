@@ -28,6 +28,22 @@ mod tests {
     }
 
     #[test]
+    fn module_path_parser_keeps_original_order_and_rejects_ambiguity() {
+        let raw = OsString::from("A Module.jar;Ü Module.jar");
+        let args = vec![OsString::from("-p"), raw.clone(), OsString::from("Main")];
+        assert_eq!(find_module_path(&args).unwrap(), Some(raw));
+
+        let long = vec![OsString::from("--module-path=first.jar;second.jar"), OsString::from("Main")];
+        assert_eq!(find_module_path(&long).unwrap(), Some(OsString::from("first.jar;second.jar")));
+
+        let duplicate = vec![
+            OsString::from("-p"), OsString::from("first.jar"),
+            OsString::from("--module-path"), OsString::from("second.jar"),
+        ];
+        assert!(find_module_path(&duplicate).is_err());
+    }
+
+    #[test]
     fn sensitive_literals_are_never_exposed() {
         assert!(is_sensitive_arg(OsStr::new("-DauthToken=VERY_SECRET")));
         assert_eq!(safe_literal(OsStr::new("-DauthToken=VERY_SECRET")), None);
@@ -144,6 +160,10 @@ mod tests {
         fs::write(java_root.join("release"), b"JAVA_VERSION=\"25.0.4\"\nIMPLEMENTOR=\"Oracle Corporation\"\n").unwrap();
         let lib = d.join("library one.jar");
         fs::write(&lib, b"jar-v1").unwrap();
+        let module_a = d.join("module one.jar");
+        let module_b = d.join("módulo two.jar");
+        fs::write(&module_a, b"module-a-v1").unwrap();
+        fs::write(&module_b, b"module-b-v1").unwrap();
         fs::create_dir_all(d.join("mods")).unwrap();
         fs::write(d.join("mods/mod.jar"), b"mod-v1").unwrap();
         fs::create_dir_all(d.join("config")).unwrap();
@@ -152,23 +172,42 @@ mod tests {
         let launcher = d.join("Pandora Launcher.exe");
         fs::write(&launcher, b"launcher").unwrap();
         let cp = env::join_paths([lib.clone()]).unwrap();
+        let module_path_raw = env::join_paths([module_a.clone(), module_b.clone()]).unwrap();
         let parsed = ParsedArgs {
             instance_dir: d.clone(),
             launcher_exe: Some(launcher),
             upstream_commit: UPSTREAM_DEFAULT.to_string(),
             java_exe: java.clone().into_os_string(),
-            java_args: vec![OsString::from("-DauthToken=VERY_SECRET"), OsString::from("-cp"), cp, OsString::from("com.moulberry.pandora.LaunchWrapper")],
+            java_args: vec![
+                OsString::from("-DauthToken=VERY_SECRET"),
+                OsString::from("-cp"), cp,
+                OsString::from("--module-path"), module_path_raw.clone(),
+                OsString::from("com.moulberry.pandora.LaunchWrapper"),
+            ],
         };
         let p1 = build_launch_plan(&parsed).unwrap();
         let p2 = build_launch_plan(&parsed).unwrap();
         assert_eq!(p1.bytes, p2.bytes);
         assert!(p1.eligible);
-        assert!(!String::from_utf8_lossy(&p1.bytes).contains("VERY_SECRET"));
+        assert_eq!(find_module_path(&parsed.java_args).unwrap(), Some(module_path_raw));
+        let plan_text = String::from_utf8_lossy(&p1.bytes);
+        assert!(!plan_text.contains("VERY_SECRET"));
+        let module_section = plan_text.split("\"module_path\"").nth(1).unwrap();
+        let module_a_hash = hash_file(&module_a).unwrap();
+        let module_b_hash = hash_file(&module_b).unwrap();
+        let a_pos = module_section.find(&module_a_hash).unwrap();
+        let b_pos = module_section.find(&module_b_hash).unwrap();
+        assert!(a_pos < b_pos, "module path fingerprint must preserve JVM path order");
 
         fs::write(&lib, b"jar-v2").unwrap();
         let p3 = build_launch_plan(&parsed).unwrap();
         assert_ne!(p1.sha256, p3.sha256);
         fs::write(&lib, b"jar-v1").unwrap();
+
+        fs::write(&module_b, b"module-b-v2").unwrap();
+        let module_changed = build_launch_plan(&parsed).unwrap();
+        assert_ne!(p1.sha256, module_changed.sha256);
+        fs::write(&module_b, b"module-b-v1").unwrap();
 
         fs::write(d.join("config/fml.toml"), b"earlyWindowControl=false\n").unwrap();
         let config_changed = build_launch_plan(&parsed).unwrap();
@@ -209,5 +248,38 @@ mod tests {
         assert!(!has_agent_configuration(&[OsString::from("-Xmx6G")]));
         assert!(has_conflicting_cds_configuration(&[OsString::from("-XX:+AutoCreateSharedArchive")]));
         assert!(has_conflicting_cds_configuration(&[OsString::from("-Xshare:on")]));
+    }
+
+    #[test]
+    fn upgrade_module_path_is_fail_closed() {
+        assert!(has_unsupported_module_configuration(&[
+            OsString::from("--upgrade-module-path"), OsString::from("upgrade.jar")
+        ]));
+        assert!(has_unsupported_module_configuration(&[
+            OsString::from("--upgrade-module-path=upgrade.jar")
+        ]));
+    }
+
+    #[test]
+    fn patch_module_is_fail_closed() {
+        assert!(has_unsupported_module_configuration(&[
+            OsString::from("--patch-module"), OsString::from("example=patch.jar")
+        ]));
+        assert!(has_unsupported_module_configuration(&[
+            OsString::from("--patch-module=example=patch.jar")
+        ]));
+    }
+
+    #[test]
+    fn limit_modules_is_fail_closed() {
+        assert!(has_unsupported_module_configuration(&[
+            OsString::from("--limit-modules"), OsString::from("java.base")
+        ]));
+        assert!(has_unsupported_module_configuration(&[
+            OsString::from("--limit-modules=java.base")
+        ]));
+        assert!(!has_unsupported_module_configuration(&[
+            OsString::from("--add-modules=ALL-MODULE-PATH")
+        ]));
     }
 }
