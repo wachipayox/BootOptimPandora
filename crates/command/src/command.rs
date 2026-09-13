@@ -80,11 +80,17 @@ impl PandoraCommand {
     }
 
     pub async fn spawn(mut self) -> std::io::Result<PandoraChild> {
-        self.maybe_bootoptim_interpose();
-        crate::spawner::spawn(self, SpawnType::Normal)
+        let training_marker = self.maybe_bootoptim_prepare();
+        let result = crate::spawner::spawn(self, SpawnType::Normal)
             .await
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "spawning thread has shutdown"))
-            .flatten()
+            .flatten();
+        if result.is_err() {
+            if let Some(path) = training_marker {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        result
     }
 
     pub async fn spawn_elevated(self) -> std::io::Result<PandoraProcess> {
@@ -102,44 +108,101 @@ impl PandoraCommand {
             .flatten()
     }
 
-    fn maybe_bootoptim_interpose(&mut self) {
-        let Some(helper) = std::env::var_os("BOOTOPTIM_LAUNCH_INTERPOSER") else {
-            return;
-        };
+    fn maybe_bootoptim_prepare(&mut self) -> Option<PathBuf> {
+        let helper = std::env::var_os("BOOTOPTIM_LAUNCH_INTERPOSER")?;
         let helper = PathBuf::from(helper);
         if !helper.is_file() {
-            return;
+            return None;
         }
-        let Some(instance_dir) = self.current_dir.clone() else {
-            return;
-        };
+        let helper = helper.canonicalize().ok()?;
+        let instance_dir = self.current_dir.clone()?;
         if !self.args.iter().any(|arg| arg.0 == OsStr::new("com.moulberry.pandora.LaunchWrapper")) {
-            return;
+            return None;
         }
 
-        // v0 intentionally interposes only Pandora's direct Java executable. If a
-        // user configured a wrapper command, or if sandboxing uses its separate
-        // spawn path, we fail closed to the stock Pandora launch rather than
-        // guessing wrapper/sandbox semantics or serializing argv through a shell.
+        // v0 intentionally prepares only Pandora's direct Java executable. If a
+        // user configured a wrapper command, or if sandbox/elevated launching is
+        // used, we keep the stock path rather than guessing those semantics.
         if !is_java_executable(&self.executable.0) {
-            return;
+            return None;
         }
 
-        let Ok(launcher_exe) = std::env::current_exe() else {
-            return;
-        };
-        let java_exe = std::mem::replace(&mut self.executable, helper.into());
-        let original_args = std::mem::take(&mut self.args);
+        let launcher_exe = std::env::current_exe().ok()?;
+        let mut preflight = std::process::Command::new(&helper);
+        preflight
+            .arg("--instance-dir")
+            .arg(&instance_dir)
+            .arg("--launcher-exe")
+            .arg(&launcher_exe)
+            .arg("--upstream-commit")
+            .arg(BOOTOPTIM_PANDORA_UPSTREAM)
+            .arg("--")
+            .arg(&self.executable.0);
+        for arg in &self.args {
+            preflight.arg(&arg.0);
+        }
+        preflight.current_dir(&instance_dir);
+        preflight.stdin(std::process::Stdio::null());
+        preflight.stdout(std::process::Stdio::piped());
+        preflight.stderr(std::process::Stdio::null());
 
-        self.arg("--instance-dir");
-        self.arg(instance_dir);
-        self.arg("--launcher-exe");
-        self.arg(launcher_exe);
-        self.arg("--upstream-commit");
-        self.arg(BOOTOPTIM_PANDORA_UPSTREAM.to_string());
-        self.arg("--");
-        self.args.push(java_exe);
-        self.args.extend(original_args);
+        // Give the preflight helper the same effective environment that the Java
+        // process will receive, so hidden JVM option variables are evaluated
+        // against the actual launch tuple rather than Pandora's ambient process.
+        preflight.env_clear();
+        for (k, v) in std::env::vars_os() {
+            let key: PandoraArg = k.clone().into();
+            if self.env.contains_key(&key) {
+                continue;
+            }
+            if let Some(inherit_env) = self.inherit_env && !(inherit_env)(k.as_os_str()) {
+                continue;
+            }
+            preflight.env(&k, &v);
+        }
+        for (k, v) in &self.env {
+            preflight.env(&k.0, &v.0);
+        }
+        // This is launcher control state, not a JVM identity input. Ensure the
+        // helper sees it even if a caller uses a restrictive Java env filter.
+        if let Some(mode) = std::env::var_os("BOOTOPTIM_APPCDS_MODE") {
+            preflight.env("BOOTOPTIM_APPCDS_MODE", mode);
+        }
+
+        let output = preflight.output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let decision = String::from_utf8_lossy(&output.stdout);
+        match decision.trim() {
+            "READY" => {
+                let ready = instance_dir.join(".bootoptim").join("appcds").join("ready.jsa");
+                self.prepend_bootoptim_flags(vec![
+                    OsString::from("-Xshare:auto"),
+                    bootoptim_os_flag("-XX:SharedArchiveFile=", &ready),
+                ]);
+                log::info!("BOOTOPTIM_INTERPOSER status=ready activation=enabled");
+                None
+            }
+            "TRAIN" => {
+                let cache_dir = instance_dir.join(".bootoptim").join("appcds");
+                let training = cache_dir.join("training.jsa");
+                self.prepend_bootoptim_flags(vec![
+                    OsString::from("-Xshare:auto"),
+                    bootoptim_os_flag("-XX:ArchiveClassesAtExit=", &training),
+                ]);
+                log::info!("BOOTOPTIM_INTERPOSER status=generating activation=training");
+                Some(cache_dir.join("training.meta"))
+            }
+            _ => None,
+        }
+    }
+
+    fn prepend_bootoptim_flags(&mut self, flags: Vec<OsString>) {
+        let mut args = Vec::with_capacity(flags.len() + self.args.len());
+        args.extend(flags.into_iter().map(PandoraArg::from));
+        args.append(&mut self.args);
+        self.args = args;
     }
 
     pub(crate) fn resolve_executable_path(&self) -> std::io::Result<PathBuf> {
@@ -212,6 +275,12 @@ fn is_java_executable(value: &OsStr) -> bool {
         return false;
     };
     root.join("lib").is_dir()
+}
+
+fn bootoptim_os_flag(prefix: &str, path: &Path) -> OsString {
+    let mut out = OsString::from(prefix);
+    out.push(path.as_os_str());
+    out
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
