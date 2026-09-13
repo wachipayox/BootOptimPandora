@@ -1,0 +1,401 @@
+from pathlib import Path
+
+launch = Path('crates/backend/src/launch/mod.rs')
+text = launch.read_text()
+old = '''        // Remove duplicate libraries
+        let mut deduplicated_libraries: HashMap<String, (GameLibrary, Vec<isize>)> = HashMap::new();
+        for library in libraries {
+            if let Some(rules) = &library.rules && !self.check_rules(rules) {
+                continue;
+            }
+
+            let coordinate = MavenCoordinate::create(&library.name);
+
+            let coordinate_id = if let Some(specifier) = coordinate.specifier {
+                format!("{}:{}:{}", coordinate.group_id, coordinate.artifact_id, specifier)
+            } else {
+                format!("{}:{}", coordinate.group_id, coordinate.artifact_id)
+            };
+
+            let version_id = coordinate.version_id();
+            if let Some((_, existing_library_version)) = deduplicated_libraries.get(&coordinate_id) {
+                let mut ordering = Ordering::Equal;
+                for (left, right) in version_id.iter().zip(existing_library_version.iter()) {
+                    let cmp = left.cmp(right);
+                    if cmp != Ordering::Equal {
+                        ordering = cmp;
+                        break;
+                    }
+                }
+                if ordering == Ordering::Equal {
+                    ordering = version_id.len().cmp(&existing_library_version.len());
+                }
+                if ordering == Ordering::Less {
+                    continue;
+                }
+            }
+
+            deduplicated_libraries.insert(coordinate_id, (library.clone(), version_id));
+        }
+
+        for library in deduplicated_libraries.into_values().map(|v| v.0) {
+'''
+new = '''        // Deduplicate by coordinate without deriving launch order from HashMap iteration.
+        // The map is lookup-only. The ordered vector records the encounter position of
+        // each current winner. If a later equal/newer version wins, the old slot is
+        // retired and the later winner is appended at its own encounter position. This
+        // preserves the relative order of every non-duplicate winning library while
+        // retaining the existing version-selection rule (later wins on equal versions).
+        let mut winner_index_by_coordinate: HashMap<String, usize> = HashMap::new();
+        let mut ordered_winners: Vec<Option<(GameLibrary, Vec<isize>)>> = Vec::new();
+        for library in libraries {
+            if let Some(rules) = &library.rules && !self.check_rules(rules) {
+                continue;
+            }
+
+            let coordinate = MavenCoordinate::create(&library.name);
+
+            let coordinate_id = if let Some(specifier) = coordinate.specifier {
+                format!("{}:{}:{}", coordinate.group_id, coordinate.artifact_id, specifier)
+            } else {
+                format!("{}:{}", coordinate.group_id, coordinate.artifact_id)
+            };
+
+            let version_id = coordinate.version_id();
+            if let Some(existing_index) = winner_index_by_coordinate.get(&coordinate_id).copied() {
+                let existing_library_version = &ordered_winners[existing_index]
+                    .as_ref()
+                    .expect("winner index must point at an active library")
+                    .1;
+                let mut ordering = Ordering::Equal;
+                for (left, right) in version_id.iter().zip(existing_library_version.iter()) {
+                    let cmp = left.cmp(right);
+                    if cmp != Ordering::Equal {
+                        ordering = cmp;
+                        break;
+                    }
+                }
+                if ordering == Ordering::Equal {
+                    ordering = version_id.len().cmp(&existing_library_version.len());
+                }
+                if ordering == Ordering::Less {
+                    continue;
+                }
+
+                ordered_winners[existing_index] = None;
+            }
+
+            let winner_index = ordered_winners.len();
+            ordered_winners.push(Some((library.clone(), version_id)));
+            winner_index_by_coordinate.insert(coordinate_id, winner_index);
+        }
+
+        for library in ordered_winners.into_iter().flatten().map(|v| v.0) {
+'''
+if text.count(old) != 1:
+    raise SystemExit(f'collect_libraries source anchor count={text.count(old)}')
+text = text.replace(old, new)
+
+if 'mod bootoptim_library_order_tests {' not in text:
+    text += r'''
+
+#[cfg(test)]
+mod bootoptim_library_order_tests {
+    use super::*;
+
+    fn artifact(path: &str) -> GameLibraryArtifact {
+        GameLibraryArtifact {
+            path: Ustr::from(path),
+            sha1: None,
+            size: Some(128),
+            url: Ustr::from("https://example.invalid/library.jar"),
+        }
+    }
+
+    fn library(name: &str, path: &str) -> GameLibrary {
+        GameLibrary {
+            downloads: GameLibraryDownloads {
+                artifact: Some(artifact(path)),
+                classifiers: None,
+            },
+            name: Ustr::from(name),
+            rules: None,
+            natives: None,
+            extract: None,
+        }
+    }
+
+    fn context() -> LaunchRuleContext {
+        LaunchRuleContext {
+            is_demo_user: false,
+            custom_resolution: None,
+            quick_play: None,
+        }
+    }
+
+    fn collect_paths(libraries: &[GameLibrary]) -> (Vec<String>, HashMap<Ustr, GameLibraryExtractOptions>) {
+        let mut artifacts = Vec::new();
+        let mut natives = HashMap::new();
+        context().collect_libraries(libraries, &mut artifacts, &mut natives);
+        (
+            artifacts.into_iter().map(|artifact| artifact.path.to_string()).collect(),
+            natives,
+        )
+    }
+
+    #[test]
+    fn deterministic_across_equivalent_collections() {
+        let template = vec![
+            library("example:a:1", "a-1.jar"),
+            library("example:b:1", "b-1.jar"),
+            library("example:a:2", "a-2.jar"),
+            library("example:c:1", "c-1.jar"),
+        ];
+        let expected = vec!["b-1.jar", "a-2.jar", "c-1.jar"];
+
+        for _ in 0..128 {
+            let equivalent_collection = template.clone();
+            assert_eq!(collect_paths(&equivalent_collection).0, expected);
+        }
+    }
+
+    #[test]
+    fn duplicate_versions_preserve_selection_and_winning_encounter_position() {
+        let libraries = vec![
+            library("example:a:1", "a-1.jar"),
+            library("example:b:1", "b-1.jar"),
+            library("example:a:3", "a-3.jar"),
+            library("example:c:1", "c-1.jar"),
+            library("example:a:2", "a-2-loses.jar"),
+        ];
+        assert_eq!(collect_paths(&libraries).0, vec!["b-1.jar", "a-3.jar", "c-1.jar"]);
+
+        let equal_version = vec![
+            library("example:a:3", "a-3-first.jar"),
+            library("example:b:1", "b-1.jar"),
+            library("example:a:3", "a-3-later-wins.jar"),
+        ];
+        assert_eq!(collect_paths(&equal_version).0, vec!["b-1.jar", "a-3-later-wins.jar"]);
+    }
+
+    #[test]
+    fn classifiers_and_natives_follow_winning_library_order() {
+        let os = match std::env::consts::OS {
+            "linux" => OsName::Linux,
+            "macos" => OsName::Osx,
+            "windows" => OsName::Windows,
+            other => panic!("unsupported test OS: {other}"),
+        };
+        let classifier_id = Ustr::from("natives-current");
+        let native_path = Ustr::from("native-current.jar");
+        let mut classifiers = HashMap::new();
+        classifiers.insert(classifier_id, artifact(native_path.as_str()));
+        let mut natives = HashMap::new();
+        natives.insert(os, classifier_id);
+
+        let mut native_library = library("example:native:2", "native-main.jar");
+        native_library.downloads.classifiers = Some(classifiers);
+        native_library.natives = Some(natives);
+        native_library.extract = Some(GameLibraryExtractOptions { exclude: None });
+
+        let libraries = vec![
+            library("example:a:1", "a.jar"),
+            native_library,
+            library("example:b:1", "b.jar"),
+        ];
+        let (paths, extracts) = collect_paths(&libraries);
+        assert_eq!(paths, vec!["a.jar", "native-main.jar", "native-current.jar", "b.jar"]);
+        assert!(extracts.contains_key(&native_path));
+    }
+
+    #[test]
+    fn excluded_rules_do_not_displace_an_eligible_winner() {
+        let mut excluded_newer = library("example:a:9", "a-9-excluded.jar");
+        excluded_newer.rules = Some(Arc::from(vec![Rule {
+            action: RuleAction::Disallow,
+            features: None,
+            os: None,
+        }]));
+
+        let libraries = vec![
+            library("example:a:1", "a-1.jar"),
+            excluded_newer,
+            library("example:b:1", "b-1.jar"),
+        ];
+        assert_eq!(collect_paths(&libraries).0, vec!["a-1.jar", "b-1.jar"]);
+    }
+}
+'''
+launch.write_text(text)
+
+command = Path('crates/command/src/command.rs')
+text = command.read_text()
+anchor = 'const BOOTOPTIM_PANDORA_UPSTREAM: &str = "4eb6c7849561151695288443c106519774ee05ea";\n'
+addition = anchor + r'''
+
+#[cfg(windows)]
+const BOOTOPTIM_CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(windows)]
+fn configure_bootoptim_preflight(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(BOOTOPTIM_CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_bootoptim_preflight(_command: &mut std::process::Command) {}
+'''
+if text.count(anchor) != 1:
+    raise SystemExit('command constant anchor missing')
+text = text.replace(anchor, addition, 1)
+old_stdio = '''        preflight.stdin(std::process::Stdio::null());
+        preflight.stdout(std::process::Stdio::piped());
+        preflight.stderr(std::process::Stdio::null());
+'''
+new_stdio = '''        preflight.stdin(std::process::Stdio::null());
+        preflight.stdout(std::process::Stdio::piped());
+        preflight.stderr(std::process::Stdio::piped());
+        configure_bootoptim_preflight(&mut preflight);
+'''
+if text.count(old_stdio) != 1:
+    raise SystemExit('preflight stdio anchor missing')
+text = text.replace(old_stdio, new_stdio, 1)
+old_output = '''        let output = preflight.output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let decision = String::from_utf8_lossy(&output.stdout);
+        match decision.trim() {
+'''
+new_output = '''        let output = match preflight.output() {
+            Ok(output) => output,
+            Err(error) => {
+                log::warn!("BOOTOPTIM_INTERPOSER status=helper-spawn-error activation=stock error={error}");
+                return None;
+            }
+        };
+        if !output.status.success() {
+            log::warn!(
+                "BOOTOPTIM_INTERPOSER status=helper-error activation=stock exit_code={:?} stderr_bytes={}",
+                output.status.code(),
+                output.stderr.len()
+            );
+            return None;
+        }
+        let decision = String::from_utf8_lossy(&output.stdout);
+        match decision.trim() {
+'''
+if text.count(old_output) != 1:
+    raise SystemExit('preflight output anchor missing')
+text = text.replace(old_output, new_output, 1)
+old_tail = '''            _ => None,
+        }
+    }
+'''
+new_tail = '''            "STOCK" => None,
+            _ => {
+                log::warn!(
+                    "BOOTOPTIM_INTERPOSER status=invalid-helper-decision activation=stock stdout_bytes={}",
+                    output.stdout.len()
+                );
+                None
+            }
+        }
+    }
+'''
+if text.count(old_tail) < 1:
+    raise SystemExit('decision tail anchor missing')
+text = text.replace(old_tail, new_tail, 1)
+if 'mod bootoptim_windows_preflight_tests {' not in text:
+    text += r'''
+
+#[cfg(all(test, windows))]
+mod bootoptim_windows_preflight_tests {
+    use super::*;
+
+    #[test]
+    fn create_no_window_preserves_redirected_stdout_and_stderr() {
+        let mut command = std::process::Command::new("cmd.exe");
+        command.args([
+            "/D",
+            "/S",
+            "/C",
+            "echo READY & echo helper-diagnostic 1>&2 & exit /b 7",
+        ]);
+        command.stdin(std::process::Stdio::null());
+        command.stdout(std::process::Stdio::piped());
+        command.stderr(std::process::Stdio::piped());
+        configure_bootoptim_preflight(&mut command);
+
+        let output = command.output().expect("hidden child must spawn");
+        assert_eq!(output.status.code(), Some(7));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("READY"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("helper-diagnostic"));
+    }
+}
+'''
+command.write_text(text)
+
+readme = Path('bootoptim-v0/README.md')
+text = readme.read_text()
+old_doc = '''### Important Pandora upstream limitation
+
+At the pinned upstream commit, `LaunchRuleContext::collect_libraries` deduplicates libraries in `std::collections::HashMap` and then iterates `deduplicated_libraries.into_values()`. v0 **does not sort or otherwise normalize this order** because that could change classpath precedence.
+
+Therefore the real PC test is authoritative: if two otherwise identical Pandora launches produce different `launch-plan.json` bytes/classpath order/module-path order/config identity, AppCDS activation is **NO-GO** for this host revision/pack state. The preflight remains useful as a launch-plan proof and Pandora continues to launch stock. A later mismatch is also safe: the exact plan hash is checked on every READY consumption and a mismatch becomes `STALE` with no archive flags.
+'''
+new_doc = '''### Deterministic library/classpath order contract
+
+The pinned upstream `LaunchRuleContext::collect_libraries` selected duplicate winners in a `HashMap` and then emitted `into_values()`, so hash-table iteration randomized the effective library/classpath order. v0 now uses the map only for coordinate lookup and keeps a separate encounter-ordered winner vector. No alphabetical/path/Maven sort is introduced.
+
+The exact contract is: rules are evaluated first; duplicate coordinates use the pre-existing version comparator unchanged; an older later entry is ignored; an equal or newer later entry remains the winner exactly as before, retires the previous slot, and is emitted at the later winning entry's own encounter position. Thus the final sequence is the encounter/resolution order of the winning library occurrences, while the relative precedence of non-duplicate winners is unchanged. Artifact order inside each winning library remains main artifact first and selected native classifier second, exactly as before.
+
+Tests cover repeated equivalent collections, increasing/decreasing/equal duplicate versions, classifier/native emission and rule-excluded duplicates. CI additionally reruns the deterministic-order test in independent test processes. The real PC two-plan byte-for-byte gate remains authoritative: any later plan mismatch is still **NO-GO** and READY consumption remains exact-plan/fail-open.
+'''
+if text.count(old_doc) != 1:
+    raise SystemExit('README limitation anchor missing')
+text = text.replace(old_doc, new_doc, 1)
+text = text.replace(
+    'Unit tests cover SHA-256, structured Unicode/space arguments, exact classpath and module-path string/order preservation,',
+    'Unit tests cover deterministic winning-library encounter order (including duplicate versions, natives/classifiers and excluded rules), Windows `CREATE_NO_WINDOW` pipe preservation, SHA-256, structured Unicode/space arguments, exact classpath and module-path string/order preservation,',
+    1,
+)
+readme.write_text(text)
+
+workflow = Path('.github/workflows/bootoptim-v0.yml')
+text = workflow.read_text()
+text = text.replace(
+    '      - "agent151/bootoptim-launch-interposer-v0-20260913"\n',
+    '      - "agent151/bootoptim-launch-interposer-v0-20260913"\n      - "agent152/deterministic-classpath-hidden-preflight-20260913"\n',
+    1,
+)
+text = text.replace(
+    '      - "crates/command/**"\n',
+    '      - "crates/command/**"\n      - "crates/backend/src/launch/**"\n',
+    1,
+)
+windows_anchor = '''      - name: Test standalone interposer
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc
+
+'''
+windows_add = windows_anchor + '''      - name: Test deterministic library order
+        shell: pwsh
+        run: cargo test -p backend bootoptim_library_order_tests --frozen --target x86_64-pc-windows-msvc
+
+      - name: Repeat deterministic order in independent processes
+        shell: pwsh
+        run: |
+          1..3 | ForEach-Object {
+            cargo test -p backend deterministic_across_equivalent_collections --frozen --target x86_64-pc-windows-msvc
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Test hidden preflight pipe semantics
+        shell: pwsh
+        run: cargo test -p command bootoptim_windows_preflight_tests --frozen --target x86_64-pc-windows-msvc
+
+'''
+if text.count(windows_anchor) != 1:
+    raise SystemExit('workflow test anchor missing')
+text = text.replace(windows_anchor, windows_add, 1)
+workflow.write_text(text)
