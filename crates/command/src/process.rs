@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::PandoraExitStatus;
 #[cfg(unix)]
 use crate::unix::unix_helpers::cvt_r;
@@ -18,6 +20,7 @@ pub struct PandoraProcess {
 
     terminate_state: ProcessTerminateState,
     exit_status: Option<PandoraExitStatus>,
+    bootoptim_completion_marker: Option<PathBuf>,
 }
 
 unsafe impl Send for PandoraProcess {}
@@ -40,6 +43,7 @@ impl PandoraProcess {
             pid,
             terminate_state: ProcessTerminateState::Running,
             exit_status: None,
+            bootoptim_completion_marker: None,
         }
     }
 
@@ -51,6 +55,22 @@ impl PandoraProcess {
             process_handle,
             terminate_state: ProcessTerminateState::Running,
             exit_status: None,
+            bootoptim_completion_marker: None,
+        }
+    }
+
+    pub(crate) fn set_bootoptim_completion_marker(&mut self, path: PathBuf) {
+        self.bootoptim_completion_marker = Some(path);
+    }
+
+    fn maybe_mark_bootoptim_complete(&self, status: PandoraExitStatus) {
+        if !bootoptim_exit_success(status) {
+            return;
+        }
+        if let Some(path) = &self.bootoptim_completion_marker {
+            // The marker is advisory BootOptim state only. A filesystem failure
+            // must never change Pandora's process/wait semantics.
+            let _ = std::fs::write(path, b"complete\n");
         }
     }
 
@@ -126,7 +146,9 @@ impl PandoraProcess {
         {
             let mut status = 0 as libc::c_int;
             cvt_r(|| unsafe { libc::waitpid(self.pid, &mut status, 0) })?;
-            return Ok(PandoraExitStatus(status));
+            let exit_status = PandoraExitStatus(status);
+            self.maybe_mark_bootoptim_complete(exit_status);
+            return Ok(exit_status);
         }
 
         #[cfg(windows)]
@@ -138,7 +160,9 @@ impl PandoraProcess {
 
             let mut code = 0;
             windows::Win32::System::Threading::GetExitCodeProcess(self.process_handle, &mut code)?;
-            return Ok(PandoraExitStatus(code));
+            let exit_status = PandoraExitStatus(code);
+            self.maybe_mark_bootoptim_complete(exit_status);
+            return Ok(exit_status);
         }
     }
 
@@ -155,7 +179,9 @@ impl PandoraProcess {
             if pid == 0 {
                 return Ok(None);
             } else {
-                self.exit_status = Some(PandoraExitStatus(status));
+                let exit_status = PandoraExitStatus(status);
+                self.maybe_mark_bootoptim_complete(exit_status);
+                self.exit_status = Some(exit_status);
                 return Ok(self.exit_status);
             }
         }
@@ -171,9 +197,22 @@ impl PandoraProcess {
 
             let mut code = 0;
             windows::Win32::System::Threading::GetExitCodeProcess(self.process_handle, &mut code)?;
-            self.exit_status = Some(PandoraExitStatus(code));
+            let exit_status = PandoraExitStatus(code);
+            self.maybe_mark_bootoptim_complete(exit_status);
+            self.exit_status = Some(exit_status);
             return Ok(self.exit_status);
         }
+    }
+}
+
+fn bootoptim_exit_success(status: PandoraExitStatus) -> bool {
+    #[cfg(windows)]
+    {
+        status.0 == 0
+    }
+    #[cfg(unix)]
+    {
+        libc::WIFEXITED(status.0) && libc::WEXITSTATUS(status.0) == 0
     }
 }
 
