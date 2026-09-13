@@ -52,11 +52,13 @@ Java module options whose exact CDS semantics are not part of this v0 are explic
 
 `launch-plan.match` becomes `MATCH` only when the previous plan bytes and current plan bytes are exactly equal. Hash calculation is read-only; the cross-process cache lock is acquired **before** publishing `launch-plan.json`, `launch-plan.sha256`, `launch-plan.match` or any state transition, so concurrent preflights cannot make the match file describe another launch. Lock contention returns `STOCK` without publishing a plan/state update. AppCDS auto mode refuses generation until the exact two-plan proof exists.
 
-### Important Pandora upstream limitation
+### Deterministic library/classpath order contract
 
-At the pinned upstream commit, `LaunchRuleContext::collect_libraries` deduplicates libraries in `std::collections::HashMap` and then iterates `deduplicated_libraries.into_values()`. v0 **does not sort or otherwise normalize this order** because that could change classpath precedence.
+The pinned upstream `LaunchRuleContext::collect_libraries` selected duplicate winners in a `HashMap` and then emitted `into_values()`, so hash-table iteration randomized the effective library/classpath order. v0 now uses the map only for coordinate lookup and keeps a separate encounter-ordered winner vector. No alphabetical/path/Maven sort is introduced.
 
-Therefore the real PC test is authoritative: if two otherwise identical Pandora launches produce different `launch-plan.json` bytes/classpath order/module-path order/config identity, AppCDS activation is **NO-GO** for this host revision/pack state. The preflight remains useful as a launch-plan proof and Pandora continues to launch stock. A later mismatch is also safe: the exact plan hash is checked on every READY consumption and a mismatch becomes `STALE` with no archive flags.
+The exact contract is: rules are evaluated first; duplicate coordinates use the pre-existing version comparator unchanged; an older later entry is ignored; an equal or newer later entry remains the winner exactly as before, retires the previous slot, and is emitted at the later winning entry's own encounter position. Thus the final sequence is the encounter/resolution order of the winning library occurrences, while the relative precedence of non-duplicate winners is unchanged. Artifact order inside each winning library remains main artifact first and selected native classifier second, exactly as before.
+
+Tests cover repeated equivalent collections, increasing/decreasing/equal duplicate versions, classifier/native emission and rule-excluded duplicates. CI additionally reruns the deterministic-order test in independent test processes. The real PC two-plan byte-for-byte gate remains authoritative: any later plan mismatch is still **NO-GO** and READY consumption remains exact-plan/fail-open.
 
 ## AppCDS state machine
 
@@ -91,7 +93,7 @@ Outputs:
 
 The `BootOptim v0 interposer` Actions workflow is pinned to `windows-2022` for the delivery gate and uploads both binaries plus `SHA256SUMS.txt` as `bootoptim-pandora-v0-windows-x86_64`. It also contains an independent Ubuntu helper-test job solely to distinguish workflow/code failures from hosted-runner provisioning failures. **Do not use a local/manual artifact for the good-PC gate while the Windows Actions job has not executed real steps and completed successfully.**
 
-Unit tests cover SHA-256, structured Unicode/space arguments, exact classpath and module-path string/order preservation, module-path JAR hash invalidation, sensitive-value redaction, exclusive same-process and cross-process locks, incomplete staging, promotion and rollback-visible stale states, byte-for-byte plan comparison, classpath JAR changes, Java absolute-path/binary changes, launch-affecting config changes, resource-pack-selection changes, stale no-consume behavior, Java/JVMTI agent/conflicting-CDS rejection, and explicit fail-closed handling for `--upgrade-module-path`, `--patch-module`, and `--limit-modules`.
+Unit tests cover deterministic winning-library encounter order (including duplicate versions, natives/classifiers and excluded rules), Windows `CREATE_NO_WINDOW` pipe preservation, SHA-256, structured Unicode/space arguments, exact classpath and module-path string/order preservation, module-path JAR hash invalidation, sensitive-value redaction, exclusive same-process and cross-process locks, incomplete staging, promotion and rollback-visible stale states, byte-for-byte plan comparison, classpath JAR changes, Java absolute-path/binary changes, launch-affecting config changes, resource-pack-selection changes, stale no-consume behavior, Java/JVMTI agent/conflicting-CDS rejection, and explicit fail-closed handling for `--upgrade-module-path`, `--patch-module`, and `--limit-modules`.
 
 ## Good-PC protocol — no timing claim yet
 

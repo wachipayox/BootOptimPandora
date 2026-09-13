@@ -1920,8 +1920,14 @@ impl LaunchRuleContext {
             _ => None,
         };
 
-        // Remove duplicate libraries
-        let mut deduplicated_libraries: HashMap<String, (GameLibrary, Vec<isize>)> = HashMap::new();
+        // Deduplicate by coordinate without deriving launch order from HashMap iteration.
+        // The map is lookup-only. The ordered vector records the encounter position of
+        // each current winner. If a later equal/newer version wins, the old slot is
+        // retired and the later winner is appended at its own encounter position. This
+        // preserves the relative order of every non-duplicate winning library while
+        // retaining the existing version-selection rule (later wins on equal versions).
+        let mut winner_index_by_coordinate: HashMap<String, usize> = HashMap::new();
+        let mut ordered_winners: Vec<Option<(GameLibrary, Vec<isize>)>> = Vec::new();
         for library in libraries {
             if let Some(rules) = &library.rules && !self.check_rules(rules) {
                 continue;
@@ -1936,7 +1942,11 @@ impl LaunchRuleContext {
             };
 
             let version_id = coordinate.version_id();
-            if let Some((_, existing_library_version)) = deduplicated_libraries.get(&coordinate_id) {
+            if let Some(existing_index) = winner_index_by_coordinate.get(&coordinate_id).copied() {
+                let existing_library_version = &ordered_winners[existing_index]
+                    .as_ref()
+                    .expect("winner index must point at an active library")
+                    .1;
                 let mut ordering = Ordering::Equal;
                 for (left, right) in version_id.iter().zip(existing_library_version.iter()) {
                     let cmp = left.cmp(right);
@@ -1951,12 +1961,16 @@ impl LaunchRuleContext {
                 if ordering == Ordering::Less {
                     continue;
                 }
+
+                ordered_winners[existing_index] = None;
             }
 
-            deduplicated_libraries.insert(coordinate_id, (library.clone(), version_id));
+            let winner_index = ordered_winners.len();
+            ordered_winners.push(Some((library.clone(), version_id)));
+            winner_index_by_coordinate.insert(coordinate_id, winner_index);
         }
 
-        for library in deduplicated_libraries.into_values().map(|v| v.0) {
+        for library in ordered_winners.into_iter().flatten().map(|v| v.0) {
             if let Some(artifact) = &library.downloads.artifact {
                 let empty = if let Some(artifact_size) = artifact.size && artifact_size <= 22 {
                     true
@@ -2481,4 +2495,132 @@ fn expand_forge_argument<'a>(argument: &'a str, map: &FxHashMap<String, OsString
         return Cow::Owned(builder);
     }
     Cow::Borrowed(OsStr::new(argument))
+}
+
+
+#[cfg(test)]
+mod bootoptim_library_order_tests {
+    use super::*;
+
+    fn artifact(path: &str) -> GameLibraryArtifact {
+        GameLibraryArtifact {
+            path: Ustr::from(path),
+            sha1: None,
+            size: Some(128),
+            url: Ustr::from("https://example.invalid/library.jar"),
+        }
+    }
+
+    fn library(name: &str, path: &str) -> GameLibrary {
+        GameLibrary {
+            downloads: GameLibraryDownloads {
+                artifact: Some(artifact(path)),
+                classifiers: None,
+            },
+            name: Ustr::from(name),
+            rules: None,
+            natives: None,
+            extract: None,
+        }
+    }
+
+    fn context() -> LaunchRuleContext {
+        LaunchRuleContext {
+            is_demo_user: false,
+            custom_resolution: None,
+            quick_play: None,
+        }
+    }
+
+    fn collect_paths(libraries: &[GameLibrary]) -> (Vec<String>, HashMap<Ustr, GameLibraryExtractOptions>) {
+        let mut artifacts = Vec::new();
+        let mut natives = HashMap::new();
+        context().collect_libraries(libraries, &mut artifacts, &mut natives);
+        (
+            artifacts.into_iter().map(|artifact| artifact.path.to_string()).collect(),
+            natives,
+        )
+    }
+
+    #[test]
+    fn deterministic_across_equivalent_collections() {
+        let template = vec![
+            library("example:a:1", "a-1.jar"),
+            library("example:b:1", "b-1.jar"),
+            library("example:a:2", "a-2.jar"),
+            library("example:c:1", "c-1.jar"),
+        ];
+        let expected = vec!["b-1.jar", "a-2.jar", "c-1.jar"];
+
+        for _ in 0..128 {
+            let equivalent_collection = template.clone();
+            assert_eq!(collect_paths(&equivalent_collection).0, expected);
+        }
+    }
+
+    #[test]
+    fn duplicate_versions_preserve_selection_and_winning_encounter_position() {
+        let libraries = vec![
+            library("example:a:1", "a-1.jar"),
+            library("example:b:1", "b-1.jar"),
+            library("example:a:3", "a-3.jar"),
+            library("example:c:1", "c-1.jar"),
+            library("example:a:2", "a-2-loses.jar"),
+        ];
+        assert_eq!(collect_paths(&libraries).0, vec!["b-1.jar", "a-3.jar", "c-1.jar"]);
+
+        let equal_version = vec![
+            library("example:a:3", "a-3-first.jar"),
+            library("example:b:1", "b-1.jar"),
+            library("example:a:3", "a-3-later-wins.jar"),
+        ];
+        assert_eq!(collect_paths(&equal_version).0, vec!["b-1.jar", "a-3-later-wins.jar"]);
+    }
+
+    #[test]
+    fn classifiers_and_natives_follow_winning_library_order() {
+        let os = match std::env::consts::OS {
+            "linux" => OsName::Linux,
+            "macos" => OsName::Osx,
+            "windows" => OsName::Windows,
+            other => panic!("unsupported test OS: {other}"),
+        };
+        let classifier_id = Ustr::from("natives-current");
+        let native_path = Ustr::from("native-current.jar");
+        let mut classifiers = HashMap::new();
+        classifiers.insert(classifier_id, artifact(native_path.as_str()));
+        let mut natives = HashMap::new();
+        natives.insert(os, classifier_id);
+
+        let mut native_library = library("example:native:2", "native-main.jar");
+        native_library.downloads.classifiers = Some(classifiers);
+        native_library.natives = Some(natives);
+        native_library.extract = Some(GameLibraryExtractOptions { exclude: None });
+
+        let libraries = vec![
+            library("example:a:1", "a.jar"),
+            native_library,
+            library("example:b:1", "b.jar"),
+        ];
+        let (paths, extracts) = collect_paths(&libraries);
+        assert_eq!(paths, vec!["a.jar", "native-main.jar", "native-current.jar", "b.jar"]);
+        assert!(extracts.contains_key(&native_path));
+    }
+
+    #[test]
+    fn excluded_rules_do_not_displace_an_eligible_winner() {
+        let mut excluded_newer = library("example:a:9", "a-9-excluded.jar");
+        excluded_newer.rules = Some(Arc::from(vec![Rule {
+            action: RuleAction::Disallow,
+            features: None,
+            os: None,
+        }]));
+
+        let libraries = vec![
+            library("example:a:1", "a-1.jar"),
+            excluded_newer,
+            library("example:b:1", "b-1.jar"),
+        ];
+        assert_eq!(collect_paths(&libraries).0, vec!["a-1.jar", "b-1.jar"]);
+    }
 }

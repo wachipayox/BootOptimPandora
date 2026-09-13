@@ -6,6 +6,19 @@ use crate::{process::PandoraProcess, spawner::SpawnType};
 
 const BOOTOPTIM_PANDORA_UPSTREAM: &str = "4eb6c7849561151695288443c106519774ee05ea";
 
+
+#[cfg(windows)]
+const BOOTOPTIM_CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(windows)]
+fn configure_bootoptim_preflight(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(BOOTOPTIM_CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_bootoptim_preflight(_command: &mut std::process::Command) {}
+
 #[derive(Debug)]
 struct BootOptimTraining {
     metadata: PathBuf,
@@ -160,7 +173,8 @@ impl PandoraCommand {
         preflight.current_dir(&instance_dir);
         preflight.stdin(std::process::Stdio::null());
         preflight.stdout(std::process::Stdio::piped());
-        preflight.stderr(std::process::Stdio::null());
+        preflight.stderr(std::process::Stdio::piped());
+        configure_bootoptim_preflight(&mut preflight);
 
         // Give the preflight helper the same effective environment that the Java
         // process will receive, so hidden JVM option variables are evaluated
@@ -185,8 +199,19 @@ impl PandoraCommand {
             preflight.env("BOOTOPTIM_APPCDS_MODE", mode);
         }
 
-        let output = preflight.output().ok()?;
+        let output = match preflight.output() {
+            Ok(output) => output,
+            Err(error) => {
+                log::warn!("BOOTOPTIM_INTERPOSER status=helper-spawn-error activation=stock error={error}");
+                return None;
+            }
+        };
         if !output.status.success() {
+            log::warn!(
+                "BOOTOPTIM_INTERPOSER status=helper-error activation=stock exit_code={:?} stderr_bytes={}",
+                output.status.code(),
+                output.stderr.len()
+            );
             return None;
         }
         let decision = String::from_utf8_lossy(&output.stdout);
@@ -215,7 +240,14 @@ impl PandoraCommand {
                     completion,
                 })
             }
-            _ => None,
+            "STOCK" => None,
+            _ => {
+                log::warn!(
+                    "BOOTOPTIM_INTERPOSER status=invalid-helper-decision activation=stock stdout_bytes={}",
+                    output.stdout.len()
+                );
+                None
+            }
         }
     }
 
@@ -378,4 +410,30 @@ pub struct PandoraChild {
     pub stdin: Option<PipeWriter>,
     pub stdout: Option<PipeReader>,
     pub stderr: Option<PipeReader>,
+}
+
+
+#[cfg(all(test, windows))]
+mod bootoptim_windows_preflight_tests {
+    use super::*;
+
+    #[test]
+    fn create_no_window_preserves_redirected_stdout_and_stderr() {
+        let mut command = std::process::Command::new("cmd.exe");
+        command.args([
+            "/D",
+            "/S",
+            "/C",
+            "echo READY & echo helper-diagnostic 1>&2 & exit /b 7",
+        ]);
+        command.stdin(std::process::Stdio::null());
+        command.stdout(std::process::Stdio::piped());
+        command.stderr(std::process::Stdio::piped());
+        configure_bootoptim_preflight(&mut command);
+
+        let output = command.output().expect("hidden child must spawn");
+        assert_eq!(output.status.code(), Some(7));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("READY"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("helper-diagnostic"));
+    }
 }
