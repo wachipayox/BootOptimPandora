@@ -1,0 +1,77 @@
+name: BootOptim v0 interposer
+
+on:
+  push:
+    branches:
+      - "agent151/bootoptim-launch-interposer-v0-20260913"
+  pull_request:
+    paths:
+      - "bootoptim-v0/**"
+      - "crates/command/**"
+      - ".github/workflows/bootoptim-v0.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootoptim-v0-agent151
+  cancel-in-progress: true
+
+jobs:
+  hosted-runner-diagnostic:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run portable helper tests
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
+
+  windows-v0:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Test standalone interposer
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc
+
+      - name: Build standalone interposer
+        run: cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Build patched Pandora
+        run: cargo build --release --frozen --target x86_64-pc-windows-msvc
+
+      - name: Assemble reproducible test artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bootoptim-v0/dist | Out-Null
+          Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe bootoptim-v0/dist/
+          Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe bootoptim-v0/dist/BootOptimPandora-v0.exe
+          $files = @(
+            "bootoptim-v0/dist/bootoptim-launch-interposer.exe",
+            "bootoptim-v0/dist/BootOptimPandora-v0.exe"
+          )
+          $lines = foreach ($file in $files) {
+            $h = Get-FileHash -Algorithm SHA256 $file
+            "{0}  {1}" -f $h.Hash.ToLowerInvariant(), (Split-Path $file -Leaf)
+          }
+          $lines | Set-Content -Encoding ascii bootoptim-v0/dist/SHA256SUMS.txt
+          Get-Content bootoptim-v0/dist/SHA256SUMS.txt
+
+      - name: Upload Windows prototype
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootoptim-pandora-v0-windows-x86_64
+          path: bootoptim-v0/dist/*
+          if-no-files-found: error
