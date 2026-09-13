@@ -198,6 +198,7 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
 
     let training_meta = cache_dir.join("training.meta");
     let training_archive = cache_dir.join("training.jsa");
+    let training_complete = cache_dir.join("training.complete");
     if training_meta.is_file() {
         let pending_plan = read_training_plan(&training_meta)?;
         if pending_plan != plan.sha256 {
@@ -206,9 +207,15 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
             return Ok(PrepareDecision::Stock);
         }
 
-        if !training_archive.is_file() {
+        if !training_complete.is_file() {
             write_state(&cache_dir, CacheState::Generating, "training-pending")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-pending");
+            return Ok(PrepareDecision::Stock);
+        }
+
+        if !training_archive.is_file() {
+            write_state(&cache_dir, CacheState::Failed, "training-complete-without-archive")?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-complete-without-archive");
             return Ok(PrepareDecision::Stock);
         }
 
@@ -220,14 +227,15 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
 
         promote_archive(&cache_dir, &training_archive, &plan.sha256)?;
         let _ = fs::remove_file(&training_meta);
+        let _ = fs::remove_file(&training_complete);
         write_state(&cache_dir, CacheState::Ready, "promotion-complete")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=ready promotion=complete");
         return Ok(PrepareDecision::Ready);
     }
 
-    if training_archive.exists() {
-        write_state(&cache_dir, CacheState::Failed, "orphan-training-archive")?;
-        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=orphan-training-archive");
+    if training_archive.exists() || training_complete.exists() {
+        write_state(&cache_dir, CacheState::Failed, "orphan-training-state")?;
+        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=orphan-training-state");
         return Ok(PrepareDecision::Stock);
     }
 
@@ -257,6 +265,7 @@ fn read_training_plan(path: &Path) -> io::Result<String> {
 fn cleanup_training_files(cache_dir: &Path) {
     let _ = fs::remove_file(cache_dir.join("training.meta"));
     let _ = fs::remove_file(cache_dir.join("training.jsa"));
+    let _ = fs::remove_file(cache_dir.join("training.complete"));
 }
 
 fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
