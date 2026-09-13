@@ -22,6 +22,25 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
         }
     }
 
+    let mut module_path = Vec::new();
+    let mut module_path_valid = true;
+    match find_module_path(&parsed.java_args) {
+        Ok(Some(raw)) => {
+            for entry in env::split_paths(&raw) {
+                let resolved = absolute_path(&parsed.instance_dir, &entry);
+                match artifact_from_path("module-path", &resolved) {
+                    Ok(a) => module_path.push(a),
+                    Err(_) => module_path_valid = false,
+                }
+            }
+            if module_path.is_empty() {
+                module_path_valid = false;
+            }
+        }
+        Ok(None) => {}
+        Err(()) => module_path_valid = false,
+    }
+
     let mut mods = Vec::new();
     let mods_dir = parsed.instance_dir.join("mods");
     let mut mods_valid = mods_dir.is_dir();
@@ -91,6 +110,7 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
     let eligible = java_hash.is_some()
         && release_hash.is_some()
         && classpath_valid
+        && module_path_valid
         && mods_valid
         && pack_inputs_valid
         && pack_manifest_sha256.is_some()
@@ -99,6 +119,7 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
         && launcher_artifact.is_some()
         && !has_agent
         && !has_conflicting_cds_configuration(&parsed.java_args)
+        && !has_unsupported_module_configuration(&parsed.java_args)
         && !injected_env_present;
 
     let mut out = String::new();
@@ -127,6 +148,7 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
     }
     out.push_str("  ],\n");
     push_artifact_array(&mut out, "classpath", &classpath, true);
+    push_artifact_array(&mut out, "module_path", &module_path, true);
     push_artifact_array(&mut out, "mods", &mods, true);
     push_artifact_array(&mut out, "pack_inputs", &pack_inputs, true);
     push_json_opt_str(&mut out, "pack_manifest_sha256", pack_manifest_sha256.as_deref(), 2, true);
@@ -147,6 +169,43 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
     let bytes = out.into_bytes();
     let sha256 = sha256_hex(&bytes);
     Ok(LaunchPlan { bytes, sha256, eligible })
+}
+
+fn find_module_path(args: &[OsString]) -> Result<Option<OsString>, ()> {
+    let mut found: Option<OsString> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == OsStr::new("--module-path") || arg == OsStr::new("-p") {
+            let value = args.get(i + 1).cloned().ok_or(())?;
+            if found.replace(value).is_some() {
+                return Err(());
+            }
+            i += 2;
+            continue;
+        }
+        if let Some(text) = arg.to_str() {
+            if let Some(rest) = text.strip_prefix("--module-path=") {
+                if rest.is_empty() || found.replace(OsString::from(rest)).is_some() {
+                    return Err(());
+                }
+            }
+        }
+        i += 1;
+    }
+    Ok(found)
+}
+
+fn has_unsupported_module_configuration(args: &[OsString]) -> bool {
+    args.iter().any(|arg| {
+        let text = arg.to_string_lossy();
+        text == "--upgrade-module-path"
+            || text.starts_with("--upgrade-module-path=")
+            || text == "--patch-module"
+            || text.starts_with("--patch-module=")
+            || text == "--limit-modules"
+            || text.starts_with("--limit-modules=")
+    })
 }
 
 fn collect_pack_inputs(instance_dir: &Path) -> (Vec<Artifact>, bool) {
