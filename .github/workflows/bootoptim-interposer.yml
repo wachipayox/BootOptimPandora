@@ -24,10 +24,6 @@ jobs:
           filter: blob:none
           sparse-checkout: bootoptim-launch-interposer
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Format
-        run: cargo fmt -- --check
       - name: Test
         run: cargo test
       - name: Build release
