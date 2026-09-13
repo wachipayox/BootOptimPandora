@@ -47,6 +47,62 @@ mod tests {
     }
 
     #[test]
+    fn lock_excludes_a_second_process() {
+        const PATH_ENV: &str = "BOOTOPTIM_TEST_LOCK_PATH";
+        const READY_ENV: &str = "BOOTOPTIM_TEST_LOCK_READY";
+        const ROLE_ENV: &str = "BOOTOPTIM_TEST_LOCK_ROLE";
+
+        if let Some(lock_path) = env::var_os(PATH_ENV) {
+            let role = env::var(ROLE_ENV).unwrap_or_default();
+            let acquired = try_lock(Path::new(&lock_path)).unwrap();
+            if role == "holder" {
+                let _guard = acquired.expect("holder must acquire OS lock");
+                let ready = PathBuf::from(env::var_os(READY_ENV).unwrap());
+                fs::write(ready, b"ready").unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+            } else {
+                assert!(acquired.is_none(), "contender must fail open while holder owns lock");
+            }
+            return;
+        }
+
+        let d = temp_dir("process-lock");
+        let lock = d.join("cache.lock");
+        let ready = d.join("holder.ready");
+        let exe = env::current_exe().unwrap();
+        let test_name = "tests::lock_excludes_a_second_process";
+
+        let mut holder = Command::new(&exe)
+            .arg("--exact")
+            .arg(test_name)
+            .arg("--nocapture")
+            .env(PATH_ENV, &lock)
+            .env(READY_ENV, &ready)
+            .env(ROLE_ENV, "holder")
+            .spawn()
+            .unwrap();
+
+        for _ in 0..100 {
+            if ready.is_file() { break; }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(ready.is_file(), "holder did not acquire lock in time");
+
+        let contender = Command::new(&exe)
+            .arg("--exact")
+            .arg(test_name)
+            .arg("--nocapture")
+            .env(PATH_ENV, &lock)
+            .env(READY_ENV, &ready)
+            .env(ROLE_ENV, "contender")
+            .status()
+            .unwrap();
+        assert!(contender.success());
+        assert!(holder.wait().unwrap().success());
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
     fn incomplete_staging_is_never_ready() {
         let d = temp_dir("incomplete");
         fs::write(d.join("staging-dead.jsa"), b"partial").unwrap();
@@ -98,11 +154,12 @@ mod tests {
             launcher_exe: Some(launcher),
             upstream_commit: UPSTREAM_DEFAULT.to_string(),
             java_exe: java.clone().into_os_string(),
-            java_args: vec![OsString::from("-cp"), cp, OsString::from("com.moulberry.pandora.LaunchWrapper")],
+            java_args: vec![OsString::from("-DauthToken=VERY_SECRET"), OsString::from("-cp"), cp, OsString::from("com.moulberry.pandora.LaunchWrapper")],
         };
         let p1 = build_launch_plan(&parsed).unwrap();
         let p2 = build_launch_plan(&parsed).unwrap();
         assert_eq!(p1.bytes, p2.bytes);
+        assert!(!String::from_utf8_lossy(&p1.bytes).contains("VERY_SECRET"));
         fs::write(&lib, b"jar-v2").unwrap();
         let p3 = build_launch_plan(&parsed).unwrap();
         assert_ne!(p1.sha256, p3.sha256);
