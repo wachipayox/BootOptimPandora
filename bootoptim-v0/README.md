@@ -40,15 +40,20 @@ Each preflight writes an instance-local `.bootoptim/appcds/launch-plan.json`. Th
 - every final JVM argv position and a fingerprint of non-sensitive values; sensitive-looking values are `REDACTED` and never persisted;
 - final classpath entries **in their original order**, each with path, size and SHA-256;
 - top-level mod JAR fingerprints. Their plan representation is sorted only to canonicalize this unordered fingerprint set; it does not change launch/FML ordering;
+- a strong local snapshot of regular files under `config/`, `defaultconfigs/`, `kubejs/` and `scripts/`, sorted only in the identity representation. An unexpected symlink/reparse/unsupported entry in these roots makes AppCDS ineligible rather than following an ambiguous tree;
+- `resource_pack_selection_sha256`, derived only from `resourcePacks`/`incompatibleResourcePacks` in `options.txt`, so unrelated graphics/keybind option edits do not invalidate the archive;
+- `pack_manifest_sha256`, a canonical digest over top-level mod JAR identity, the launch-affecting pack-input snapshot and resource-pack-selection fingerprint. In v0 this is a **local strong invalidation manifest**, not a signed distribution manifest and never an automatic repair authority;
 - presence only, never contents, for `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, and `JDK_JAVA_OPTIONS`. Any presence makes AppCDS ineligible because the final hidden JVM command would not be fully known.
 
-`launch-plan.match` becomes `MATCH` only when the previous plan bytes and current plan bytes are exactly equal. AppCDS auto mode refuses generation until that proof exists.
+The exact-pack architecture research requires pack-manifest/config identity in addition to Java/classpath/mod identity. v0 therefore refuses AppCDS activation if the local pack manifest cannot be established (for example missing `mods/`, no top-level mod JAR, missing/unparseable `options.txt` resource-pack selection, or unreadable/ambiguous pack-input tree). Stock launch remains available.
+
+`launch-plan.match` becomes `MATCH` only when the previous plan bytes and current plan bytes are exactly equal. Hash calculation is read-only; the cross-process cache lock is acquired **before** publishing `launch-plan.json`, `launch-plan.sha256`, `launch-plan.match` or any state transition, so concurrent preflights cannot make the match file describe another launch. Lock contention returns `STOCK` without publishing a plan/state update. AppCDS auto mode refuses generation until the exact two-plan proof exists.
 
 ### Important Pandora upstream limitation
 
 At the pinned upstream commit, `LaunchRuleContext::collect_libraries` deduplicates libraries in `std::collections::HashMap` and then iterates `deduplicated_libraries.into_values()`. v0 **does not sort or otherwise normalize this order** because that could change classpath precedence.
 
-Therefore the real PC test is authoritative: if two otherwise identical Pandora launches produce different `launch-plan.json` bytes/classpath order, AppCDS activation is **NO-GO** for this host revision. The preflight remains useful as a launch-plan proof and Pandora continues to launch stock. A later mismatch is also safe: the exact plan hash is checked on every READY consumption and a mismatch becomes `STALE` with no archive flags.
+Therefore the real PC test is authoritative: if two otherwise identical Pandora launches produce different `launch-plan.json` bytes/classpath order/config identity, AppCDS activation is **NO-GO** for this host revision/pack state. The preflight remains useful as a launch-plan proof and Pandora continues to launch stock. A later mismatch is also safe: the exact plan hash is checked on every READY consumption and a mismatch becomes `STALE` with no archive flags.
 
 ## AppCDS state machine
 
@@ -57,14 +62,14 @@ Cache ownership is per instance: `<instance>/.bootoptim/appcds/`. No file is wri
 - `ABSENT`: no ready archive. With a proven deterministic plan in Windows auto mode, preflight writes `training.meta` and returns `TRAIN`. Pandora directly starts Java with `-Xshare:auto -XX:ArchiveClassesAtExit=<instance>/.bootoptim/appcds/training.jsa`.
 - `GENERATING`: persisted while a training result is pending. A concurrent/early launch that sees `training.meta` without `training.complete` launches stock and does not start another training writer, even if HotSpot has already created a partial or final-looking `training.jsa`.
 - `READY`: only a later exact preflight with matching `training.meta`, `training.complete`, and a non-empty `training.jsa` may promote to hashed `ready.jsa`/`ready.meta`; that same launch may then consume it with `-Xshare:auto -XX:SharedArchiveFile=<ready>`.
-- `STALE`: launch-plan, ready metadata or archive hash/size mismatch. Launch stock; do not consume or overwrite the ready archive.
+- `STALE`: launch-plan, pack/config identity, ready metadata or archive hash/size mismatch. Launch stock; do not consume or overwrite the ready archive.
 - `FAILED`: malformed/orphan cache state, conflicting staging, a completion marker without a usable archive, or ineligible identity. Launch stock. v0 favors inspection/manual reset over silently rewriting ambiguous state.
 
-A cross-process Windows file lock protects preflight/cache transitions. Lock contention launches stock. Ready promotion uses non-existing rename targets; metadata is staged and synced first. If metadata promotion fails after archive rename, the new ready archive is removed. `AutoCreateSharedArchive` is never used.
+A cross-process Windows file lock protects plan publication and cache transitions. Lock contention launches stock. Ready promotion uses non-existing rename targets; metadata is staged and synced first. If metadata promotion fails after archive rename, the new ready archive is removed. `AutoCreateSharedArchive` is never used.
 
 The training archive is produced by the exact Java process at VM exit. Pandora keeps that Java process as its normal direct `PandoraProcess`. Only after `wait`/`try_wait` observes a **clean exit code 0** does Pandora write `training.complete`. The helper requires that marker before promotion. A crash, force-kill, failed spawn, still-running Java, or archive file appearing before Pandora has observed clean termination cannot become `READY`. `state.meta` therefore remains `GENERATING` after training until a later exact preflight sees all three training artifacts and performs the promotion.
 
-v0 rejects AppCDS activation when it sees Java/JVMTI agents, `-XX:+AllowArchivingWithJavaAgent`, any existing `SharedArchiveFile`/`ArchiveClassesAtExit`/`AutoCreateSharedArchive`/`-Xshare:*` setting, an unhashable/non-file classpath entry, missing identity input, or hidden JVM option environment variables. `AutoCreateSharedArchive` is never used.
+v0 rejects AppCDS activation when it sees Java/JVMTI agents, `-XX:+AllowArchivingWithJavaAgent`, any existing `SharedArchiveFile`/`ArchiveClassesAtExit`/`AutoCreateSharedArchive`/`-Xshare:*` setting, an unhashable/non-file classpath entry, missing pack/config identity, missing other identity input, or hidden JVM option environment variables. `AutoCreateSharedArchive` is never used.
 
 ## Reproducible Windows build/test
 
@@ -83,7 +88,7 @@ Outputs:
 
 The `BootOptim v0 interposer` Actions workflow performs these gates on `windows-latest` and uploads both binaries plus `SHA256SUMS.txt` as `bootoptim-pandora-v0-windows-x86_64`.
 
-Unit tests cover SHA-256, structured Unicode/space arguments, exact classpath string preservation, sensitive-value redaction, exclusive locks, incomplete staging, promotion and rollback-visible stale states, byte-for-byte plan comparison, JAR hash change, Java absolute-path change, Java executable change, stale no-consume behavior, and agent/conflicting-CDS rejection.
+Unit tests cover SHA-256, structured Unicode/space arguments, exact classpath string preservation, sensitive-value redaction, exclusive locks, incomplete staging, promotion and rollback-visible stale states, byte-for-byte plan comparison, classpath JAR changes, Java absolute-path/binary changes, launch-affecting config changes, resource-pack-selection changes, stale no-consume behavior, and agent/conflicting-CDS rejection.
 
 ## Good-PC protocol — no timing claim yet
 
@@ -96,15 +101,15 @@ Use the Windows Actions artifact. Do this on the good PC only after CI is green.
    $env:BOOTOPTIM_APPCDS_MODE = 'plan'
    .\BootOptimPandora-v0.exe
    ```
-   Launch the intended instance normally. This launch is stock Java behavior; the helper only records the JVM launch plan before Pandora directly starts Java.
-3. After exit, copy `<instance>\.bootoptim\appcds\launch-plan.json` to `launch-plan.first.json` outside the cache. Repeat the same plan-only launch without changing Java/instance/Pandora. Require `launch-plan.match` to contain exactly `MATCH` and compare the two files byte-for-byte (`Compare-Object` or hashes). If they differ, stop: **NO-GO for AppCDS activation on this Pandora revision**. Do not reorder the classpath to make it pass.
+   Launch the intended instance normally. This launch is stock Java behavior; the helper only records the JVM/pack launch plan before Pandora directly starts Java.
+3. After exit, copy `<instance>\.bootoptim\appcds\launch-plan.json` to `launch-plan.first.json` outside the cache. Repeat the same plan-only launch without changing Java/instance/Pandora/config/resource selection. Require `activation_eligible=true`, require `launch-plan.match` to contain exactly `MATCH`, and compare the two files byte-for-byte (`Compare-Object` or hashes). If they differ, stop: **NO-GO for AppCDS activation on this Pandora revision/pack state**. Do not reorder the classpath or weaken the pack-input set to make it pass.
 4. Verify fallback before training: close v0, set `BOOTOPTIM_LAUNCH_INTERPOSER` to a nonexistent path, relaunch v0 once, and confirm the instance still starts through Pandora's stock path. Restore the valid helper path afterward. This does not edit instance/Java configuration.
 5. Only after the two-plan gate passes, set `$env:BOOTOPTIM_APPCDS_MODE = 'auto'` and launch once. This is the **training/generation run**, not a performance result. Pandora should log `BOOTOPTIM_INTERPOSER status=generating activation=training`. Exit Minecraft normally after reaching the intended menu. After Pandora observes the Java exit, require `training.meta`, a non-empty `training.jsa`, and `training.complete`; `state.meta` is expected to remain `GENERATING` until the next preflight. If the process was killed/crashed or `training.complete` is absent, do not continue to consumption.
-6. Launch once more with the exact same tuple and auto mode. Its preflight must require all three training artifacts, promote the archive, then Pandora should log `BOOTOPTIM_INTERPOSER status=ready activation=enabled` and directly spawn Java with the ready archive. Require `state.meta=READY`, `ready.jsa`, and `ready.meta`; `training.meta`, `training.jsa`, and `training.complete` should be gone. Only this run is a candidate archive-consumption observation. Do not infer a startup saving from generation or from this single consumption run.
+6. Launch once more with the exact same tuple and auto mode. Its preflight must require the same Java/classpath/JAR/config/resource-selection identity plus all three training artifacts, promote the archive, then Pandora should log `BOOTOPTIM_INTERPOSER status=ready activation=enabled` and directly spawn Java with the ready archive. Require `state.meta=READY`, `ready.jsa`, and `ready.meta`; `training.meta`, `training.jsa`, and `training.complete` should be gone. Only this run is a candidate archive-consumption observation. Do not infer a startup saving from generation or from this single consumption run.
 7. Confirm Pandora's normal Stop/Close behavior still controls this Java process during the test. This is a direct-child invariant of the v0 design; a build that leaves Java running after Pandora stops it is a hard NO-GO.
-8. If Java, its absolute path, a classpath JAR, mod JAR, Pandora/helper binary, or the final ordered classpath changes, the plan changes. READY is not used; state becomes `STALE` and the launch is stock. v0 intentionally does not silently retrain a stale cache. Delete the instance-local `.bootoptim/appcds` directory only when deliberately starting a new training campaign.
+8. If Java, its absolute path, a classpath JAR, mod JAR, launch-affecting config/script, resource-pack selection, Pandora/helper binary, or the final ordered classpath changes, the plan changes. READY is not used; state becomes/ultimately resolves to `STALE` and the launch is stock. v0 intentionally does not silently retrain a stale cache. Delete the instance-local `.bootoptim/appcds` directory only when deliberately starting a new training campaign.
 
-No laptop run is requested by this prototype. A later performance campaign, if authorized, must separate launcher/setup wall time, process-start to usable menu, training cost, and cold/warm cache state.
+No laptop run is requested by this prototype. A later performance campaign, if authorized, must separate launcher/setup wall time (including strong hashing), process-start to usable menu, training cost, and cold/warm cache state.
 
 ## Uninstall / restore
 
