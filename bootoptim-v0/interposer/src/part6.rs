@@ -39,6 +39,57 @@ fn relative_components_equal(path: &Path, expected: &[&str]) -> bool {
         && actual.iter().zip(expected).all(|(a, b)| *a == OsStr::new(b))
 }
 
+fn canonical_simple_properties(bytes: &[u8], drippy_reference: bool) -> Option<Vec<u8>> {
+    if !bytes.is_ascii() {
+        return None;
+    }
+    let text = std::str::from_utf8(bytes).ok()?;
+    let mut values = BTreeMap::<String, String>::new();
+    for raw_line in text.lines() {
+        if raw_line.is_empty() || raw_line.starts_with('#') || raw_line.starts_with('!') {
+            continue;
+        }
+        if raw_line.contains('\\')
+            || raw_line.chars().next().map(char::is_whitespace).unwrap_or(false)
+        {
+            return None;
+        }
+        let (key, value) = raw_line.split_once('=')?;
+        if key.is_empty()
+            || key.trim() != key
+            || key.chars().any(char::is_whitespace)
+            || values.contains_key(key)
+        {
+            return None;
+        }
+        values.insert(key.to_string(), value.to_string());
+    }
+    if values.is_empty() {
+        return None;
+    }
+    if drippy_reference {
+        if values.len() != 3
+            || !values.contains_key("height")
+            || !values.contains_key("timestamp")
+            || !values.contains_key("width")
+            || values["height"].parse::<u32>().is_err()
+            || values["width"].parse::<u32>().is_err()
+            || values["timestamp"].parse::<u64>().is_err()
+        {
+            return None;
+        }
+        values.remove("timestamp");
+    }
+    let mut canonical = Vec::new();
+    for (key, value) in values {
+        canonical.extend_from_slice(key.as_bytes());
+        canonical.push(b'=');
+        canonical.extend_from_slice(value.as_bytes());
+        canonical.push(b'\n');
+    }
+    Some(canonical)
+}
+
 #[cfg(test)]
 mod exact_config_path_tests {
     use super::*;
