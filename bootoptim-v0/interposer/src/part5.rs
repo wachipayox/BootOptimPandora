@@ -12,7 +12,7 @@ mod config_identity_tests {
         let path = root.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, bytes).unwrap();
-        artifact_from_path("pack-input", &path).unwrap()
+        pack_input_artifact(root, &path).unwrap()
     }
 
     #[test]
