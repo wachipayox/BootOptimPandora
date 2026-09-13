@@ -230,7 +230,7 @@ fn collect_pack_inputs(instance_dir: &Path) -> (Vec<Artifact>, bool) {
     paths.sort_by_key(|p| encode_os(p.as_os_str()).encoded_hex);
     let mut artifacts = Vec::with_capacity(paths.len());
     for path in paths {
-        match artifact_from_path("pack-input", &path) {
+        match pack_input_artifact(instance_dir, &path) {
             Ok(artifact) => artifacts.push(artifact),
             Err(_) => valid = false,
         }
