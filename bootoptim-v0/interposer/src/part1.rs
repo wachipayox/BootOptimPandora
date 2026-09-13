@@ -144,7 +144,14 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
     let cache_dir = parsed.instance_dir.join(".bootoptim").join("appcds");
     fs::create_dir_all(&cache_dir)?;
 
+    // Hashing is read-only and can happen outside the cache lock. Publication of
+    // the plan and every state transition is serialized so launch-plan.match can
+    // never describe a different concurrent preflight.
     let plan = build_launch_plan(parsed)?;
+    let Some(_lock) = try_lock(&cache_dir.join("cache.lock"))? else {
+        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=lock-busy");
+        return Ok(PrepareDecision::Stock);
+    };
     let stable = persist_plan_and_compare(&cache_dir, &plan.bytes, &plan.sha256)?;
 
     if mode == Mode::Plan {
@@ -168,11 +175,6 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=identity-ineligible");
         return Ok(PrepareDecision::Stock);
     }
-
-    let Some(_lock) = try_lock(&cache_dir.join("cache.lock"))? else {
-        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=lock-busy");
-        return Ok(PrepareDecision::Stock);
-    };
 
     let (state, _) = classify_cache(&cache_dir, &plan.sha256)?;
     match state {
