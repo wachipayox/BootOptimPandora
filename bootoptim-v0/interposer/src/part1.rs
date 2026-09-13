@@ -135,29 +135,29 @@ fn run(parsed: &ParsedArgs) -> io::Result<i32> {
 
     if mode == Mode::Plan {
         eprintln!("BOOTOPTIM_INTERPOSER status=plan-only deterministic={}", if stable { "true" } else { "false" });
-        return spawn_java(&parsed.java_exe, &parsed.java_args, &[])?.code().map_or(1, |c| c);
+        return Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?));
     }
 
     if !cfg!(windows) {
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=appcds-windows-only-v0");
-        return spawn_java(&parsed.java_exe, &parsed.java_args, &[])?.code().map_or(1, |c| c);
+        return Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?));
     }
 
     if !stable {
         write_state(&cache_dir, CacheState::Absent, "plan-not-yet-proven")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=plan-not-yet-proven");
-        return spawn_java(&parsed.java_exe, &parsed.java_args, &[])?.code().map_or(1, |c| c);
+        return Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?));
     }
 
     if !plan.eligible {
         write_state(&cache_dir, CacheState::Failed, "identity-ineligible")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=identity-ineligible");
-        return spawn_java(&parsed.java_exe, &parsed.java_args, &[])?.code().map_or(1, |c| c);
+        return Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?));
     }
 
     let Some(_lock) = try_lock(&cache_dir.join("cache.lock"))? else {
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=lock-busy");
-        return spawn_java(&parsed.java_exe, &parsed.java_args, &[])?.code().map_or(1, |c| c);
+        return Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?));
     };
 
     let (state, ready_meta) = classify_cache(&cache_dir, &plan.sha256)?;
@@ -168,7 +168,7 @@ fn run(parsed: &ParsedArgs) -> io::Result<i32> {
             write_state(&cache_dir, CacheState::Ready, "identity-match")?;
             let flags = shared_archive_flags(CacheState::Ready, &ready_path);
             eprintln!("BOOTOPTIM_INTERPOSER status=ready activation=enabled");
-            spawn_java(&parsed.java_exe, &parsed.java_args, &flags)?.code().map_or(1, |c| c)
+            Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &flags)?))
         }
         CacheState::Absent => {
             let staging = cache_dir.join(format!("staging-{}.jsa", unique_suffix()));
@@ -196,19 +196,19 @@ fn run(parsed: &ParsedArgs) -> io::Result<i32> {
                 write_state(&cache_dir, CacheState::Failed, "training-incomplete")?;
                 eprintln!("BOOTOPTIM_INTERPOSER status=failed reason=training-incomplete");
             }
-            status.code().map_or(1, |c| c)
+            Ok(exit_code(status))
         }
         CacheState::Stale => {
             let _ = ready_meta;
             write_state(&cache_dir, CacheState::Stale, "identity-mismatch")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=stale");
-            spawn_java(&parsed.java_exe, &parsed.java_args, &[])?.code().map_or(1, |c| c)
+            Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?))
         }
         CacheState::Failed | CacheState::Generating => {
             cleanup_orphan_staging(&cache_dir)?;
             write_state(&cache_dir, CacheState::Failed, "incomplete-or-failed")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=failed-state");
-            spawn_java(&parsed.java_exe, &parsed.java_args, &[])?.code().map_or(1, |c| c)
+            Ok(exit_code(spawn_java(&parsed.java_exe, &parsed.java_args, &[])?))
         }
     }
 }
@@ -251,4 +251,8 @@ fn spawn_java(java_exe: &OsStr, args: &[OsString], prefix: &[OsString]) -> io::R
     cmd.stdout(Stdio::inherit());
     cmd.stderr(Stdio::inherit());
     cmd.status()
+}
+
+fn exit_code(status: ExitStatus) -> i32 {
+    status.code().unwrap_or(1)
 }
