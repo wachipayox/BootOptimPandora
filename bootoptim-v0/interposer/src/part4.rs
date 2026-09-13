@@ -135,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn jar_java_and_path_changes_change_plan_and_stale_never_consumes_archive() {
+    fn launch_identity_changes_invalidate_plan_and_stale_never_consumes_archive() {
         let d = temp_dir("identity-change");
         let java_root = d.join("runtime");
         fs::create_dir_all(java_root.join("bin")).unwrap();
@@ -146,6 +146,9 @@ mod tests {
         fs::write(&lib, b"jar-v1").unwrap();
         fs::create_dir_all(d.join("mods")).unwrap();
         fs::write(d.join("mods/mod.jar"), b"mod-v1").unwrap();
+        fs::create_dir_all(d.join("config")).unwrap();
+        fs::write(d.join("config/fml.toml"), b"earlyWindowControl=true\n").unwrap();
+        fs::write(d.join("options.txt"), b"resourcePacks:[\"vanilla\"]\nincompatibleResourcePacks:[]\n").unwrap();
         let launcher = d.join("Pandora Launcher.exe");
         fs::write(&launcher, b"launcher").unwrap();
         let cp = env::join_paths([lib.clone()]).unwrap();
@@ -159,12 +162,24 @@ mod tests {
         let p1 = build_launch_plan(&parsed).unwrap();
         let p2 = build_launch_plan(&parsed).unwrap();
         assert_eq!(p1.bytes, p2.bytes);
+        assert!(p1.eligible);
         assert!(!String::from_utf8_lossy(&p1.bytes).contains("VERY_SECRET"));
+
         fs::write(&lib, b"jar-v2").unwrap();
         let p3 = build_launch_plan(&parsed).unwrap();
         assert_ne!(p1.sha256, p3.sha256);
-
         fs::write(&lib, b"jar-v1").unwrap();
+
+        fs::write(d.join("config/fml.toml"), b"earlyWindowControl=false\n").unwrap();
+        let config_changed = build_launch_plan(&parsed).unwrap();
+        assert_ne!(p1.sha256, config_changed.sha256);
+        fs::write(d.join("config/fml.toml"), b"earlyWindowControl=true\n").unwrap();
+
+        fs::write(d.join("options.txt"), b"resourcePacks:[\"vanilla\",\"file/Test Pack.zip\"]\nincompatibleResourcePacks:[]\n").unwrap();
+        let resource_selection_changed = build_launch_plan(&parsed).unwrap();
+        assert_ne!(p1.sha256, resource_selection_changed.sha256);
+        fs::write(d.join("options.txt"), b"resourcePacks:[\"vanilla\"]\nincompatibleResourcePacks:[]\n").unwrap();
+
         let java2_root = d.join("runtime copy");
         fs::create_dir_all(java2_root.join("bin")).unwrap();
         let java2 = java2_root.join(if cfg!(windows) { "bin/javaw.exe" } else { "bin/java" });
