@@ -4,6 +4,8 @@ use std::{borrow::Cow, collections::BTreeMap, ffi::{OsStr, OsString}, io::{Error
 use crate::unix::unix_helpers::RawStringVec;
 use crate::{process::PandoraProcess, spawner::SpawnType};
 
+const BOOTOPTIM_PANDORA_UPSTREAM: &str = "4eb6c7849561151695288443c106519774ee05ea";
+
 #[derive(Debug)]
 pub struct PandoraCommand {
     pub(crate) executable: PandoraArg,
@@ -77,7 +79,8 @@ impl PandoraCommand {
         self.force_feedback = force_feedback;
     }
 
-    pub async fn spawn(self) -> std::io::Result<PandoraChild> {
+    pub async fn spawn(mut self) -> std::io::Result<PandoraChild> {
+        self.maybe_bootoptim_interpose();
         crate::spawner::spawn(self, SpawnType::Normal)
             .await
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "spawning thread has shutdown"))
@@ -97,6 +100,46 @@ impl PandoraCommand {
             .await
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "spawning thread has shutdown"))
             .flatten()
+    }
+
+    fn maybe_bootoptim_interpose(&mut self) {
+        let Some(helper) = std::env::var_os("BOOTOPTIM_LAUNCH_INTERPOSER") else {
+            return;
+        };
+        let helper = PathBuf::from(helper);
+        if !helper.is_file() {
+            return;
+        }
+        let Some(instance_dir) = self.current_dir.clone() else {
+            return;
+        };
+        if !self.args.iter().any(|arg| arg.0 == OsStr::new("com.moulberry.pandora.LaunchWrapper")) {
+            return;
+        }
+
+        // v0 intentionally interposes only Pandora's direct Java executable. If a
+        // user configured a wrapper command, or if sandboxing uses its separate
+        // spawn path, we fail closed to the stock Pandora launch rather than
+        // guessing wrapper/sandbox semantics or serializing argv through a shell.
+        if !is_java_executable(&self.executable.0) {
+            return;
+        }
+
+        let Ok(launcher_exe) = std::env::current_exe() else {
+            return;
+        };
+        let java_exe = std::mem::replace(&mut self.executable, helper.into());
+        let original_args = std::mem::take(&mut self.args);
+
+        self.arg("--instance-dir");
+        self.arg(instance_dir);
+        self.arg("--launcher-exe");
+        self.arg(launcher_exe);
+        self.arg("--upstream-commit");
+        self.arg(BOOTOPTIM_PANDORA_UPSTREAM.to_string());
+        self.arg("--");
+        self.args.push(java_exe);
+        self.args.extend(original_args);
     }
 
     pub(crate) fn resolve_executable_path(&self) -> std::io::Result<PathBuf> {
@@ -149,6 +192,26 @@ impl PandoraCommand {
         }
         std::mem::take(&mut self.env)
     }
+}
+
+fn is_java_executable(value: &OsStr) -> bool {
+    let path = Path::new(value);
+    let Some(name) = path.file_name().map(|v| v.to_string_lossy().to_ascii_lowercase()) else {
+        return false;
+    };
+    if name != "java" && name != "java.exe" && name != "javaw.exe" {
+        return false;
+    }
+    let Some(bin) = path.parent() else {
+        return false;
+    };
+    if !bin.file_name().map(|v| v.to_string_lossy().eq_ignore_ascii_case("bin")).unwrap_or(false) {
+        return false;
+    }
+    let Some(root) = bin.parent() else {
+        return false;
+    };
+    root.join("lib").is_dir()
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
