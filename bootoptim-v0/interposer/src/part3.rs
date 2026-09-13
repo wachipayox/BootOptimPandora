@@ -55,99 +55,12 @@ fn artifact_from_path(role: &'static str, path: &Path) -> io::Result<Artifact> {
     if !meta.is_file() {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "artifact not file"));
     }
-    if role == "pack-input" {
-        if let Some(canonical) = canonical_pack_input_bytes(path)? {
-            return Ok(Artifact {
-                role,
-                path: encode_os(path.as_os_str()),
-                size: canonical.len() as u64,
-                sha256: sha256_hex(&canonical),
-            });
-        }
-    }
     Ok(Artifact {
         role,
         path: encode_os(path.as_os_str()),
         size: meta.len(),
         sha256: hash_file(path)?,
     })
-}
-
-fn canonical_pack_input_bytes(path: &Path) -> io::Result<Option<Vec<u8>>> {
-    const SIMPLE_PROPERTIES: &[&[&str]] = &[
-        &["config", "asyncparticles", "asyncparticles-mixin.properties"],
-        &["config", "fabric", "indigo-renderer.properties"],
-        &["config", "iris.properties"],
-    ];
-    for suffix in SIMPLE_PROPERTIES {
-        if path_ends_with_components(path, suffix) {
-            return Ok(canonical_simple_properties(&fs::read(path)?, false));
-        }
-    }
-    if path_ends_with_components(path, &["config", "drippyloadingscreen", "early_window_reference.properties"]) {
-        return Ok(canonical_simple_properties(&fs::read(path)?, true));
-    }
-    Ok(None)
-}
-
-fn path_ends_with_components(path: &Path, suffix: &[&str]) -> bool {
-    let components = path.components().map(|c| c.as_os_str()).collect::<Vec<_>>();
-    if components.len() < suffix.len() {
-        return false;
-    }
-    components[components.len() - suffix.len()..]
-        .iter()
-        .zip(suffix)
-        .all(|(actual, expected)| *actual == OsStr::new(expected))
-}
-
-fn canonical_simple_properties(bytes: &[u8], drippy_reference: bool) -> Option<Vec<u8>> {
-    if !bytes.is_ascii() {
-        return None;
-    }
-    let text = std::str::from_utf8(bytes).ok()?;
-    let mut values = BTreeMap::<String, String>::new();
-    for raw_line in text.split_terminator(['\n', '\r']) {
-        if raw_line.is_empty() || raw_line.starts_with('#') || raw_line.starts_with('!') {
-            continue;
-        }
-        if raw_line.contains('\\') || raw_line.starts_with(char::is_whitespace) {
-            return None;
-        }
-        let (key, value) = raw_line.split_once('=')?;
-        if key.is_empty()
-            || key.trim() != key
-            || key.chars().any(char::is_whitespace)
-            || values.contains_key(key)
-        {
-            return None;
-        }
-        values.insert(key.to_string(), value.to_string());
-    }
-    if values.is_empty() {
-        return None;
-    }
-    if drippy_reference {
-        if values.len() != 3
-            || !values.contains_key("height")
-            || !values.contains_key("timestamp")
-            || !values.contains_key("width")
-            || values["height"].parse::<u32>().is_err()
-            || values["width"].parse::<u32>().is_err()
-            || values["timestamp"].parse::<u64>().is_err()
-        {
-            return None;
-        }
-        values.remove("timestamp");
-    }
-    let mut canonical = Vec::new();
-    for (key, value) in values {
-        canonical.extend_from_slice(key.as_bytes());
-        canonical.push(b'=');
-        canonical.extend_from_slice(value.as_bytes());
-        canonical.push(b'\n');
-    }
-    Some(canonical)
 }
 
 fn hash_file(path: &Path) -> io::Result<String> {
