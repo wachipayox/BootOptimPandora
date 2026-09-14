@@ -49,12 +49,6 @@ fn illegal_filename_char(b: u8) -> bool {
 pub fn spawn(command: PandoraCommand, spawn_type: SpawnType) -> tokio::sync::oneshot::Receiver<std::io::Result<PandoraChild>> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
 
-    if is_probe_minecraft_launch(&command) {
-        probe_event("classpath_resolution", "inclusive_end", None);
-        probe_event("native_extraction", "inclusive_end", None);
-        probe_event("wrapper_arguments", "inclusive_end", None);
-    }
-
     static SPAWNING_CHANNEL: OnceCell<mpsc::Sender<SpawnInfo>> = OnceCell::new();
     let channel = SPAWNING_CHANNEL.get_or_init(|| {
         let (send, recv) = mpsc::channel::<SpawnInfo>();
@@ -163,12 +157,21 @@ fn probe_path() -> Option<&'static OsString> {
     PATH.get_or_init(|| std::env::var_os(LAUNCH_PROBE_ENV).filter(|v| !v.is_empty())).as_ref()
 }
 
-fn is_probe_minecraft_launch(command: &PandoraCommand) -> bool {
+pub(crate) fn is_probe_minecraft_launch(command: &PandoraCommand) -> bool {
     probe_path().is_some()
         && command.args.iter().any(|arg| arg.0 == OsStr::new("com.moulberry.pandora.LaunchWrapper"))
 }
 
-fn probe_event(phase: &str, event: &str, outcome: Option<&str>) {
+pub(crate) fn probe_minecraft_command_ready(command: &PandoraCommand) {
+    if !is_probe_minecraft_launch(command) {
+        return;
+    }
+    probe_event("classpath_resolution", "inclusive_end", None);
+    probe_event("native_extraction", "inclusive_end", None);
+    probe_event("wrapper_arguments", "inclusive_end", None);
+}
+
+pub(crate) fn probe_event(phase: &str, event: &str, outcome: Option<&str>) {
     let Some(path) = probe_path() else {
         return;
     };
