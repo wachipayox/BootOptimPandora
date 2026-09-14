@@ -1,0 +1,40 @@
+name: Agent 156 launch integrity scheduling
+
+on:
+  push:
+    branches:
+      - "agent156/serialize-integrity-reads-20260914"
+  pull_request:
+    paths:
+      - "crates/backend/src/fs.rs"
+      - ".github/workflows/agent156-integrity.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  backend-integrity-tests:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig1-dev libudev-dev
+
+      - name: Run launch integrity tests
+        run: cargo test -p backend fs::tests:: --frozen --target ${{ matrix.target }}
