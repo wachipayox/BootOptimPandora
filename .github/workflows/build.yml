@@ -30,22 +30,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform.target }}
-
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
-
       - name: Install needed packages on Linux
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
         if: contains(matrix.platform.os, 'ubuntu')
-
       - name: Install mold linker
         uses: rui314/setup-mold@v1
-
+      - name: Test asset verification intent propagation
+        run: cargo test -p bridge asset_verification_mode --frozen --target ${{ matrix.platform.target }}
       - name: Run build command
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}

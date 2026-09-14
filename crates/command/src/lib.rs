@@ -17,6 +17,16 @@ pub use command::*;
 pub use process::*;
 pub use exit_status::*;
 
+#[doc(hidden)]
+pub fn bootoptim_packaged_probe_contract_finalize_for_test() {
+    let mut command = PandoraCommand::new("java.exe");
+    command.arg("com.moulberry.pandora.LaunchWrapper");
+    spawner::probe_minecraft_command_ready(&command);
+    spawner::probe_event("java_spawn", "begin", None);
+    spawner::probe_event("java_spawn", "end", Some("ok"));
+    spawner::probe_event("launcher_pre_java", "end", Some("ok"));
+}
+
 pub fn is_command_available(command: &'static str) -> bool {
     path_cache::get_command_path_cached(OsStr::new(command)).is_some()
 }

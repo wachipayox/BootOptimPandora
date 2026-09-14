@@ -1,0 +1,9 @@
+# Agent 165 — reproducible PR14 A/B composition
+
+This composition is rooted at PR #7 final `55f05135396e9682a5d0f76a24e62f21850fbc03` and carries only the PR #10 asset-verification-intent delta (`6c1e3bcb85b49769b330a630bb3b3f986c224ab5..635171f4241320c0de4507fbb67ed45f1cfabd17`). It deliberately excludes the PR #9/160 USN foundation, PR #8 I/O scheduling, and any AppCDS behavior change.
+
+The base artifact must pass the packaged-EXE selftest in `bootoptim-v0.yml`: a real execution of `pandora_launcher.exe` enters the existing `--run-instance` launcher path, `BackendHandle::send` invokes the bridge root state machine, command-ready instrumentation emits the post-I/O markers, and the EXE exits nonzero unless the generated JSONL has exactly one `launcher_pre_java.begin/end`, exactly one `java_spawn.begin/end`, no legacy `inclusive_begin`/`inclusive_end`, and each of `classpath_resolution`, `native_extraction`, and `wrapper_arguments` is explicit `unobserved` with `observed=false,duration_ns=null`.
+
+## Physical A/B protocol
+
+Use the same BootOptimLaptop instance for all runs. Set `BOOTOPTIM_APPCDS_MODE=plan`. Do not set `BOOTOPTIM_VERIFY_IO_LIMIT` or `BOOTOPTIM_ASSET_USN_CACHE`. Use a fresh `BOOTOPTIM_LAUNCH_PROBE` JSONL filename for every run. Alternate strictly base -> candidate -> base -> candidate rather than batching conditions. Autoclose only after the Minecraft Java window has appeared. Before computing Start-to-Java, reject any JSONL whose first record is not `launcher_pre_java.begin`, that lacks exactly one root end after `java_spawn.end`, or that contains legacy inclusive markers. Compute Start-to-Java only as root end minus root begin after that validation; do not sum overlapping child phases. Record `assets_verify_download` separately. No saving or performance claim is permitted until this physical gate passes.
