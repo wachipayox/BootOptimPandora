@@ -68,6 +68,7 @@ jobs:
           Path("bootoptim-v0/.agent162-do-assets.tmp").unlink(missing_ok=True)
           PY
 
+          git add -A
           expected=$(cat <<'EOF'
           .github/workflows/bootoptim-v0.yml
           bootoptim-v0/ASSET_ATTRIBUTION_PROBE.md
@@ -76,7 +77,7 @@ jobs:
           crates/backend/src/lib.rs
           EOF
           )
-          actual=$(git diff --name-only 55f05135396e9682a5d0f76a24e62f21850fbc03 -- | sort)
+          actual=$(git diff --cached --name-only 55f05135396e9682a5d0f76a24e62f21850fbc03 -- | sort)
           if [ "$actual" != "$expected" ]; then
             echo "Unexpected final diff:"
             printf '%s\n' "$actual"
@@ -87,6 +88,5 @@ jobs:
 
           git config user.name "agent162-cleanup"
           git config user.email "agent162-cleanup@users.noreply.github.com"
-          git add -A
           git commit -m "Clean agent 162 diagnostic diff"
           git push origin HEAD:agent162/assets-attribution-probe-20260914
