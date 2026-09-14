@@ -125,7 +125,9 @@ impl ModalActionInner {
             probe_modal_key: self.probe_key(),
         }));
 
-        crate::launch_probe::tracker_created(self.probe_key(), tracker.probe_key(), &tracker.get_title());
+        if crate::launch_probe::enabled() {
+            crate::launch_probe::tracker_created(self.probe_key(), tracker.probe_key(), &tracker.get_title());
+        }
         self.trackers.write().push(tracker.clone());
         self.notify.notify_one();
 
@@ -249,8 +251,16 @@ impl ProgressTracker {
     }
 
     pub fn add_count(&self, count: usize) {
-        self.0.count.fetch_add(count, Ordering::SeqCst);
-        crate::launch_probe::tracker_add_count(self.0.probe_modal_key, self.probe_key());
+        let previous = self.0.count.fetch_add(count, Ordering::SeqCst);
+        if crate::launch_probe::enabled() {
+            let total = self.0.total.load(Ordering::SeqCst);
+            crate::launch_probe::tracker_add_count(
+                self.0.probe_modal_key,
+                self.probe_key(),
+                previous.wrapping_add(count),
+                total,
+            );
+        }
         self.0.notify.notify_one();
     }
 
