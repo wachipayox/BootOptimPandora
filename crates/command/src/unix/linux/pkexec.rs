@@ -12,10 +12,7 @@ pub fn spawn(mut cmd: PandoraCommand, context: &mut SpawnContext) -> std::io::Re
     // Replace with absolute path since pkexec won't inherit PATH
     if !executable.0.as_encoded_bytes().contains(&b'/') {
         let Some(path) = crate::path_cache::get_command_path(&executable.0) else {
-            return Err(Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("cannot find '{}'", executable.0.to_string_lossy()),
-            ));
+            return Err(Error::new(std::io::ErrorKind::NotFound, format!("cannot find '{}'", executable.0.to_string_lossy())));
         };
         executable = path.as_os_str().to_os_string().into();
     }

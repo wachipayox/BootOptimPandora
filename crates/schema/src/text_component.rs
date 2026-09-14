@@ -43,7 +43,11 @@ fn append_flat(component: &mut FlatTextComponent, value: serde_json::Value) {
             component.content.push_str("null");
         },
         serde_json::Value::Bool(value) => {
-            let value_str = if value { "true" } else { "false" };
+            let value_str = if value {
+                "true"
+            } else {
+                "false"
+            };
             component.content.push_str(value_str);
         },
         serde_json::Value::Number(number) => {
@@ -130,13 +134,10 @@ fn append_flat(component: &mut FlatTextComponent, value: serde_json::Value) {
                 while let Some(run) = component.runs.get_mut(run_index) {
                     if run.range.start > ix {
                         let until = run.range.start;
-                        component.runs.insert(
-                            run_index,
-                            TextComponentRun {
-                                range: ix..until,
-                                style: style.clone(),
-                            },
-                        );
+                        component.runs.insert(run_index, TextComponentRun {
+                            range: ix..until,
+                            style: style.clone(),
+                        });
                         ix = until;
                         run_index += 1;
                         continue;
@@ -163,7 +164,10 @@ fn append_flat(component: &mut FlatTextComponent, value: serde_json::Value) {
                 }
 
                 if ix < end {
-                    component.runs.push(TextComponentRun { range: ix..end, style });
+                    component.runs.push(TextComponentRun {
+                        range: ix..end,
+                        style
+                    });
                 }
             }
         },
@@ -179,7 +183,7 @@ fn append_string(component: &mut FlatTextComponent, mut text: String) {
         if let Some((from, style)) = last_legacy_color.take() {
             if pos > from {
                 component.runs.push(TextComponentRun {
-                    range: current_len + from..current_len + pos,
+                    range: current_len+from..current_len+pos,
                     style,
                 });
             }
@@ -211,7 +215,7 @@ fn append_string(component: &mut FlatTextComponent, mut text: String) {
                 'n' => current_style.underlined = Some(true),
                 'o' => current_style.italic = Some(true),
                 'r' => current_style = TextComponentStyle::default(),
-                _ => {},
+                _ => {}
             }
             if current_style != TextComponentStyle::default() {
                 last_legacy_color = Some((pos, current_style.clone()));
@@ -223,7 +227,7 @@ fn append_string(component: &mut FlatTextComponent, mut text: String) {
         let to = text.len();
         if to > from {
             component.runs.push(TextComponentRun {
-                range: current_len + from..current_len + to,
+                range: current_len+from..current_len+to,
                 style,
             });
         }

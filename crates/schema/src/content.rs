@@ -9,11 +9,11 @@ pub enum ContentSource {
     Manual,
     ModrinthUnknown,
     ModrinthProject {
-        project_id: Arc<str>,
+        project_id: Arc<str>
     },
     CurseforgeProject {
         project_id: u32,
-    },
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

@@ -1,54 +1,11 @@
-use std::{
-    ffi::OsString,
-    io::{Error, ErrorKind},
-    os::windows::ffi::{OsStrExt, OsStringExt},
-    path::Path,
-};
+use std::{ffi::OsString, io::{Error, ErrorKind}, os::windows::ffi::{OsStrExt, OsStringExt}, path::Path};
 
 use rustc_hash::FxHashSet;
-use windows::{
-    Win32::{
-        Foundation::{
-            ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, GetLastError, HANDLE,
-            LocalFree,
-        },
-        Security::{
-            ACE_HEADER, ACL,
-            Authorization::{
-                ConvertSidToStringSidW, ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW,
-                GetSecurityInfo, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SE_WINDOW_OBJECT, SetEntriesInAclW,
-                SetNamedSecurityInfoW, SetSecurityInfo, TRUSTEE_IS_GROUP, TRUSTEE_IS_SID,
-            },
-            CONTAINER_INHERIT_ACE, CreateWellKnownSid, DACL_SECURITY_INFORMATION, DeriveCapabilitySidsFromName,
-            FreeSid, GetAce, InitializeSecurityDescriptor,
-            Isolation::{CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName},
-            NO_INHERITANCE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
-            SetFileSecurityW, SetSecurityDescriptorDacl, WELL_KNOWN_SID_TYPE, WinCapabilityInternetClientServerSid,
-            WinCapabilityInternetClientSid, WinCapabilityPrivateNetworkClientServerSid,
-        },
-        Storage::FileSystem::{
-            FILE_ALL_ACCESS, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_TRAVERSE, READ_CONTROL, WRITE_DAC,
-        },
-        System::{
-            StationsAndDesktops::OpenWindowStationW,
-            SystemServices::{SE_GROUP_ENABLED, SECURITY_DESCRIPTOR_REVISION},
-            Threading::{
-                DeleteProcThreadAttributeList, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-                PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, UpdateProcThreadAttribute,
-            },
-        },
-        UI::WindowsAndMessaging::WINSTA_WRITEATTRIBUTES,
-    },
-    core::{HRESULT, PCWSTR, PWSTR},
-};
+use windows::{Win32::{Foundation::{ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, GetLastError, HANDLE, LocalFree}, Security::{ACE_HEADER, ACL, Authorization::{ConvertSidToStringSidW, ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, GetSecurityInfo, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SE_WINDOW_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW, SetSecurityInfo, TRUSTEE_IS_GROUP, TRUSTEE_IS_SID}, CONTAINER_INHERIT_ACE, CreateWellKnownSid, DACL_SECURITY_INFORMATION, DeriveCapabilitySidsFromName, FreeSid, GetAce, InitializeSecurityDescriptor, Isolation::{CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName}, NO_INHERITANCE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES, SetFileSecurityW, SetSecurityDescriptorDacl, WELL_KNOWN_SID_TYPE, WinCapabilityInternetClientServerSid, WinCapabilityInternetClientSid, WinCapabilityPrivateNetworkClientServerSid}, Storage::FileSystem::{FILE_ALL_ACCESS, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_TRAVERSE, READ_CONTROL, WRITE_DAC}, System::{StationsAndDesktops::OpenWindowStationW, SystemServices::{SE_GROUP_ENABLED, SECURITY_DESCRIPTOR_REVISION}, Threading::{DeleteProcThreadAttributeList, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, UpdateProcThreadAttribute}}, UI::WindowsAndMessaging::WINSTA_WRITEATTRIBUTES}, core::{HRESULT, PCWSTR, PWSTR}};
 
 use crate::{PandoraChild, PandoraCommand, PandoraSandbox, spawner::SpawnContext, windows::windows_spawn};
 
-pub fn spawn(
-    command: PandoraCommand,
-    sandbox: PandoraSandbox,
-    context: &mut SpawnContext,
-) -> std::io::Result<PandoraChild> {
+pub fn spawn(command: PandoraCommand, sandbox: PandoraSandbox, context: &mut SpawnContext) -> std::io::Result<PandoraChild> {
     let app_container_sid = create_app_container(&sandbox)?;
     scopeguard::defer! {
         unsafe { FreeSid(app_container_sid) };
@@ -62,8 +19,7 @@ pub fn spawn(
     }
 
     let mut proc_thread_attribute_list_alloc = vec![0; lpsize];
-    let lpproc_thread_attribute_list =
-        LPPROC_THREAD_ATTRIBUTE_LIST(proc_thread_attribute_list_alloc.as_mut_ptr() as *mut _);
+    let lpproc_thread_attribute_list = LPPROC_THREAD_ATTRIBUTE_LIST(proc_thread_attribute_list_alloc.as_mut_ptr() as *mut _);
 
     unsafe { InitializeProcThreadAttributeList(Some(lpproc_thread_attribute_list), 1, None, &mut lpsize)? };
 
@@ -75,13 +31,12 @@ pub fn spawn(
         owned_capabilities.push(OwnedCapability::new(WinCapabilityPrivateNetworkClientServerSid)?);
     }
 
-    let mut capabilities = owned_capabilities
-        .iter_mut()
-        .map(|cap| SID_AND_ATTRIBUTES {
+    let mut capabilities = owned_capabilities.iter_mut().map(|cap| {
+        SID_AND_ATTRIBUTES {
             Sid: cap.as_psid(),
             Attributes: SE_GROUP_ENABLED as u32,
-        })
-        .collect::<Vec<_>>();
+        }
+    }).collect::<Vec<_>>();
 
     let winsta_sids = if sandbox.grant_winsta_writeattributes {
         // Ideally we could just add the appcontainer's sid to winsta0 directly,
@@ -93,13 +48,8 @@ pub fn spawn(
         let mut capability_sids = std::ptr::null_mut();
         let mut capability_sid_count = 0;
         unsafe {
-            DeriveCapabilitySidsFromName(
-                windows::core::w!("pandora.grantWinstaWriteAttributesCapability_ikU1gY09aHdb3PsX"),
-                &mut group_sids,
-                &mut group_sid_count,
-                &mut capability_sids,
-                &mut capability_sid_count,
-            )?
+            DeriveCapabilitySidsFromName(windows::core::w!("pandora.grantWinstaWriteAttributesCapability_ikU1gY09aHdb3PsX"),
+                &mut group_sids, &mut group_sid_count, &mut capability_sids, &mut capability_sid_count)?
         };
 
         if capability_sid_count == 0 {
@@ -111,10 +61,7 @@ pub fn spawn(
             if let Err(err) = add_writeattributes_to_winsta(&derived_sid) {
                 log::error!("Unable to set WINSTA_WRITEATTRIBUTES: {err}");
             } else {
-                capabilities.push(SID_AND_ATTRIBUTES {
-                    Sid: derived_sid,
-                    Attributes: SE_GROUP_ENABLED as u32,
-                });
+                capabilities.push(SID_AND_ATTRIBUTES { Sid: derived_sid, Attributes: SE_GROUP_ENABLED as u32 });
             }
         }
         Some((group_sids, group_sid_count, capability_sids, capability_sid_count))
@@ -155,7 +102,7 @@ pub fn spawn(
             Some(&security_capabilities as *const SECURITY_CAPABILITIES as *const _),
             size_of::<SECURITY_CAPABILITIES>(),
             None,
-            None,
+            None
         )?
     };
 
@@ -215,12 +162,10 @@ pub fn spawn(
         false
     });
 
+
     if !parents.is_empty() {
         let Some(self_elevate_for_acl_arg) = sandbox.self_elevate_for_acl_arg else {
-            return Err(Error::new(
-                ErrorKind::Other,
-                "unable to do elevated acl modification because self_elevate_for_acl_arg wasn't set",
-            ));
+            return Err(Error::new(ErrorKind::Other, "unable to do elevated acl modification because self_elevate_for_acl_arg wasn't set"));
         };
 
         let mut stringsid = PWSTR::default();
@@ -261,7 +206,9 @@ impl OwnedCapability {
         }
         let mut sid_alloc = vec![0; size as usize];
         unsafe { CreateWellKnownSid(known, None, Some(PSID(sid_alloc.as_mut_ptr() as *mut _)), &mut size)? };
-        Ok(Self { sid_alloc })
+        Ok(Self {
+            sid_alloc
+        })
     }
 
     pub fn as_psid(&mut self) -> PSID {
@@ -270,8 +217,12 @@ impl OwnedCapability {
 }
 
 fn create_app_container(sandbox: &PandoraSandbox) -> windows::core::Result<PSID> {
-    let encoded_name = sandbox.name.encode_wide().chain([0]).collect::<Vec<_>>();
-    let encoded_description = sandbox.description.encode_wide().chain([0]).collect::<Vec<_>>();
+    let encoded_name = sandbox.name.encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let encoded_description = sandbox.description.encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
 
     let mut result = unsafe {
         CreateAppContainerProfile(
@@ -325,7 +276,9 @@ fn add_writeattributes_to_winsta(app_container: &PSID) -> std::io::Result<()> {
     ea.Trustee.TrusteeType = TRUSTEE_IS_GROUP;
 
     let mut new_acl = std::ptr::null_mut();
-    let err = unsafe { SetEntriesInAclW(Some(&[ea]), Some(old_acl), &mut new_acl) };
+    let err = unsafe {
+        SetEntriesInAclW(Some(&[ea]), Some(old_acl), &mut new_acl)
+    };
     if new_acl.is_null() {
         return Err(Error::new(ErrorKind::Other, "new acl was null"));
     }
@@ -337,7 +290,9 @@ fn add_writeattributes_to_winsta(app_container: &PSID) -> std::io::Result<()> {
     }
 
     match acl_eq(old_acl, new_acl) {
-        Ok(true) => return Ok(()),
+        Ok(true) => {
+            return Ok(())
+        },
         Ok(false) => {},
         Err(err) => {
             log::error!("Error comparing ACL for winsta0, updating acl anyways: {err}");
@@ -363,7 +318,9 @@ fn add_writeattributes_to_winsta(app_container: &PSID) -> std::io::Result<()> {
 }
 
 fn add_to_acl(app_container: &PSID, path: &Path, perms: PermissionType) -> std::io::Result<()> {
-    let encoded_path = path.as_os_str().encode_wide().chain([0]).collect::<Vec<_>>();
+    let encoded_path = path.as_os_str().encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
     let mut old_acl = std::ptr::null_mut();
     let err = unsafe {
         GetNamedSecurityInfoW(
@@ -374,7 +331,7 @@ fn add_to_acl(app_container: &PSID, path: &Path, perms: PermissionType) -> std::
             None,
             Some(&mut old_acl),
             None,
-            std::ptr::null_mut(),
+            std::ptr::null_mut()
         )
     };
     if err != ERROR_SUCCESS {
@@ -383,12 +340,12 @@ fn add_to_acl(app_container: &PSID, path: &Path, perms: PermissionType) -> std::
     let mut ea = EXPLICIT_ACCESS_W::default();
     ea.grfAccessMode = GRANT_ACCESS;
     ea.grfAccessPermissions = match perms {
-        PermissionType::TraverseNoInherit => (FILE_GENERIC_READ | FILE_TRAVERSE).0,
+        PermissionType::TraverseNoInherit =>  (FILE_GENERIC_READ | FILE_TRAVERSE).0,
         PermissionType::Write => (FILE_ALL_ACCESS).0,
         PermissionType::Read => (FILE_GENERIC_READ | FILE_TRAVERSE | FILE_GENERIC_EXECUTE).0,
     };
     ea.grfInheritance = if matches!(perms, PermissionType::TraverseNoInherit) {
-        NO_INHERITANCE //CONTAINER_INHERIT_ACE
+        NO_INHERITANCE//CONTAINER_INHERIT_ACE
     } else {
         OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
     };
@@ -399,7 +356,9 @@ fn add_to_acl(app_container: &PSID, path: &Path, perms: PermissionType) -> std::
     ea.Trustee.TrusteeType = TRUSTEE_IS_GROUP;
 
     let mut new_acl = std::ptr::null_mut();
-    let err = unsafe { SetEntriesInAclW(Some(&[ea]), Some(old_acl), &mut new_acl) };
+    let err = unsafe {
+        SetEntriesInAclW(Some(&[ea]), Some(old_acl), &mut new_acl)
+    };
     if new_acl.is_null() {
         return Err(Error::new(ErrorKind::Other, "new acl was null"));
     }
@@ -415,7 +374,9 @@ fn add_to_acl(app_container: &PSID, path: &Path, perms: PermissionType) -> std::
         // Sometimes children don't properly inherit the ACLs,
         // so we need to be sure to apply them even if the parent is correct
         match acl_eq(old_acl, new_acl) {
-            Ok(true) => return Ok(()),
+            Ok(true) => {
+                return Ok(())
+            },
             Ok(false) => {},
             Err(err) => {
                 log::error!("Error comparing ACL for {path:?}, updating acl anyways: {err}");
@@ -444,7 +405,7 @@ fn add_to_acl(app_container: &PSID, path: &Path, perms: PermissionType) -> std::
                 PSECURITY_DESCRIPTOR(security_buf.as_mut_ptr() as *mut _),
                 true,
                 Some(new_acl),
-                false,
+                false
             )?;
         }
 
@@ -452,7 +413,7 @@ fn add_to_acl(app_container: &PSID, path: &Path, perms: PermissionType) -> std::
             let success = SetFileSecurityW(
                 PCWSTR(encoded_path.as_ptr()),
                 DACL_SECURITY_INFORMATION,
-                PSECURITY_DESCRIPTOR(security_buf.as_mut_ptr() as *mut _),
+                PSECURITY_DESCRIPTOR(security_buf.as_mut_ptr() as *mut _)
             );
             if success.as_bool() {
                 ERROR_SUCCESS
@@ -519,10 +480,8 @@ fn acl_eq(first: *const ACL, second: *const ACL) -> std::io::Result<bool> {
             return Ok(false);
         }
 
-        let first_data =
-            unsafe { std::slice::from_raw_parts(first_ace_ptr.cast::<u8>(), first_ace_header.AceSize as usize) };
-        let second_data =
-            unsafe { std::slice::from_raw_parts(second_ace_ptr.cast::<u8>(), second_ace_header.AceSize as usize) };
+        let first_data = unsafe { std::slice::from_raw_parts(first_ace_ptr.cast::<u8>(), first_ace_header.AceSize as usize) };
+        let second_data = unsafe { std::slice::from_raw_parts(second_ace_ptr.cast::<u8>(), second_ace_header.AceSize as usize) };
 
         if first_data != second_data {
             return Ok(false);
@@ -537,7 +496,9 @@ pub fn set_traverse_acls(args: Vec<OsString>) -> std::io::Result<()> {
         return Err(Error::new(ErrorKind::InvalidInput, "missing sid"));
     }
 
-    let stringsid = args[0].as_os_str().encode_wide().chain([0]).collect::<Vec<_>>();
+    let stringsid = args[0].as_os_str().encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
 
     let mut psid = PSID::default();
     unsafe { ConvertStringSidToSidW(PCWSTR(stringsid.as_ptr()), &mut psid)? };

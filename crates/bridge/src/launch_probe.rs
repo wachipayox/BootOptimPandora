@@ -1,4 +1,10 @@
-use std::{ffi::OsString, fs::OpenOptions, io::Write, path::PathBuf, sync::OnceLock};
+use std::{
+    ffi::OsString,
+    fs::OpenOptions,
+    io::Write,
+    path::PathBuf,
+    sync::OnceLock,
+};
 
 use parking_lot::Mutex;
 
@@ -353,7 +359,12 @@ fn is_loader_sha1_request_boundary(current_count: usize, total_count: usize) -> 
     current_count == 1 && total_count == 13
 }
 
-pub fn tracker_add_count(modal_key: usize, tracker_key: usize, current_count: usize, total_count: usize) {
+pub fn tracker_add_count(
+    modal_key: usize,
+    tracker_key: usize,
+    current_count: usize,
+    total_count: usize,
+) {
     if !enabled() {
         return;
     }
@@ -461,8 +472,7 @@ fn monotonic_ns() -> u64 {
     let mut ticks = 0_i64;
     let mut frequency = 0_i64;
     unsafe {
-        if QueryPerformanceCounter(&mut ticks) == 0 || QueryPerformanceFrequency(&mut frequency) == 0 || frequency <= 0
-        {
+        if QueryPerformanceCounter(&mut ticks) == 0 || QueryPerformanceFrequency(&mut frequency) == 0 || frequency <= 0 {
             return 0;
         }
     }
@@ -561,7 +571,7 @@ mod tests {
                             return Err("root begin after child");
                         }
                         root_open = true;
-                    },
+                    }
                     "end" => {
                         root_ends += 1;
                         if root_ends != 1 || !root_open {
@@ -571,8 +581,8 @@ mod tests {
                             return Err("root ended before java spawn");
                         }
                         root_open = false;
-                    },
-                    _ => {},
+                    }
+                    _ => {}
                 }
                 continue;
             }
@@ -593,7 +603,7 @@ mod tests {
                         if item.phase == "java_spawn" {
                             java_spawn_seen = true;
                         }
-                    },
+                    }
                     "end" => {
                         if !open.remove(item.phase) {
                             return Err("span end without prior begin");
@@ -601,8 +611,8 @@ mod tests {
                         if item.phase == "java_spawn" {
                             java_spawn_ended = true;
                         }
-                    },
-                    _ => {},
+                    }
+                    _ => {}
                 }
             }
         }
@@ -618,121 +628,29 @@ mod tests {
 
     fn complete_trace() -> Vec<TraceEvent> {
         vec![
-            TraceEvent {
-                mono_ns: 1,
-                phase: "launcher_pre_java",
-                event: "begin",
-            },
-            TraceEvent {
-                mono_ns: 2,
-                phase: "launch_request",
-                event: "instant",
-            },
-            TraceEvent {
-                mono_ns: 3,
-                phase: "instance_config",
-                event: "begin",
-            },
-            TraceEvent {
-                mono_ns: 4,
-                phase: "instance_config",
-                event: "end",
-            },
-            TraceEvent {
-                mono_ns: 5,
-                phase: "account_selection",
-                event: "begin",
-            },
-            TraceEvent {
-                mono_ns: 6,
-                phase: "account_selection",
-                event: "end",
-            },
-            TraceEvent {
-                mono_ns: 7,
-                phase: "prelaunch",
-                event: "begin",
-            },
-            TraceEvent {
-                mono_ns: 8,
-                phase: "prelaunch",
-                event: "end",
-            },
-            TraceEvent {
-                mono_ns: 9,
-                phase: "version_loader_resolution",
-                event: "begin",
-            },
-            TraceEvent {
-                mono_ns: 10,
-                phase: "version_loader_resolution",
-                event: "end",
-            },
-            TraceEvent {
-                mono_ns: 11,
-                phase: "assets_verify_download",
-                event: "begin",
-            },
-            TraceEvent {
-                mono_ns: 12,
-                phase: "libraries_classpath_inputs",
-                event: "begin",
-            },
-            TraceEvent {
-                mono_ns: 20,
-                phase: "libraries_classpath_inputs",
-                event: "end",
-            },
-            TraceEvent {
-                mono_ns: 30,
-                phase: "assets_verify_download",
-                event: "end",
-            },
-            TraceEvent {
-                mono_ns: 31,
-                phase: "classpath_resolution",
-                event: "unobserved",
-            },
-            TraceEvent {
-                mono_ns: 32,
-                phase: "native_extraction",
-                event: "unobserved",
-            },
-            TraceEvent {
-                mono_ns: 33,
-                phase: "wrapper_arguments",
-                event: "unobserved",
-            },
-            TraceEvent {
-                mono_ns: 34,
-                phase: "appcds_preflight",
-                event: "begin",
-            },
-            TraceEvent {
-                mono_ns: 35,
-                phase: "appcds_preflight",
-                event: "end",
-            },
-            TraceEvent {
-                mono_ns: 36,
-                phase: "java_spawn",
-                event: "begin",
-            },
-            TraceEvent {
-                mono_ns: 37,
-                phase: "java_spawn",
-                event: "end",
-            },
-            TraceEvent {
-                mono_ns: 38,
-                phase: "launcher_pre_java",
-                event: "end",
-            },
-            TraceEvent {
-                mono_ns: 39,
-                phase: "java_to_menu",
-                event: "unobserved",
-            },
+            TraceEvent { mono_ns: 1, phase: "launcher_pre_java", event: "begin" },
+            TraceEvent { mono_ns: 2, phase: "launch_request", event: "instant" },
+            TraceEvent { mono_ns: 3, phase: "instance_config", event: "begin" },
+            TraceEvent { mono_ns: 4, phase: "instance_config", event: "end" },
+            TraceEvent { mono_ns: 5, phase: "account_selection", event: "begin" },
+            TraceEvent { mono_ns: 6, phase: "account_selection", event: "end" },
+            TraceEvent { mono_ns: 7, phase: "prelaunch", event: "begin" },
+            TraceEvent { mono_ns: 8, phase: "prelaunch", event: "end" },
+            TraceEvent { mono_ns: 9, phase: "version_loader_resolution", event: "begin" },
+            TraceEvent { mono_ns: 10, phase: "version_loader_resolution", event: "end" },
+            TraceEvent { mono_ns: 11, phase: "assets_verify_download", event: "begin" },
+            TraceEvent { mono_ns: 12, phase: "libraries_classpath_inputs", event: "begin" },
+            TraceEvent { mono_ns: 20, phase: "libraries_classpath_inputs", event: "end" },
+            TraceEvent { mono_ns: 30, phase: "assets_verify_download", event: "end" },
+            TraceEvent { mono_ns: 31, phase: "classpath_resolution", event: "unobserved" },
+            TraceEvent { mono_ns: 32, phase: "native_extraction", event: "unobserved" },
+            TraceEvent { mono_ns: 33, phase: "wrapper_arguments", event: "unobserved" },
+            TraceEvent { mono_ns: 34, phase: "appcds_preflight", event: "begin" },
+            TraceEvent { mono_ns: 35, phase: "appcds_preflight", event: "end" },
+            TraceEvent { mono_ns: 36, phase: "java_spawn", event: "begin" },
+            TraceEvent { mono_ns: 37, phase: "java_spawn", event: "end" },
+            TraceEvent { mono_ns: 38, phase: "launcher_pre_java", event: "end" },
+            TraceEvent { mono_ns: 39, phase: "java_to_menu", event: "unobserved" },
         ]
     }
 
@@ -745,10 +663,7 @@ mod tests {
     #[test]
     fn event_format_is_structured_and_path_free() {
         let line = event_line(123, "assets_verify_download", "begin", false);
-        assert_eq!(
-            line,
-            "{\"schema\":\"bootoptim.launch_probe.v1\",\"mono_ns\":123,\"phase\":\"assets_verify_download\",\"event\":\"begin\",\"network\":false}"
-        );
+        assert_eq!(line, "{\"schema\":\"bootoptim.launch_probe.v1\",\"mono_ns\":123,\"phase\":\"assets_verify_download\",\"event\":\"begin\",\"network\":false}");
         assert!(!line.contains('/'));
         assert!(!line.contains('\\'));
         assert!(!line.to_ascii_lowercase().contains("token"));
@@ -778,14 +693,7 @@ mod tests {
     #[test]
     fn complete_trace_rejects_duplicate_root_begin() {
         let mut trace = complete_trace();
-        trace.insert(
-            1,
-            TraceEvent {
-                mono_ns: 1,
-                phase: "launcher_pre_java",
-                event: "begin",
-            },
-        );
+        trace.insert(1, TraceEvent { mono_ns: 1, phase: "launcher_pre_java", event: "begin" });
         assert_eq!(validate_complete_trace(&trace), Err("duplicate root begin"));
     }
 
@@ -814,14 +722,7 @@ mod tests {
     fn complete_trace_rejects_observed_child_outside_root() {
         let mut trace = complete_trace();
         let root_end = trace.iter().position(|v| v.phase == "launcher_pre_java" && v.event == "end").unwrap();
-        trace.insert(
-            root_end + 1,
-            TraceEvent {
-                mono_ns: 38,
-                phase: "network_download",
-                event: "observed",
-            },
-        );
+        trace.insert(root_end + 1, TraceEvent { mono_ns: 38, phase: "network_download", event: "observed" });
         assert_eq!(validate_complete_trace(&trace), Err("child outside root"));
     }
 

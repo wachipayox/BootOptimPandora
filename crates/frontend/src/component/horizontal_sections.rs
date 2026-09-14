@@ -1,7 +1,4 @@
-use gpui::{
-    AnyElement, AvailableSpace, Bounds, ContentMask, Element, InteractiveElement, Interactivity, IntoElement,
-    ParentElement, Pixels, Point, Size, StyleRefinement, Styled, px, size,
-};
+use gpui::{AnyElement, AvailableSpace, Bounds, ContentMask, Element, InteractiveElement, Interactivity, IntoElement, ParentElement, Pixels, Point, Size, StyleRefinement, Styled, px, size};
 use gpui_component::ActiveTheme;
 
 pub struct HorizontalSections {
@@ -63,11 +60,15 @@ impl Element for HorizontalSections {
         window: &mut gpui::Window,
         cx: &mut gpui::App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let layout_id = self
-            .interactivity
-            .request_layout(global_id, inspector_id, window, cx, |style, window, cx| {
+        let layout_id = self.interactivity.request_layout(
+            global_id,
+            inspector_id,
+            window,
+            cx,
+            |style, window, cx| {
                 window.request_layout(style, [], cx)
-            });
+            },
+        );
 
         (layout_id, ())
     }
@@ -101,19 +102,17 @@ impl Element for HorizontalSections {
 
                 let bounds = Bounds {
                     origin: bounds.origin.clone() + gpui::point(padding.left.clone(), padding.top.clone()),
-                    size: (bounds.size.clone()
-                        - size(padding.left.clone() + padding.right.clone(), padding.top.clone() + padding.bottom))
-                    .max(&Default::default()),
+                    size: (bounds.size.clone() - size(
+                            padding.left.clone() + padding.right.clone(),
+                            padding.top.clone() + padding.bottom,
+                        )).max(&Default::default()),
                 };
 
                 let total_gap_width = gap_width * (children_count - 1);
                 let available_space_for_children = bounds.size.width - total_gap_width;
                 if available_space_for_children < Pixels::ZERO {
                     for child in self.children.iter_mut() {
-                        let available_space = Size::new(
-                            AvailableSpace::Definite(Pixels::ZERO),
-                            AvailableSpace::Definite(bounds.size.height),
-                        );
+                        let available_space = Size::new(AvailableSpace::Definite(Pixels::ZERO), AvailableSpace::Definite(bounds.size.height));
                         child.layout_as_root(available_space, window, cx);
                         child.prepaint_at(bounds.origin, window, cx);
                     }
@@ -122,8 +121,7 @@ impl Element for HorizontalSections {
                     let offset = width + gap_width;
 
                     for (index, child) in self.children.iter_mut().enumerate() {
-                        let available_space =
-                            Size::new(AvailableSpace::Definite(width), AvailableSpace::Definite(bounds.size.height));
+                        let available_space = Size::new(AvailableSpace::Definite(width), AvailableSpace::Definite(bounds.size.height));
                         child.layout_as_root(available_space, window, cx);
                         let mut origin = bounds.origin;
                         origin.x += offset * index;
@@ -144,8 +142,14 @@ impl Element for HorizontalSections {
         window: &mut gpui::Window,
         cx: &mut gpui::App,
     ) {
-        self.interactivity
-            .paint(global_id, inspector_id, bounds, None, window, cx, |style, window, cx| {
+        self.interactivity.paint(
+            global_id,
+            inspector_id,
+            bounds,
+            None,
+            window,
+            cx,
+            |style, window, cx| {
                 let rem_size = window.rem_size();
                 let font_size = window.text_style().font_size;
                 let gap_width = style.gap.width.to_pixels(font_size, rem_size);
@@ -155,9 +159,10 @@ impl Element for HorizontalSections {
                 let original_bounds = bounds;
                 let bounds = Bounds {
                     origin: bounds.origin.clone() + gpui::point(padding.left.clone(), padding.top.clone()),
-                    size: (bounds.size.clone()
-                        - size(padding.left.clone() + padding.right.clone(), padding.top.clone() + padding.bottom))
-                    .max(&Default::default()),
+                    size: (bounds.size.clone() - size(
+                            padding.left.clone() + padding.right.clone(),
+                            padding.top.clone() + padding.bottom,
+                        )).max(&Default::default()),
                 };
 
                 let total_gap_width = gap_width * (children_count - 1);
@@ -184,7 +189,7 @@ impl Element for HorizontalSections {
 
                         if index == 0 {
                             full_width += padding.left + gap_width / 2.0;
-                        } else if index == children_count - 1 {
+                        } else if index == children_count-1 {
                             full_width += gap_width / 2.0 + padding.right;
                         } else {
                             full_width += gap_width;
@@ -192,7 +197,7 @@ impl Element for HorizontalSections {
 
                         let child_bounds = Bounds {
                             origin: Point::new(x, original_bounds.origin.y),
-                            size: Size::new(width + gap_width - px(1.0), original_bounds.size.height),
+                            size: Size::new(width + gap_width - px(1.0), original_bounds.size.height)
                         };
                         window.with_content_mask(Some(ContentMask { bounds: child_bounds }), |window| {
                             child.paint(window, cx);
@@ -201,6 +206,7 @@ impl Element for HorizontalSections {
                         x += full_width;
                     }
                 }
-            })
+            },
+        )
     }
 }

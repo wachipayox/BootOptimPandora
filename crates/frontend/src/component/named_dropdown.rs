@@ -36,10 +36,10 @@ impl From<SharedString> for DropdownName {
 #[derive(Clone)]
 pub struct NamedDropdownItem<T: Clone + PartialEq> {
     pub name: DropdownName,
-    pub item: T,
+    pub item: T
 }
 
-impl<T: Clone + PartialEq> PartialEq for NamedDropdownItem<T> {
+impl <T: Clone + PartialEq> PartialEq for NamedDropdownItem<T> {
     fn eq(&self, other: &Self) -> bool {
         self.item == other.item
     }
@@ -66,7 +66,9 @@ pub struct NamedDropdown<T: Clone + PartialEq> {
 
 impl<T: Clone + PartialEq> NamedDropdown<T> {
     pub fn new(items: Vec<NamedDropdownItem<T>>) -> Self {
-        Self { items }
+        Self {
+            items,
+        }
     }
 
     pub fn create(items: Vec<NamedDropdownItem<T>>, window: &mut Window, cx: &mut App) -> Entity<SelectState<Self>> {
@@ -76,12 +78,7 @@ impl<T: Clone + PartialEq> NamedDropdown<T> {
         })
     }
 
-    pub fn create_and_select(
-        items: Vec<NamedDropdownItem<T>>,
-        selected: T,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Entity<SelectState<Self>> {
+    pub fn create_and_select(items: Vec<NamedDropdownItem<T>>, selected: T, window: &mut Window, cx: &mut App) -> Entity<SelectState<Self>> {
         cx.new(|cx| {
             let delegate = Self::new(items);
             let mut select_state = SelectState::new(delegate, None, window, cx);
@@ -116,7 +113,12 @@ impl<T: Clone + PartialEq + 'static> SelectDelegate for NamedDropdown<T> {
         None
     }
 
-    fn perform_search(&mut self, _query: &str, _window: &mut Window, _: &mut App) -> Task<()> {
+    fn perform_search(
+        &mut self,
+        _query: &str,
+        _window: &mut Window,
+        _: &mut App,
+    ) -> Task<()> {
         Task::ready(())
     }
 }
@@ -145,12 +147,7 @@ impl<T: Clone + PartialEq> SearchableNamedDropdown<T> {
         })
     }
 
-    pub fn create_and_select(
-        items: Vec<NamedDropdownItem<T>>,
-        selected: T,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Entity<SelectState<Self>> {
+    pub fn create_and_select(items: Vec<NamedDropdownItem<T>>, selected: T, window: &mut Window, cx: &mut App) -> Entity<SelectState<Self>> {
         cx.new(|cx| {
             let delegate = Self::new(items);
             let mut select_state = SelectState::new(delegate, None, window, cx).searchable(true);
@@ -198,7 +195,12 @@ impl<T: Clone + PartialEq + 'static> SelectDelegate for SearchableNamedDropdown<
         None
     }
 
-    fn perform_search(&mut self, query: &str, _window: &mut Window, _: &mut App) -> Task<()> {
+    fn perform_search(
+        &mut self,
+        query: &str,
+        _window: &mut Window,
+        _: &mut App,
+    ) -> Task<()> {
         if query.is_empty() {
             self.last_query = None;
             self.searched = None;
@@ -207,8 +209,7 @@ impl<T: Clone + PartialEq + 'static> SelectDelegate for SearchableNamedDropdown<
 
         let lang_id = t::get_current_lang_id();
         if self.casefolded.as_ref().map(|(l, _)| *l != lang_id).unwrap_or(true) {
-            let (_, mut casefolded) =
-                self.casefolded.take().unwrap_or_else(|| (0, Vec::with_capacity(self.items.len())));
+            let (_, mut casefolded) = self.casefolded.take().unwrap_or_else(|| (0, Vec::with_capacity(self.items.len())));
             casefolded.clear();
 
             for item in &self.items {
@@ -221,10 +222,7 @@ impl<T: Clone + PartialEq + 'static> SelectDelegate for SearchableNamedDropdown<
 
         let query = casefold::simple_fold(query.to_string());
 
-        if let Some(searched) = &mut self.searched
-            && let Some(last_query) = &self.last_query
-            && query.contains(last_query)
-        {
+        if let Some(searched) = &mut self.searched && let Some(last_query) = &self.last_query && query.contains(last_query) {
             searched.retain(|index| casefolded[*index].contains(&query));
             self.last_query = Some(query);
         } else {

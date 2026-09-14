@@ -7,9 +7,7 @@ pub struct IdSlab<T: GetId> {
 
 impl<T: GetId> Default for IdSlab<T> {
     fn default() -> Self {
-        Self {
-            slab: Default::default(),
-        }
+        Self { slab: Default::default() }
     }
 }
 

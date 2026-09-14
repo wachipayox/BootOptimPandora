@@ -5,13 +5,7 @@ use serde::{Deserialize, Serialize};
 use ustr::Ustr;
 use uuid::Uuid;
 
-use crate::{
-    curseforge::CurseforgeReleaseType,
-    fabric_loader_manifest::FabricLoaderManifest,
-    forge::{ForgeMavenManifest, NeoforgeMavenManifest, VersionFragment},
-    loader::Loader,
-    modrinth::ModrinthVersionType,
-};
+use crate::{curseforge::CurseforgeReleaseType, fabric_loader_manifest::FabricLoaderManifest, forge::{ForgeMavenManifest, NeoforgeMavenManifest, VersionFragment}, loader::Loader, modrinth::ModrinthVersionType};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InstanceConfiguration {
@@ -21,53 +15,21 @@ pub struct InstanceConfiguration {
     pub preferred_loader_version: Option<Ustr>,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub update_channel: UpdateChannel,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "crate::skip_if_none"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "crate::skip_if_none")]
     pub preferred_account: Option<Uuid>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "is_default_memory_configuration"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_memory_configuration")]
     pub memory: Option<InstanceMemoryConfiguration>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "is_default_wrapper_command_configuration"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_wrapper_command_configuration")]
     pub wrapper_command: Option<InstanceWrapperCommandConfiguration>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "is_default_jvm_flags_configuration"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_jvm_flags_configuration")]
     pub jvm_flags: Option<InstanceJvmFlagsConfiguration>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "is_default_jvm_binary_configuration"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_jvm_binary_configuration")]
     pub jvm_binary: Option<InstanceJvmBinaryConfiguration>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "is_default_linux_wrapper_configuration"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_linux_wrapper_configuration")]
     pub linux_wrapper: Option<InstanceLinuxWrapperConfiguration>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "is_default_system_libraries_configuration"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_system_libraries_configuration")]
     pub system_libraries: Option<InstanceSystemLibrariesConfiguration>,
-    #[serde(
-        default,
-        deserialize_with = "crate::try_deserialize",
-        skip_serializing_if = "crate::skip_if_none"
-    )]
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "crate::skip_if_none")]
     pub instance_fallback_icon: Option<Ustr>,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub disable_file_syncing: bool,
@@ -94,7 +56,7 @@ impl InstanceConfiguration {
             instance_fallback_icon: None,
             disable_file_syncing: false,
             show_shader_tab: false,
-            sandbox: false, // todo: for now, off by default. In the future, turn this on by default
+            sandbox: false,  // todo: for now, off by default. In the future, turn this on by default
         }
     }
 }
@@ -189,39 +151,17 @@ pub enum UpdateChannel {
 impl UpdateChannel {
     pub fn modrinth_version_types_with_fallback(self) -> &'static [&'static [ModrinthVersionType]] {
         match self {
-            Self::Release => &[
-                &[ModrinthVersionType::Release],
-                &[ModrinthVersionType::Beta],
-                &[ModrinthVersionType::Alpha],
-            ],
-            Self::Beta => &[
-                &[ModrinthVersionType::Release, ModrinthVersionType::Beta],
-                &[ModrinthVersionType::Alpha],
-            ],
-            Self::Alpha => &[&[
-                ModrinthVersionType::Release,
-                ModrinthVersionType::Beta,
-                ModrinthVersionType::Alpha,
-            ]],
+            Self::Release => &[&[ModrinthVersionType::Release], &[ModrinthVersionType::Beta], &[ModrinthVersionType::Alpha]],
+            Self::Beta => &[&[ModrinthVersionType::Release, ModrinthVersionType::Beta], &[ModrinthVersionType::Alpha]],
+            Self::Alpha => &[&[ModrinthVersionType::Release, ModrinthVersionType::Beta, ModrinthVersionType::Alpha]],
         }
     }
 
     pub fn curseforge_release_types_with_fallback(self) -> &'static [&'static [CurseforgeReleaseType]] {
         match self {
-            Self::Release => &[
-                &[CurseforgeReleaseType::Release],
-                &[CurseforgeReleaseType::Beta],
-                &[CurseforgeReleaseType::Alpha],
-            ],
-            Self::Beta => &[
-                &[CurseforgeReleaseType::Release, CurseforgeReleaseType::Beta],
-                &[CurseforgeReleaseType::Alpha],
-            ],
-            Self::Alpha => &[&[
-                CurseforgeReleaseType::Release,
-                CurseforgeReleaseType::Beta,
-                CurseforgeReleaseType::Alpha,
-            ]],
+            Self::Release => &[&[CurseforgeReleaseType::Release], &[CurseforgeReleaseType::Beta], &[CurseforgeReleaseType::Alpha]],
+            Self::Beta => &[&[CurseforgeReleaseType::Release, CurseforgeReleaseType::Beta], &[CurseforgeReleaseType::Alpha]],
+            Self::Alpha => &[&[CurseforgeReleaseType::Release, CurseforgeReleaseType::Beta, CurseforgeReleaseType::Alpha]],
         }
     }
 }
@@ -243,7 +183,7 @@ impl Default for InstanceMemoryConfiguration {
         Self {
             enabled: false,
             min: Self::DEFAULT_MIN,
-            max: Self::DEFAULT_MAX,
+            max: Self::DEFAULT_MAX
         }
     }
 }
@@ -318,21 +258,19 @@ impl Default for InstanceLinuxWrapperConfiguration {
             use_mangohud: false,
             use_gamemode: false,
             use_discrete_gpu: true,
-            disable_gl_threaded_optimizations: false,
+            disable_gl_threaded_optimizations: false
         }
     }
 }
 
 fn is_default_linux_wrapper_configuration(config: &Option<InstanceLinuxWrapperConfiguration>) -> bool {
     if let Some(config) = config {
-        !config.use_mangohud
-            && !config.use_gamemode
-            && config.use_discrete_gpu
-            && !config.disable_gl_threaded_optimizations
+        !config.use_mangohud && !config.use_gamemode && config.use_discrete_gpu && !config.disable_gl_threaded_optimizations
     } else {
         true
     }
 }
+
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct InstanceSystemLibrariesConfiguration {
@@ -369,7 +307,9 @@ impl LwjglLibraryPath {
                     auto.clone()
                 }
             },
-            LwjglLibraryPath::Explicit(path) => Some(path),
+            LwjglLibraryPath::Explicit(path) => {
+                Some(path)
+            },
         }
     }
 }
@@ -393,7 +333,7 @@ fn get_shared_library_path_for_name(name: &str) -> Option<Arc<Path>> {
         "/usr/lib64/",
         "/usr/local/lib/",
         #[cfg(target_os = "macos")]
-        "/opt/homebrew/lib/",
+        "/opt/homebrew/lib/"
     ];
 
     for search_path in search_paths {

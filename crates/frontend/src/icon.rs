@@ -1,5 +1,5 @@
-use gpui::*;
 use gpui_component::{Icon, IconNamed};
+use gpui::*;
 
 gpui_component::icon_named!(PandoraIcon, "../../assets/icons");
 
@@ -11,6 +11,10 @@ impl RenderOnce for PandoraIcon {
 
 impl PandoraIcon {
     pub fn pause_play(pause: bool) -> Self {
-        if pause { Self::Pause } else { Self::Play }
+        if pause {
+            Self::Pause
+        } else {
+            Self::Play
+        }
     }
 }

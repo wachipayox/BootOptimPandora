@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use ustr::Ustr;
 
+
 #[derive(Debug, Deserialize)]
 #[serde(rename = "metadata")]
 pub struct MavenMetadataXml {
@@ -12,6 +13,7 @@ pub struct MavenMetadataXml {
     // pub artifact_id: Arc<str>,
     pub versioning: MavenMetadataVersioning,
 }
+
 
 #[derive(Debug, Deserialize)]
 #[serde(rename = "versioning")]
@@ -49,13 +51,7 @@ impl<'a> MavenCoordinate<'a> {
         let version = split.next().unwrap();
         let specifier = split.next();
 
-        Self {
-            group_id,
-            artifact_id,
-            version,
-            specifier,
-            extension,
-        }
+        Self { group_id, artifact_id, version, specifier, extension }
     }
 
     pub fn version_id(&self) -> Vec<isize> {

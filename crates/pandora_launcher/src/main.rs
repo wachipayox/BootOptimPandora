@@ -2,10 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::ffi::OsString;
-use std::fmt::Write;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::fmt::Write;
 use std::time::SystemTime;
 
 use bridge::handle::{BackendHandle, FrontendHandle};
@@ -189,22 +189,8 @@ fn main() {
 
         run_cli(cli, &frontend_handle, &backend_handle);
 
-        backend::start(
-            runtime,
-            launcher_dir.clone(),
-            frontend_handle,
-            backend_handle.clone(),
-            backend_recv,
-            quit_handler.fork(),
-        );
-        frontend::start(
-            launcher_dir.clone(),
-            panic_message,
-            deadlock_message,
-            backend_handle,
-            frontend_recv,
-            quit_handler,
-        );
+        backend::start(runtime, launcher_dir.clone(), frontend_handle, backend_handle.clone(), backend_recv, quit_handler.fork());
+        frontend::start(launcher_dir.clone(), panic_message, deadlock_message, backend_handle, frontend_recv, quit_handler);
         log::info!("Quitting...");
     } else {
         eprintln!("Connecting to existing local socket: {socket:?}");
@@ -278,7 +264,7 @@ struct PlatformClientStream {
 impl PlatformListener {
     fn bind(local_path: &Path) -> std::io::Result<Self> {
         Ok(Self {
-            listener: tokio::net::UnixListener::bind(local_path)?,
+            listener: tokio::net::UnixListener::bind(local_path)?
         })
     }
 
@@ -300,30 +286,29 @@ impl PlatformListener {
             .first_pipe_instance(true)
             .create(&pipe_name)?;
 
-        Ok(Self { pipe_name, pipe })
+        Ok(Self { pipe_name, pipe, })
     }
 
     async fn accept(&mut self) -> std::io::Result<PlatformServerStream> {
         self.pipe.connect().await?;
-        let old_pipe = std::mem::replace(
-            &mut self.pipe,
-            tokio::net::windows::named_pipe::ServerOptions::new()
-                .access_outbound(false)
-                .create(&self.pipe_name)?,
-        );
-        Ok(PlatformServerStream { server: old_pipe })
+        let old_pipe = std::mem::replace(&mut self.pipe, tokio::net::windows::named_pipe::ServerOptions::new()
+            .access_outbound(false)
+            .create(&self.pipe_name)?);
+        Ok(PlatformServerStream {
+            server: old_pipe
+        })
     }
 }
 
 impl PlatformServerStream {
     #[cfg(unix)]
     fn project(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut tokio::net::UnixStream> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.stream) }
+        unsafe { self.map_unchecked_mut(|s| { &mut s.stream }) }
     }
 
     #[cfg(windows)]
     fn project(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut tokio::net::windows::named_pipe::NamedPipeServer> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.server) }
+        unsafe { self.map_unchecked_mut(|s| { &mut s.server }) }
     }
 }
 
@@ -340,13 +325,11 @@ impl tokio::io::AsyncRead for PlatformServerStream {
 #[cfg(unix)]
 impl PlatformClientStream {
     async fn connect(local_path: &Path) -> std::io::Result<Self> {
-        Ok(Self {
-            stream: tokio::net::UnixStream::connect(local_path).await?,
-        })
+        Ok(Self { stream: tokio::net::UnixStream::connect(local_path).await? })
     }
 
     fn project(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut tokio::net::UnixStream> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.stream) }
+        unsafe { self.map_unchecked_mut(|s| { &mut s.stream }) }
     }
 }
 
@@ -369,7 +352,7 @@ impl PlatformClientStream {
     }
 
     fn project(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut tokio::net::windows::named_pipe::NamedPipeClient> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.client) }
+        unsafe { self.map_unchecked_mut(|s| { &mut s.client }) }
     }
 }
 
@@ -382,17 +365,11 @@ impl tokio::io::AsyncWrite for PlatformClientStream {
         tokio::io::AsyncWrite::poll_write(self.project(), cx, buf)
     }
 
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
         tokio::io::AsyncWrite::poll_flush(self.project(), cx)
     }
 
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
+    fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
         tokio::io::AsyncWrite::poll_shutdown(self.project(), cx)
     }
 }
@@ -445,10 +422,7 @@ fn show_error_eprintln(error: String) {
         .show();
 }
 
-fn start_deadlock_detection(
-    deadlock_message: &Arc<parking_lot::lock_api::RwLock<parking_lot::RawRwLock, Option<String>>>,
-    frontend_handle: &bridge::handle::FrontendHandle,
-) {
+fn start_deadlock_detection(deadlock_message: &Arc<parking_lot::lock_api::RwLock<parking_lot::RawRwLock, Option<String>>>, frontend_handle: &bridge::handle::FrontendHandle) {
     std::thread::spawn({
         let deadlock_message = deadlock_message.clone();
         let frontend_handle = frontend_handle.clone();
@@ -508,7 +482,10 @@ fn init_logging(level: log::LevelFilter, log_file: &Path) -> Result<(), fern::In
         .format(move |out, message, record| {
             out.finish(format_args!(
                 "{color_line}[{time} {level} {target}{color_line}] {message}\x1B[0m",
-                color_line = format_args!("\x1B[{}m", colors_line.get_color(&record.level()).to_fg_str()),
+                color_line = format_args!(
+                    "\x1B[{}m",
+                    colors_line.get_color(&record.level()).to_fg_str()
+                ),
                 time = humantime::format_rfc3339_seconds(SystemTime::now()),
                 level = record.level(),
                 target = record.target(),
@@ -517,7 +494,10 @@ fn init_logging(level: log::LevelFilter, log_file: &Path) -> Result<(), fern::In
         })
         .chain(std::io::stdout());
 
-    base_config.chain(file_config).chain(stdout_config).apply()?;
+    base_config
+        .chain(file_config)
+        .chain(stdout_config)
+        .apply()?;
 
     Ok(())
 }

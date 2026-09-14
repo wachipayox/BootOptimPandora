@@ -79,15 +79,14 @@ struct PrettyBacktrace(backtrace::Backtrace);
 impl std::fmt::Debug for PrettyBacktrace {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cwd = std::env::current_dir();
-        let mut print_path = move |fmt: &mut std::fmt::Formatter<'_>, path: backtrace::BytesOrWideString<'_>| {
-            let path = path.into_path_buf();
-            if let Ok(cwd) = &cwd
-                && let Ok(suffix) = path.strip_prefix(cwd)
-            {
-                return std::fmt::Display::fmt(&suffix.display(), fmt);
-            }
-            std::fmt::Display::fmt(&path.display(), fmt)
-        };
+        let mut print_path =
+            move |fmt: &mut std::fmt::Formatter<'_>, path: backtrace::BytesOrWideString<'_>| {
+                let path = path.into_path_buf();
+                if let Ok(cwd) = &cwd && let Ok(suffix) = path.strip_prefix(cwd) {
+                    return std::fmt::Display::fmt(&suffix.display(), fmt);
+                }
+                std::fmt::Display::fmt(&path.display(), fmt)
+            };
 
         let mut f = backtrace::BacktraceFmt::new(fmt, backtrace::PrintFmt::Short, &mut print_path);
         f.add_context()?;

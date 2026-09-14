@@ -6,7 +6,7 @@ use std::{
 
 use atomic_time::AtomicInstant;
 use gpui::{App, RenderImage};
-use image::{Frame, imageops::FilterType};
+use image::{imageops::FilterType, Frame};
 use intrusive_collections::{LinkedList, LinkedListLink, intrusive_adapter};
 use rustc_hash::FxHashMap;
 use schema::unique_bytes::UniqueBytes;
@@ -27,7 +27,7 @@ pub enum ImageTransformation {
         width: u32,
         height: u32,
         scale: u32,
-    },
+    }
 }
 
 struct CacheEntry {
@@ -86,8 +86,7 @@ pub fn render_with_transform(image: UniqueBytes, transform: ImageTransformation,
                 }
                 cache.submitted_cleanup = false;
             });
-        })
-        .detach();
+        }).detach();
     }
 
     result
@@ -99,9 +98,7 @@ impl PngRenderCache {
 
         if let Some(result) = self.map.get(&key) {
             // Update expiry
-            result
-                .expiring
-                .store(Instant::now() + Duration::from_secs(EXPIRY_SECONDS), Ordering::Relaxed);
+            result.expiring.store(Instant::now() + Duration::from_secs(EXPIRY_SECONDS), Ordering::Relaxed);
             unsafe {
                 self.expiring.cursor_mut_from_ptr(Rc::as_ptr(result)).remove();
             }
@@ -139,16 +136,10 @@ impl PngRenderCache {
                         image = image.resize_exact(width, height, filter);
                     }
                 },
-                ImageTransformation::CropAndScale {
-                    min_x,
-                    min_y,
-                    width,
-                    height,
-                    scale,
-                } => {
+                ImageTransformation::CropAndScale { min_x, min_y, width, height, scale } => {
                     let cropped = image.crop_imm(min_x, min_y, width, height);
-                    image = cropped.resize_exact(width * scale, height * scale, FilterType::Nearest);
-                },
+                    image = cropped.resize_exact(width*scale, height*scale, FilterType::Nearest);
+                }
             }
 
             let mut data = image.into_rgba8();

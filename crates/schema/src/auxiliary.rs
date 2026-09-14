@@ -1,23 +1,12 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::{BTreeMap, BTreeSet}, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AuxiliaryContentMeta {
-    #[serde(
-        default,
-        skip_serializing_if = "crate::skip_if_default",
-        deserialize_with = "crate::try_deserialize"
-    )]
+    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
     pub applied_overrides: AuxAppliedOverrides,
-    #[serde(
-        default,
-        skip_serializing_if = "crate::skip_if_default",
-        deserialize_with = "crate::try_deserialize"
-    )]
+    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
     pub disabled_children: AuxDisabledChildren,
 }
 
@@ -41,26 +30,18 @@ pub struct AuxDisabledChildren {
 impl AuxDisabledChildren {
     pub fn is_enabled(&self, disabled_default: bool, id: Option<&str>, name: Option<&str>, filename: &str) -> bool {
         if disabled_default {
-            if let Some(id) = id
-                && self.enabled_ids.contains(id)
-            {
+            if let Some(id) = id && self.enabled_ids.contains(id) {
                 return true;
             }
-            if let Some(name) = name
-                && self.enabled_names.contains(name)
-            {
+            if let Some(name) = name && self.enabled_names.contains(name) {
                 return true;
             }
             self.enabled_filenames.contains(filename)
         } else {
-            if let Some(id) = id
-                && self.disabled_ids.contains(id)
-            {
+            if let Some(id) = id && self.disabled_ids.contains(id) {
                 return false;
             }
-            if let Some(name) = name
-                && self.disabled_names.contains(name)
-            {
+            if let Some(name) = name && self.disabled_names.contains(name) {
                 return false;
             }
             !self.disabled_filenames.contains(filename)

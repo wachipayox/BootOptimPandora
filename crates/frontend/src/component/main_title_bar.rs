@@ -1,15 +1,9 @@
 use bridge::handle::BackendHandle;
 use gpui::*;
-use gpui_component::{
-    Sizable,
-    button::{Button, ButtonVariants},
-};
+use gpui_component::{Sizable, button::{Button, ButtonVariants}};
 use schema::pandora_update::UpdatePrompt;
 
-use crate::{
-    component::{generic_title_bar::TitleBar, page_path::PagePath},
-    icon::PandoraIcon,
-};
+use crate::{component::{generic_title_bar::TitleBar, page_path::PagePath}, icon::PandoraIcon};
 
 #[derive(IntoElement)]
 pub struct MainTitleBar {
@@ -24,7 +18,7 @@ impl RenderOnce for MainTitleBar {
         TitleBar {
             left_content: vec![
                 div().overflow_hidden().pr_8().child(self.page_path).into_any_element(),
-                self.controls,
+                self.controls
             ],
             right_content: if let Some(update) = self.update {
                 vec![
@@ -38,15 +32,10 @@ impl RenderOnce for MainTitleBar {
                         .on_click({
                             let send = self.send.clone();
                             move |_, window, cx| {
-                                crate::modals::update_prompt::open_update_prompt(
-                                    update.clone(),
-                                    send.clone(),
-                                    window,
-                                    cx,
-                                );
+                                crate::modals::update_prompt::open_update_prompt(update.clone(), send.clone(), window, cx);
                             }
                         })
-                        .into_any_element(),
+                        .into_any_element()
                 ]
             } else {
                 vec![]

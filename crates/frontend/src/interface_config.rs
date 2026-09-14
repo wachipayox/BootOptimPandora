@@ -6,9 +6,7 @@ use rand::RngCore;
 use schema::{curseforge::CurseforgeClassId, modrinth::ModrinthProjectType};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    component::named_dropdown::DropdownName, pages::instance::instance_page::InstanceSubpageType, ui::PageType,
-};
+use crate::{component::named_dropdown::DropdownName, pages::instance::instance_page::InstanceSubpageType, ui::PageType};
 
 struct InterfaceConfigHolder {
     config: InterfaceConfig,
@@ -72,15 +70,9 @@ pub struct InterfaceConfig {
     pub content_install_latest: bool,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub content_filter_version: bool,
-    #[serde(
-        default = "default_modrinth_project_type",
-        deserialize_with = "schema::try_deserialize"
-    )]
+    #[serde(default = "default_modrinth_project_type", deserialize_with = "schema::try_deserialize")]
     pub modrinth_page_project_type: ModrinthProjectType,
-    #[serde(
-        default = "default_curseforge_class_id",
-        deserialize_with = "schema::try_deserialize"
-    )]
+    #[serde(default = "default_curseforge_class_id", deserialize_with = "schema::try_deserialize")]
     pub curseforge_page_class_id: CurseforgeClassId,
 
     // Window options
@@ -200,9 +192,7 @@ impl InstanceContentSortKey {
             InstanceContentSortKey::Name => DropdownName::translated(t::instance::content::sort_key::name),
             InstanceContentSortKey::ModId => DropdownName::translated(t::instance::content::sort_key::mod_id),
             InstanceContentSortKey::Filename => DropdownName::translated(t::instance::content::sort_key::filename),
-            InstanceContentSortKey::ModifiedTime => {
-                DropdownName::translated(t::instance::content::sort_key::modified_time)
-            },
+            InstanceContentSortKey::ModifiedTime => DropdownName::translated(t::instance::content::sort_key::modified_time),
             InstanceContentSortKey::FileSize => DropdownName::translated(t::instance::content::sort_key::filesize),
         }
     }
@@ -210,33 +200,13 @@ impl InstanceContentSortKey {
     pub fn compare(self, a: &InstanceContentSummary, b: &InstanceContentSummary) -> Ordering {
         match self {
             InstanceContentSortKey::Name => {
-                let name_a = a
-                    .content_summary
-                    .name
-                    .as_deref()
-                    .or(a.content_summary.id.as_deref())
-                    .unwrap_or(&*a.filename);
-                let name_b = b
-                    .content_summary
-                    .name
-                    .as_deref()
-                    .or(b.content_summary.id.as_deref())
-                    .unwrap_or(&*b.filename);
+                let name_a = a.content_summary.name.as_deref().or(a.content_summary.id.as_deref()).unwrap_or(&*a.filename);
+                let name_b = b.content_summary.name.as_deref().or(b.content_summary.id.as_deref()).unwrap_or(&*b.filename);
                 lexical_sort::natural_lexical_cmp(name_a, name_b)
             },
             InstanceContentSortKey::ModId => {
-                let name_a = a
-                    .content_summary
-                    .id
-                    .as_deref()
-                    .or(a.content_summary.name.as_deref())
-                    .unwrap_or(&*a.filename);
-                let name_b = b
-                    .content_summary
-                    .id
-                    .as_deref()
-                    .or(b.content_summary.name.as_deref())
-                    .unwrap_or(&*b.filename);
+                let name_a = a.content_summary.id.as_deref().or(a.content_summary.name.as_deref()).unwrap_or(&*a.filename);
+                let name_b = b.content_summary.id.as_deref().or(b.content_summary.name.as_deref()).unwrap_or(&*b.filename);
                 lexical_sort::natural_lexical_cmp(name_a, name_b)
             },
             InstanceContentSortKey::Filename => {
@@ -244,13 +214,12 @@ impl InstanceContentSortKey {
                 let name_b = &*b.filename;
                 lexical_sort::natural_lexical_cmp(name_a, name_b)
             },
-            InstanceContentSortKey::ModifiedTime => a.modified_unix_ms.cmp(&b.modified_unix_ms).reverse(),
-            InstanceContentSortKey::FileSize => a
-                .content_summary
-                .filesize
-                .unwrap_or(0)
-                .cmp(&b.content_summary.filesize.unwrap_or(0))
-                .reverse(),
+            InstanceContentSortKey::ModifiedTime => {
+                a.modified_unix_ms.cmp(&b.modified_unix_ms).reverse()
+            },
+            InstanceContentSortKey::FileSize => {
+                a.content_summary.filesize.unwrap_or(0).cmp(&b.content_summary.filesize.unwrap_or(0)).reverse()
+            },
         }
     }
 }
@@ -405,7 +374,7 @@ impl InterfaceConfigHolder {
     }
 }
 
-pub(crate) fn try_read_json<T: std::fmt::Debug + Default + for<'de> Deserialize<'de>>(path: &Path) -> T {
+pub(crate) fn try_read_json<T: std::fmt::Debug + Default + for <'de> Deserialize<'de>>(path: &Path) -> T {
     let Ok(data) = std::fs::read(path) else {
         return T::default();
     };

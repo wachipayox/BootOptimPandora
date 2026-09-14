@@ -1,14 +1,12 @@
 use std::{path::Path, sync::Arc};
 
-use bridge::{
-    handle::BackendHandle,
-    message::{MessageToBackend, SkinLibrary},
-    serial::AtomicOptionSerial,
-};
+use bridge::{handle::BackendHandle, message::{MessageToBackend, SkinLibrary}, serial::AtomicOptionSerial};
 use gpui::{App, Entity, Global};
 use parking_lot::RwLock;
 
-use crate::entity::{account::AccountEntries, instance::InstanceEntries, metadata::FrontendMetadata};
+use crate::entity::{
+    account::AccountEntries, instance::InstanceEntries, metadata::FrontendMetadata
+};
 
 pub mod account;
 pub mod instance;
@@ -47,8 +45,7 @@ impl DataEntities {
             true
         };
         if load {
-            self.backend_handle
-                .send_with_serial(MessageToBackend::RequestSkinLibrary, &wrapper.serial);
+            self.backend_handle.send_with_serial(MessageToBackend::RequestSkinLibrary, &wrapper.serial);
         }
 
         wrapper.skin_library.as_ref()

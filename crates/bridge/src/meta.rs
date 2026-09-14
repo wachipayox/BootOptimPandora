@@ -1,18 +1,6 @@
 use std::sync::Arc;
 
-use schema::{
-    curseforge::{
-        CurseforgeChangelogRequest, CurseforgeChangelogResult, CurseforgeGetModFilesRequest,
-        CurseforgeGetModFilesResult, CurseforgeSearchRequest, CurseforgeSearchResult,
-    },
-    fabric_loader_manifest::FabricLoaderManifest,
-    forge::{ForgeMavenManifest, NeoforgeMavenManifest},
-    modrinth::{
-        ModrinthChangelogRequest, ModrinthChangelogResult, ModrinthProjectRequest, ModrinthProjectResult,
-        ModrinthProjectVersionsRequest, ModrinthProjectVersionsResult, ModrinthSearchRequest, ModrinthSearchResult,
-    },
-    version_manifest::MinecraftVersionManifest,
-};
+use schema::{curseforge::{CurseforgeChangelogRequest, CurseforgeChangelogResult, CurseforgeGetModFilesRequest, CurseforgeGetModFilesResult, CurseforgeSearchRequest, CurseforgeSearchResult}, fabric_loader_manifest::FabricLoaderManifest, forge::{ForgeMavenManifest, NeoforgeMavenManifest}, modrinth::{ModrinthChangelogRequest, ModrinthChangelogResult, ModrinthProjectRequest, ModrinthProjectResult, ModrinthProjectVersionsRequest, ModrinthProjectVersionsResult, ModrinthSearchRequest, ModrinthSearchResult}, version_manifest::MinecraftVersionManifest};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MetadataRequest {

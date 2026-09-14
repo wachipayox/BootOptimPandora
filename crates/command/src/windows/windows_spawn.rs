@@ -1,56 +1,29 @@
-use std::{
-    ffi::c_void,
-    io::{Error, ErrorKind},
-    os::windows::{
-        ffi::OsStrExt,
-        io::{AsRawHandle, OwnedHandle},
-    },
-};
+use std::{ffi::c_void, io::{Error, ErrorKind}, os::windows::{ffi::OsStrExt, io::{AsRawHandle, OwnedHandle}}};
 
-use windows::{
-    Win32::{
-        Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation},
-        System::{
-            Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE},
-            JobObjects::AssignProcessToJobObject,
-            Threading::{
-                CREATE_UNICODE_ENVIRONMENT, CreateProcessW, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST,
-                PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTF_FORCEONFEEDBACK, STARTF_USESTDHANDLES,
-                STARTUPINFOEXW, STARTUPINFOW,
-            },
-        },
-    },
-    core::Free,
-};
+use windows::{Win32::{Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation}, System::{Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE}, JobObjects::AssignProcessToJobObject, Threading::{CREATE_UNICODE_ENVIRONMENT, CreateProcessW, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTF_FORCEONFEEDBACK, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW}}}, core::Free};
 
-use crate::{
-    PandoraChild, PandoraCommand, PandoraStdioReadMode, PandoraStdioWriteMode, process::PandoraProcess,
-    spawner::SpawnContext, windows::windows_helpers,
-};
+use crate::{PandoraChild, PandoraCommand, PandoraStdioReadMode, PandoraStdioWriteMode, process::PandoraProcess, spawner::SpawnContext, windows::windows_helpers};
 
 pub fn spawn(command: PandoraCommand, context: &mut SpawnContext) -> std::io::Result<PandoraChild> {
     spawn_with_attributes(command, context, None)
 }
 
-pub(crate) fn spawn_with_attributes(
-    mut command: PandoraCommand,
-    context: &mut SpawnContext,
-    attributes: Option<LPPROC_THREAD_ATTRIBUTE_LIST>,
-) -> std::io::Result<PandoraChild> {
+pub(crate) fn spawn_with_attributes(mut command: PandoraCommand, context: &mut SpawnContext, attributes: Option<LPPROC_THREAD_ATTRIBUTE_LIST>) -> std::io::Result<PandoraChild> {
     if context.job_handle.is_none() {
         context.job_handle = Some(windows_helpers::to_owned_handle(windows_helpers::create_job_object()?)?);
     }
 
     let env_map = command.take_final_env();
     let application_path = command.resolve_executable_path()?;
-    let application_name = application_path.as_os_str().encode_wide().chain([0]).collect::<Vec<_>>();
-    let mut command_line = windows_helpers::join_windows_shell_arg(command.args.as_slice())
-        .encode_wide()
+    let application_name = application_path.as_os_str().encode_wide()
         .chain([0])
         .collect::<Vec<_>>();
-    let current_directory = command
-        .current_dir
-        .map(|dir| dir.as_os_str().encode_wide().chain([0]).collect::<Vec<_>>());
+    let mut command_line = windows_helpers::join_windows_shell_arg(command.args.as_slice()).encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let current_directory = command.current_dir.map(|dir| dir.as_os_str().encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>());
 
     let mut env = Vec::new();
     if env_map.is_empty() {
@@ -100,7 +73,7 @@ pub(crate) fn spawn_with_attributes(
             unsafe { SetHandleInformation(HANDLE(owned.as_raw_handle()), HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT)? };
             stdin_read = Some(HANDLE(owned.as_raw_handle()));
             handles_to_close.push(owned);
-        },
+        }
     }
     match command.stdout {
         PandoraStdioReadMode::Pipe => {
@@ -198,18 +171,13 @@ pub(crate) fn spawn_with_attributes(
             stdin_read.is_some() || stdout_write.is_some() || stderr_write.is_some(),
             process_creation_flags,
             Some(env.as_ptr() as *mut c_void),
-            current_directory
-                .as_ref()
-                .map(|dir| windows::core::PCWSTR(dir.as_ptr()))
-                .unwrap_or_default(),
+            current_directory.as_ref().map(|dir| windows::core::PCWSTR(dir.as_ptr())).unwrap_or_default(),
             sip,
-            &mut pi,
+            &mut pi
         )?
     }
 
-    unsafe {
-        pi.hThread.free();
-    };
+    unsafe { pi.hThread.free(); };
 
     if pi.hProcess.is_invalid() {
         return Err(Error::new(ErrorKind::Other, "CreateProcessW returned invalid process handle"));
@@ -218,7 +186,10 @@ pub(crate) fn spawn_with_attributes(
     drop(handles_to_close);
 
     unsafe {
-        let job_handle = context.job_handle.as_ref().map(|h| HANDLE(h.as_raw_handle())).unwrap();
+        let job_handle = context.job_handle
+            .as_ref()
+            .map(|h| HANDLE(h.as_raw_handle()))
+            .unwrap();
         _ = AssignProcessToJobObject(job_handle, pi.hProcess);
     }
 
@@ -226,6 +197,6 @@ pub(crate) fn spawn_with_attributes(
         process: PandoraProcess::new(pi.hProcess),
         stdin: stdin_write,
         stdout: stdout_read,
-        stderr: stderr_read,
+        stderr: stderr_read
     });
 }

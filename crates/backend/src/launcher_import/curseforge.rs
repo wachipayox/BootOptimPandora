@@ -1,14 +1,7 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::{Path, PathBuf}, sync::Arc};
 
 use bridge::{import::ImportFromOtherLauncherJob, modal_action::ModalAction};
-use schema::{
-    curseforge::CurseforgeModLoaderType,
-    instance::{InstanceConfiguration, InstanceMemoryConfiguration},
-    loader::Loader,
-};
+use schema::{curseforge::{CurseforgeModLoaderType}, instance::{InstanceConfiguration, InstanceMemoryConfiguration}, loader::Loader};
 use serde::Deserialize;
 use ustr::Ustr;
 
@@ -56,10 +49,7 @@ fn try_load_from_curseforge(config_path: &Path) -> Option<InstanceConfiguration>
         if loader == CurseforgeModLoaderType::Any {
             log::warn!("CurseForge import: unknown mod loader type id {}", base_mod_loader.r#type);
             (Loader::Vanilla, None)
-        } else if !base_mod_loader.latest
-            && !base_mod_loader.recommended
-            && let Some(loader_version) = base_mod_loader.loader_version
-        {
+        } else if !base_mod_loader.latest && !base_mod_loader.recommended && let Some(loader_version) = base_mod_loader.loader_version {
             let preferred_loader_version = if loader == CurseforgeModLoaderType::Forge {
                 format!("{}-{}", instance_cfg.game_version, loader_version).into()
             } else {
@@ -85,11 +75,7 @@ fn try_load_from_curseforge(config_path: &Path) -> Option<InstanceConfiguration>
     Some(configuration)
 }
 
-pub fn import_from_curseforge(
-    backend: &BackendState,
-    import_job: ImportFromOtherLauncherJob,
-    modal_action: ModalAction,
-) {
+pub fn import_from_curseforge(backend: &BackendState, import_job: ImportFromOtherLauncherJob, modal_action: ModalAction) {
     import_instances_from_curseforge(backend, &import_job, &modal_action);
     modal_action.set_finished();
 }
@@ -101,11 +87,7 @@ struct CurseforgeInstanceToImport {
     folder: Arc<Path>,
 }
 
-pub fn import_instances_from_curseforge(
-    backend: &BackendState,
-    import_job: &ImportFromOtherLauncherJob,
-    modal_action: &ModalAction,
-) {
+pub fn import_instances_from_curseforge(backend: &BackendState, import_job: &ImportFromOtherLauncherJob, modal_action: &ModalAction) {
     if import_job.paths.is_empty() {
         return;
     }
@@ -136,7 +118,7 @@ pub fn import_instances_from_curseforge(
         to_import.push(CurseforgeInstanceToImport {
             pandora_path,
             config_path: curseforge_config,
-            folder: folder.clone(),
+            folder: folder.clone()
         });
     }
 
@@ -148,10 +130,7 @@ pub fn import_instances_from_curseforge(
 
         let Some(configuration) = try_load_from_curseforge(&to_import.config_path) else {
             tracker.set_finished(bridge::modal_action::ProgressTrackerFinishType::Error);
-            log::error!(
-                "Failed to load config path from curseforge for {:?}",
-                to_import.folder.file_name().unwrap()
-            );
+            log::error!("Failed to load config path from curseforge for {:?}", to_import.folder.file_name().unwrap());
             continue;
         };
 
@@ -187,4 +166,5 @@ pub fn import_instances_from_curseforge(
     }
 
     all_tracker.set_finished(bridge::modal_action::ProgressTrackerFinishType::Normal);
+
 }

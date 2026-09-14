@@ -1,20 +1,11 @@
-use std::{
-    ffi::{CString, OsStr, OsString},
-    io::{Error, ErrorKind},
-    os::unix::ffi::{OsStrExt, OsStringExt},
-    path::Path,
-};
+use std::{ffi::{CString, OsStr, OsString}, io::{Error, ErrorKind}, os::unix::ffi::{OsStrExt, OsStringExt}, path::Path};
 
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashSet;
 
 use crate::{PandoraChild, PandoraCommand, PandoraSandbox, spawner::SpawnContext, unix::unix_helpers::RawStringVec};
 
-pub fn spawn(
-    mut command: PandoraCommand,
-    sandbox: PandoraSandbox,
-    context: &mut SpawnContext,
-) -> std::io::Result<PandoraChild> {
+pub fn spawn(mut command: PandoraCommand, sandbox: PandoraSandbox, context: &mut SpawnContext) -> std::io::Result<PandoraChild> {
     let mut profile = OsString::from(BASE_PROFILE);
 
     let resolved_executable = command.resolve_executable_path()?;
@@ -60,7 +51,7 @@ pub fn spawn(
     let mut sandbox_params = RawStringVec::with_capacity(1);
 
     let Some(home) = std::env::var_os("HOME") else {
-        return Err(Error::new(ErrorKind::Other, "HOME not set in environment"));
+        return Err(Error::new(ErrorKind::Other, "HOME not set in environment"))
     };
     sandbox_params.push_os("HOME".into())?;
     sandbox_params.push_os(home)?;
@@ -102,9 +93,7 @@ fn allow_write(profile: &mut OsString, path: &Path) {
         return;
     };
     if path.is_dir() {
-        profile.push(
-            "(allow file-write* file-link file-read* file-map-executable process-exec file-issue-extension (subpath \"",
-        );
+        profile.push("(allow file-write* file-link file-read* file-map-executable process-exec file-issue-extension (subpath \"");
     } else {
         profile.push("(allow file-write* file-read* file-map-executable process-exec file-issue-extension (literal \"");
     }
@@ -269,12 +258,18 @@ static NETWORK: &'static str = r#"
 "#;
 
 static ALLOWED_ENV_VARS: Lazy<FxHashSet<&'static OsStr>> = Lazy::new(|| {
-    ["TMPDIR", "PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "USERNAME"]
-        .iter()
-        .map(OsStr::new)
-        .collect()
+    [
+        "TMPDIR",
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "TERM",
+        "USER",
+        "USERNAME",
+    ].iter().map(OsStr::new).collect()
 });
 
 pub fn should_pass_env_var(var: &OsStr) -> bool {
-    return ALLOWED_ENV_VARS.contains(var);
+    return ALLOWED_ENV_VARS.contains(var)
 }

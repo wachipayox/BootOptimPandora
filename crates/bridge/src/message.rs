@@ -1,38 +1,20 @@
 use std::{
-    collections::BTreeMap,
-    ffi::OsString,
-    path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicU8},
+    collections::BTreeMap, ffi::OsString, path::{Path, PathBuf}, sync::{Arc, atomic::AtomicU8}
 };
 
 use schema::{
-    backend_config::{BackendConfig, ProxyConfig},
-    instance::{
+    backend_config::{BackendConfig, ProxyConfig}, instance::{
         InstanceConfiguration, InstanceJvmBinaryConfiguration, InstanceJvmFlagsConfiguration,
-        InstanceLinuxWrapperConfiguration, InstanceMemoryConfiguration, InstanceSystemLibrariesConfiguration,
-        InstanceWrapperCommandConfiguration, UpdateChannel,
-    },
-    loader::Loader,
-    minecraft_profile::{MinecraftProfileCape, SkinVariant},
-    pandora_update::UpdatePrompt,
-    unique_bytes::UniqueBytes,
+        InstanceLinuxWrapperConfiguration, InstanceMemoryConfiguration, InstanceSystemLibrariesConfiguration, InstanceWrapperCommandConfiguration, UpdateChannel,
+    }, loader::Loader, minecraft_profile::{MinecraftProfileCape, SkinVariant}, pandora_update::UpdatePrompt, unique_bytes::UniqueBytes
 };
 use ustr::Ustr;
 use uuid::Uuid;
 
 use crate::{
-    account::Account,
-    game_output::GameOutputLogLevel,
-    import::{ImportFromOtherLauncherJob, OtherLauncher},
-    install::ContentInstall,
-    instance::{
-        ContentFolder, InstanceContentID, InstanceContentSummary, InstanceID, InstancePlaytime, InstanceServerSummary,
-        InstanceStatus, InstanceWorldSummary,
-    },
-    manual_download::ManualCurseforgeDownloadRequest,
-    meta::{MetadataRequest, MetadataResult},
-    modal_action::ModalAction,
-    notify_signal::KeepAliveNotifySignalHandle,
+    account::Account, game_output::GameOutputLogLevel, import::{ImportFromOtherLauncherJob, OtherLauncher}, install::ContentInstall, instance::{
+        ContentFolder, InstanceContentID, InstanceContentSummary, InstanceID, InstancePlaytime, InstanceServerSummary, InstanceStatus, InstanceWorldSummary
+    }, manual_download::{ManualCurseforgeDownloadRequest}, meta::{MetadataRequest, MetadataResult}, modal_action::ModalAction, notify_signal::KeepAliveNotifySignalHandle,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,23 +87,23 @@ pub enum MessageToBackend {
     },
     SetInstanceMinecraftVersion {
         id: InstanceID,
-        version: Ustr,
+        version: Ustr
     },
     SetInstanceLoader {
         id: InstanceID,
-        loader: Loader,
+        loader: Loader
     },
     SetInstanceUpdateChannel {
         id: InstanceID,
         update_channel: UpdateChannel,
     },
     SetInstancePreferredAccount {
-        id: InstanceID,
-        account: Option<Uuid>,
+    	id: InstanceID,
+     	account: Option<Uuid>,
     },
     SetInstancePreferredLoaderVersion {
         id: InstanceID,
-        loader_version: Option<&'static str>,
+        loader_version: Option<&'static str>
     },
     SetInstanceDisableFileSyncing {
         id: InstanceID,
@@ -164,7 +146,7 @@ pub enum MessageToBackend {
     },
     StartInstanceByName {
         name: String,
-        quick_play: Option<QuickPlayLaunch>,
+        quick_play: Option<QuickPlayLaunch>
     },
     StartInstance {
         id: InstanceID,
@@ -221,7 +203,7 @@ pub enum MessageToBackend {
     DownloadAllMetadata,
     UpdateCheck {
         instance: InstanceID,
-        modal_action: ModalAction,
+        modal_action: ModalAction
     },
     UpdateContent {
         instance: InstanceID,
@@ -236,7 +218,7 @@ pub enum MessageToBackend {
     Sleep5s,
     ReadLog {
         path: Arc<Path>,
-        send: tokio::sync::mpsc::Sender<Arc<str>>,
+        send: tokio::sync::mpsc::Sender<Arc<str>>
     },
     GetLogFiles {
         instance: InstanceID,
@@ -270,7 +252,7 @@ pub enum MessageToBackend {
     },
     AddOfflineAccount {
         name: Arc<str>,
-        uuid: Uuid,
+        uuid: Uuid
     },
     SelectAccount {
         uuid: Uuid,
@@ -290,11 +272,11 @@ pub enum MessageToBackend {
     },
     CreateInstanceShortcut {
         id: InstanceID,
-        path: PathBuf,
+        path: PathBuf
     },
     RelocateInstance {
         id: InstanceID,
-        path: PathBuf,
+        path: PathBuf
     },
     InstallUpdate {
         update: UpdatePrompt,
@@ -307,7 +289,7 @@ pub enum MessageToBackend {
     },
     GetAccountSkin {
         account: Uuid,
-        result: tokio::sync::oneshot::Sender<AccountSkinResult>,
+        result: tokio::sync::oneshot::Sender<AccountSkinResult>
     },
     SetAccountSkin {
         account: Uuid,
@@ -323,7 +305,7 @@ pub enum MessageToBackend {
         cape: Option<Uuid>,
     },
     RequestSkinLibrary,
-    RemoveFromSkinLibrary {
+    RemoveFromSkinLibrary{
         skin: UniqueBytes,
     },
     AddToSkinLibrary {
@@ -521,12 +503,16 @@ pub enum AccountCapesResult {
 pub struct SkinLibrary {
     pub state: BridgeDataLoadState,
     pub skins: Arc<[UniqueBytes]>,
-    pub folder: Arc<Path>,
+    pub folder: Arc<Path>
 }
 
 pub enum UrlOrFile {
-    Url { url: Arc<str> },
-    File { path: PathBuf },
+    Url {
+        url: Arc<str>,
+    },
+    File {
+        path: PathBuf,
+    }
 }
 
 pub struct GameOutputMsg {

@@ -9,8 +9,7 @@ use std::{
 use bridge::{
     instance::InstanceID,
     message::{ExportFormat, ExportOptions},
-    modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType},
-    safe_path::SafePath,
+    modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath,
 };
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashSet;
@@ -30,16 +29,11 @@ use sha1::{Digest as Sha1Digest, Sha1};
 use sha2::Sha512;
 use ustr::Ustr;
 use walkdir::WalkDir;
-use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 use crate::{
-    BackendState,
-    metadata::{
-        items::{
-            CurseforgeFingerprintMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem,
-            ModrinthProjectsMetadataItem, ModrinthVersionsFromHashesMetadataItem, NeoforgeInstallerMavenMetadataItem,
-        },
-        manager::MetaLoadError,
+    BackendState, metadata::{
+        items::{CurseforgeFingerprintMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, ModrinthProjectsMetadataItem, ModrinthVersionsFromHashesMetadataItem, NeoforgeInstallerMavenMetadataItem}, manager::MetaLoadError,
     },
 };
 
@@ -86,23 +80,11 @@ struct ExportInstanceData {
 impl ExportInstanceData {
     async fn determine_loader_version(&self, backend: &BackendState) -> Option<Ustr> {
         match self.configuration.loader {
-            Loader::Fabric => backend
-                .meta
-                .fetch(FabricLoaderManifestMetadataItem)
-                .await
-                .ok()
+            Loader::Fabric => backend.meta.fetch(FabricLoaderManifestMetadataItem).await.ok()
                 .and_then(|manifest| self.configuration.determine_fabric_loader_version(&manifest)),
-            Loader::Forge => backend
-                .meta
-                .fetch(ForgeInstallerMavenMetadataItem)
-                .await
-                .ok()
+            Loader::Forge => backend.meta.fetch(ForgeInstallerMavenMetadataItem).await.ok()
                 .and_then(|manifest| self.configuration.determine_forge_loader_version(&manifest)),
-            Loader::NeoForge => backend
-                .meta
-                .fetch(NeoforgeInstallerMavenMetadataItem)
-                .await
-                .ok()
+            Loader::NeoForge => backend.meta.fetch(NeoforgeInstallerMavenMetadataItem).await.ok()
                 .and_then(|manifest| self.configuration.determine_neoforge_loader_version(&manifest)),
             Loader::Vanilla => None,
         }
@@ -233,15 +215,7 @@ async fn export_modrinth_pack(
     let write_tracker = modal_action.push_tracker("Writing zip".into());
     write_tracker.set_total(files.len());
 
-    write_zip(
-        output,
-        &files,
-        &extra_files,
-        &exclude,
-        Some(SafePath::new("overrides").unwrap()),
-        modal_action,
-        &write_tracker,
-    )?;
+    write_zip(output, &files, &extra_files, &exclude, Some(SafePath::new("overrides").unwrap()), modal_action, &write_tracker)?;
     write_tracker.set_finished(ProgressTrackerFinishType::Normal);
     Ok(())
 }
@@ -288,15 +262,7 @@ async fn export_curseforge_pack(
     let write_tracker = modal_action.push_tracker("Writing zip".into());
     write_tracker.set_total(files.len());
 
-    write_zip(
-        output,
-        &files,
-        &extra_files,
-        &exclude,
-        Some(SafePath::new("overrides").unwrap()),
-        modal_action,
-        &write_tracker,
-    )?;
+    write_zip(output, &files, &extra_files, &exclude, Some(SafePath::new("overrides").unwrap()), modal_action, &write_tracker)?;
     write_tracker.set_finished(ProgressTrackerFinishType::Normal);
     Ok(())
 }
@@ -330,7 +296,11 @@ fn collect_files(
             continue;
         }
 
-        let rel_to_dot_minecraft = entry.path().strip_prefix(dot_minecraft_path).ok().and_then(SafePath::from_std_path);
+        let rel_to_dot_minecraft = entry
+            .path()
+            .strip_prefix(dot_minecraft_path)
+            .ok()
+            .and_then(SafePath::from_std_path);
 
         if !options.include_synced {
             if let Ok(real_path) = entry.path().canonicalize() {
@@ -589,7 +559,12 @@ async fn resolve_modrinth_files(
             .await
             .map_err(|e| format!("Error resolving Modrinth projects: {}", e))?;
 
-        projects.0.iter().cloned().map(|p| (Arc::clone(&p.id), p)).collect()
+        projects
+            .0
+            .iter()
+            .cloned()
+            .map(|p| (Arc::clone(&p.id), p))
+            .collect()
     };
 
     let mut resolved = Vec::new();
@@ -601,7 +576,10 @@ async fn resolve_modrinth_files(
         };
 
         // Match the exact file for this sha512.
-        let Some(file_entry) = version.files.iter().find(|f| f.hashes.sha512.as_deref() == Some(info.sha512.as_ref()))
+        let Some(file_entry) = version
+            .files
+            .iter()
+            .find(|f| f.hashes.sha512.as_deref() == Some(info.sha512.as_ref()))
         else {
             continue;
         };
@@ -710,24 +688,16 @@ fn build_modrinth_index(
     dependencies.insert("minecraft".into(), config.minecraft_version.as_str().into());
     if let Some(loader_version) = loader_version {
         match config.loader {
-            Loader::Fabric => {
-                dependencies.insert("fabric-loader".into(), loader_version.as_str().into());
-            },
-            Loader::Forge => {
-                dependencies.insert("forge".into(), loader_version.as_str().into());
-            },
-            Loader::NeoForge => {
-                dependencies.insert("neoforge".into(), loader_version.as_str().into());
-            },
-            _ => {},
+            Loader::Fabric => { dependencies.insert("fabric-loader".into(), loader_version.as_str().into()); },
+            Loader::Forge => { dependencies.insert("forge".into(), loader_version.as_str().into()); },
+            Loader::NeoForge => { dependencies.insert("neoforge".into(), loader_version.as_str().into()); },
+            _ => {}
         }
     }
 
-    let summary = options
-        .modrinth
-        .summary
-        .as_ref()
-        .and_then(|s| if s.is_empty() { None } else { Some(Arc::<str>::clone(s)) });
+    let summary = options.modrinth.summary.as_ref().and_then(|s| {
+        if s.is_empty() { None } else { Some(Arc::<str>::clone(s)) }
+    });
 
     let files_out: Vec<ModrinthModpackFileDownload> = resolved
         .iter()
@@ -792,7 +762,7 @@ fn build_curseforge_manifest(
                 } else {
                     format!("neoforge-{}", loader_version)
                 }
-            },
+            }
             _ => String::new(),
         };
         if !loader_id.is_empty() {
@@ -900,11 +870,7 @@ fn temp_output_path(output: &Path) -> PathBuf {
     temp
 }
 
-fn compute_hashes(
-    path: &Path,
-    modal_action: &ModalAction,
-    buffer: &mut [u8],
-) -> Result<(String, String, u64), ExportError> {
+fn compute_hashes(path: &Path, modal_action: &ModalAction, buffer: &mut [u8]) -> Result<(String, String, u64), ExportError> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
     let mut sha1 = Sha1::new();
     let mut sha512 = Sha512::new();
@@ -957,17 +923,17 @@ fn murmur2_32(data: &[u8]) -> u32 {
             h ^= (data[i + 1] as u32) << 8;
             h ^= data[i] as u32;
             h = h.wrapping_mul(M);
-        },
+        }
         2 => {
             h ^= (data[i + 1] as u32) << 8;
             h ^= data[i] as u32;
             h = h.wrapping_mul(M);
-        },
+        }
         1 => {
             h ^= data[i] as u32;
             h = h.wrapping_mul(M);
-        },
-        _ => {},
+        }
+        _ => {}
     }
 
     h ^= h >> 13;

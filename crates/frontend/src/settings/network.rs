@@ -2,32 +2,23 @@ use std::rc::Rc;
 
 use bridge::message::MessageToBackend;
 use gpui::*;
-use gpui_component::{
-    ActiveTheme, FocusableExt,
-    input::{Input, InputEvent, InputState, NumberInput},
-    select::{Select, SelectEvent, SelectState},
-    switch::Switch,
-};
+use gpui_component::{ActiveTheme, FocusableExt, input::{Input, InputEvent, InputState, NumberInput}, select::{Select, SelectEvent, SelectState}, switch::Switch};
 use schema::backend_config::ProxyProtocol;
 
-use crate::{
-    component::named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem},
-    settings::{SettingGroup, SettingItem, SettingItemWidget, SettingPage},
-};
+use crate::{component::named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem}, settings::{SettingGroup, SettingItem, SettingItemWidget, SettingPage}};
 
 pub(super) fn create_page() -> SettingPage {
     SettingPage {
         title: t::settings::network,
-        groups: vec![SettingGroup {
-            title: Some(t::settings::network::launcher_proxy),
-            items: vec![
-                SettingItem {
-                    title: t::settings::network::launcher_proxy::enable_proxy,
-                    description: t::settings::network::launcher_proxy::enable_proxy_desc,
-                    widget: SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
-                        Switch::new("enable-proxy")
-                            .checked(backend.proxy.enabled)
-                            .on_click(cx.listener(|root, val, _, cx| {
+        groups: vec![
+            SettingGroup {
+                title: Some(t::settings::network::launcher_proxy),
+                items: vec![
+                    SettingItem {
+                        title: t::settings::network::launcher_proxy::enable_proxy,
+                        description: t::settings::network::launcher_proxy::enable_proxy_desc,
+                        widget: SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
+                            Switch::new("enable-proxy").checked(backend.proxy.enabled).on_click(cx.listener(|root, val, _, cx| {
                                 let Some(mut proxy_settings) = root.backend_config().map(|b| b.proxy.clone()) else {
                                     return;
                                 };
@@ -35,36 +26,33 @@ pub(super) fn create_page() -> SettingPage {
                                     proxy_settings.enabled = *val;
                                     root.set_proxy_settings(proxy_settings, cx);
                                 }
-                            }))
-                            .into_any_element()
-                    })),
-                    ..Default::default()
-                },
-                SettingItem {
-                    title: t::settings::network::launcher_proxy::protocol,
-                    description: t::settings::network::launcher_proxy::protocol_desc,
-                    widget: create_proxy_protocol_widget(),
-                    ..Default::default()
-                },
-                SettingItem {
-                    title: t::settings::network::launcher_proxy::host,
-                    description: t::settings::network::launcher_proxy::host_desc,
-                    widget: create_proxy_host_widget(),
-                    ..Default::default()
-                },
-                SettingItem {
-                    title: t::settings::network::launcher_proxy::port,
-                    description: t::settings::network::launcher_proxy::port_desc,
-                    widget: create_proxy_port_widget(),
-                    ..Default::default()
-                },
-                SettingItem {
-                    title: t::settings::network::launcher_proxy::use_auth,
-                    description: t::settings::network::launcher_proxy::use_auth_desc,
-                    widget: SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
-                        Switch::new("enable-proxy-auth")
-                            .checked(backend.proxy.auth_enabled)
-                            .on_click(cx.listener(|root, val, _, cx| {
+                            })).into_any_element()
+                        })),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: t::settings::network::launcher_proxy::protocol,
+                        description: t::settings::network::launcher_proxy::protocol_desc,
+                        widget: create_proxy_protocol_widget(),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: t::settings::network::launcher_proxy::host,
+                        description: t::settings::network::launcher_proxy::host_desc,
+                        widget: create_proxy_host_widget(),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: t::settings::network::launcher_proxy::port,
+                        description: t::settings::network::launcher_proxy::port_desc,
+                        widget: create_proxy_port_widget(),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: t::settings::network::launcher_proxy::use_auth,
+                        description: t::settings::network::launcher_proxy::use_auth_desc,
+                        widget: SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
+                            Switch::new("enable-proxy-auth").checked(backend.proxy.auth_enabled).on_click(cx.listener(|root, val, _, cx| {
                                 let Some(mut proxy_settings) = root.backend_config().map(|b| b.proxy.clone()) else {
                                     return;
                                 };
@@ -72,31 +60,30 @@ pub(super) fn create_page() -> SettingPage {
                                     proxy_settings.auth_enabled = *val;
                                     root.set_proxy_settings(proxy_settings, cx);
                                 }
-                            }))
-                            .into_any_element()
-                    })),
-                    ..Default::default()
-                },
-                SettingItem {
-                    title: t::settings::network::launcher_proxy::username,
-                    description: t::settings::network::launcher_proxy::username_desc,
-                    widget: create_proxy_username_widget(),
-                    ..Default::default()
-                },
-                SettingItem {
-                    title: t::settings::network::launcher_proxy::password,
-                    description: t::settings::network::launcher_proxy::password_desc,
-                    widget: create_proxy_password_widget(),
-                    ..Default::default()
-                },
-            ]
-            .into(),
-            searched_items: None,
-        }]
-        .into(),
-        searched_groups: None,
+                            })).into_any_element()
+                        })),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: t::settings::network::launcher_proxy::username,
+                        description: t::settings::network::launcher_proxy::username_desc,
+                        widget: create_proxy_username_widget(),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: t::settings::network::launcher_proxy::password,
+                        description: t::settings::network::launcher_proxy::password_desc,
+                        widget: create_proxy_password_widget(),
+                        ..Default::default()
+                    },
+                ].into(),
+                searched_items: None
+            },
+        ].into(),
+        searched_groups: None
     }
 }
+
 
 fn create_proxy_protocol_widget() -> SettingItemWidget {
     SettingItemWidget::Backend(Rc::new(|backend, window, cx| {
@@ -106,15 +93,15 @@ fn create_proxy_protocol_widget() -> SettingItemWidget {
             let items = vec![
                 NamedDropdownItem {
                     name: DropdownName::new("HTTP"),
-                    item: ProxyProtocol::Http,
+                    item: ProxyProtocol::Http
                 },
                 NamedDropdownItem {
                     name: DropdownName::new("HTTPS"),
-                    item: ProxyProtocol::Https,
+                    item: ProxyProtocol::Https
                 },
                 NamedDropdownItem {
                     name: DropdownName::new("SOCKS5"),
-                    item: ProxyProtocol::Socks5,
+                    item: ProxyProtocol::Socks5
                 },
             ];
             let mut state = SelectState::new(NamedDropdown::new(items), None, window, cx);
@@ -123,7 +110,9 @@ fn create_proxy_protocol_widget() -> SettingItemWidget {
         });
         if created {
             cx.subscribe(&state, |root, _, event: &SelectEvent<_>, cx| {
-                let SelectEvent::Confirm(Some(val)) = event else { return };
+                let SelectEvent::Confirm(Some(val)) = event else {
+                    return
+                };
                 let Some(mut proxy_settings) = root.backend_config().map(|b| b.proxy.clone()) else {
                     return;
                 };
@@ -131,10 +120,11 @@ fn create_proxy_protocol_widget() -> SettingItemWidget {
                     proxy_settings.protocol = *val;
                     root.set_proxy_settings(proxy_settings, cx);
                 }
-            })
-            .detach();
+            }).detach();
         } else if state.read(cx).selected_value() != Some(&backend.proxy.protocol) {
-            state.update(cx, |state, cx| state.set_selected_value(&backend.proxy.protocol, window, cx));
+            state.update(cx, |state, cx| {
+                state.set_selected_value(&backend.proxy.protocol, window, cx)
+            });
         }
         Select::new(&state).menu_width(px(200.0)).into_any_element()
     }))
@@ -164,13 +154,14 @@ fn create_proxy_host_widget() -> SettingItemWidget {
                     root.set_proxy_settings(proxy_settings, cx);
                 }
                 window.blur();
-            })
-            .detach();
+            }).detach();
         } else {
             let state_read = state.read(cx);
             if &*state_read.value() != &*backend.proxy.host {
                 if !state_read.focus_handle(cx).is_focused(window) {
-                    state.update(cx, |state, cx| state.set_value(&backend.proxy.host, window, cx));
+                    state.update(cx, |state, cx| {
+                        state.set_value(&backend.proxy.host, window, cx)
+                    });
                 } else {
                     dirty = true;
                 }
@@ -211,13 +202,14 @@ fn create_proxy_port_widget() -> SettingItemWidget {
                     root.set_proxy_settings(proxy_settings, cx);
                 }
                 window.blur();
-            })
-            .detach();
+            }).detach();
         } else {
             let state_read = state.read(cx);
             if state_read.value().parse::<u16>() != Ok(backend.proxy.port) {
                 if !state_read.focus_handle(cx).is_focused(window) {
-                    state.update(cx, |state, cx| state.set_value(format!("{}", backend.proxy.port), window, cx));
+                    state.update(cx, |state, cx| {
+                        state.set_value(format!("{}", backend.proxy.port), window, cx)
+                    });
                 } else {
                     dirty = true;
                 }
@@ -255,13 +247,14 @@ fn create_proxy_username_widget() -> SettingItemWidget {
                     root.set_proxy_settings(proxy_settings, cx);
                 }
                 window.blur();
-            })
-            .detach();
+            }).detach();
         } else {
             let state_read = state.read(cx);
             if &*state_read.value() != &*backend.proxy.username {
                 if !state_read.focus_handle(cx).is_focused(window) {
-                    state.update(cx, |state, cx| state.set_value(&backend.proxy.username, window, cx));
+                    state.update(cx, |state, cx| {
+                        state.set_value(&backend.proxy.username, window, cx)
+                    });
                 } else {
                     dirty = true;
                 }
@@ -298,8 +291,7 @@ fn create_proxy_password_widget() -> SettingItemWidget {
 
                 root.backend_handle.send(MessageToBackend::SetProxyPassword { password: value.into() });
                 window.blur();
-            })
-            .detach();
+            }).detach();
         } else {
             let state_read = state.read(cx);
             empty = state_read.value().is_empty();

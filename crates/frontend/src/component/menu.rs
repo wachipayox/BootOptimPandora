@@ -1,9 +1,6 @@
 use std::rc::Rc;
 
-use gpui::{
-    App, ClickEvent, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
-};
+use gpui::{App, ClickEvent, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder};
 use gpui_component::{ActiveTheme, StyledExt, v_flex};
 
 #[derive(IntoElement)]
@@ -83,8 +80,7 @@ impl RenderOnce for MenuGroupItem {
             });
 
         if self.active {
-            item = item
-                .font_medium()
+            item = item.font_medium()
                 .bg(cx.theme().sidebar_accent)
                 .text_color(cx.theme().sidebar_accent_foreground);
         } else {

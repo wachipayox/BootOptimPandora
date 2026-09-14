@@ -1,9 +1,4 @@
-use std::{
-    ffi::{OsStr, OsString},
-    io::{Error, ErrorKind},
-    os::fd::{AsRawFd, FromRawFd, RawFd},
-    path::{Path, PathBuf},
-};
+use std::{ffi::{OsStr, OsString}, io::{Error, ErrorKind}, os::fd::{AsRawFd, FromRawFd, RawFd}, path::{Path, PathBuf}};
 
 use libseccomp::{ScmpAction, ScmpArgCompare, ScmpCompareOp, ScmpFilterContext, ScmpSyscall};
 use once_cell::sync::Lazy;
@@ -31,7 +26,7 @@ const DEV_BINDS: &[&str] = &[
     // NT Sync Primitives (Wine)
     "/dev/ntsync",
     // Raw ALSA
-    "/dev/snd",
+    "/dev/snd"
 ];
 
 const SYSTEM_FILES_RO: &[&str] = &[
@@ -88,11 +83,8 @@ static ALLOWED_ENV_VARS: Lazy<FxHashSet<&'static OsStr>> = Lazy::new(|| {
         "DISPLAY",
         "XAUTHORITY",
         "WAYLAND_DISPLAY",
-        "PULSE_SERVER",
-    ]
-    .iter()
-    .map(OsStr::new)
-    .collect()
+        "PULSE_SERVER"
+    ].iter().map(OsStr::new).collect()
 });
 
 #[derive(Debug)]
@@ -174,7 +166,7 @@ impl BwrapBuilder {
 }
 
 pub fn should_pass_env_var(var: &OsStr) -> bool {
-    return var.as_encoded_bytes().starts_with(b"XDG_") || ALLOWED_ENV_VARS.contains(var);
+    return var.as_encoded_bytes().starts_with(b"XDG_") || ALLOWED_ENV_VARS.contains(var)
 }
 
 fn get_card_names() -> Vec<OsString> {
@@ -192,11 +184,7 @@ fn get_card_names() -> Vec<OsString> {
     card_names
 }
 
-pub fn spawn(
-    mut command: PandoraCommand,
-    sandbox: PandoraSandbox,
-    context: &mut SpawnContext,
-) -> std::io::Result<PandoraChild> {
+pub fn spawn(mut command: PandoraCommand, sandbox: PandoraSandbox, context: &mut SpawnContext) -> std::io::Result<PandoraChild> {
     let resolved_executable = if command.executable.0.as_encoded_bytes().contains(&b'/') {
         let path = Path::new(&command.executable.0);
         let Ok(path) = path.canonicalize() else {
@@ -295,8 +283,9 @@ pub fn spawn(
     if let Some(xdg_runtime_dir) = directories.runtime_dir() {
         builder.create_dir(xdg_runtime_dir);
 
-        let display_path =
-            xdg_runtime_dir.join(std::env::var_os("WAYLAND_DISPLAY").as_deref().unwrap_or(OsStr::new("wayland-0")));
+        let display_path = xdg_runtime_dir.join(
+            std::env::var_os("WAYLAND_DISPLAY").as_deref().unwrap_or(OsStr::new("wayland-0"))
+        );
         builder.bind_if_exists(BindType::ReadOnly, &display_path);
 
         let pipewire_path = xdg_runtime_dir.join("pipewire-0");
@@ -328,20 +317,14 @@ pub fn spawn(
     }
 
     // Bind X11 sockets/xauthority
-    let display_index = std::env::var_os("DISPLAY")
-        .and_then(|display| {
-            let display_bytes = display.as_encoded_bytes();
-            if display_bytes.len() == 2
-                && display_bytes[0] == b':'
-                && display_bytes[1] >= b'0'
-                && display_bytes[1] <= b'9'
-            {
-                Some(display_bytes[1] - b'0')
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
+    let display_index = std::env::var_os("DISPLAY").and_then(|display| {
+        let display_bytes = display.as_encoded_bytes();
+        if display_bytes.len() == 2 && display_bytes[0] == b':' && display_bytes[1] >= b'0' && display_bytes[1] <= b'9' {
+            Some(display_bytes[1] - b'0')
+        } else {
+            None
+        }
+    }).unwrap_or(0);
 
     builder.bind_if_exists(BindType::ReadOnly, Path::new(&format!("/tmp/.X11-unix/X{display_index}")));
     if let Some(xauthority) = std::env::var_os("XAUTHORITY") {
@@ -420,7 +403,7 @@ fn start_dbus_proxy(sandbox_dir: &Path, context: &mut SpawnContext) -> std::io::
         });
     };
     let Some(proxy_executable) = crate::path_cache::get_command_path(OsStr::new("xdg-dbus-proxy")) else {
-        return Err(Error::new(ErrorKind::NotFound, "unable to find 'xdg-dbus-proxy'"));
+        return Err(Error::new(ErrorKind::NotFound, "unable to find 'xdg-dbus-proxy'"))
     };
 
     let proxy_path = sandbox_dir.join("dbus-proxy");
@@ -832,98 +815,56 @@ fn create_seccomp_filter() -> std::io::Result<std::os::fd::OwnedFd> {
         _ = filter.add_rule(ScmpAction::Allow, syscall);
     }
     if let Ok(syscall) = ScmpSyscall::from_name("clone") {
-        let disallowed_clones = libc::CLONE_NEWNS
-            | libc::CLONE_NEWUTS
-            | libc::CLONE_NEWIPC
-            | libc::CLONE_NEWUSER
-            | libc::CLONE_NEWPID
-            | libc::CLONE_NEWNET
-            | libc::CLONE_NEWCGROUP;
-        _ = filter.add_rule_conditional(
-            ScmpAction::Allow,
-            syscall,
-            &[ScmpArgCompare::new(
-                0,
-                ScmpCompareOp::MaskedEqual(disallowed_clones as u64),
-                0,
-            )],
-        );
+        let disallowed_clones = libc::CLONE_NEWNS | libc::CLONE_NEWUTS | libc::CLONE_NEWIPC | libc::CLONE_NEWUSER
+            | libc::CLONE_NEWPID | libc::CLONE_NEWNET | libc::CLONE_NEWCGROUP;
+        _ = filter.add_rule_conditional(ScmpAction::Allow, syscall, &[
+           ScmpArgCompare::new(0, ScmpCompareOp::MaskedEqual(disallowed_clones as u64), 0)
+        ]);
     }
     if let Ok(syscall) = ScmpSyscall::from_name("clone3") {
         _ = filter.add_rule(ScmpAction::Errno(libc::ENOSYS), syscall);
     }
     if let Ok(syscall) = ScmpSyscall::from_name("socket") {
-        _ = filter.add_rule_conditional(
-            ScmpAction::Allow,
-            syscall,
-            &[ScmpArgCompare::new(0, ScmpCompareOp::NotEqual, libc::AF_VSOCK as u64)],
-        );
+        _ = filter.add_rule_conditional(ScmpAction::Allow, syscall, &[
+           ScmpArgCompare::new(0, ScmpCompareOp::NotEqual, libc::AF_VSOCK as u64)
+        ]);
     }
     if let Ok(syscall) = ScmpSyscall::from_name("personality") {
-        _ = filter.add_rule_conditional(
-            ScmpAction::Allow,
-            syscall,
-            &[ScmpArgCompare::new(0, ScmpCompareOp::Equal, 0x0)],
-        );
-        _ = filter.add_rule_conditional(
-            ScmpAction::Allow,
-            syscall,
-            &[ScmpArgCompare::new(0, ScmpCompareOp::Equal, 0x8)],
-        );
-        _ = filter.add_rule_conditional(
-            ScmpAction::Allow,
-            syscall,
-            &[ScmpArgCompare::new(0, ScmpCompareOp::Equal, 0x20000)],
-        );
-        _ = filter.add_rule_conditional(
-            ScmpAction::Allow,
-            syscall,
-            &[ScmpArgCompare::new(0, ScmpCompareOp::Equal, 0x20008)],
-        );
-        _ = filter.add_rule_conditional(
-            ScmpAction::Allow,
-            syscall,
-            &[ScmpArgCompare::new(0, ScmpCompareOp::Equal, 0xffffffff)],
-        );
+        _ = filter.add_rule_conditional(ScmpAction::Allow, syscall, &[
+           ScmpArgCompare::new(0, ScmpCompareOp::Equal, 0x0)
+        ]);
+        _ = filter.add_rule_conditional(ScmpAction::Allow, syscall, &[
+           ScmpArgCompare::new(0, ScmpCompareOp::Equal, 0x8)
+        ]);
+        _ = filter.add_rule_conditional(ScmpAction::Allow, syscall, &[
+           ScmpArgCompare::new(0, ScmpCompareOp::Equal, 0x20000)
+        ]);
+        _ = filter.add_rule_conditional(ScmpAction::Allow, syscall, &[
+           ScmpArgCompare::new(0, ScmpCompareOp::Equal, 0x20008)
+        ]);
+        _ = filter.add_rule_conditional(ScmpAction::Allow, syscall, &[
+           ScmpArgCompare::new(0, ScmpCompareOp::Equal, 0xffffffff)
+        ]);
     }
     if let Ok(syscall) = ScmpSyscall::from_name("ioctl") {
-        _ = filter.add_rule_conditional(
-            ScmpAction::Errno(libc::EPERM),
-            syscall,
-            &[ScmpArgCompare::new(
-                1,
-                ScmpCompareOp::MaskedEqual(0xFFFFFFFF),
-                libc::TIOCSTI,
-            )],
-        );
+        _ = filter.add_rule_conditional(ScmpAction::Errno(libc::EPERM), syscall, &[
+           ScmpArgCompare::new(1, ScmpCompareOp::MaskedEqual(0xFFFFFFFF), libc::TIOCSTI)
+        ]);
     }
     if let Ok(syscall) = ScmpSyscall::from_name("ioctl") {
-        _ = filter.add_rule_conditional(
-            ScmpAction::Errno(libc::EPERM),
-            syscall,
-            &[ScmpArgCompare::new(
-                1,
-                ScmpCompareOp::MaskedEqual(0xFFFFFFFF),
-                libc::TIOCLINUX,
-            )],
-        );
+        _ = filter.add_rule_conditional(ScmpAction::Errno(libc::EPERM), syscall, &[
+           ScmpArgCompare::new(1, ScmpCompareOp::MaskedEqual(0xFFFFFFFF), libc::TIOCLINUX)
+        ]);
     }
 
     unsafe {
-        let fd = cvt(libc::memfd_create(
-            c"default-seccomp-bpf".as_ptr(),
-            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING,
-        ))? as RawFd;
+        let fd = cvt(libc::memfd_create(c"default-seccomp-bpf".as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING))? as RawFd;
         if filter.export_bpf(std::os::fd::BorrowedFd::borrow_raw(fd)).is_err() {
             log::error!("Unable to export bpf");
             return Err(Error::new(ErrorKind::Other, "unable to export bpf"));
         }
         libc::lseek(fd, 0, libc::SEEK_SET);
-        cvt(libc::fcntl(
-            fd,
-            libc::F_ADD_SEALS,
-            libc::F_SEAL_SEAL | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_WRITE,
-        ))?;
+        cvt(libc::fcntl(fd, libc::F_ADD_SEALS, libc::F_SEAL_SEAL | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_WRITE))?;
         Ok(std::os::fd::OwnedFd::from_raw_fd(fd))
     }
 }

@@ -1,9 +1,6 @@
 use std::{ffi::OsStr, path::Path, sync::Arc};
 
-use bridge::{
-    instance::{ContentFolder, InstanceID},
-    message::MessageToFrontend,
-};
+use bridge::{instance::{ContentFolder, InstanceID}, message::MessageToFrontend};
 use notify::{
     EventKind,
     event::{DataChange, ModifyKind, RenameMode},
@@ -88,9 +85,7 @@ impl BackendState {
                 }
             },
             Err(_) => {
-                log::error!(
-                    "An error occurred while watching the filesystem! The launcher might be out-of-sync with your files!"
-                );
+                log::error!("An error occurred while watching the filesystem! The launcher might be out-of-sync with your files!");
                 self.send.send_error("An error occurred while watching the filesystem! The launcher might be out-of-sync with your files!");
             },
         }
@@ -102,9 +97,7 @@ impl BackendState {
         after_debounce_effects: &mut AfterDebounceEffects,
     ) {
         let target = self.file_watching.read().get_target(&path).copied();
-        if let Some(target) = target
-            && self.filesystem_handle_change(target, &path, after_debounce_effects).await
-        {
+        if let Some(target) = target && self.filesystem_handle_change(target, &path, after_debounce_effects).await {
             return;
         }
         let Some(parent_path) = path.parent() else {
@@ -112,8 +105,7 @@ impl BackendState {
         };
         let parent = self.file_watching.read().get_target(parent_path).copied();
         if let Some(parent) = parent {
-            self.filesystem_handle_child_change(parent, parent_path, &path, after_debounce_effects)
-                .await;
+            self.filesystem_handle_child_change(parent, parent_path, &path, after_debounce_effects).await;
         }
     }
 
@@ -133,8 +125,7 @@ impl BackendState {
         };
         let parent = self.file_watching.write().get_target(parent_path).copied();
         if let Some(parent) = parent {
-            self.filesystem_handle_child_removed(parent, parent_path, &path, after_debounce_effects)
-                .await;
+            self.filesystem_handle_child_removed(parent, parent_path, &path, after_debounce_effects).await;
         }
     }
 
@@ -158,10 +149,7 @@ impl BackendState {
                 }
             },
             FilesystemEvent::Rename(from, to) => {
-                if let Some(from_parent) = from.parent()
-                    && to.parent() == Some(from_parent)
-                    && let Some(to_name) = to.file_name()
-                {
+                if let Some(from_parent) = from.parent() && to.parent() == Some(from_parent) && let Some(to_name) = to.file_name() {
                     let from_paths = self.file_watching.write().all_paths(from.clone());
                     for from in from_paths {
                         let to = from_parent.join(to_name).into();
@@ -187,6 +175,7 @@ impl BackendState {
                         self.handle_filesystem_change_event(to, after_debounce_effects).await;
                     }
                 }
+
             },
         }
     }
@@ -226,27 +215,23 @@ impl BackendState {
                 self.remove_instance(id);
                 true
             },
-            WatchTarget::InvalidInstanceDir => true,
+            WatchTarget::InvalidInstanceDir => {
+                true
+            },
             WatchTarget::InstanceWorldDir { id } => {
-                after_debounce_effects
-                    .world_changes
-                    .entry(id)
+                after_debounce_effects.world_changes.entry(id)
                     .or_insert_with(FolderChanges::no_changes)
                     .dirty_path(path.clone());
                 true
             },
             WatchTarget::InstanceSavesDir { id } => {
-                after_debounce_effects
-                    .world_changes
-                    .entry(id)
+                after_debounce_effects.world_changes.entry(id)
                     .or_insert_with(FolderChanges::no_changes)
                     .dirty_all();
                 true
             },
             WatchTarget::InstanceContentDir { id, folder } => {
-                after_debounce_effects
-                    .content_changes
-                    .entry((id, folder))
+                after_debounce_effects.content_changes.entry((id, folder))
                     .or_insert_with(FolderChanges::no_changes)
                     .dirty_all();
                 true
@@ -264,7 +249,7 @@ impl BackendState {
             WatchTarget::ManualCurseForgeDownloadDirectory { .. } => {
                 self.send.send_error("Download directory has been deleted!");
                 true
-            },
+            }
         }
     }
 
@@ -327,7 +312,7 @@ impl BackendState {
                         after_debounce_effects.skin_manager_changes.dirty_all();
                     }
                 }
-            },
+            }
             WatchTarget::InstancesDir => {
                 if path.is_dir() {
                     let Some(file_name) = path.file_name() else {
@@ -376,15 +361,11 @@ impl BackendState {
                     };
                     match name {
                         "saves" => {
-                            after_debounce_effects
-                                .world_changes
-                                .entry(id)
+                            after_debounce_effects.world_changes.entry(id)
                                 .or_insert_with(FolderChanges::no_changes)
                                 .dirty_all();
                             if instance.worlds_state.is_not_unloaded() {
-                                self.file_watching
-                                    .write()
-                                    .watch_filesystem(path.clone(), WatchTarget::InstanceSavesDir { id });
+                                self.file_watching.write().watch_filesystem(path.clone(), WatchTarget::InstanceSavesDir { id });
                             }
                             return;
                         },
@@ -396,15 +377,11 @@ impl BackendState {
                     }
                     for folder in ContentFolder::iter() {
                         if name == folder.folder_name() {
-                            after_debounce_effects
-                                .content_changes
-                                .entry((id, folder))
+                            after_debounce_effects.content_changes.entry((id, folder))
                                 .or_insert_with(FolderChanges::no_changes)
                                 .dirty_all();
                             if instance.content_state[folder].load_state.is_not_unloaded() {
-                                self.file_watching
-                                    .write()
-                                    .watch_filesystem(path.clone(), WatchTarget::InstanceContentDir { id, folder });
+                                self.file_watching.write().watch_filesystem(path.clone(), WatchTarget::InstanceContentDir { id, folder });
                             }
                             return;
                         }
@@ -425,25 +402,19 @@ impl BackendState {
                     return;
                 };
                 if file_name == "level.dat" || file_name == "icon.png" {
-                    after_debounce_effects
-                        .world_changes
-                        .entry(id)
+                    after_debounce_effects.world_changes.entry(id)
                         .or_insert_with(FolderChanges::no_changes)
                         .dirty_path(parent_path.into());
                 }
             },
             WatchTarget::InstanceSavesDir { id } => {
                 // If a world folder is added to the saves directory, mark the world (path) as dirty
-                after_debounce_effects
-                    .world_changes
-                    .entry(id)
+                after_debounce_effects.world_changes.entry(id)
                     .or_insert_with(FolderChanges::no_changes)
                     .dirty_path(path.clone());
             },
             WatchTarget::InstanceContentDir { id, folder } => {
-                after_debounce_effects
-                    .content_changes
-                    .entry((id, folder))
+                after_debounce_effects.content_changes.entry((id, folder))
                     .or_insert_with(FolderChanges::no_changes)
                     .dirty_path(path.clone());
             },
@@ -458,7 +429,7 @@ impl BackendState {
                         manual.process_candidate(&path, metadata, session_id, true);
                     });
                 }
-            },
+            }
         }
     }
 
@@ -476,9 +447,7 @@ impl BackendState {
                 };
                 if file_name == "info_v1.json" {
                     self.remove_instance(id);
-                    self.file_watching
-                        .write()
-                        .watch_filesystem(parent_path.into(), WatchTarget::InvalidInstanceDir);
+                    self.file_watching.write().watch_filesystem(parent_path.into(), WatchTarget::InvalidInstanceDir);
                 }
             },
             WatchTarget::InstanceDotMinecraftDir { id } => {
@@ -488,30 +457,24 @@ impl BackendState {
                 if file_name == "servers.dat" {
                     after_debounce_effects.server_dat_changes.insert(id);
                 }
-            },
+            }
             WatchTarget::InstanceWorldDir { id } => {
                 let Some(file_name) = path.file_name() else {
                     return;
                 };
                 if file_name == "level.dat" || file_name == "icon.png" {
-                    after_debounce_effects
-                        .world_changes
-                        .entry(id)
+                    after_debounce_effects.world_changes.entry(id)
                         .or_insert_with(FolderChanges::no_changes)
                         .dirty_path(parent_path.into());
                 }
             },
             WatchTarget::InstanceSavesDir { id } => {
-                after_debounce_effects
-                    .world_changes
-                    .entry(id)
+                after_debounce_effects.world_changes.entry(id)
                     .or_insert_with(FolderChanges::no_changes)
                     .dirty_path(path.clone());
             },
             WatchTarget::InstanceContentDir { id, folder } => {
-                after_debounce_effects
-                    .content_changes
-                    .entry((id, folder))
+                after_debounce_effects.content_changes.entry((id, folder))
                     .or_insert_with(FolderChanges::no_changes)
                     .dirty_path(path.clone());
             },

@@ -1,10 +1,8 @@
-use std::{
-    borrow::Cow,
-    io::{BufRead, BufReader, PipeReader},
-    sync::Arc,
-};
+use std::{borrow::Cow, io::{BufRead, BufReader, PipeReader}, sync::Arc};
 
-use bridge::{game_output::GameOutputLogLevel, message::GameOutputMsg};
+use bridge::{
+    game_output::GameOutputLogLevel, message::GameOutputMsg,
+};
 use chrono::Utc;
 use memchr::memchr;
 use once_cell::sync::Lazy;
@@ -35,10 +33,7 @@ pub fn replace(string: &str) -> Cow<'_, str> {
     replaced
 }
 
-pub fn start_game_output(
-    stdout: PipeReader,
-    stderr: Option<PipeReader>,
-) -> tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg> {
+pub fn start_game_output(stdout: PipeReader, stderr: Option<PipeReader>) -> tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg> {
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
 
     if let Some(stderr) = stderr {
@@ -82,7 +77,7 @@ pub fn start_game_output(
         let mut log_reader = LogReader {
             stack: Vec::new(),
             sender: sender.clone(),
-            empty_message: "<empty>".into(),
+            empty_message: "<empty>".into()
         };
         let mut log_input = LogInput {
             buffer: Vec::new(),
@@ -91,7 +86,9 @@ pub fn start_game_output(
 
         #[cfg(debug_assertions)]
         let result = {
-            let panic_result = std::panic::catch_unwind(move || log_reader.handle_output(&mut log_input));
+            let panic_result = std::panic::catch_unwind(move || {
+                log_reader.handle_output(&mut log_input)
+            });
             match panic_result {
                 Ok(result) => result,
                 Err(panic_error) => {
@@ -103,8 +100,7 @@ pub fn start_game_output(
                         },
                     };
 
-                    let panic_message =
-                        format!("(Pandora) There was an error while reading the log: {panic_error_str}");
+                    let panic_message = format!("(Pandora) There was an error while reading the log: {panic_error_str}");
 
                     _ = sender.send(GameOutputMsg {
                         time: Utc::now().timestamp_millis(),
@@ -162,7 +158,7 @@ struct LogReader {
 
 struct LogInput {
     buffer: Vec<u8>,
-    reader: BufReader<PipeReader>,
+    reader: BufReader<PipeReader>
 }
 
 #[derive(Debug)]
@@ -213,7 +209,7 @@ impl LogReader {
                     continue;
                 };
 
-                input.reader.consume(index + 1);
+                input.reader.consume(index+1);
                 self.read_markup(input)?;
 
                 continue;
@@ -236,12 +232,12 @@ impl LogReader {
 
             if available[index] == b'\n' {
                 self.finish_text(&available[..index], &mut input.buffer)?;
-                input.reader.consume(index + 1);
+                input.reader.consume(index+1);
             } else if !available[..index].trim_ascii().is_empty() {
                 // Line contains non-whitespace before <, treat as a literal line instead of markup
                 if let Some(new_index) = memchr::memchr(b'\n', &available[index..]) {
-                    self.finish_text(&available[..index + new_index], &mut input.buffer)?;
-                    input.reader.consume(index + new_index + 1);
+                    self.finish_text(&available[..index+new_index], &mut input.buffer)?;
+                    input.reader.consume(index+new_index+1);
                     continue;
                 }
 
@@ -252,7 +248,7 @@ impl LogReader {
                 self.read_rest_of_line(input)?;
             } else {
                 input.buffer.clear();
-                input.reader.consume(index + 1);
+                input.reader.consume(index+1);
                 self.read_markup(input)?;
             }
         }
@@ -307,8 +303,8 @@ impl LogReader {
                         continue;
                     };
 
-                    if available.len() >= 3 && available[..index + 1].ends_with(b"]]>") {
-                        let remaining_text = &available[..index - 2];
+                    if available.len() >= 3 && available[..index+1].ends_with(b"]]>") {
+                        let remaining_text = &available[..index-2];
                         if input.buffer.is_empty() {
                             self.apply_cdata(remaining_text)?;
                         } else {
@@ -316,15 +312,15 @@ impl LogReader {
                             self.apply_cdata(&input.buffer)?;
                             input.buffer.clear();
                         }
-                        input.reader.consume(index + 1);
+                        input.reader.consume(index+1);
                         return Ok(());
                     }
 
-                    input.buffer.extend_from_slice(&available[..index + 1]);
-                    input.reader.consume(index + 1);
+                    input.buffer.extend_from_slice(&available[..index+1]);
+                    input.reader.consume(index+1);
 
                     if input.buffer.len() >= 3 && input.buffer.ends_with(b"]]>") {
-                        self.apply_cdata(&input.buffer[..input.buffer.len() - 3])?;
+                        self.apply_cdata(&input.buffer[..input.buffer.len()-3])?;
                         input.buffer.clear();
                         return Ok(());
                     }
@@ -365,9 +361,9 @@ impl LogReader {
                     let Some(index) = memchr::memchr(b'>', available) else {
                         if available.len() == 1 && available[0] == b'-' && partial_end_sequence == 1 {
                             partial_end_sequence = 2; // Case when the buffer size is exactly 1 (we need 3 reads)
-                        } else if available.len() >= 2 && &available[available.len() - 2..] == b"--" {
+                        } else if available.len() >= 2 && &available[available.len()-2..] == b"--" {
                             partial_end_sequence = 2;
-                        } else if available[available.len() - 1] == b'-' {
+                        } else if available[available.len()-1] == b'-' {
                             partial_end_sequence = 1;
                         } else {
                             partial_end_sequence = 0;
@@ -381,14 +377,14 @@ impl LogReader {
                         true
                     } else if index == 1 && partial_end_sequence == 1 && available[0] == b'-' {
                         true
-                    } else if index >= 2 && &available[index - 2..index] == b"--" {
+                    } else if index >= 2 && &available[index-2..index] == b"--" {
                         true
                     } else {
                         false
                     };
 
                     partial_end_sequence = 0;
-                    input.reader.consume(index + 1);
+                    input.reader.consume(index+1);
 
                     if success {
                         return Ok(());
@@ -405,7 +401,7 @@ impl LogReader {
                 } else {
                     Self::skip_balanced_angle_brackets(1, input)?;
                 }
-            },
+            }
         }
 
         Ok(())
@@ -421,22 +417,23 @@ impl LogReader {
             }
 
             let Some(index) = memchr::memchr(b'>', available) else {
-                ended_with_question_mark = available[available.len() - 1] == b'?';
+                ended_with_question_mark = available[available.len()-1] == b'?';
                 let read = available.len();
                 input.reader.consume(read);
                 continue;
             };
 
+
             let success = if index == 0 && ended_with_question_mark {
                 true
-            } else if index >= 1 && available[index - 1] == b'?' {
+            } else if index >= 1 && available[index-1] == b'?' {
                 true
             } else {
                 false
             };
 
             ended_with_question_mark = false;
-            input.reader.consume(index + 1);
+            input.reader.consume(index+1);
 
             if success {
                 return Ok(());
@@ -458,7 +455,7 @@ impl LogReader {
             };
 
             let last = available[index];
-            input.reader.consume(index + 1);
+            input.reader.consume(index+1);
 
             if last == b'<' {
                 depth += 1;
@@ -521,10 +518,10 @@ impl LogReader {
                         continue;
                     }
 
-                    if terminator == b'>' && name[name.len() - 1] == b'/' {
+                    if terminator == b'>' && name[name.len()-1] == b'/' {
                         // Skip auto-closing tags
                         input.buffer.clear();
-                        input.reader.consume(end + 1);
+                        input.reader.consume(end+1);
                         return Ok(());
                     }
 
@@ -532,7 +529,7 @@ impl LogReader {
 
                     if terminator == b'>' {
                         input.buffer.clear();
-                        input.reader.consume(end + 1);
+                        input.reader.consume(end+1);
                         return Ok(());
                     }
 
@@ -547,9 +544,8 @@ impl LogReader {
                     }
                 },
                 ElementParseState::ReadingKey => {
-                    let end = available
-                        .iter()
-                        .position(|b| is_xml_whitespace(*b) || *b == b'>' || *b == b'\'' || *b == b'"' || *b == b'=');
+                    let end = available.iter().position(|b| is_xml_whitespace(*b) || *b == b'>' ||
+                        *b == b'\'' || *b == b'"' || *b == b'=');
                     let Some(end) = end else {
                         input.buffer.extend_from_slice(available);
                         let read = available.len();
@@ -564,12 +560,12 @@ impl LogReader {
                             self.stack.pop();
                         }
                         input.buffer.clear();
-                        input.reader.consume(end + 1);
+                        input.reader.consume(end+1);
                         return Ok(());
-                    } else if terminator == b'>' && available[end - 1] == b'/' {
+                    } else if terminator == b'>' && available[end-1] == b'/' {
                         self.stack.pop();
                         input.buffer.clear();
-                        input.reader.consume(end + 1);
+                        input.reader.consume(end+1);
                         return Ok(());
                     } else if terminator != b'=' {
                         if cfg!(debug_assertions) {
@@ -600,11 +596,11 @@ impl LogReader {
                             } else {
                                 NamedAttributeKey::Unknown
                             }
-                        },
+                        }
                     };
 
                     input.buffer.clear();
-                    input.reader.consume(end + 1); // +1 to skip '=' as well
+                    input.reader.consume(end+1); // +1 to skip '=' as well
 
                     state = ElementParseState::ReadingValue(key);
                 },
@@ -625,7 +621,7 @@ impl LogReader {
                     let needle = match state {
                         ElementParseState::ReadingValueDoubleQuoted(_) => b'"',
                         ElementParseState::ReadingValueSingleQuoted(_) => b'\'',
-                        _ => unreachable!(),
+                        _ => unreachable!()
                     };
 
                     let end = memchr(needle, available);
@@ -646,7 +642,7 @@ impl LogReader {
                     self.apply_attribute_key_value(key, value);
 
                     input.buffer.clear();
-                    input.reader.consume(end + 1); // +1 to skip '=' as well
+                    input.reader.consume(end+1); // +1 to skip '=' as well
 
                     self.skip_whitespace(input)?;
                     state = ElementParseState::ReadingKey;
@@ -670,14 +666,14 @@ impl LogReader {
                     } else {
                         if end == 0 && skip_had_slash_last {
                             self.stack.pop();
-                        } else if end >= 1 && available[end - 1] == b'/' {
+                        } else if end >= 1 && available[end-1] == b'/' {
                             self.stack.pop();
                         }
-                        input.reader.consume(end + 1);
+                        input.reader.consume(end+1);
                         return Ok(());
                     }
 
-                    input.reader.consume(end + 1);
+                    input.reader.consume(end+1);
                 },
                 ElementParseState::SkipSingleQuotes => {
                     let Some(end) = memchr::memchr(b'\'', available) else {
@@ -686,7 +682,7 @@ impl LogReader {
                         continue;
                     };
 
-                    input.reader.consume(end + 1);
+                    input.reader.consume(end+1);
                     state = ElementParseState::Skip;
                 },
                 ElementParseState::SkipDoubleQuotes => {
@@ -696,7 +692,7 @@ impl LogReader {
                         continue;
                     };
 
-                    input.reader.consume(end + 1);
+                    input.reader.consume(end+1);
                     state = ElementParseState::Skip;
                 },
             }
@@ -752,7 +748,7 @@ impl LogReader {
                     };
 
                     let terminator = available[end];
-                    input.reader.consume(end + 1);
+                    input.reader.consume(end+1);
 
                     if terminator == b'\'' {
                         state = ElementParseState::SkipSingleQuotes;
@@ -769,7 +765,7 @@ impl LogReader {
                         continue;
                     };
 
-                    input.reader.consume(end + 1);
+                    input.reader.consume(end+1);
                     state = ElementParseState::Skip;
                 },
                 ElementParseState::SkipDoubleQuotes => {
@@ -779,7 +775,7 @@ impl LogReader {
                         continue;
                     };
 
-                    input.reader.consume(end + 1);
+                    input.reader.consume(end+1);
                     state = ElementParseState::Skip;
                 },
             }
@@ -810,7 +806,7 @@ impl LogReader {
                 if cfg!(debug_assertions) {
                     panic!("Unexpected cdata on {:?}", last);
                 }
-            },
+            }
         }
         Ok(())
     }
@@ -823,7 +819,7 @@ impl LogReader {
                         timestamp: None,
                         level: None,
                         text: None,
-                        throwable: None,
+                        throwable: None
                     });
                     return ReadAttributesForElement::Yes;
                 } else if cfg!(debug_assertions) {
@@ -849,7 +845,7 @@ impl LogReader {
                 } else {
                     self.stack.push(LogOutputState::Unknown);
                 }
-            },
+            }
         }
         ReadAttributesForElement::No
     }
@@ -861,13 +857,7 @@ impl LogReader {
                     return Err(HandleOutputError::UnmatchedElement(str::from_utf8(name)?.into()));
                 }
 
-                let Some(LogOutputState::Event {
-                    timestamp,
-                    level,
-                    mut text,
-                    mut throwable,
-                }) = self.stack.pop()
-                else {
+                let Some(LogOutputState::Event { timestamp, level, mut text, mut throwable }) = self.stack.pop() else {
                     unreachable!()
                 };
                 let mut lines = Vec::new();
@@ -887,9 +877,7 @@ impl LogReader {
 
                 if let Some(text) = &text {
                     let mut split = text.split('\n');
-                    if let Some(first) = split.next()
-                        && let Some(second) = split.next()
-                    {
+                    if let Some(first) = split.next() && let Some(second) = split.next() {
                         lines.push(Arc::from(first.trim_end()));
                         lines.push(Arc::from(second.trim_end()));
                         for next in split {
@@ -899,12 +887,8 @@ impl LogReader {
                 }
                 if let Some(throwable) = &throwable {
                     let mut split = throwable.split('\n');
-                    if let Some(first) = split.next()
-                        && let Some(second) = split.next()
-                    {
-                        if let Some(text) = text.take()
-                            && lines.is_empty()
-                        {
+                    if let Some(first) = split.next() && let Some(second) = split.next() {
+                        if let Some(text) = text.take() && lines.is_empty() {
                             lines.push(text);
                         }
 
@@ -970,7 +954,7 @@ impl LogReader {
             },
             Some(LogOutputState::Unknown) => {
                 _ = self.stack.pop();
-            },
+            }
             None => {
                 return Err(HandleOutputError::UnmatchedElement(str::from_utf8(name)?.into()));
             },
@@ -1006,7 +990,7 @@ impl LogReader {
                     },
                     NamedAttributeKey::Thread => {
                         // Ignore
-                    },
+                    }
                     _ => {
                         if cfg!(debug_assertions) {
                             panic!("Unexpected attribute {:?} on {:?}", key, self.stack.last_mut());
@@ -1018,7 +1002,7 @@ impl LogReader {
                 if cfg!(debug_assertions) {
                     panic!("Unexpected attribute {:?} on {:?}", key, self.stack.last_mut());
                 }
-            },
+            }
         }
     }
 

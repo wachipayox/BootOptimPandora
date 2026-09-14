@@ -1,29 +1,14 @@
 use std::rc::Rc;
 
 use bridge::{handle::BackendHandle, message::MessageToBackend};
-use gpui::{prelude::*, *};
-use gpui_component::{
-    ActiveTheme, Root, StyledExt, h_flex,
-    input::{Input, InputEvent, InputState},
-    separator::Separator,
-    spinner::Spinner,
-    switch::Switch,
-    v_flex,
-};
+use gpui::{*, prelude::*};
+use gpui_component::{ActiveTheme, Root, StyledExt, h_flex, input::{Input, InputEvent, InputState}, separator::Separator, spinner::Spinner, switch::Switch, v_flex};
 use schema::backend_config::{BackendConfig, ProxyConfig};
 
-use crate::{
-    component::{
-        generic_title_bar::TitleBar,
-        resize_panel::{ResizePanel, ResizePanelState},
-    },
-    entity::DataEntities,
-    icon::PandoraIcon,
-    interface_config::InterfaceConfig,
-};
+use crate::{component::{generic_title_bar::TitleBar, resize_panel::{ResizePanel, ResizePanelState}}, entity::DataEntities, icon::PandoraIcon, interface_config::InterfaceConfig};
 
-mod appearance;
 mod general;
+mod appearance;
 mod network;
 
 struct SettingsRoot {
@@ -48,7 +33,8 @@ enum OnReceiveBackendConfig {
 
 impl SettingsRoot {
     fn backend_config(&self) -> Option<&BackendConfig> {
-        self.temp_backend_config.as_ref().or(self.actual_backend_config.as_ref())
+        self.temp_backend_config.as_ref()
+            .or(self.actual_backend_config.as_ref())
     }
 
     pub fn set_proxy_settings(&mut self, proxy_settings: ProxyConfig, cx: &mut Context<Self>) {
@@ -58,14 +44,13 @@ impl SettingsRoot {
             } else {
                 OnReceiveBackendConfig::ClearTemp
             };
-            let pending = self
-                .temp_backend_config
-                .get_or_insert_with(|| self.actual_backend_config.clone().unwrap());
+            let pending = self.temp_backend_config.get_or_insert_with(|| self.actual_backend_config.clone().unwrap());
             pending.proxy = proxy_settings.clone();
         }
 
-        self.backend_handle
-            .send(MessageToBackend::SetProxyConfiguration { config: proxy_settings });
+        self.backend_handle.send(MessageToBackend::SetProxyConfiguration {
+            config: proxy_settings,
+        });
 
         self.update_backend_configuration(cx);
     }
@@ -98,7 +83,9 @@ impl SettingsRoot {
             });
         }));
 
-        self.backend_handle.send(MessageToBackend::GetBackendConfiguration { channel: send });
+        self.backend_handle.send(MessageToBackend::GetBackendConfiguration {
+            channel: send,
+        });
     }
 }
 
@@ -150,10 +137,7 @@ impl SettingsRoot {
         let (pages, mut page_elements) = if let Some(searched) = &self.settings.searched_pages {
             (itertools::Either::Left(searched.iter().copied()), Vec::with_capacity(searched.len()))
         } else {
-            (
-                itertools::Either::Right(0..self.settings.pages.len()),
-                Vec::with_capacity(self.settings.pages.len()),
-            )
+            (itertools::Either::Right(0..self.settings.pages.len()), Vec::with_capacity(self.settings.pages.len()))
         };
 
         for page_ix in pages {
@@ -178,8 +162,7 @@ impl SettingsRoot {
                 }));
 
             if self.settings.selected_page == Some(page_ix) {
-                page_element = page_element
-                    .font_medium()
+                page_element = page_element.font_medium()
                     .bg(cx.theme().sidebar_accent)
                     .text_color(cx.theme().sidebar_accent_foreground);
             } else {
@@ -236,12 +219,14 @@ impl SettingsRoot {
                     group_elements.push(group_element.into_any());
                 }
 
-                let combined = v_flex().w_full().child(page_element).child(
-                    h_flex()
+                let combined = v_flex()
+                    .w_full()
+                    .child(page_element)
+                    .child(h_flex()
                         .w_full()
                         .child(Separator::vertical().mx_2())
-                        .child(v_flex().w_full().children(group_elements)),
-                );
+                        .child(v_flex().w_full().children(group_elements))
+                    );
 
                 page_elements.push(combined.into_any());
             } else {
@@ -259,15 +244,14 @@ impl SettingsRoot {
 
         let page = self.settings.pages[page_ix].clone();
 
-        let group_count = page.searched_groups.as_ref().map(|g| g.len()).unwrap_or(page.groups.len());
+        let group_count = page.searched_groups.as_ref().map(|g| g.len())
+            .unwrap_or(page.groups.len());
         if self.group_list_state.item_count() != group_count {
             self.group_list_state.reset(group_count);
         }
         if self.settings.deferred_scroll_to_group {
             self.settings.deferred_scroll_to_group = false;
-            if let Some(group) = self.settings.selected_group
-                && group < group_count
-            {
+            if let Some(group) = self.settings.selected_group && group < group_count {
                 self.group_list_state.scroll_to_reveal_item(group);
             }
         }
@@ -324,7 +308,7 @@ impl SettingsRoot {
                                     let value = (get)(cx);
                                     state.set_value(format!("{}", value), window, cx);
                                     state
-                                },
+                                }
                             );
                             if initialized {
                                 let get = *get;
@@ -355,8 +339,7 @@ impl SettingsRoot {
                                             input.set_value(new_value, window, cx);
                                         });
                                     }
-                                })
-                                .detach();
+                                }).detach();
                             }
                             gpui_component::input::NumberInput::new(&state).w(px(200.0)).into_any_element()
                         },
@@ -368,21 +351,21 @@ impl SettingsRoot {
 
                             (func)(backend_config, window, cx)
                         },
-                        SettingItemWidget::Any(func) => (func)(window, cx),
+                        SettingItemWidget::Any(func) => {
+                            (func)(window, cx)
+                        },
                     };
 
                     let item_element = h_flex()
                         .justify_between()
                         .items_center()
                         .w_full()
-                        .child(
-                            v_flex()
-                                .text_sm()
-                                .flex_1()
-                                .max_w_3_5()
-                                .child((item.title)())
-                                .child(div().text_color(cx.theme().muted_foreground).child((item.description)())),
-                        )
+                        .child(v_flex()
+                            .text_sm()
+                            .flex_1()
+                            .max_w_3_5()
+                            .child((item.title)())
+                            .child(div().text_color(cx.theme().muted_foreground).child((item.description)())))
                         .child(h_flex().max_w_2_5().child(widget));
 
                     item_elements.push(item_element);
@@ -406,21 +389,22 @@ impl SettingsRoot {
                         .size_full()
                         .px_3()
                         .py_1p5()
-                        .child(
-                            div()
-                                .text_color(cx.theme().muted_foreground)
-                                .when(selected_group == Some(group_ix), Styled::underline)
-                                .child((title)()),
-                        )
+                        .child(div()
+                            .text_color(cx.theme().muted_foreground)
+                            .when(selected_group == Some(group_ix), Styled::underline)
+                            .child((title)()))
                         .child(items)
                         .into_any_element()
                 } else {
-                    v_flex().size_full().p_3().pb_1p5().child(items).into_any_element()
+                    v_flex()
+                        .size_full()
+                        .p_3()
+                        .pb_1p5()
+                        .child(items)
+                        .into_any_element()
                 }
             })
-        })
-        .size_full()
-        .into_any_element()
+        }).size_full().into_any_element()
     }
 
     pub fn on_search(&mut self, entity: Entity<InputState>, event: &InputEvent, cx: &mut Context<Self>) {
@@ -460,7 +444,7 @@ impl Clone for SettingItem {
             description: self.description.clone(),
             widget: self.widget.clone(),
             casefolded_title: None,
-            casefolded_description: None,
+            casefolded_description: None
         }
     }
 }
@@ -472,21 +456,17 @@ impl Default for SettingItem {
             description: || "",
             widget: SettingItemWidget::default(),
             casefolded_title: None,
-            casefolded_description: None,
+            casefolded_description: None
         }
     }
 }
 
 impl SettingItem {
     pub fn matches_search(&self, query: &str) -> bool {
-        if let Some(casefolded_title) = &self.casefolded_title
-            && casefolded_title.contains(query)
-        {
+        if let Some(casefolded_title) = &self.casefolded_title && casefolded_title.contains(query) {
             return true;
         }
-        if let Some(casefolded_description) = &self.casefolded_description
-            && casefolded_description.contains(query)
-        {
+        if let Some(casefolded_description) = &self.casefolded_description && casefolded_description.contains(query) {
             return true;
         }
         false
@@ -640,10 +620,7 @@ impl Settings {
 
         let query = casefold::simple_fold(query.to_string());
 
-        let searched = if let Some(searched) = &mut self.searched_pages
-            && let Some(last_query) = &self.last_query
-            && query.contains(last_query)
-        {
+        let searched = if let Some(searched) = &mut self.searched_pages && let Some(last_query) = &self.last_query && query.contains(last_query) {
             searched.retain(|index| self.pages[*index].refine_search(&*query));
             searched
         } else {
@@ -696,11 +673,7 @@ pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut 
             ..Default::default()
         }),
         app_owns_titlebar_drag: use_custom_titlebar,
-        window_decorations: Some(if use_custom_titlebar {
-            WindowDecorations::Client
-        } else {
-            WindowDecorations::Server
-        }),
+        window_decorations: Some(if use_custom_titlebar { WindowDecorations::Client } else { WindowDecorations::Server }),
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(display_id, size(px(960.0), px(540.0)), cx))),
         window_min_size: Some(size(px(480.0), px(270.0))),
         ..Default::default()
@@ -709,7 +682,9 @@ pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut 
         let settings_root = cx.new(|cx| {
             let sidebar_state = ResizePanelState::new(px(175.0), px(150.0), px(225.0));
 
-            let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(t::common::search()));
+            let search_state = cx.new(|cx| {
+                InputState::new(window, cx).placeholder(t::common::search())
+            });
 
             cx.subscribe(&search_state, SettingsRoot::on_search).detach();
 
@@ -723,7 +698,7 @@ pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut 
                 get_configuration_task: None,
                 actual_backend_config: None,
                 temp_backend_config: None,
-                on_receive_backend_config: OnReceiveBackendConfig::DoNothing,
+                on_receive_backend_config: OnReceiveBackendConfig::DoNothing
             };
 
             root.update_backend_configuration(cx);
@@ -740,8 +715,7 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
             general::create_page(window, cx),
             appearance::create_page(data, window, cx),
             network::create_page(),
-        ]
-        .into_boxed_slice(),
+        ].into_boxed_slice(),
         selected_page: Some(0),
         selected_group: None,
         deferred_scroll_to_group: false,

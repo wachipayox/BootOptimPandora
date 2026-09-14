@@ -48,7 +48,9 @@ impl PandoraProcess {
     }
 
     #[cfg(windows)]
-    pub(crate) fn new(process_handle: windows::Win32::Foundation::HANDLE) -> Self {
+    pub(crate) fn new(
+        process_handle: windows::Win32::Foundation::HANDLE,
+    ) -> Self {
         Self {
             process_handle,
             terminate_state: ProcessTerminateState::Running,
@@ -80,23 +82,16 @@ impl PandoraProcess {
         self.terminate_state = ProcessTerminateState::Closed;
 
         #[cfg(unix)]
-        unsafe {
-            cvt_r(|| libc::kill(self.pid, libc::SIGTERM))?
-        };
+        unsafe { cvt_r(|| libc::kill(self.pid, libc::SIGTERM))? };
 
         #[cfg(windows)]
         unsafe {
-            use windows::Win32::{
-                Foundation::LPARAM, System::Threading::GetProcessId, UI::WindowsAndMessaging::EnumWindows,
-            };
+            use windows::Win32::{Foundation::LPARAM, System::Threading::GetProcessId, UI::WindowsAndMessaging::EnumWindows};
 
             let process = GetProcessId(self.process_handle);
 
             if process == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "stop: unable to get process id for handle",
-                ));
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, "stop: unable to get process id for handle"));
             }
 
             let mut data = CloseWindowData {
@@ -120,7 +115,9 @@ impl PandoraProcess {
         #[cfg(unix)]
         return self.pid as u32;
         #[cfg(windows)]
-        return unsafe { windows::Win32::System::Threading::GetProcessId(self.process_handle) };
+        return unsafe {
+            windows::Win32::System::Threading::GetProcessId(self.process_handle)
+        };
     }
 
     // Kill the process forcefully (SIGKILL / TerminateProcess())
@@ -131,14 +128,10 @@ impl PandoraProcess {
         self.terminate_state = ProcessTerminateState::Killed;
 
         #[cfg(unix)]
-        unsafe {
-            cvt_r(|| libc::kill(self.pid, libc::SIGKILL))?
-        };
+        unsafe { cvt_r(|| libc::kill(self.pid, libc::SIGKILL))? };
 
         #[cfg(windows)]
-        unsafe {
-            windows::Win32::System::Threading::TerminateProcess(self.process_handle, 1)?;
-        }
+        unsafe { windows::Win32::System::Threading::TerminateProcess(self.process_handle, 1)?; }
 
         Ok(())
     }
@@ -160,10 +153,7 @@ impl PandoraProcess {
 
         #[cfg(windows)]
         unsafe {
-            let wait = windows::Win32::System::Threading::WaitForSingleObject(
-                self.process_handle,
-                windows::Win32::System::Threading::INFINITE,
-            );
+            let wait = windows::Win32::System::Threading::WaitForSingleObject(self.process_handle, windows::Win32::System::Threading::INFINITE);
             if wait == windows::Win32::Foundation::WAIT_FAILED {
                 return Err(windows::core::Error::from_thread().into());
             }
@@ -233,21 +223,13 @@ struct CloseWindowData {
 }
 
 #[cfg(windows)]
-extern "system" fn close_window_matching(
-    hwnd: windows::Win32::Foundation::HWND,
-    lparam: windows::Win32::Foundation::LPARAM,
-) -> windows::core::BOOL {
-    use windows::Win32::{
-        Foundation::{LPARAM, TRUE, WPARAM},
-        UI::WindowsAndMessaging::{GetWindowThreadProcessId, PostMessageW, WM_CLOSE},
-    };
+extern "system" fn close_window_matching(hwnd: windows::Win32::Foundation::HWND, lparam: windows::Win32::Foundation::LPARAM) -> windows::core::BOOL {
+    use windows::Win32::{Foundation::{LPARAM, TRUE, WPARAM}, UI::WindowsAndMessaging::{GetWindowThreadProcessId, PostMessageW, WM_CLOSE}};
 
     let data = unsafe { (lparam.0 as *mut CloseWindowData).as_mut().unwrap() };
 
     let mut process_id = 0;
-    unsafe {
-        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
-    }
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)); }
 
     if process_id != 0 && process_id == data.match_process {
         _ = unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM::default(), LPARAM::default()) };

@@ -5,13 +5,13 @@ use serde::{Deserialize, Serialize};
 use crate::fs::IoOrSerializationError;
 
 #[derive(Debug)]
-pub struct Persistent<T: Serialize + for<'de> Deserialize<'de>> {
+pub struct Persistent<T: Serialize + for <'de> Deserialize<'de>> {
     path: Arc<Path>,
     dirty: bool,
-    data: T,
+    data: T
 }
 
-impl<T: Serialize + for<'de> Deserialize<'de> + Default> Persistent<T> {
+impl<T: Serialize + for <'de> Deserialize<'de> + Default> Persistent<T> {
     pub fn load(path: Arc<Path>) -> Self {
         let data = if path.exists() {
             match crate::fs::read_json(&path) {
@@ -32,7 +32,7 @@ impl<T: Serialize + for<'de> Deserialize<'de> + Default> Persistent<T> {
     }
 }
 
-impl<T: Serialize + for<'de> Deserialize<'de>> Persistent<T> {
+impl<T: Serialize + for <'de> Deserialize<'de>> Persistent<T> {
     pub fn try_load(path: Arc<Path>) -> Result<Self, IoOrSerializationError> {
         let data = crate::fs::read_json(&path)?;
         Ok(Self {
@@ -70,7 +70,9 @@ impl<T: Serialize + for<'de> Deserialize<'de>> Persistent<T> {
             self.load_from_disk();
         }
 
-        if bridge::launch_probe::enabled() && std::any::type_name::<T>() == "schema::instance::InstanceConfiguration" {
+        if bridge::launch_probe::enabled()
+            && std::any::type_name::<T>() == "schema::instance::InstanceConfiguration"
+        {
             bridge::launch_probe::instance_config_loaded();
         }
 

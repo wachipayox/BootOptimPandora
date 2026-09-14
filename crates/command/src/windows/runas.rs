@@ -1,8 +1,4 @@
-use std::{
-    io::{Error, ErrorKind},
-    os::windows::io::AsRawHandle,
-    path::Path,
-};
+use std::{io::{Error, ErrorKind}, os::windows::io::AsRawHandle, path::Path};
 
 use windows::Win32::{Foundation::HANDLE, System::JobObjects::AssignProcessToJobObject, UI::Shell::SHELLEXECUTEINFOW};
 
@@ -30,9 +26,10 @@ pub fn spawn(command: PandoraCommand, context: &mut SpawnContext) -> std::io::Re
     };
 
     use std::os::windows::ffi::OsStrExt;
-    let application_name = resolved.into_os_string().encode_wide().chain([0]).collect::<Vec<_>>();
-    let command_line = windows_helpers::join_windows_shell_arg(command.args.as_slice())
-        .encode_wide()
+    let application_name = resolved.into_os_string().encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let command_line = windows_helpers::join_windows_shell_arg(command.args.as_slice()).encode_wide()
         .chain([0])
         .collect::<Vec<_>>();
 
@@ -49,14 +46,14 @@ pub fn spawn(command: PandoraCommand, context: &mut SpawnContext) -> std::io::Re
     }
 
     if sei.hProcess.is_invalid() {
-        return Err(Error::new(
-            ErrorKind::Other,
-            "ShellExecuteExW returned invalid process handle. Operation completed via DDE?",
-        ));
+        return Err(Error::new(ErrorKind::Other, "ShellExecuteExW returned invalid process handle. Operation completed via DDE?"));
     }
 
     unsafe {
-        let job_handle = context.job_handle.as_ref().map(|h| HANDLE(h.as_raw_handle())).unwrap();
+        let job_handle = context.job_handle
+            .as_ref()
+            .map(|h| HANDLE(h.as_raw_handle()))
+            .unwrap();
         _ = AssignProcessToJobObject(job_handle, sei.hProcess);
     }
 
@@ -64,6 +61,6 @@ pub fn spawn(command: PandoraCommand, context: &mut SpawnContext) -> std::io::Re
         process: PandoraProcess::new(sei.hProcess),
         stdin: None,
         stdout: None,
-        stderr: None,
+        stderr: None
     })
 }

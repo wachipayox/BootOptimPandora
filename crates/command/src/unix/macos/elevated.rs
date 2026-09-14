@@ -1,24 +1,14 @@
-use std::{
-    ffi::CString,
-    io::{Error, ErrorKind},
-    os::unix::ffi::OsStringExt,
-};
+use std::{ffi::CString, io::{Error, ErrorKind}, os::unix::ffi::OsStringExt};
 
-use security_framework_sys::authorization::{
-    AuthorizationCreate, AuthorizationExecuteWithPrivileges, AuthorizationFree, AuthorizationRef,
-    errAuthorizationSuccess, kAuthorizationFlagDefaults,
-};
+use security_framework_sys::authorization::{AuthorizationCreate, AuthorizationExecuteWithPrivileges, AuthorizationFree, AuthorizationRef, errAuthorizationSuccess, kAuthorizationFlagDefaults};
 
-use crate::{
-    PandoraChild, PandoraCommand, PandoraProcess,
-    unix::unix_helpers::{RawStringVec, cvt_r},
-};
+use crate::{PandoraChild, PandoraCommand, PandoraProcess, unix::unix_helpers::{RawStringVec, cvt_r}};
 
 pub fn spawn(mut command: PandoraCommand) -> std::io::Result<PandoraChild> {
     // Program
     let resolved = command.resolve_executable_path()?;
     let Ok(program) = CString::new(resolved.clone().into_os_string().into_vec()) else {
-        return Err(Error::new(ErrorKind::InvalidData, "program contained null byte"));
+        return Err(Error::new(ErrorKind::InvalidData, "program contained null byte"))
     };
 
     // Arguments
@@ -29,7 +19,12 @@ pub fn spawn(mut command: PandoraCommand) -> std::io::Result<PandoraChild> {
 
     let mut authorization = OwnedAuthorization(std::ptr::null_mut());
     let status = unsafe {
-        AuthorizationCreate(std::ptr::null(), std::ptr::null(), kAuthorizationFlagDefaults, &mut authorization.0)
+        AuthorizationCreate(
+            std::ptr::null(),
+            std::ptr::null(),
+            kAuthorizationFlagDefaults,
+            &mut authorization.0
+        )
     };
     if status != errAuthorizationSuccess {
         return Err(Error::new(ErrorKind::Other, format!("unable to create authorization: {status}")));
@@ -42,7 +37,7 @@ pub fn spawn(mut command: PandoraCommand) -> std::io::Result<PandoraChild> {
             program.as_ptr(),
             kAuthorizationFlagDefaults,
             argv.as_null_terminated_ptr(),
-            &mut stdout,
+            &mut stdout
         )
     };
     if status != errAuthorizationSuccess {
@@ -56,7 +51,7 @@ pub fn spawn(mut command: PandoraCommand) -> std::io::Result<PandoraChild> {
         process: PandoraProcess::new(pid),
         stdin: None,
         stdout: None,
-        stderr: None,
+        stderr: None
     });
 }
 
