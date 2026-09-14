@@ -3,6 +3,17 @@
 These are product requirements for a later launcher phase. They are not part
 of the v0 AppCDS measurement prototype and must not silently expand its scope.
 
+## Self-contained prerequisite installation
+
+- The production installer must detect and, with clear user consent, install
+  launcher prerequisites such as the supported Microsoft Visual C++ Redistributable.
+- A clean Windows installation must not fail silently because a required native
+  runtime DLL is absent. The installer must report a prerequisite failure and
+  offer a documented recovery path before the launcher is first run.
+- Bundled prerequisite installers must be versioned, architecture-appropriate,
+  and independently updatable; the launcher itself must not depend on a random
+  system-wide DLL already happening to be present.
+
 ## Profiles and AppCDS
 
 - The launcher will offer named configuration profiles for the modpack.
