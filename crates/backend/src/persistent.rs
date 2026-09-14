@@ -70,6 +70,10 @@ impl<T: Serialize + for <'de> Deserialize<'de>> Persistent<T> {
             self.load_from_disk();
         }
 
+        if std::any::type_name::<T>() == "schema::instance::InstanceConfiguration" {
+            bridge::launch_probe::instance_config_loaded();
+        }
+
         &self.data
     }
 
