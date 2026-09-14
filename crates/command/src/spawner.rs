@@ -2,6 +2,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs::OpenOptions,
     io::{Error, ErrorKind, Write},
+    path::Path,
     sync::mpsc,
 };
 
@@ -157,8 +158,19 @@ fn probe_path() -> Option<&'static OsString> {
     PATH.get_or_init(|| std::env::var_os(LAUNCH_PROBE_ENV).filter(|v| !v.is_empty())).as_ref()
 }
 
+fn is_direct_java_executable(executable: &OsStr) -> bool {
+    let Some(name) = Path::new(executable).file_name() else {
+        return false;
+    };
+    let name = name.to_string_lossy();
+    name.eq_ignore_ascii_case("java")
+        || name.eq_ignore_ascii_case("java.exe")
+        || name.eq_ignore_ascii_case("javaw.exe")
+}
+
 pub(crate) fn is_probe_minecraft_launch(command: &PandoraCommand) -> bool {
     probe_path().is_some()
+        && is_direct_java_executable(&command.executable.0)
         && command.args.iter().any(|arg| arg.0 == OsStr::new("com.moulberry.pandora.LaunchWrapper"))
 }
 
@@ -245,4 +257,17 @@ fn monotonic_ns() -> u64 {
     use std::{sync::OnceLock, time::Instant};
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_nanos().min(u64::MAX as u128) as u64
+}
+
+#[cfg(test)]
+mod launch_probe_tests {
+    use super::*;
+
+    #[test]
+    fn direct_java_name_filter_rejects_wrappers() {
+        assert!(is_direct_java_executable(OsStr::new("java")));
+        assert!(is_direct_java_executable(OsStr::new("C:\\runtime\\bin\\javaw.exe")));
+        assert!(!is_direct_java_executable(OsStr::new("cmd.exe")));
+        assert!(!is_direct_java_executable(OsStr::new("wrapper.exe")));
+    }
 }
