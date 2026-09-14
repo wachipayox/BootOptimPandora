@@ -1,4 +1,4 @@
-use std::{borrow::Cow, ffi::{OsStr, OsString}, io::{Error, ErrorKind, Write}, path::{Path, PathBuf}, sync::Arc};
+use std::{borrow::Cow, ffi::{OsStr, OsString}, io::{Error, ErrorKind, Write}, path::{Path, PathBuf}, sync::{Arc, Mutex, OnceLock}};
 
 use bridge::instance::InstanceContentSummary;
 use rand::RngCore;
@@ -53,7 +53,17 @@ pub(crate) fn get_sha1_hash(path: &Path) -> std::io::Result<[u8; 20]> {
     Ok(hasher.finalize().try_into().expect("expected sha1 hash to be 20 bytes"))
 }
 
+// Integrity verification is intentionally serialized across the process. Launch currently
+// verifies Java runtime files, game assets and libraries in parallel, with each subsystem
+// independently permitting up to 32 blocking disk hash tasks. On rotational media that can
+// turn a full integrity pass into seek-heavy random I/O. Keep the exact SHA-1 verification
+// semantics, but allow only one on-disk hash read at a time. Downloads and post-download
+// in-memory hashing are unaffected.
+static SHA1_VERIFICATION_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+
 pub(crate) fn check_sha1_hash(path: &Path, expected_hash: [u8; 20]) -> std::io::Result<bool> {
+    let guard = SHA1_VERIFICATION_GUARD.get_or_init(|| Mutex::new(()));
+    let _guard = guard.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let actual_hash = get_sha1_hash(path)?;
     Ok(expected_hash == actual_hash)
 }
@@ -489,5 +499,71 @@ impl FileMetadata {
 
     pub fn number_of_links(&self) -> u64 {
         self.number_of_links as u64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{sync::mpsc, time::Duration};
+
+    fn temp_test_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("bootoptim-pandora-fs-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn sha1_integrity_reads_are_serialized() {
+        let dir = temp_test_dir();
+        let path = dir.join("asset.bin");
+        std::fs::write(&path, b"known-good-asset").unwrap();
+        let expected = get_sha1_hash(&path).unwrap();
+
+        let gate = SHA1_VERIFICATION_GUARD.get_or_init(|| Mutex::new(()));
+        let held = gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (tx, rx) = mpsc::channel();
+        let worker_path = path.clone();
+        std::thread::spawn(move || {
+            tx.send(check_sha1_hash(&worker_path, expected)).unwrap();
+        });
+
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(held);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap().unwrap(), true);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn launch_integrity_gate_rejects_changed_asset_deleted_library_and_corrupt_native_archive() {
+        let dir = temp_test_dir();
+        let asset = dir.join("asset-object");
+        let library = dir.join("library.jar");
+        let native = dir.join("native.jar");
+
+        std::fs::write(&asset, b"asset-good").unwrap();
+        std::fs::write(&library, b"library-good").unwrap();
+        std::fs::write(&native, b"native-good").unwrap();
+
+        let asset_hash = get_sha1_hash(&asset).unwrap();
+        let library_hash = get_sha1_hash(&library).unwrap();
+        let native_hash = get_sha1_hash(&native).unwrap();
+
+        assert!(check_sha1_hash(&asset, asset_hash).unwrap());
+        assert!(check_sha1_hash(&library, library_hash).unwrap());
+        assert!(check_sha1_hash(&native, native_hash).unwrap());
+
+        // Same-length corruption must still be detected; no size/mtime shortcut is used.
+        std::fs::write(&asset, b"asset-baad").unwrap();
+        assert!(!check_sha1_hash(&asset, asset_hash).unwrap());
+
+        std::fs::remove_file(&library).unwrap();
+        assert_eq!(check_sha1_hash(&library, library_hash).unwrap_err().kind(), ErrorKind::NotFound);
+
+        std::fs::write(&native, b"native-baad").unwrap();
+        assert!(!check_sha1_hash(&native, native_hash).unwrap());
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
