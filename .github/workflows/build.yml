@@ -48,7 +48,6 @@ jobs:
         uses: rui314/setup-mold@v1
 
       - name: Run launch integrity tests
-        if: matrix.platform.os != 'macos-latest'
         run: cargo test -p backend fs::tests:: --frozen --target ${{ matrix.platform.target }}
 
       - name: Run build command
