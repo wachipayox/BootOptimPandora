@@ -45,3 +45,15 @@ of the v0 AppCDS measurement prototype and must not silently expand its scope.
 - It must clearly label this as a development/local-server mode and let the
   user choose its username and select it per instance. It must not imply that
   offline accounts can join authenticated servers.
+
+## Instance-launch preparation
+
+- Profile launch preparation must be measured as its own boundary: user click
+  to Java process creation, separately from Java process creation to usable
+  main menu.
+- Investigate and remove avoidable subprocesses, repeated metadata reads,
+  hashing, filesystem walks, extraction and synchronous network/update checks
+  in the instance-launch path. A roughly 20-second fast-PC preparation cost is
+  not acceptable when it can scale much worse on an old HDD laptop.
+- Reuse fingerprinted, invalidatable launch metadata where it is semantically
+  safe; report progress honestly rather than presenting unexplained silent work.
