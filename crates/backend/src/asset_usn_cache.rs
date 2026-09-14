@@ -19,6 +19,15 @@ pub(crate) const ASSET_USN_HELPER_SHA256_ENV: &str = "BOOTOPTIM_ASSET_USN_HELPER
 const MANIFEST_SCHEMA: u32 = 1;
 const MAX_MANIFEST_BYTES: usize = 16 * 1024 * 1024;
 
+fn cache_layout_eligible(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some("objects")
+        && path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            == Some("assets")
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AssetUsnCacheRuntime {
     requested: bool,
@@ -66,9 +75,13 @@ impl AssetUsnCacheSession {
         expected_hashes: Vec<String>,
     ) -> Self {
         let runtime = AssetUsnCacheRuntime::from_environment();
+        let canonical_objects_layout = cache_layout_eligible(&assets_objects_dir);
 
         #[cfg(windows)]
-        let inner = if runtime.requested() && mode == AssetVerificationMode::Normal {
+        let inner = if runtime.requested()
+            && mode == AssetVerificationMode::Normal
+            && canonical_objects_layout
+        {
             windows::WindowsSession::begin(asset_index_sha1, assets_objects_dir, expected_hashes)
                 .ok()
                 .map(Arc::new)
@@ -77,7 +90,12 @@ impl AssetUsnCacheSession {
         };
 
         #[cfg(not(windows))]
-        let _ = (asset_index_sha1, assets_objects_dir, expected_hashes);
+        let _ = (
+            asset_index_sha1,
+            assets_objects_dir,
+            expected_hashes,
+            canonical_objects_layout,
+        );
 
         Self {
             runtime,
@@ -423,6 +441,14 @@ mod tests {
             evaluate_hit(&manifest, &manifest.assets[0], &evidence),
             ReuseDecision::FullSha1(reason)
         );
+    }
+
+    #[test]
+    fn cache_is_restricted_to_canonical_objects_layout() {
+        assert!(cache_layout_eligible(Path::new("launcher/assets/objects")));
+        assert!(!cache_layout_eligible(Path::new("game/resources")));
+        assert!(!cache_layout_eligible(Path::new("launcher/assets/virtual/legacy")));
+        assert!(!cache_layout_eligible(Path::new("other/objects")));
     }
 
     #[test]
