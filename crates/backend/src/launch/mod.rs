@@ -28,6 +28,8 @@ use crate::{
     }}
 };
 
+mod asset_prefix_dirs;
+
 #[cfg(target_os = "linux")]
 mod linux_gpu;
 
@@ -1637,16 +1639,11 @@ async fn do_asset_objects_load(
     let mut tasks = Vec::new();
 
     let _ = std::fs::create_dir_all(&assets_objects_dir);
+    let mut asset_prefix_directories = asset_prefix_dirs::AssetPrefixDirectories::default();
 
     for (_, asset) in &assets_index.objects {
-        let mut expected_hash = [0u8; 20];
-        let Ok(_) = hex::decode_to_slice(asset.hash.as_str(), &mut expected_hash) else {
-            return Err(LoadAssetObjectsError::InvalidHash(asset.hash));
-        };
-
-        let mut path = assets_objects_dir.join(&asset.hash[..2]);
-        let _ = std::fs::create_dir(&path);
-        path.push(asset.hash.as_str());
+        let (expected_hash, path) =
+            asset_prefix_directories.object_path(assets_objects_dir.as_ref(), asset.hash)?;
 
         total_size += asset.size;
 
