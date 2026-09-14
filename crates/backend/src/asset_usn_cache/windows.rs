@@ -53,6 +53,7 @@ const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
 const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(45);
 const MESSAGE_TIMEOUT: Duration = Duration::from_secs(5);
+const PINNED_HELPER_SHA256: Option<&str> = option_env!("BOOTOPTIM_ASSET_USN_HELPER_SHA256_PIN");
 
 #[cfg(test)]
 const FSCTL_READ_FILE_USN_DATA: u32 = 0x0009_00eb;
@@ -174,7 +175,6 @@ unsafe extern "system" {
         written: *mut u32,
         overlapped: *mut c_void,
     ) -> i32;
-    fn FlushFileBuffers(handle: Handle) -> i32;
     fn LocalFree(memory: *mut c_void) -> *mut c_void;
     fn MoveFileExW(existing: *const u16, new_name: *const u16, flags: u32) -> i32;
     #[cfg(test)]
@@ -315,10 +315,9 @@ impl Drop for HelperPipe {
             volume_guid: self.volume_guid,
             file_id: [0; 16],
         });
+        // Best effort only. Closing the server handle wakes or breaks the client;
+        // waiting for FlushFileBuffers here could block stock fallback on a hung helper.
         let _ = write_exact(self.pipe.0, &shutdown);
-        unsafe {
-            FlushFileBuffers(self.pipe.0);
-        }
     }
 }
 
@@ -727,6 +726,13 @@ fn hash_file(file: &mut File, expected: [u8; 20]) -> Option<bool> {
     Some(expected == *hasher.finalize())
 }
 
+fn valid_helper_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn launch_helper(volume_guid: &str) -> Result<HelperPipe, CapabilityFailure> {
     let helper_path = std::env::var_os(ASSET_USN_HELPER_ENV)
         .map(PathBuf::from)
@@ -735,14 +741,16 @@ fn launch_helper(volume_guid: &str) -> Result<HelperPipe, CapabilityFailure> {
         .map_err(|_| CapabilityFailure::HelperMissing)?;
     let expected_digest = std::env::var(ASSET_USN_HELPER_SHA256_ENV)
         .map_err(|_| CapabilityFailure::HelperIdentityMismatch)?;
-    if expected_digest.len() != 64
-        || !expected_digest
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
+    let pinned_digest = PINNED_HELPER_SHA256
+        .filter(|value| valid_helper_digest(value))
+        .ok_or(CapabilityFailure::HelperIdentityMismatch)?;
+    if !valid_helper_digest(&expected_digest) || expected_digest != pinned_digest {
         return Err(CapabilityFailure::HelperIdentityMismatch);
     }
 
+    // Keep a read handle open with write/delete sharing denied from hashing until
+    // after the elevated process is authenticated. Any pathname substitution must
+    // still match the SHA-256 embedded in this Pandora build.
     let mut guard = OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ)
@@ -766,7 +774,7 @@ fn launch_helper(volume_guid: &str) -> Result<HelperPipe, CapabilityFailure> {
         }
         hasher.update(&buffer[..read]);
     }
-    if hex::encode(hasher.finalize()) != expected_digest {
+    if hex::encode(hasher.finalize()) != pinned_digest {
         return Err(CapabilityFailure::HelperIdentityMismatch);
     }
 
@@ -1079,6 +1087,14 @@ mod windows_tests {
             std::process::id(),
             hex::encode(random)
         ))
+    }
+
+    #[test]
+    fn helper_digest_pin_is_strict_lower_hex() {
+        let valid = "0123456789abcdef".repeat(4);
+        assert!(valid_helper_digest(&valid));
+        assert!(!valid_helper_digest(&valid[..63]));
+        assert!(!valid_helper_digest(&valid.to_uppercase()));
     }
 
     #[test]

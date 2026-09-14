@@ -77,6 +77,16 @@ jobs:
       - name: Build standalone interposer
         run: cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml --release --locked --target x86_64-pc-windows-msvc
 
+      - name: Build ephemeral USN helper
+        run: cargo build -p backend --bin bootoptim-usn-helper --release --frozen --target x86_64-pc-windows-msvc
+
+      - name: Pin ephemeral USN helper into Pandora build
+        shell: pwsh
+        run: |
+          $helper = "target/x86_64-pc-windows-msvc/release/bootoptim-usn-helper.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $helper).Hash.ToLowerInvariant()
+          "BOOTOPTIM_ASSET_USN_HELPER_SHA256_PIN=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build patched Pandora
         run: cargo build --release --frozen --target x86_64-pc-windows-msvc
 
@@ -85,9 +95,11 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force bootoptim-v0/dist | Out-Null
           Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe bootoptim-v0/dist/
+          Copy-Item target/x86_64-pc-windows-msvc/release/bootoptim-usn-helper.exe bootoptim-v0/dist/
           Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe bootoptim-v0/dist/BootOptimPandora-v0.exe
           $files = @(
             "bootoptim-v0/dist/bootoptim-launch-interposer.exe",
+            "bootoptim-v0/dist/bootoptim-usn-helper.exe",
             "bootoptim-v0/dist/BootOptimPandora-v0.exe"
           )
           $lines = foreach ($file in $files) {
