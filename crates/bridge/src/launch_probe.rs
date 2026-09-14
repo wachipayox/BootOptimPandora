@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     fs::OpenOptions,
     io::Write,
     path::PathBuf,
@@ -40,7 +41,7 @@ struct ProbeState {
     trackers: Vec<TrackerRecord>,
 }
 
-static OUTPUT_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+static OUTPUT_PATH: OnceLock<PathBuf> = OnceLock::new();
 static STATE: OnceLock<Mutex<ProbeState>> = OnceLock::new();
 static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -48,10 +49,18 @@ pub fn enabled() -> bool {
     output_path().is_some()
 }
 
+fn configured_path(value: Option<OsString>) -> Option<PathBuf> {
+    value.filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
 fn output_path() -> Option<&'static PathBuf> {
-    OUTPUT_PATH
-        .get_or_init(|| std::env::var_os(ENV_NAME).filter(|v| !v.is_empty()).map(PathBuf::from))
-        .as_ref()
+    if let Some(path) = OUTPUT_PATH.get() {
+        return Some(path);
+    }
+
+    let path = configured_path(std::env::var_os(ENV_NAME))?;
+    let _ = OUTPUT_PATH.set(path);
+    OUTPUT_PATH.get()
 }
 
 fn state() -> &'static Mutex<ProbeState> {
@@ -99,6 +108,17 @@ fn network_event(phase: &str, source: &str) {
             "{{\"schema\":\"{SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"observed\",\"network\":true,\"source\":\"{source}\"}}"
         )
     });
+}
+
+fn modal_matches_or_adopt(guard: &mut ProbeState, modal_key: usize) -> bool {
+    if guard.modal_key == modal_key {
+        true
+    } else if guard.modal_key == 0 && modal_key != 0 {
+        guard.modal_key = modal_key;
+        true
+    } else {
+        false
+    }
 }
 
 pub fn network_download_observed(source: &'static str) {
@@ -156,6 +176,8 @@ pub fn request(modal_key: usize) {
 
     let now = monotonic_ns();
     let mut initial = String::new();
+    initial.push_str(&event_line(now, "launcher_pre_java", "begin", false));
+    initial.push('\n');
     initial.push_str(&event_line(now, "launch_request", "instant", false));
     initial.push('\n');
     initial.push_str(&event_line(now, "instance_config", "begin", false));
@@ -176,7 +198,7 @@ pub fn backend_dispatch(modal_key: usize) {
         return;
     }
     let mut guard = state().lock();
-    if !guard.active || guard.modal_key != modal_key {
+    if !guard.active || !modal_matches_or_adopt(&mut guard, modal_key) {
         return;
     }
     guard.config_dispatch_ready = true;
@@ -193,7 +215,7 @@ pub fn instance_config_loaded() {
     guard.config_dispatch_ready = false;
     guard.config_done = true;
     drop(guard);
-    event("instance_config", "end", false);
+    outcome_event("instance_config", "ok");
     event("account_selection", "begin", false);
 }
 
@@ -202,14 +224,14 @@ pub fn modal_clear(modal_key: usize) {
         return;
     }
     let mut guard = state().lock();
-    if !guard.active || guard.modal_key != modal_key {
+    if !guard.active || !modal_matches_or_adopt(&mut guard, modal_key) {
         return;
     }
 
     if !guard.account_done {
         guard.account_done = true;
         drop(guard);
-        event("account_selection", "end", false);
+        outcome_event("account_selection", "ok");
         event("prelaunch", "begin", false);
         return;
     }
@@ -217,7 +239,7 @@ pub fn modal_clear(modal_key: usize) {
     if !guard.prelaunch_done {
         guard.prelaunch_done = true;
         drop(guard);
-        event("prelaunch", "end", false);
+        outcome_event("prelaunch", "ok");
         event("version_loader_resolution", "begin", false);
     }
 }
@@ -233,7 +255,7 @@ pub fn tracker_created(modal_key: usize, tracker_key: usize, title: &str) {
 
     {
         let mut guard = state().lock();
-        if !guard.active || guard.modal_key != modal_key {
+        if !guard.active || !modal_matches_or_adopt(&mut guard, modal_key) {
             return;
         }
 
@@ -249,9 +271,6 @@ pub fn tracker_created(modal_key: usize, tracker_key: usize, title: &str) {
         if top_level {
             begin_kinds.push(kind);
         } else if kind == TrackerKind::Assets && !guard.version_done {
-            // Safety fallback for an unexpected progress shape. Asset loading exists only
-            // in the outer launch group. Do not backdate promoted sibling starts: emitting
-            // them now keeps JSONL timestamps nondecreasing instead of fabricating history.
             guard.version_done = true;
             end_version = true;
             for record in &mut guard.trackers {
@@ -291,8 +310,8 @@ pub fn tracker_title_changed(modal_key: usize, tracker_key: usize, title: &str) 
     if !enabled() || !title.starts_with("Downloading ") {
         return;
     }
-    let guard = state().lock();
-    if !guard.active || guard.modal_key != modal_key {
+    let mut guard = state().lock();
+    if !guard.active || !modal_matches_or_adopt(&mut guard, modal_key) {
         return;
     }
     let Some(record) = guard.trackers.iter().find(|v| v.key == tracker_key) else {
@@ -310,7 +329,7 @@ pub fn tracker_finished(modal_key: usize, tracker_key: usize, error: bool) {
 
     let phase_end = {
         let mut guard = state().lock();
-        if !guard.active || guard.modal_key != modal_key {
+        if !guard.active || !modal_matches_or_adopt(&mut guard, modal_key) {
             return;
         }
         let Some(index) = guard.trackers.iter().position(|v| v.key == tracker_key) else {
@@ -322,7 +341,6 @@ pub fn tracker_finished(modal_key: usize, tracker_key: usize, error: bool) {
         guard.trackers[index].finished = true;
 
         if kind == TrackerKind::Parent {
-            guard.active = false;
             return;
         }
         top_level.then_some(kind)
@@ -356,7 +374,7 @@ pub fn tracker_add_count(
 
     {
         let mut guard = state().lock();
-        if !guard.active || guard.modal_key != modal_key {
+        if !guard.active || !modal_matches_or_adopt(&mut guard, modal_key) {
             return;
         }
         let Some(record) = guard.trackers.iter().find(|r| r.key == tracker_key) else {
@@ -378,8 +396,6 @@ pub fn tracker_add_count(
     }
 
     if emit_loader_network {
-        // Pinned Forge/NeoForge create_forgelike increments the parent tracker to 1/13
-        // immediately before constructing the join containing the installer SHA-1 request.
         network_request_observed("loader_sha1");
     }
     if end_version {
@@ -392,12 +408,13 @@ pub fn cancel(modal_key: usize) {
         return;
     }
     let mut guard = state().lock();
-    if !guard.active || guard.modal_key != modal_key {
+    if !guard.active || !modal_matches_or_adopt(&mut guard, modal_key) {
         return;
     }
     guard.active = false;
     guard.config_dispatch_ready = false;
     drop(guard);
+    outcome_event("launcher_pre_java", "cancelled");
     outcome_event("launch", "cancelled");
 }
 
@@ -406,12 +423,13 @@ pub fn error(modal_key: usize) {
         return;
     }
     let mut guard = state().lock();
-    if !guard.active || guard.modal_key != modal_key {
+    if !guard.active || !modal_matches_or_adopt(&mut guard, modal_key) {
         return;
     }
     guard.active = false;
     guard.config_dispatch_ready = false;
     drop(guard);
+    outcome_event("launcher_pre_java", "error");
     outcome_event("launch", "error");
 }
 
@@ -505,7 +523,7 @@ mod tests {
         event: &'static str,
     }
 
-    fn is_span_phase(phase: &str) -> bool {
+    fn is_measured_span(phase: &str) -> bool {
         matches!(
             phase,
             "instance_config"
@@ -520,10 +538,19 @@ mod tests {
         )
     }
 
+    fn is_root_child(phase: &str) -> bool {
+        !matches!(phase, "launcher_pre_java" | "java_to_menu" | "launch")
+    }
+
     fn validate_complete_trace(events: &[TraceEvent]) -> Result<(), &'static str> {
         let mut open = HashSet::new();
         let mut previous = None;
-        let mut launcher_pre_java_ended = false;
+        let mut root_open = false;
+        let mut root_begins = 0;
+        let mut root_ends = 0;
+        let mut child_seen = false;
+        let mut java_spawn_seen = false;
+        let mut java_spawn_ended = false;
 
         for item in events {
             if let Some(previous) = previous {
@@ -533,67 +560,104 @@ mod tests {
             }
             previous = Some(item.mono_ns);
 
-            if launcher_pre_java_ended && matches!(item.event, "begin" | "inclusive_begin") {
-                return Err("begin after launcher_pre_java.end");
+            if item.phase == "launcher_pre_java" {
+                match item.event {
+                    "begin" => {
+                        root_begins += 1;
+                        if root_begins != 1 {
+                            return Err("duplicate root begin");
+                        }
+                        if child_seen {
+                            return Err("root begin after child");
+                        }
+                        root_open = true;
+                    }
+                    "end" => {
+                        root_ends += 1;
+                        if root_ends != 1 || !root_open {
+                            return Err("root end without begin or duplicate");
+                        }
+                        if java_spawn_seen && !java_spawn_ended {
+                            return Err("root ended before java spawn");
+                        }
+                        root_open = false;
+                    }
+                    _ => {}
+                }
+                continue;
             }
 
-            if is_span_phase(item.phase) {
+            if is_root_child(item.phase) {
+                child_seen = true;
+                if !root_open {
+                    return Err("child outside root");
+                }
+            }
+
+            if is_measured_span(item.phase) {
                 match item.event {
-                    "begin" | "inclusive_begin" => {
+                    "begin" => {
                         if !open.insert(item.phase) {
                             return Err("duplicate begin");
                         }
+                        if item.phase == "java_spawn" {
+                            java_spawn_seen = true;
+                        }
                     }
-                    "end" | "inclusive_end" => {
+                    "end" => {
                         if !open.remove(item.phase) {
                             return Err("span end without prior begin");
+                        }
+                        if item.phase == "java_spawn" {
+                            java_spawn_ended = true;
                         }
                     }
                     _ => {}
                 }
-            }
-
-            if item.phase == "launcher_pre_java" && item.event == "end" {
-                launcher_pre_java_ended = true;
             }
         }
 
         if !open.is_empty() {
             return Err("span left open");
         }
+        if java_spawn_seen && (root_begins != 1 || root_ends != 1 || root_open) {
+            return Err("java spawn without complete root");
+        }
         Ok(())
     }
 
     fn complete_trace() -> Vec<TraceEvent> {
         vec![
-            TraceEvent { mono_ns: 1, phase: "launch_request", event: "instant" },
-            TraceEvent { mono_ns: 2, phase: "instance_config", event: "begin" },
-            TraceEvent { mono_ns: 3, phase: "instance_config", event: "end" },
-            TraceEvent { mono_ns: 4, phase: "account_selection", event: "begin" },
-            TraceEvent { mono_ns: 5, phase: "network_request", event: "observed" },
+            TraceEvent { mono_ns: 1, phase: "launcher_pre_java", event: "begin" },
+            TraceEvent { mono_ns: 2, phase: "launch_request", event: "instant" },
+            TraceEvent { mono_ns: 3, phase: "instance_config", event: "begin" },
+            TraceEvent { mono_ns: 4, phase: "instance_config", event: "end" },
+            TraceEvent { mono_ns: 5, phase: "account_selection", event: "begin" },
             TraceEvent { mono_ns: 6, phase: "account_selection", event: "end" },
             TraceEvent { mono_ns: 7, phase: "prelaunch", event: "begin" },
             TraceEvent { mono_ns: 8, phase: "prelaunch", event: "end" },
             TraceEvent { mono_ns: 9, phase: "version_loader_resolution", event: "begin" },
-            TraceEvent { mono_ns: 10, phase: "network_request", event: "observed" },
-            TraceEvent { mono_ns: 11, phase: "version_loader_resolution", event: "end" },
-            TraceEvent { mono_ns: 12, phase: "java_runtime", event: "begin" },
-            TraceEvent { mono_ns: 13, phase: "assets_verify_download", event: "begin" },
-            TraceEvent { mono_ns: 14, phase: "libraries_classpath_inputs", event: "begin" },
-            TraceEvent { mono_ns: 15, phase: "network_download", event: "observed" },
+            TraceEvent { mono_ns: 10, phase: "version_loader_resolution", event: "end" },
+            TraceEvent { mono_ns: 11, phase: "assets_verify_download", event: "begin" },
+            TraceEvent { mono_ns: 12, phase: "libraries_classpath_inputs", event: "begin" },
             TraceEvent { mono_ns: 20, phase: "libraries_classpath_inputs", event: "end" },
             TraceEvent { mono_ns: 30, phase: "assets_verify_download", event: "end" },
-            TraceEvent { mono_ns: 31, phase: "java_runtime", event: "end" },
-            TraceEvent { mono_ns: 32, phase: "classpath_resolution", event: "unobserved" },
-            TraceEvent { mono_ns: 33, phase: "native_extraction", event: "unobserved" },
-            TraceEvent { mono_ns: 34, phase: "wrapper_arguments", event: "unobserved" },
-            TraceEvent { mono_ns: 35, phase: "appcds_preflight", event: "begin" },
-            TraceEvent { mono_ns: 36, phase: "appcds_preflight", event: "end" },
-            TraceEvent { mono_ns: 37, phase: "java_spawn", event: "begin" },
-            TraceEvent { mono_ns: 38, phase: "java_spawn", event: "end" },
-            TraceEvent { mono_ns: 39, phase: "launcher_pre_java", event: "end" },
-            TraceEvent { mono_ns: 40, phase: "java_to_menu", event: "unobserved" },
+            TraceEvent { mono_ns: 31, phase: "classpath_resolution", event: "unobserved" },
+            TraceEvent { mono_ns: 32, phase: "native_extraction", event: "unobserved" },
+            TraceEvent { mono_ns: 33, phase: "wrapper_arguments", event: "unobserved" },
+            TraceEvent { mono_ns: 34, phase: "appcds_preflight", event: "begin" },
+            TraceEvent { mono_ns: 35, phase: "appcds_preflight", event: "end" },
+            TraceEvent { mono_ns: 36, phase: "java_spawn", event: "begin" },
+            TraceEvent { mono_ns: 37, phase: "java_spawn", event: "end" },
+            TraceEvent { mono_ns: 38, phase: "launcher_pre_java", event: "end" },
+            TraceEvent { mono_ns: 39, phase: "java_to_menu", event: "unobserved" },
         ]
+    }
+
+    #[test]
+    fn disabled_env_value_is_not_activation() {
+        assert_eq!(configured_path(None), None);
+        assert_eq!(configured_path(Some(OsString::new())), None);
     }
 
     #[test]
@@ -607,42 +671,6 @@ mod tests {
     }
 
     #[test]
-    fn required_phase_order_contract_keeps_parallel_group_together() {
-        fn rank(phase: &str) -> u8 {
-            match phase {
-                "launch_request" => 0,
-                "instance_config" => 1,
-                "account_selection" => 2,
-                "prelaunch" => 3,
-                "version_loader_resolution" => 4,
-                "java_runtime" | "assets_verify_download" | "libraries_classpath_inputs" => 5,
-                "classpath_resolution" | "native_extraction" | "wrapper_arguments" => 6,
-                "appcds_preflight" => 7,
-                "java_spawn" => 8,
-                "launcher_pre_java" => 9,
-                "java_to_menu" => 10,
-                _ => 255,
-            }
-        }
-        let serial = [
-            "launch_request",
-            "instance_config",
-            "account_selection",
-            "prelaunch",
-            "version_loader_resolution",
-            "assets_verify_download",
-            "classpath_resolution",
-            "appcds_preflight",
-            "java_spawn",
-            "launcher_pre_java",
-            "java_to_menu",
-        ];
-        assert!(serial.windows(2).all(|w| rank(w[0]) <= rank(w[1])));
-        assert_eq!(rank("assets_verify_download"), rank("libraries_classpath_inputs"));
-        assert_eq!(rank("assets_verify_download"), rank("java_runtime"));
-    }
-
-    #[test]
     fn version_resolution_boundaries_cover_pinned_loader_shapes() {
         for (version_done, total) in [(2, 7), (5, 10), (8, 13)] {
             assert!(is_version_resolution_boundary(version_done, total));
@@ -651,8 +679,29 @@ mod tests {
     }
 
     #[test]
-    fn complete_trace_has_ordered_spans_and_monotonic_timestamps() {
+    fn complete_trace_has_one_root_and_ordered_children() {
         assert_eq!(validate_complete_trace(&complete_trace()), Ok(()));
+    }
+
+    #[test]
+    fn complete_trace_rejects_missing_root_begin() {
+        let mut trace = complete_trace();
+        trace.remove(0);
+        assert_eq!(validate_complete_trace(&trace), Err("child outside root"));
+    }
+
+    #[test]
+    fn complete_trace_rejects_duplicate_root_begin() {
+        let mut trace = complete_trace();
+        trace.insert(1, TraceEvent { mono_ns: 1, phase: "launcher_pre_java", event: "begin" });
+        assert_eq!(validate_complete_trace(&trace), Err("duplicate root begin"));
+    }
+
+    #[test]
+    fn complete_trace_rejects_root_begin_after_child() {
+        let mut trace = complete_trace();
+        trace.swap(0, 1);
+        assert_eq!(validate_complete_trace(&trace), Err("child outside root"));
     }
 
     #[test]
@@ -663,17 +712,25 @@ mod tests {
     }
 
     #[test]
-    fn complete_trace_rejects_begin_after_launcher_pre_java_end() {
+    fn complete_trace_rejects_timestamp_regression() {
         let mut trace = complete_trace();
-        trace.push(TraceEvent { mono_ns: 41, phase: "java_spawn", event: "begin" });
-        assert_eq!(validate_complete_trace(&trace), Err("begin after launcher_pre_java.end"));
+        trace[10].mono_ns = 5;
+        assert_eq!(validate_complete_trace(&trace), Err("timestamp moved backwards"));
     }
 
     #[test]
-    fn complete_trace_rejects_timestamp_regression() {
+    fn complete_trace_rejects_observed_child_outside_root() {
         let mut trace = complete_trace();
-        trace[12].mono_ns = 5;
-        assert_eq!(validate_complete_trace(&trace), Err("timestamp moved backwards"));
+        let root_end = trace.iter().position(|v| v.phase == "launcher_pre_java" && v.event == "end").unwrap();
+        trace.insert(root_end + 1, TraceEvent { mono_ns: 38, phase: "network_download", event: "observed" });
+        assert_eq!(validate_complete_trace(&trace), Err("child outside root"));
+    }
+
+    #[test]
+    fn complete_trace_rejects_java_spawn_without_root_complete() {
+        let mut trace = complete_trace();
+        trace.retain(|item| !(item.phase == "launcher_pre_java" && item.event == "end"));
+        assert_eq!(validate_complete_trace(&trace), Err("java spawn without complete root"));
     }
 
     #[test]
