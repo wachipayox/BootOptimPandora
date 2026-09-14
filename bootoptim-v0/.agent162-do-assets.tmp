@@ -10,7 +10,11 @@ async fn do_asset_objects_load(
     let started_downloading = AtomicBool::new(false);
 
     let planned_objects = assets_index.objects.len() as u64;
-    let planned_bytes = assets_index.objects.values().map(|asset| asset.size).sum::<u64>();
+    let planned_bytes = assets_index
+        .objects
+        .values()
+        .map(|asset| u64::from(asset.size))
+        .sum::<u64>();
     let attribution_probe =
         crate::asset_probe::AssetAttributionProbe::for_launch(planned_objects, planned_bytes);
 
