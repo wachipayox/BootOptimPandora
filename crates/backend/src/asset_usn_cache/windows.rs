@@ -743,9 +743,6 @@ fn launch_helper(volume_guid: &str) -> Result<HelperPipe, CapabilityFailure> {
         return Err(CapabilityFailure::HelperIdentityMismatch);
     }
 
-    // Keep a read handle open with write/delete sharing denied from hashing until
-    // after the elevated process is authenticated. The helper may live on any
-    // local filesystem; unlike asset objects it is not required to reside on NTFS.
     let mut guard = OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ)
@@ -999,7 +996,7 @@ fn read_exact_timeout(handle: Handle, output: &mut [u8], deadline: Instant) -> b
 
 fn write_exact(handle: Handle, input: &[u8]) -> bool {
     let mut written = 0u32;
-    unsafe {
+    let ok = unsafe {
         WriteFile(
             handle,
             input.as_ptr().cast(),
@@ -1007,8 +1004,8 @@ fn write_exact(handle: Handle, input: &[u8]) -> bool {
             &mut written,
             null_mut(),
         )
-    } != 0
-        && written as usize == input.len()
+    };
+    ok != 0 && written as usize == input.len()
 }
 
 fn last_error() -> i32 {
