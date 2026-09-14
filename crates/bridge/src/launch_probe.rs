@@ -336,8 +336,29 @@ fn is_version_resolution_boundary(current_count: usize, total_count: usize) -> b
     total_count >= 5 && current_count == total_count - 5
 }
 
-fn is_post_join_boundary(current_count: usize, total_count: usize) -> bool {
-    total_count >= 1 && current_count == total_count - 1
+fn is_post_join_boundary(state: &ProbeState, current_count: usize, total_count: usize) -> bool {
+    if total_count < 2 {
+        return false;
+    }
+
+    // Managed Mojang Java increments the parent tracker when its runtime branch finishes,
+    // so the outer post-try_join4 increment lands at total-1. A configured/external Java
+    // path returns before creating a Java-runtime tracker or incrementing that branch; in
+    // that case the exact same outer increment lands at total-2. A delayed managed runtime
+    // cannot be confused with this case: before its tracker exists, assets+libraries can
+    // reach at most total-3; once it contributes the total-2 increment, its top-level
+    // JavaRuntime tracker is already present.
+    if current_count == total_count - 1 {
+        return true;
+    }
+    if current_count != total_count - 2 {
+        return false;
+    }
+
+    !state
+        .trackers
+        .iter()
+        .any(|r| r.top_level && r.kind == TrackerKind::JavaRuntime)
 }
 
 fn is_loader_sha1_request_boundary(current_count: usize, total_count: usize) -> bool {
@@ -382,7 +403,7 @@ pub fn tracker_add_count(
 
         if guard.version_done
             && !guard.post_resolution_started
-            && is_post_join_boundary(current_count, total_count)
+            && is_post_join_boundary(&guard, current_count, total_count)
         {
             guard.post_resolution_started = true;
             start_post_envelope = true;
@@ -398,9 +419,9 @@ pub fn tracker_add_count(
         outcome_event("version_loader_resolution", "ok");
     }
     if start_post_envelope {
-        // The parent progress increment happens only after try_join4 has returned, including
-        // the untracked log_configuration sibling. This is therefore a race-free post-join
-        // boundary; the three scopes remain inclusive because Pandora interleaves their work.
+        // This parent increment occurs only after try_join4 has returned, including the
+        // untracked log_configuration sibling. The custom/external Java path skips its own
+        // progress increment, which is why its exact post-join count is one lower.
         event("classpath_resolution", "inclusive_begin", false);
         event("native_extraction", "inclusive_begin", false);
         event("wrapper_arguments", "inclusive_begin", false);
@@ -556,12 +577,31 @@ mod tests {
     }
 
     #[test]
-    fn progress_boundaries_cover_pinned_loader_shapes() {
-        for (version_done, post_join, total) in [(2, 6, 7), (5, 9, 10), (8, 12, 13)] {
+    fn progress_boundaries_cover_pinned_loader_shapes_and_custom_java() {
+        for (version_done, managed_post_join, custom_post_join, total) in [
+            (2, 6, 5, 7),
+            (5, 9, 8, 10),
+            (8, 12, 11, 13),
+        ] {
             assert!(is_version_resolution_boundary(version_done, total));
-            assert!(is_post_join_boundary(post_join, total));
             assert!(!is_version_resolution_boundary(version_done.saturating_sub(1), total));
-            assert!(!is_post_join_boundary(post_join.saturating_sub(1), total));
+
+            let managed = ProbeState {
+                trackers: vec![TrackerRecord {
+                    key: 1,
+                    kind: TrackerKind::JavaRuntime,
+                    created_ns: 1,
+                    top_level: true,
+                    finished: true,
+                }],
+                ..ProbeState::default()
+            };
+            assert!(!is_post_join_boundary(&managed, custom_post_join, total));
+            assert!(is_post_join_boundary(&managed, managed_post_join, total));
+
+            let custom = ProbeState::default();
+            assert!(!is_post_join_boundary(&custom, custom_post_join.saturating_sub(1), total));
+            assert!(is_post_join_boundary(&custom, custom_post_join, total));
         }
     }
 
