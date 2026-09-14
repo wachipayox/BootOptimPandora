@@ -23,6 +23,8 @@ enum TrackerKind {
 struct TrackerRecord {
     key: usize,
     kind: TrackerKind,
+    top_level: bool,
+    finished: bool,
 }
 
 #[derive(Debug, Default)]
@@ -33,14 +35,16 @@ struct ProbeState {
     account_done: bool,
     prelaunch_done: bool,
     version_done: bool,
-    assets_finished: bool,
-    libraries_finished: bool,
     post_resolution_started: bool,
     trackers: Vec<TrackerRecord>,
 }
 
 static OUTPUT_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 static STATE: OnceLock<Mutex<ProbeState>> = OnceLock::new();
+
+pub fn enabled() -> bool {
+    output_path().is_some()
+}
 
 fn output_path() -> Option<&'static PathBuf> {
     OUTPUT_PATH
@@ -57,8 +61,10 @@ fn append_line(line: &str) {
         return;
     };
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = file.write_all(line.as_bytes());
-        let _ = file.write_all(b"\n");
+        let mut record = String::with_capacity(line.len() + 1);
+        record.push_str(line);
+        record.push('\n');
+        let _ = file.write_all(record.as_bytes());
     }
 }
 
@@ -79,6 +85,13 @@ fn outcome_event(phase: &str, outcome: &str) {
     ));
 }
 
+fn network_event(source: &str) {
+    append_line(&format!(
+        "{{\"schema\":\"{SCHEMA}\",\"mono_ns\":{},\"phase\":\"network_download\",\"event\":\"observed\",\"network\":true,\"source\":\"{source}\"}}",
+        monotonic_ns()
+    ));
+}
+
 pub fn request(modal_key: usize) {
     let Some(path) = output_path() else {
         return;
@@ -92,8 +105,14 @@ pub fn request(modal_key: usize) {
     };
 
     let now = monotonic_ns();
-    let _ = writeln!(file, "{}", event_line(now, "launch_request", "instant", false));
-    let _ = writeln!(file, "{}", event_line(now, "instance_config", "begin", false));
+    let mut initial = String::new();
+    initial.push_str(&event_line(now, "launch_request", "instant", false));
+    initial.push('\n');
+    initial.push_str(&event_line(now, "instance_config", "begin", false));
+    initial.push('\n');
+    if file.write_all(initial.as_bytes()).is_err() {
+        return;
+    }
 
     *state().lock() = ProbeState {
         active: true,
@@ -103,7 +122,7 @@ pub fn request(modal_key: usize) {
 }
 
 pub fn instance_config_loaded() {
-    if output_path().is_none() {
+    if !enabled() {
         return;
     }
     let mut guard = state().lock();
@@ -117,7 +136,7 @@ pub fn instance_config_loaded() {
 }
 
 pub fn modal_clear(modal_key: usize) {
-    if output_path().is_none() {
+    if !enabled() {
         return;
     }
     let mut guard = state().lock();
@@ -142,7 +161,7 @@ pub fn modal_clear(modal_key: usize) {
 }
 
 pub fn tracker_created(modal_key: usize, tracker_key: usize, title: &str) {
-    if output_path().is_none() {
+    if !enabled() {
         return;
     }
     let mut guard = state().lock();
@@ -151,26 +170,28 @@ pub fn tracker_created(modal_key: usize, tracker_key: usize, title: &str) {
     }
 
     let kind = tracker_kind(title);
-    guard.trackers.push(TrackerRecord { key: tracker_key, kind });
+    let top_level = guard.version_done
+        && matches!(kind, TrackerKind::Assets | TrackerKind::Libraries | TrackerKind::JavaRuntime);
+    guard.trackers.push(TrackerRecord {
+        key: tracker_key,
+        kind,
+        top_level,
+        finished: false,
+    });
+    drop(guard);
 
-    if kind == TrackerKind::Parent {
-        return;
+    if top_level {
+        event(phase_name(kind), "begin", false);
     }
-
-    if matches!(kind, TrackerKind::Assets | TrackerKind::Libraries | TrackerKind::JavaRuntime) {
-        if !guard.version_done {
-            guard.version_done = true;
-            drop(guard);
-            event("version_loader_resolution", "end", false);
-        } else {
-            drop(guard);
+    if title.starts_with("Downloading ") {
+        if let Some(source) = network_source(kind) {
+            network_event(source);
         }
-        event(phase_name(kind), "begin", title.starts_with("Downloading "));
     }
 }
 
 pub fn tracker_title_changed(modal_key: usize, tracker_key: usize, title: &str) {
-    if output_path().is_none() {
+    if !enabled() || !title.starts_with("Downloading ") {
         return;
     }
     let guard = state().lock();
@@ -180,57 +201,51 @@ pub fn tracker_title_changed(modal_key: usize, tracker_key: usize, title: &str) 
     let Some(record) = guard.trackers.iter().find(|v| v.key == tracker_key) else {
         return;
     };
-    let kind = record.kind;
+    let source = network_source(record.kind);
     drop(guard);
 
-    if title.starts_with("Downloading ") && matches!(kind, TrackerKind::Assets | TrackerKind::Libraries | TrackerKind::JavaRuntime) {
-        event(phase_name(kind), "network_download_begin", true);
+    if let Some(source) = source {
+        network_event(source);
     }
 }
 
 pub fn tracker_finished(modal_key: usize, tracker_key: usize, error: bool) {
-    if output_path().is_none() {
+    if !enabled() {
         return;
     }
     let mut guard = state().lock();
     if !guard.active || guard.modal_key != modal_key {
         return;
     }
-    let Some(record) = guard.trackers.iter().find(|v| v.key == tracker_key).copied() else {
+    let Some(record) = guard.trackers.iter_mut().find(|v| v.key == tracker_key) else {
         return;
     };
+    record.finished = true;
+    let kind = record.kind;
+    let top_level = record.top_level;
 
-    if record.kind == TrackerKind::Parent {
+    if kind == TrackerKind::Parent {
         guard.active = false;
-        drop(guard);
-        append_line(&format!(
-            "{{\"schema\":\"{SCHEMA}\",\"mono_ns\":{},\"phase\":\"java_to_menu\",\"event\":\"unobserved\",\"network\":false,\"observed\":false,\"duration_ns\":null}}",
-            monotonic_ns()
-        ));
-        if error {
-            outcome_event("launch", "error");
-        }
         return;
-    }
-
-    match record.kind {
-        TrackerKind::Assets => guard.assets_finished = true,
-        TrackerKind::Libraries => guard.libraries_finished = true,
-        _ => {}
     }
     drop(guard);
 
-    if matches!(record.kind, TrackerKind::Assets | TrackerKind::Libraries | TrackerKind::JavaRuntime) {
-        outcome_event(phase_name(record.kind), if error { "error" } else { "ok" });
+    if top_level {
+        outcome_event(phase_name(kind), if error { "error" } else { "ok" });
     }
 }
 
-pub fn tracker_add_count(modal_key: usize, tracker_key: usize) {
-    if output_path().is_none() {
+pub fn tracker_add_count(
+    modal_key: usize,
+    tracker_key: usize,
+    current_count: usize,
+    total_count: usize,
+) {
+    if !enabled() {
         return;
     }
     let mut guard = state().lock();
-    if !guard.active || guard.modal_key != modal_key || guard.post_resolution_started {
+    if !guard.active || guard.modal_key != modal_key {
         return;
     }
     let Some(parent) = guard.trackers.iter().find(|v| v.key == tracker_key) else {
@@ -240,16 +255,35 @@ pub fn tracker_add_count(modal_key: usize, tracker_key: usize) {
         return;
     }
 
-    if guard.assets_finished && guard.libraries_finished {
+    if !guard.version_done && is_version_boundary(current_count, total_count) {
+        guard.version_done = true;
+        drop(guard);
+        outcome_event("version_loader_resolution", "ok");
+        return;
+    }
+
+    if guard.version_done
+        && !guard.post_resolution_started
+        && is_post_resolution_boundary(current_count, total_count)
+    {
         guard.post_resolution_started = true;
         drop(guard);
         event("classpath_resolution", "inclusive_begin", false);
         event("native_extraction", "inclusive_begin", false);
+        event("wrapper_arguments", "inclusive_begin", false);
     }
 }
 
+fn is_version_boundary(current_count: usize, total_count: usize) -> bool {
+    total_count >= 5 && current_count == total_count - 5
+}
+
+fn is_post_resolution_boundary(current_count: usize, total_count: usize) -> bool {
+    total_count >= 1 && current_count == total_count - 1
+}
+
 pub fn cancel(modal_key: usize) {
-    if output_path().is_none() {
+    if !enabled() {
         return;
     }
     let mut guard = state().lock();
@@ -262,13 +296,14 @@ pub fn cancel(modal_key: usize) {
 }
 
 pub fn error(modal_key: usize) {
-    if output_path().is_none() {
+    if !enabled() {
         return;
     }
-    let guard = state().lock();
+    let mut guard = state().lock();
     if !guard.active || guard.modal_key != modal_key {
         return;
     }
+    guard.active = false;
     drop(guard);
     outcome_event("launch", "error");
 }
@@ -290,6 +325,15 @@ fn phase_name(kind: TrackerKind) -> &'static str {
         TrackerKind::JavaRuntime => "java_runtime",
         TrackerKind::Parent => "launch",
         TrackerKind::Other => "other",
+    }
+}
+
+fn network_source(kind: TrackerKind) -> Option<&'static str> {
+    match kind {
+        TrackerKind::Assets => Some("assets"),
+        TrackerKind::Libraries => Some("libraries"),
+        TrackerKind::JavaRuntime => Some("java_runtime"),
+        TrackerKind::Parent | TrackerKind::Other => None,
     }
 }
 
@@ -352,7 +396,7 @@ mod tests {
         assert!(!line.contains('/'));
         assert!(!line.contains('\\'));
         assert!(!line.to_ascii_lowercase().contains("token"));
-        assert!(!line.to_ascii_lowercase().contains("username"));
+        assert!(!line.to_ascii_lowercase().contains("account"));
     }
 
     #[test]
@@ -365,11 +409,10 @@ mod tests {
                 "prelaunch" => 3,
                 "version_loader_resolution" => 4,
                 "java_runtime" | "assets_verify_download" | "libraries_classpath_inputs" => 5,
-                "classpath_resolution" | "native_extraction" => 6,
-                "wrapper_arguments" => 7,
-                "java_spawn" => 8,
-                "launcher_pre_java" => 9,
-                "java_to_menu" => 10,
+                "classpath_resolution" | "native_extraction" | "wrapper_arguments" => 6,
+                "java_spawn" => 7,
+                "launcher_pre_java" => 8,
+                "java_to_menu" => 9,
                 _ => 255,
             }
         }
@@ -382,6 +425,26 @@ mod tests {
         assert_eq!(rank("assets_verify_download"), rank("libraries_classpath_inputs"));
         assert_eq!(rank("assets_verify_download"), rank("java_runtime"));
         assert_eq!(rank("classpath_resolution"), rank("native_extraction"));
+        assert_eq!(rank("classpath_resolution"), rank("wrapper_arguments"));
+    }
+
+    #[test]
+    fn parent_progress_boundaries_cover_supported_loader_shapes() {
+        assert!(is_version_boundary(2, 7));
+        assert!(is_version_boundary(5, 10));
+        assert!(is_version_boundary(8, 13));
+        assert!(!is_version_boundary(7, 13));
+        assert!(is_post_resolution_boundary(6, 7));
+        assert!(is_post_resolution_boundary(9, 10));
+        assert!(is_post_resolution_boundary(12, 13));
+    }
+
+    #[test]
+    fn network_source_is_fixed_metadata_only() {
+        assert_eq!(network_source(TrackerKind::Assets), Some("assets"));
+        assert_eq!(network_source(TrackerKind::Libraries), Some("libraries"));
+        assert_eq!(network_source(TrackerKind::JavaRuntime), Some("java_runtime"));
+        assert_eq!(network_source(TrackerKind::Other), None);
     }
 
     #[test]
