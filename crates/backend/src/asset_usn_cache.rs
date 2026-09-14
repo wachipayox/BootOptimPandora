@@ -515,40 +515,40 @@ mod tests {
 
     #[test]
     fn journal_restamp_regression_and_both_lower_bounds_miss() {
-        let mut evidence = evidence();
-        evidence.journal_id += 1;
-        miss(evidence, MissReason::JournalIdMismatch);
+        let mut restamp = evidence();
+        restamp.journal_id += 1;
+        miss(restamp, MissReason::JournalIdMismatch);
 
-        let mut evidence = evidence();
-        evidence.current_next_usn = 999;
-        miss(evidence, MissReason::JournalRegression);
+        let mut regression = evidence();
+        regression.current_next_usn = 999;
+        miss(regression, MissReason::JournalRegression);
 
-        let mut evidence = evidence();
-        evidence.current_lowest_valid_usn = 1_001;
-        miss(evidence, MissReason::JournalDiscontinuity);
+        let mut lowest_bound = evidence();
+        lowest_bound.current_lowest_valid_usn = 1_001;
+        miss(lowest_bound, MissReason::JournalDiscontinuity);
 
-        let mut evidence = evidence();
-        evidence.current_first_usn = 1_001;
-        miss(evidence, MissReason::JournalDiscontinuity);
+        let mut first_bound = evidence();
+        first_bound.current_first_usn = 1_001;
+        miss(first_bound, MissReason::JournalDiscontinuity);
     }
 
     #[test]
     fn asset_index_asset_hash_volume_and_identity_changes_miss() {
-        let mut evidence = evidence();
-        evidence.asset_index_sha1 = OTHER_SHA;
-        miss(evidence, MissReason::AssetIndexMismatch);
+        let mut index_change = evidence();
+        index_change.asset_index_sha1 = OTHER_SHA;
+        miss(index_change, MissReason::AssetIndexMismatch);
 
-        let mut evidence = evidence();
-        evidence.expected_asset_sha1 = OTHER_SHA;
-        miss(evidence, MissReason::AssetSha1Mismatch);
+        let mut asset_change = evidence();
+        asset_change.expected_asset_sha1 = OTHER_SHA;
+        miss(asset_change, MissReason::AssetSha1Mismatch);
 
-        let mut evidence = evidence();
-        evidence.volume_serial = 8;
-        miss(evidence, MissReason::VolumeMismatch);
+        let mut volume_change = evidence();
+        volume_change.volume_serial = 8;
+        miss(volume_change, MissReason::VolumeMismatch);
 
-        let mut evidence = evidence();
-        evidence.handle_identity_unchanged = false;
-        miss(evidence, MissReason::HandleIdentityChanged);
+        let mut identity_change = evidence();
+        identity_change.handle_identity_unchanged = false;
+        miss(identity_change, MissReason::HandleIdentityChanged);
     }
 
     #[test]
@@ -572,60 +572,60 @@ mod tests {
 
     #[test]
     fn non_ntfs_reparse_nonregular_and_toctou_protection_failure_miss() {
-        let mut evidence = evidence();
-        evidence.ntfs = false;
-        miss(evidence, MissReason::NonNtfs);
+        let mut non_ntfs = evidence();
+        non_ntfs.ntfs = false;
+        miss(non_ntfs, MissReason::NonNtfs);
 
-        let mut evidence = evidence();
-        evidence.reparse_point = true;
-        miss(evidence, MissReason::ReparsePoint);
+        let mut reparse = evidence();
+        reparse.reparse_point = true;
+        miss(reparse, MissReason::ReparsePoint);
 
-        let mut evidence = evidence();
-        evidence.regular_file = false;
-        miss(evidence, MissReason::NotRegularFile);
+        let mut nonregular = evidence();
+        nonregular.regular_file = false;
+        miss(nonregular, MissReason::NotRegularFile);
 
-        let mut evidence = evidence();
-        evidence.freeze_handle_held = false;
-        miss(evidence, MissReason::FreezeHandleUnavailable);
+        let mut protection_failure = evidence();
+        protection_failure.freeze_handle_held = false;
+        miss(protection_failure, MissReason::FreezeHandleUnavailable);
     }
 
     #[test]
     fn corrupt_truncated_unknown_duplicate_partial_and_invalid_usn_manifests_are_rejected() {
         assert_eq!(parse_manifest(b"{"), Err(ManifestError::Json));
 
-        let mut manifest = manifest();
-        manifest.schema = 2;
+        let mut schema_manifest = manifest();
+        schema_manifest.schema = 2;
         assert_eq!(
-            parse_manifest(&serde_json::to_vec(&manifest).unwrap()),
+            parse_manifest(&serde_json::to_vec(&schema_manifest).unwrap()),
             Err(ManifestError::Schema)
         );
 
-        let mut manifest = manifest();
-        manifest.snapshot_first_usn = 1_001;
+        let mut usn_manifest = manifest();
+        usn_manifest.snapshot_first_usn = 1_001;
         assert_eq!(
-            parse_manifest(&serde_json::to_vec(&manifest).unwrap()),
+            parse_manifest(&serde_json::to_vec(&usn_manifest).unwrap()),
             Err(ManifestError::Usn)
         );
 
-        let mut manifest = manifest();
-        manifest.asset_count = 2;
+        let mut count_manifest = manifest();
+        count_manifest.asset_count = 2;
         assert_eq!(
-            parse_manifest(&serde_json::to_vec(&manifest).unwrap()),
+            parse_manifest(&serde_json::to_vec(&count_manifest).unwrap()),
             Err(ManifestError::AssetCount)
         );
 
-        let mut manifest = manifest();
-        manifest.assets.push(manifest.assets[0].clone());
-        manifest.asset_count = 2;
+        let mut duplicate_manifest = manifest();
+        duplicate_manifest.assets.push(duplicate_manifest.assets[0].clone());
+        duplicate_manifest.asset_count = 2;
         assert_eq!(
-            parse_manifest(&serde_json::to_vec(&manifest).unwrap()),
+            parse_manifest(&serde_json::to_vec(&duplicate_manifest).unwrap()),
             Err(ManifestError::DuplicateAsset)
         );
 
-        let mut manifest = manifest();
-        manifest.assets[0].file_id = "00112233445566778899aabbccddeeff".into();
+        let mut file_id_manifest = manifest();
+        file_id_manifest.assets[0].file_id = "00112233445566778899aabbccddeeff".into();
         assert_eq!(
-            parse_manifest(&serde_json::to_vec(&manifest).unwrap()),
+            parse_manifest(&serde_json::to_vec(&file_id_manifest).unwrap()),
             Err(ManifestError::AssetEntry)
         );
 
