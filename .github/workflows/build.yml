@@ -48,7 +48,7 @@ jobs:
         uses: rui314/setup-mold@v1
 
       - name: Run verification I/O coordinator tests
-        run: cargo test -p backend fs::tests:: --frozen --target ${{ matrix.platform.target }}
+        run: 'cargo test -p backend fs::tests:: --frozen --target ${{ matrix.platform.target }}'
 
       - name: Run build command
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}
