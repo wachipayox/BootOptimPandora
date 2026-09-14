@@ -270,14 +270,7 @@ impl ProgressTracker {
     }
 
     pub fn add_total(&self, total: usize) {
-        let previous = self.0.total.fetch_add(total, Ordering::SeqCst);
-        if crate::launch_probe::enabled() {
-            crate::launch_probe::tracker_total_changed(
-                self.0.probe_modal_key,
-                self.probe_key(),
-                previous.wrapping_add(total),
-            );
-        }
+        self.0.total.fetch_add(total, Ordering::SeqCst);
         self.0.notify.notify_one();
     }
 
