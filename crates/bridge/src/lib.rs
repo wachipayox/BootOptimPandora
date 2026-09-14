@@ -5,6 +5,7 @@ pub mod import;
 pub mod install;
 pub mod instance;
 pub mod keep_alive;
+pub mod launch_probe;
 pub mod message;
 pub mod meta;
 pub mod modal_action;
