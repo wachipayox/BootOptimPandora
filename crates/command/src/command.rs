@@ -4,6 +4,27 @@ use std::{borrow::Cow, collections::BTreeMap, ffi::{OsStr, OsString}, io::{Error
 use crate::unix::unix_helpers::RawStringVec;
 use crate::{process::PandoraProcess, spawner::SpawnType};
 
+const BOOTOPTIM_PANDORA_UPSTREAM: &str = "4eb6c7849561151695288443c106519774ee05ea";
+
+
+#[cfg(windows)]
+const BOOTOPTIM_CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(windows)]
+fn configure_bootoptim_preflight(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(BOOTOPTIM_CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_bootoptim_preflight(_command: &mut std::process::Command) {}
+
+#[derive(Debug)]
+struct BootOptimTraining {
+    metadata: PathBuf,
+    completion: PathBuf,
+}
+
 #[derive(Debug)]
 pub struct PandoraCommand {
     pub(crate) executable: PandoraArg,
@@ -77,11 +98,28 @@ impl PandoraCommand {
         self.force_feedback = force_feedback;
     }
 
-    pub async fn spawn(self) -> std::io::Result<PandoraChild> {
-        crate::spawner::spawn(self, SpawnType::Normal)
+    pub async fn spawn(mut self) -> std::io::Result<PandoraChild> {
+        let training = self.maybe_bootoptim_prepare();
+        let result = crate::spawner::spawn(self, SpawnType::Normal)
             .await
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "spawning thread has shutdown"))
-            .flatten()
+            .flatten();
+
+        match result {
+            Ok(mut child) => {
+                if let Some(training) = training {
+                    child.process.set_bootoptim_completion_marker(training.completion);
+                }
+                Ok(child)
+            }
+            Err(error) => {
+                if let Some(training) = training {
+                    let _ = std::fs::remove_file(training.metadata);
+                    let _ = std::fs::remove_file(training.completion);
+                }
+                Err(error)
+            }
+        }
     }
 
     pub async fn spawn_elevated(self) -> std::io::Result<PandoraProcess> {
@@ -97,6 +135,127 @@ impl PandoraCommand {
             .await
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "spawning thread has shutdown"))
             .flatten()
+    }
+
+    fn maybe_bootoptim_prepare(&mut self) -> Option<BootOptimTraining> {
+        let helper = std::env::var_os("BOOTOPTIM_LAUNCH_INTERPOSER")?;
+        let helper = PathBuf::from(helper);
+        if !helper.is_file() {
+            return None;
+        }
+        let helper = helper.canonicalize().ok()?;
+        let instance_dir = self.current_dir.clone()?;
+        if !self.args.iter().any(|arg| arg.0 == OsStr::new("com.moulberry.pandora.LaunchWrapper")) {
+            return None;
+        }
+
+        // v0 intentionally prepares only Pandora's direct Java executable. If a
+        // user configured a wrapper command, or if sandbox/elevated launching is
+        // used, we keep the stock path rather than guessing those semantics.
+        if !is_java_executable(&self.executable.0) {
+            return None;
+        }
+
+        let launcher_exe = std::env::current_exe().ok()?;
+        let mut preflight = std::process::Command::new(&helper);
+        preflight
+            .arg("--instance-dir")
+            .arg(&instance_dir)
+            .arg("--launcher-exe")
+            .arg(&launcher_exe)
+            .arg("--upstream-commit")
+            .arg(BOOTOPTIM_PANDORA_UPSTREAM)
+            .arg("--")
+            .arg(&self.executable.0);
+        for arg in &self.args {
+            preflight.arg(&arg.0);
+        }
+        preflight.current_dir(&instance_dir);
+        preflight.stdin(std::process::Stdio::null());
+        preflight.stdout(std::process::Stdio::piped());
+        preflight.stderr(std::process::Stdio::piped());
+        configure_bootoptim_preflight(&mut preflight);
+
+        // Give the preflight helper the same effective environment that the Java
+        // process will receive, so hidden JVM option variables are evaluated
+        // against the actual launch tuple rather than Pandora's ambient process.
+        preflight.env_clear();
+        for (k, v) in std::env::vars_os() {
+            let key: PandoraArg = k.clone().into();
+            if self.env.contains_key(&key) {
+                continue;
+            }
+            if let Some(inherit_env) = self.inherit_env && !(inherit_env)(k.as_os_str()) {
+                continue;
+            }
+            preflight.env(&k, &v);
+        }
+        for (k, v) in &self.env {
+            preflight.env(&k.0, &v.0);
+        }
+        // This is launcher control state, not a JVM identity input. Ensure the
+        // helper sees it even if a caller uses a restrictive Java env filter.
+        if let Some(mode) = std::env::var_os("BOOTOPTIM_APPCDS_MODE") {
+            preflight.env("BOOTOPTIM_APPCDS_MODE", mode);
+        }
+
+        let output = match preflight.output() {
+            Ok(output) => output,
+            Err(error) => {
+                log::warn!("BOOTOPTIM_INTERPOSER status=helper-spawn-error activation=stock error={error}");
+                return None;
+            }
+        };
+        if !output.status.success() {
+            log::warn!(
+                "BOOTOPTIM_INTERPOSER status=helper-error activation=stock exit_code={:?} stderr_bytes={}",
+                output.status.code(),
+                output.stderr.len()
+            );
+            return None;
+        }
+        let decision = String::from_utf8_lossy(&output.stdout);
+        match decision.trim() {
+            "READY" => {
+                let ready = instance_dir.join(".bootoptim").join("appcds").join("ready.jsa");
+                self.prepend_bootoptim_flags(vec![
+                    OsString::from("-Xshare:auto"),
+                    bootoptim_os_flag("-XX:SharedArchiveFile=", &ready),
+                ]);
+                log::info!("BOOTOPTIM_INTERPOSER status=ready activation=enabled");
+                None
+            }
+            "TRAIN" => {
+                let cache_dir = instance_dir.join(".bootoptim").join("appcds");
+                let training = cache_dir.join("training.jsa");
+                let completion = cache_dir.join("training.complete");
+                let _ = std::fs::remove_file(&completion);
+                self.prepend_bootoptim_flags(vec![
+                    OsString::from("-Xshare:auto"),
+                    bootoptim_os_flag("-XX:ArchiveClassesAtExit=", &training),
+                ]);
+                log::info!("BOOTOPTIM_INTERPOSER status=generating activation=training");
+                Some(BootOptimTraining {
+                    metadata: cache_dir.join("training.meta"),
+                    completion,
+                })
+            }
+            "STOCK" => None,
+            _ => {
+                log::warn!(
+                    "BOOTOPTIM_INTERPOSER status=invalid-helper-decision activation=stock stdout_bytes={}",
+                    output.stdout.len()
+                );
+                None
+            }
+        }
+    }
+
+    fn prepend_bootoptim_flags(&mut self, flags: Vec<OsString>) {
+        let mut args = Vec::with_capacity(flags.len() + self.args.len());
+        args.extend(flags.into_iter().map(PandoraArg::from));
+        args.append(&mut self.args);
+        self.args = args;
     }
 
     pub(crate) fn resolve_executable_path(&self) -> std::io::Result<PathBuf> {
@@ -149,6 +308,32 @@ impl PandoraCommand {
         }
         std::mem::take(&mut self.env)
     }
+}
+
+fn is_java_executable(value: &OsStr) -> bool {
+    let path = Path::new(value);
+    let Some(name) = path.file_name().map(|v| v.to_string_lossy().to_ascii_lowercase()) else {
+        return false;
+    };
+    if name != "java" && name != "java.exe" && name != "javaw.exe" {
+        return false;
+    }
+    let Some(bin) = path.parent() else {
+        return false;
+    };
+    if !bin.file_name().map(|v| v.to_string_lossy().eq_ignore_ascii_case("bin")).unwrap_or(false) {
+        return false;
+    }
+    let Some(root) = bin.parent() else {
+        return false;
+    };
+    root.join("lib").is_dir()
+}
+
+fn bootoptim_os_flag(prefix: &str, path: &Path) -> OsString {
+    let mut out = OsString::from(prefix);
+    out.push(path.as_os_str());
+    out
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -225,4 +410,30 @@ pub struct PandoraChild {
     pub stdin: Option<PipeWriter>,
     pub stdout: Option<PipeReader>,
     pub stderr: Option<PipeReader>,
+}
+
+
+#[cfg(all(test, windows))]
+mod bootoptim_windows_preflight_tests {
+    use super::*;
+
+    #[test]
+    fn create_no_window_preserves_redirected_stdout_and_stderr() {
+        let mut command = std::process::Command::new("cmd.exe");
+        command.args([
+            "/D",
+            "/S",
+            "/C",
+            "echo READY & echo helper-diagnostic 1>&2 & exit /b 7",
+        ]);
+        command.stdin(std::process::Stdio::null());
+        command.stdout(std::process::Stdio::piped());
+        command.stderr(std::process::Stdio::piped());
+        configure_bootoptim_preflight(&mut command);
+
+        let output = command.output().expect("hidden child must spawn");
+        assert_eq!(output.status.code(), Some(7));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("READY"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("helper-diagnostic"));
+    }
 }
