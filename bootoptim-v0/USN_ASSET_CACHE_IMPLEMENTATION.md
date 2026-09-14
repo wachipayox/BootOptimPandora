@@ -20,10 +20,10 @@ Landing only some of those pieces would create a dangerous intermediate state in
 `crates/backend/src/asset_usn_cache.rs` adds:
 
 - explicit opt-in property `BOOTOPTIM_ASSET_USN_CACHE=1`; absence or any other value is off;
-- schema-v1 cache structures for exact asset-index SHA-1, volume GUID/serial, USN journal identity/bounds and per-object SHA-1/FileId/last-USN;
-- strict manifest validation: unknown/duplicate struct fields are rejected by Serde, schema and hash/FileId formats are checked, partial asset counts fail, duplicate object SHA-1s fail, invalid/negative USNs fail, malformed/truncated JSON fails;
-- a pure reuse decision function requiring every identity/continuity/TOCTOU gate from the architecture;
-- explicit miss reasons for UAC/helper/timeout/protocol/ACL/PID failures, non-NTFS, reparse/non-regular files, freeze-handle failure, index/volume/journal/FileId/USN changes, journal regression/truncation and final handle-identity change;
+- schema-v1 cache structures for exact asset-index SHA-1, volume GUID/serial, `UsnJournalID`, snapshot `FirstUsn`/`LowestValidUsn`/`NextUsn`, and per-object expected SHA-1/FileId/last-USN;
+- strict manifest validation: unknown/duplicate struct fields are rejected by Serde, schema and hash/FileId formats are checked, partial asset counts fail, duplicate object SHA-1s fail, invalid/negative/internally inconsistent USNs fail, malformed/truncated JSON fails;
+- a pure reuse decision function requiring every identity/continuity/TOCTOU gate from the architecture, including exact current asset-index SHA-1 and exact expected object SHA-1 before any file identity may qualify;
+- explicit miss reasons for UAC/helper/timeout/protocol/ACL/PID failures, non-NTFS, reparse/non-regular files, freeze-handle failure, index/object-hash/volume/journal/FileId/USN changes, journal regression/truncation and final handle-identity change;
 - `AssetUsnCacheRuntime::can_skip_sha1`, which is intentionally hard-wired to `false` in this PR. Setting the opt-in variable cannot change asset verification behavior.
 
 The module is compiled into `backend`; it is not hooked into `do_asset_objects_load` yet because there is no complete privileged evidence provider. Consequently this branch performs exactly the same SHA-1 path as its base.
@@ -36,11 +36,11 @@ Portable state-machine tests prove `FullSha1` for:
 - same-size/restored-mtime mutation represented by changed file USN;
 - truncate/restore represented by changed file USN;
 - delete/recreate/FileId replacement;
-- journal-ID restamp, `NextUsn` regression and lower-bound crossing the cached snapshot;
-- asset-index, volume and final handle-identity changes;
+- journal-ID restamp, `NextUsn` regression, `FirstUsn` crossing the cached snapshot, and `LowestValidUsn` crossing the cached snapshot;
+- asset-index SHA-1, expected object SHA-1, volume and final handle-identity changes;
 - helper missing, UAC denial, helper crash, timeout, malformed protocol, invalid pipe ACL and invalid peer PID;
 - non-NTFS, reparse, non-regular file and inability to acquire the write/delete-denying freeze handle;
-- corrupt/truncated/unknown-schema/partial/duplicate cache manifests;
+- corrupt/truncated/unknown-schema/invalid-USN/partial/duplicate cache manifests;
 - the runtime safety latch remaining false even when the feature is explicitly requested.
 
 The existing repository build workflow is the compile/test gate. No separate workflow is needed for the portable foundation.
@@ -52,7 +52,7 @@ Before `can_skip_sha1` may ever return true, Windows CI/capability tests must us
 - same-size content mutation with original mtime restored changes the file USN and causes stock SHA-1;
 - truncate/restore causes stock SHA-1;
 - delete/recreate cannot retain the accepted FileId identity;
-- journal discontinuity/restamp fixture causes full-index miss;
+- `UsnJournalID` restamp, `NextUsn` regression, and either returned valid lower bound (`FirstUsn` or `LowestValidUsn`) crossing the cached snapshot boundary cause full-index miss;
 - corrupt/partial cache cannot be consumed;
 - helper absent, UAC cancelled/denied, helper crash, timeout and malformed protocol all continue launch through stock verification;
 - reparse points and non-NTFS volumes are ineligible;
