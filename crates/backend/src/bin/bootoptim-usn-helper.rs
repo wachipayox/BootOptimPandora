@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 #[cfg(not(windows))]
 fn main() {
     std::process::exit(2);
@@ -27,6 +29,7 @@ mod windows_helper {
     const FILE_SHARE_WRITE: u32 = 0x2;
     const FILE_SHARE_DELETE: u32 = 0x4;
     const OPEN_EXISTING: u32 = 3;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
     const PIPE_NOWAIT: u32 = 0x1;
     const ERROR_NO_DATA: i32 = 232;
     const ERROR_PIPE_LISTENING: i32 = 536;
@@ -204,7 +207,7 @@ mod windows_helper {
                 FILE_READ_ATTRIBUTES,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 null(),
-                0,
+                FILE_FLAG_OPEN_REPARSE_POINT,
             )
         })?;
         let mut info: ByHandleFileInformation = unsafe { zeroed() };
@@ -316,6 +319,7 @@ mod windows_helper {
             if request.nonce != nonce { return 4; }
             if request.kind == RequestKind::Shutdown { return 0; }
             if usn_protocol::volume_guid_str(&request.volume_guid).is_none() { return 4; }
+            if request.kind == RequestKind::Journal && request.file_id != [0; 16] { return 4; }
             match session_volume {
                 Some(volume) if volume != request.volume_guid => return 4,
                 None => session_volume = Some(request.volume_guid),
