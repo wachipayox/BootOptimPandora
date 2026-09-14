@@ -361,20 +361,20 @@ fn observable_outer_group_finished(state: &ProbeState) -> bool {
             .all(|r| r.finished)
 }
 
-pub fn tracker_add_count(
-    _modal_key: usize,
-    _tracker_key: usize,
-    _current_count: usize,
-    _total_count: usize,
-) {
-    // Intentionally unused for phase attribution. Earlier probe revisions inferred boundaries
-    // from parent progress totals; that was brittle for custom Java and Forge-like nested work.
+fn is_loader_sha1_request_boundary(current_count: usize, total_count: usize) -> bool {
+    current_count == 1 && total_count == 13
 }
 
-pub fn tracker_total_changed(modal_key: usize, tracker_key: usize, total_count: usize) {
-    if !enabled() {
+pub fn tracker_add_count(
+    modal_key: usize,
+    tracker_key: usize,
+    current_count: usize,
+    total_count: usize,
+) {
+    if !enabled() || !is_loader_sha1_request_boundary(current_count, total_count) {
         return;
     }
+
     let should_emit = {
         let mut guard = state().lock();
         if !guard.active || guard.modal_key != modal_key || guard.loader_network_emitted {
@@ -383,16 +383,16 @@ pub fn tracker_total_changed(modal_key: usize, tracker_key: usize, total_count: 
         let Some(record) = guard.trackers.iter().find(|r| r.key == tracker_key) else {
             return;
         };
-        if record.kind != TrackerKind::Parent || total_count != 13 {
+        if record.kind != TrackerKind::Parent {
             return;
         }
         guard.loader_network_emitted = true;
         true
     };
+
     if should_emit {
-        // In the pinned launcher, total=13 is the Forge/NeoForge outer progress shape:
-        // create_launch_version has added seven steps and immediately enters the
-        // create_forgelike path, which always attempts the installer SHA-1 request.
+        // Pinned Forge/NeoForge create_forgelike code increments the parent tracker to 1/13
+        // immediately before constructing the join whose right-hand future is download_sha1.
         network_request_observed("loader_sha1");
     }
 }
@@ -568,6 +568,14 @@ mod tests {
             ..ProbeState::default()
         };
         assert_eq!(state.trackers.iter().filter(|r| !r.finished).count(), 0);
+    }
+
+    #[test]
+    fn loader_sha1_boundary_matches_pinned_forgelike_shape_only() {
+        assert!(is_loader_sha1_request_boundary(1, 13));
+        assert!(!is_loader_sha1_request_boundary(0, 13));
+        assert!(!is_loader_sha1_request_boundary(1, 10));
+        assert!(!is_loader_sha1_request_boundary(2, 13));
     }
 
     #[test]
