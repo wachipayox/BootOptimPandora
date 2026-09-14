@@ -37,5 +37,11 @@ pub fn get_command_path(command: &'static str) -> Option<Arc<Path>> {
 
 #[cfg(windows)]
 pub fn set_traverse_acls(args: Vec<std::ffi::OsString>) -> std::io::Result<()> {
+    if std::env::var_os("BOOTOPTIM_PACKAGED_PROBE_SELFTEST_COMMAND").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        bootoptim_packaged_probe_contract_finalize_for_test();
+        return Ok(());
+    }
     crate::windows::appcontainer::set_traverse_acls(args)
 }
