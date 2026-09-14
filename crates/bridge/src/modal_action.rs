@@ -33,10 +33,9 @@ impl ModalAction {
     /// legacy or future callers cannot accidentally become eligible for a
     /// verification fast path without positively declaring normal-launch intent.
     pub fn normal_launch() -> Self {
-        Self(Arc::new(ModalActionInner {
-            asset_verification_mode: AssetVerificationMode::Normal,
-            ..Default::default()
-        }))
+        let mut inner = ModalActionInner::default();
+        inner.asset_verification_mode = AssetVerificationMode::Normal;
+        Self(Arc::new(inner))
     }
 
     pub fn asset_verification_mode(&self) -> AssetVerificationMode {
