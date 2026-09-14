@@ -1,0 +1,92 @@
+name: Agent 162 cleanup
+
+on:
+  push:
+    branches:
+      - "agent162/assets-attribution-probe-20260914"
+
+permissions:
+  contents: write
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent162/assets-attribution-probe-20260914
+          fetch-depth: 0
+      - name: Install Linux build dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+      - name: Rebuild minimal agent 162 tree and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          base = "55f05135396e9682a5d0f76a24e62f21850fbc03"
+          preserve_paths = [
+              ".github/workflows/bootoptim-v0.yml",
+              "bootoptim-v0/ASSET_ATTRIBUTION_PROBE.md",
+              "crates/backend/src/asset_probe.rs",
+          ]
+          preserved = {path: Path(path).read_text(encoding="utf-8") for path in preserve_paths}
+
+          launch = Path("crates/backend/src/launch/mod.rs")
+          launch_text = launch.read_text(encoding="utf-8")
+          start = launch_text.index("async fn do_asset_objects_load(")
+          marker = "\n#[derive(thiserror::Error, Debug)]\npub enum LoadLibrariesError"
+          end = launch_text.index(marker, start)
+          asset_function = launch_text[start:end]
+
+          subprocess.run(["git", "read-tree", "-u", "--reset", base], check=True)
+
+          for path, text in preserved.items():
+              p = Path(path)
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_text(text, encoding="utf-8")
+
+          lib = Path("crates/backend/src/lib.rs")
+          text = lib.read_text(encoding="utf-8")
+          if "mod asset_probe;" not in text:
+              anchor = "mod account;\n"
+              if anchor not in text:
+                  raise SystemExit("lib.rs anchor missing")
+              text = text.replace(anchor, anchor + "mod asset_probe;\n", 1)
+          lib.write_text(text, encoding="utf-8")
+
+          launch = Path("crates/backend/src/launch/mod.rs")
+          text = launch.read_text(encoding="utf-8")
+          start = text.index("async fn do_asset_objects_load(")
+          end = text.index(marker, start)
+          launch.write_text(text[:start] + asset_function + text[end:], encoding="utf-8")
+
+          Path(".github/workflows/agent162-cleanup.yml").unlink(missing_ok=True)
+          Path(".github/workflows/agent162-bootstrap.yml").unlink(missing_ok=True)
+          Path("bootoptim-v0/.agent162-do-assets.tmp").unlink(missing_ok=True)
+          PY
+
+          expected=$(cat <<'EOF'
+          .github/workflows/bootoptim-v0.yml
+          bootoptim-v0/ASSET_ATTRIBUTION_PROBE.md
+          crates/backend/src/asset_probe.rs
+          crates/backend/src/launch/mod.rs
+          crates/backend/src/lib.rs
+          EOF
+          )
+          actual=$(git diff --name-only 55f05135396e9682a5d0f76a24e62f21850fbc03 -- | sort)
+          if [ "$actual" != "$expected" ]; then
+            echo "Unexpected final diff:"
+            printf '%s\n' "$actual"
+            exit 1
+          fi
+
+          cargo test -p backend asset_attribution --frozen
+
+          git config user.name "agent162-cleanup"
+          git config user.email "agent162-cleanup@users.noreply.github.com"
+          git add -A
+          git commit -m "Clean agent 162 diagnostic diff"
+          git push origin HEAD:agent162/assets-attribution-probe-20260914
