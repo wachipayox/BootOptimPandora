@@ -58,6 +58,9 @@ impl BackendReceiver {
         if let Some(serial) = serial {
             self.processed_serial.set(serial);
         }
+        if let MessageToBackend::StartInstance { modal_action, .. } = &message {
+            crate::launch_probe::backend_dispatch(modal_action.probe_key());
+        }
         Some(message)
     }
 
@@ -65,6 +68,9 @@ impl BackendReceiver {
         let (message, serial) = self.receiver.try_recv().ok()?;
         if let Some(serial) = serial {
             self.processed_serial.set(serial);
+        }
+        if let MessageToBackend::StartInstance { modal_action, .. } = &message {
+            crate::launch_probe::backend_dispatch(modal_action.probe_key());
         }
         Some(message)
     }
