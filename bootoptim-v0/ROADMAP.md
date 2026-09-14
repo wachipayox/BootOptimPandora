@@ -57,3 +57,8 @@ of the v0 AppCDS measurement prototype and must not silently expand its scope.
   not acceptable when it can scale much worse on an old HDD laptop.
 - Reuse fingerprinted, invalidatable launch metadata where it is semantically
   safe; report progress honestly rather than presenting unexplained silent work.
+- **High-priority physical finding:** Pandora can spend up to roughly ten
+  minutes at “Verifying game assets integrity” on the old HDD laptop. Replace
+  unconditional full verification with an incremental, fingerprinted manifest
+  that reuses a validated result and invalidates only affected assets. Preserve
+  a user-invoked full repair/verification path and fail safely on uncertainty.
