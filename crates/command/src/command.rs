@@ -1,11 +1,17 @@
-use std::{borrow::Cow, collections::BTreeMap, ffi::{OsStr, OsString}, io::{Error, ErrorKind, PipeReader, PipeWriter}, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::BTreeMap,
+    ffi::{OsStr, OsString},
+    io::{Error, ErrorKind, PipeReader, PipeWriter},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[cfg(target_os = "macos")]
 use crate::unix::unix_helpers::RawStringVec;
 use crate::{process::PandoraProcess, spawner::SpawnType};
 
 const BOOTOPTIM_PANDORA_UPSTREAM: &str = "4eb6c7849561151695288443c106519774ee05ea";
-
 
 #[cfg(windows)]
 const BOOTOPTIM_CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -112,14 +118,14 @@ impl PandoraCommand {
                     child.process.set_bootoptim_completion_marker(training.completion);
                 }
                 Ok(child)
-            }
+            },
             Err(error) => {
                 if let Some(training) = training {
                     let _ = std::fs::remove_file(training.metadata);
                     let _ = std::fs::remove_file(training.completion);
                 }
                 Err(error)
-            }
+            },
         }
     }
 
@@ -187,7 +193,9 @@ impl PandoraCommand {
             if self.env.contains_key(&key) {
                 continue;
             }
-            if let Some(inherit_env) = self.inherit_env && !(inherit_env)(k.as_os_str()) {
+            if let Some(inherit_env) = self.inherit_env
+                && !(inherit_env)(k.as_os_str())
+            {
                 continue;
             }
             preflight.env(&k, &v);
@@ -213,7 +221,7 @@ impl PandoraCommand {
                 }
                 log::warn!("BOOTOPTIM_INTERPOSER status=helper-spawn-error activation=stock error={error}");
                 return None;
-            }
+            },
         };
         if probe_preflight {
             crate::spawner::probe_event(
@@ -240,7 +248,7 @@ impl PandoraCommand {
                 ]);
                 log::info!("BOOTOPTIM_INTERPOSER status=ready activation=enabled");
                 None
-            }
+            },
             "TRAIN" => {
                 let cache_dir = instance_dir.join(".bootoptim").join("appcds");
                 let training = cache_dir.join("training.jsa");
@@ -255,7 +263,7 @@ impl PandoraCommand {
                     metadata: cache_dir.join("training.meta"),
                     completion,
                 })
-            }
+            },
             "STOCK" => None,
             _ => {
                 log::warn!(
@@ -263,7 +271,7 @@ impl PandoraCommand {
                     output.stdout.len()
                 );
                 None
-            }
+            },
         }
     }
 
@@ -428,7 +436,6 @@ pub struct PandoraChild {
     pub stderr: Option<PipeReader>,
 }
 
-
 #[cfg(all(test, windows))]
 mod bootoptim_windows_preflight_tests {
     use super::*;
@@ -436,12 +443,7 @@ mod bootoptim_windows_preflight_tests {
     #[test]
     fn create_no_window_preserves_redirected_stdout_and_stderr() {
         let mut command = std::process::Command::new("cmd.exe");
-        command.args([
-            "/D",
-            "/S",
-            "/C",
-            "echo READY & echo helper-diagnostic 1>&2 & exit /b 7",
-        ]);
+        command.args(["/D", "/S", "/C", "echo READY & echo helper-diagnostic 1>&2 & exit /b 7"]);
         command.stdin(std::process::Stdio::null());
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());

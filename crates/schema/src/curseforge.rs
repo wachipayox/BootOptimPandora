@@ -129,7 +129,7 @@ pub struct CurseforgeHit {
     pub logo: Option<CurseforgeModAsset>,
     pub authors: Arc<[CurseforgeModAuthor]>,
     pub categories: Arc<[CurseforgeCategory]>,
-    pub latest_files_indexes: Arc<[FileIndex]>
+    pub latest_files_indexes: Arc<[FileIndex]>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -228,7 +228,9 @@ impl CurseforgeReleaseType {
 }
 
 impl From<CurseforgeReleaseType> for u32 {
-    fn from(v: CurseforgeReleaseType) -> Self { v as u32 }
+    fn from(v: CurseforgeReleaseType) -> Self {
+        v as u32
+    }
 }
 
 #[derive(enumset::EnumSetType, Default, Debug, Hash, PartialOrd, Ord)]
@@ -393,7 +395,8 @@ pub struct CurseforgeModpackMinecraft {
 
 impl CurseforgeModpackMinecraft {
     pub fn get_loader(&self) -> Option<Loader> {
-        self.mod_loaders.iter()
+        self.mod_loaders
+            .iter()
             .find(|loader| loader.primary)
             .or_else(|| self.mod_loaders.first())
             .and_then(|loader| {

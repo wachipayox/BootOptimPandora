@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use schema::unique_bytes::UniqueBytes;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]

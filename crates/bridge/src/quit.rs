@@ -44,7 +44,7 @@ impl QuitCoordinator {
         drop(guard);
         Self {
             index,
-            shared: self.shared.clone()
+            shared: self.shared.clone(),
         }
     }
 

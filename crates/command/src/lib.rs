@@ -14,8 +14,8 @@ mod process;
 mod spawner;
 
 pub use command::*;
-pub use process::*;
 pub use exit_status::*;
+pub use process::*;
 
 pub fn is_command_available(command: &'static str) -> bool {
     path_cache::get_command_path_cached(OsStr::new(command)).is_some()

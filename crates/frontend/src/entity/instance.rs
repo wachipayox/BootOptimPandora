@@ -1,7 +1,13 @@
 use std::{path::Path, sync::Arc};
 
 use bridge::{
-    handle::BackendHandle, instance::{ContentFolder, InstanceContentSummary, InstanceID, InstancePlaytime, InstanceServerSummary, InstanceStatus, InstanceWorldSummary}, message::{BridgeDataLoadState, MessageToBackend}, serial::AtomicOptionSerial
+    handle::BackendHandle,
+    instance::{
+        ContentFolder, InstanceContentSummary, InstanceID, InstancePlaytime, InstanceServerSummary, InstanceStatus,
+        InstanceWorldSummary,
+    },
+    message::{BridgeDataLoadState, MessageToBackend},
+    serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
 use gpui_component::select::SelectItem;
@@ -74,7 +80,7 @@ impl InstanceEntries {
 
     pub fn find_name_by_id(entity: &Entity<Self>, id: InstanceID, cx: &App) -> Option<SharedString> {
         if let Some(entry) = entity.read(cx).entries.get(&id) {
-            return Some(entry.read(cx).name.clone())
+            return Some(entry.read(cx).name.clone());
         }
         None
     }
@@ -120,12 +126,7 @@ impl InstanceEntries {
         });
     }
 
-    pub fn set_worlds(
-        entity: &Entity<Self>,
-        id: InstanceID,
-        worlds: Arc<[InstanceWorldSummary]>,
-        cx: &mut App,
-    ) {
+    pub fn set_worlds(entity: &Entity<Self>, id: InstanceID, worlds: Arc<[InstanceWorldSummary]>, cx: &mut App) {
         entity.update(cx, |entries, cx| {
             if let Some(instance) = entries.entries.get_mut(&id) {
                 instance.update(cx, |instance, cx| {
@@ -138,12 +139,7 @@ impl InstanceEntries {
         });
     }
 
-    pub fn set_servers(
-        entity: &Entity<Self>,
-        id: InstanceID,
-        servers: Arc<[InstanceServerSummary]>,
-        cx: &mut App,
-    ) {
+    pub fn set_servers(entity: &Entity<Self>, id: InstanceID, servers: Arc<[InstanceServerSummary]>, cx: &mut App) {
         entity.update(cx, |entries, cx| {
             if let Some(instance) = entries.entries.get_mut(&id) {
                 instance.update(cx, |instance, cx| {
@@ -156,7 +152,13 @@ impl InstanceEntries {
         });
     }
 
-    pub fn set_content(entity: &Entity<Self>, id: InstanceID, content_folder: ContentFolder, content: Arc<[InstanceContentSummary]>, cx: &mut App) {
+    pub fn set_content(
+        entity: &Entity<Self>,
+        id: InstanceID,
+        content_folder: ContentFolder,
+        content: Arc<[InstanceContentSummary]>,
+        cx: &mut App,
+    ) {
         entity.update(cx, |entries, cx| {
             if let Some(instance) = entries.entries.get_mut(&id) {
                 instance.update(cx, |instance, cx| {
@@ -221,7 +223,11 @@ pub struct ContentStates {
 }
 
 impl ContentStates {
-    pub fn new(instance_id: InstanceID, states: enum_map::EnumMap<ContentFolder, BridgeDataLoadState>, backend_handle: BackendHandle) -> Self {
+    pub fn new(
+        instance_id: InstanceID,
+        states: enum_map::EnumMap<ContentFolder, BridgeDataLoadState>,
+        backend_handle: BackendHandle,
+    ) -> Self {
         Self {
             instance_id,
             backend_handle,
@@ -236,7 +242,7 @@ impl ContentStates {
         if load_state.should_load() {
             let message = MessageToBackend::RequestLoadContentFolder {
                 id: self.instance_id,
-                content_folder
+                content_folder,
             };
             self.backend_handle.send_with_serial(message, serial);
         }
@@ -248,7 +254,7 @@ impl ContentStates {
             if load_state.should_load() {
                 let message = MessageToBackend::RequestLoadContentFolder {
                     id: self.instance_id,
-                    content_folder
+                    content_folder,
                 };
                 self.backend_handle.send_with_serial(message, serial);
             }
@@ -290,10 +296,11 @@ impl InstanceEntry {
         let loader_string_lower = loader_string.to_ascii_lowercase();
         let contains_loader = lower.contains(&loader_string_lower);
 
-        let contains_minecraft_version = if let Some(index) = lower.find(self.configuration.minecraft_version.as_str()) {
+        let contains_minecraft_version = if let Some(index) = lower.find(self.configuration.minecraft_version.as_str())
+        {
             let lower_bytes = lower.as_bytes();
             let next = index + self.configuration.minecraft_version.len();
-            if index > 0 && is_version_continuation(lower_bytes[index-1]) {
+            if index > 0 && is_version_continuation(lower_bytes[index - 1]) {
                 false
             } else if next < lower_bytes.len() && is_version_continuation(lower_bytes[next]) {
                 false
@@ -308,15 +315,9 @@ impl InstanceEntry {
             (false, false) => {
                 format!("{} ({} {})", self.name, loader_string, self.configuration.minecraft_version).into()
             },
-            (false, true) => {
-                format!("{} ({})", self.name, loader_string).into()
-            },
-            (true, false) => {
-                format!("{} ({})", self.name, self.configuration.minecraft_version).into()
-            },
-            (true, true) => {
-                self.name.clone()
-            }
+            (false, true) => format!("{} ({})", self.name, loader_string).into(),
+            (true, false) => format!("{} ({})", self.name, self.configuration.minecraft_version).into(),
+            (true, true) => self.name.clone(),
         }
     }
 }

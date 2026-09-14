@@ -165,16 +165,16 @@ impl AssetAttributionProbe {
             Ok(true) => {
                 self.counters.hash_hits.fetch_add(1, Ordering::Relaxed);
                 true
-            }
+            },
             Ok(false) => {
                 self.counters.hash_misses.fetch_add(1, Ordering::Relaxed);
                 false
-            }
+            },
             Err(_) => {
                 self.counters.hash_io_errors.fetch_add(1, Ordering::Relaxed);
                 self.counters.hash_misses.fetch_add(1, Ordering::Relaxed);
                 false
-            }
+            },
         }
     }
 
@@ -213,8 +213,7 @@ impl AssetAttributionProbe {
         let hash_misses = self.counters.hash_misses.load(Ordering::Relaxed);
         let hash_io_errors = self.counters.hash_io_errors.load(Ordering::Relaxed);
         let downloaded_objects = self.counters.downloaded_objects.load(Ordering::Relaxed);
-        let warm_ab_contaminated =
-            any_network || hash_misses != 0 || hash_io_errors != 0 || downloaded_objects != 0;
+        let warm_ab_contaminated = any_network || hash_misses != 0 || hash_io_errors != 0 || downloaded_objects != 0;
 
         let snapshot = Snapshot {
             schema: SCHEMA,
@@ -243,8 +242,7 @@ impl AssetAttributionProbe {
             hash_wall_ns: None,
             hash_cpu_ns: None,
             hash_queue_wait_ns: None,
-            timing_observation:
-                "unobserved: aggregate hash wall/cpu and semaphore wait would require per-object timing or scheduler instrumentation",
+            timing_observation: "unobserved: aggregate hash wall/cpu and semaphore wait would require per-object timing or scheduler instrumentation",
             error_snapshot_complete: outcome == "ok",
         };
 
@@ -298,9 +296,7 @@ fn monotonic_ns() -> u64 {
     let mut ticks = 0_i64;
     let mut frequency = 0_i64;
     unsafe {
-        if QueryPerformanceCounter(&mut ticks) == 0
-            || QueryPerformanceFrequency(&mut frequency) == 0
-            || frequency <= 0
+        if QueryPerformanceCounter(&mut ticks) == 0 || QueryPerformanceFrequency(&mut frequency) == 0 || frequency <= 0
         {
             return 0;
         }
@@ -331,8 +327,7 @@ fn monotonic_ns() -> u64 {
             return 0;
         }
     }
-    (value.tv_sec.max(0) as u128 * 1_000_000_000_u128 + value.tv_nsec.max(0) as u128)
-        .min(u64::MAX as u128) as u64
+    (value.tv_sec.max(0) as u128 * 1_000_000_000_u128 + value.tv_nsec.max(0) as u128).min(u64::MAX as u128) as u64
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]

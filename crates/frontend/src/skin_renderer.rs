@@ -75,14 +75,11 @@ pub enum BodyPartType {
 impl BodyPartType {
     pub const fn inflate(self) -> f64 {
         match self {
-            Self::HeadOverlay |
-                Self::RightArmOverlay |
-                Self::LeftArmOverlay |
-                Self::RightLegOverlay |
-                Self::LeftLegOverlay =>
-            {
-                0.25
-            },
+            Self::HeadOverlay
+            | Self::RightArmOverlay
+            | Self::LeftArmOverlay
+            | Self::RightLegOverlay
+            | Self::LeftLegOverlay => 0.25,
             Self::BodyOverlay => 0.24,
             _ => 0.0,
         }
@@ -90,46 +87,25 @@ impl BodyPartType {
 
     pub const fn allow_transparency(self) -> bool {
         match self {
-            Self::HeadOverlay |
-                Self::RightArmOverlay |
-                Self::LeftArmOverlay |
-                Self::RightLegOverlay |
-                Self::LeftLegOverlay |
-                Self::BodyOverlay =>
-            {
-                true
-            },
+            Self::HeadOverlay
+            | Self::RightArmOverlay
+            | Self::LeftArmOverlay
+            | Self::RightLegOverlay
+            | Self::LeftLegOverlay
+            | Self::BodyOverlay => true,
             _ => false,
         }
     }
 
     pub const fn sway_time_mult(self) -> f64 {
-        if let Self::Cape = self {
-            1.0
-        } else {
-            4.0
-        }
+        if let Self::Cape = self { 1.0 } else { 4.0 }
     }
 
     pub const fn sway_strength(self) -> f64 {
         match self {
-            Self::RightArm |
-                Self::RightArmOverlay |
-                Self::LeftLeg |
-                Self::LeftLegOverlay =>
-            {
-                1.0
-            },
-            Self::LeftArm |
-                Self::LeftArmOverlay |
-                Self::RightLeg |
-                Self::RightLegOverlay =>
-            {
-                -1.0
-            },
-            Self::Cape => {
-                0.25
-            },
+            Self::RightArm | Self::RightArmOverlay | Self::LeftLeg | Self::LeftLegOverlay => 1.0,
+            Self::LeftArm | Self::LeftArmOverlay | Self::RightLeg | Self::RightLegOverlay => -1.0,
+            Self::Cape => 0.25,
             _ => 0.0,
         }
     }
@@ -189,7 +165,8 @@ impl BodyPartDef {
                 ],
                 normal: V3::new(0.0, 0.0, 1.0),
                 allow_transparency,
-            }.flip_uv_horz(flip_x),
+            }
+            .flip_uv_horz(flip_x),
             // Back face (-Z) – texture at (tx+2d+w, ty+d) size w×h
             Quad {
                 verts: [
@@ -206,7 +183,8 @@ impl BodyPartDef {
                 ],
                 normal: V3::new(0.0, 0.0, -1.0),
                 allow_transparency,
-            }.flip_uv_horz(flip_x),
+            }
+            .flip_uv_horz(flip_x),
             // Right face (-X, player's right) – texture at (tx, ty+d) size d×h
             Quad {
                 verts: [
@@ -215,15 +193,11 @@ impl BodyPartDef {
                     V3::new(x0, y0, z0),
                     V3::new(x0, y0, z1),
                 ],
-                uvs: [
-                    (tx + d, ty + d),
-                    (tx, ty + d),
-                    (tx, ty + d + h),
-                    (tx + d, ty + d + h)
-                ],
+                uvs: [(tx + d, ty + d), (tx, ty + d), (tx, ty + d + h), (tx + d, ty + d + h)],
                 normal: V3::new(-1.0, 0.0, 0.0),
                 allow_transparency,
-            }.flip_uv_horz(flip_z),
+            }
+            .flip_uv_horz(flip_z),
             // Left face (+X, player's left) – texture at (tx+d+w, ty+d) size d×h
             Quad {
                 verts: [
@@ -240,7 +214,8 @@ impl BodyPartDef {
                 ],
                 normal: V3::new(1.0, 0.0, 0.0),
                 allow_transparency,
-            }.flip_uv_horz(flip_z),
+            }
+            .flip_uv_horz(flip_z),
             // Top face (+Y) – texture at (tx+d, ty) size w×d
             Quad {
                 verts: [
@@ -249,15 +224,12 @@ impl BodyPartDef {
                     V3::new(x1, y1, z1),
                     V3::new(x0, y1, z1),
                 ],
-                uvs: [
-                    (tx + d, ty),
-                    (tx + d + w, ty),
-                    (tx + d + w, ty + d),
-                    (tx + d, ty + d)
-                ],
+                uvs: [(tx + d, ty), (tx + d + w, ty), (tx + d + w, ty + d), (tx + d, ty + d)],
                 normal: V3::new(0.0, 1.0, 0.0),
                 allow_transparency,
-            }.flip_uv_horz(flip_x).flip_uv_vert(flip_z),
+            }
+            .flip_uv_horz(flip_x)
+            .flip_uv_vert(flip_z),
             // Bottom face (-Y) – texture at (tx+d+w, ty) size w×d
             Quad {
                 verts: [
@@ -274,7 +246,9 @@ impl BodyPartDef {
                 ],
                 normal: V3::new(0.0, -1.0, 0.0),
                 allow_transparency,
-            }.flip_uv_horz(flip_x).flip_uv_vert(flip_z),
+            }
+            .flip_uv_horz(flip_x)
+            .flip_uv_vert(flip_z),
         ];
 
         if flip_x {
@@ -291,27 +265,36 @@ impl BodyPartDef {
         quads
     }
 
-    fn add_projected_quads(&self, projected_quads: &mut Vec<ProjectedQuad>, rot: &Mat3, light0: V3, light1: V3, sway_progress: f64) {
+    fn add_projected_quads(
+        &self,
+        projected_quads: &mut Vec<ProjectedQuad>,
+        rot: &Mat3,
+        light0: V3,
+        light1: V3,
+        sway_progress: f64,
+    ) {
         let mut quads = self.to_quads();
         let sway_strength = self.part_type.sway_strength();
         let sway_time_mult = self.part_type.sway_time_mult();
         let pitch_offset = self.part_type.pitch_offset();
 
-        let pitch = -15.0_f64.to_radians() * sway_strength * (sway_progress * std::f64::consts::TAU * sway_time_mult).sin() + pitch_offset;
+        let pitch =
+            -15.0_f64.to_radians() * sway_strength * (sway_progress * std::f64::consts::TAU * sway_time_mult).sin()
+                + pitch_offset;
 
         if pitch != 0.0 {
             let transform = Mat3::rotation_x(pitch);
             for quad in &mut quads {
                 let pivot = self.pivot.unwrap_or_else(|| {
                     V3::new(
-                        self.min.x/2.0 + self.max.x/2.0,
-                        self.min.y/2.0 + self.max.y/2.0,
-                        self.min.z/2.0 + self.max.z/2.0,
+                        self.min.x / 2.0 + self.max.x / 2.0,
+                        self.min.y / 2.0 + self.max.y / 2.0,
+                        self.min.z / 2.0 + self.max.z / 2.0,
                     )
                 });
                 for vert in &mut quad.verts {
                     *vert = transform.transform_with_offset(*vert, pivot);
-                };
+                }
                 quad.normal = transform.transform(quad.normal);
             }
         }
@@ -353,7 +336,7 @@ impl BodyPartDef {
                 avg_z,
                 allow_transparency: quad.allow_transparency,
                 shade,
-                part_type: self.part_type
+                part_type: self.part_type,
             });
         }
     }
@@ -791,20 +774,35 @@ fn rasterize_triangle(
 }
 
 impl ProjectedQuad {
-    fn rasterize(
-        &self,
-        skin: &image::DynamicImage,
-        output: &mut RgbaImage,
-        zbuf: &mut [f64],
-    ) {
+    fn rasterize(&self, skin: &image::DynamicImage, output: &mut RgbaImage, zbuf: &mut [f64]) {
         // Triangle 1: v0, v1, v2
-        rasterize_triangle(self.verts[0], self.verts[1], self.verts[2],
-           self.uvs[0], self.uvs[1], self.uvs[2],
-           skin, output, zbuf, self.allow_transparency, self.shade);
+        rasterize_triangle(
+            self.verts[0],
+            self.verts[1],
+            self.verts[2],
+            self.uvs[0],
+            self.uvs[1],
+            self.uvs[2],
+            skin,
+            output,
+            zbuf,
+            self.allow_transparency,
+            self.shade,
+        );
         // Triangle 2: v0, v2, v3
-        rasterize_triangle(self.verts[0], self.verts[2], self.verts[3],
-            self.uvs[0], self.uvs[2], self.uvs[3],
-            skin, output, zbuf, self.allow_transparency, self.shade);
+        rasterize_triangle(
+            self.verts[0],
+            self.verts[2],
+            self.verts[3],
+            self.uvs[0],
+            self.uvs[2],
+            self.uvs[3],
+            skin,
+            output,
+            zbuf,
+            self.allow_transparency,
+            self.shade,
+        );
     }
 }
 
@@ -843,7 +841,8 @@ fn collect_quads(
             ty: 0.0,
             flip_x: false,
             part_type: BodyPartType::Cape,
-        }.add_projected_quads(&mut projected_quads, &rot, light0, light1, sway_progress);
+        }
+        .add_projected_quads(&mut projected_quads, &rot, light0, light1, sway_progress);
     }
 
     projected_quads
@@ -872,7 +871,9 @@ pub fn render_skin_3d(
     zoom: f64,
 ) -> Option<RgbaImage> {
     let skin = image::load_from_memory_with_format(skin_png_bytes, ImageFormat::Png).ok()?;
-    let cape = cape_png_bytes.map(|cape| image::load_from_memory_with_format(cape, ImageFormat::Png).ok()).flatten();
+    let cape = cape_png_bytes
+        .map(|cape| image::load_from_memory_with_format(cape, ImageFormat::Png).ok())
+        .flatten();
 
     let is_legacy = skin.height() == 32;
     if skin.width() != 64 {
@@ -919,7 +920,7 @@ pub fn render_skin_3d(
 }
 
 // Constants calculated by brute force
-const MAX_CAPE_ANGLE_SWAY_PROGRESS: f64 = 3.0/4.0;
+const MAX_CAPE_ANGLE_SWAY_PROGRESS: f64 = 3.0 / 4.0;
 const MAX_WIDTH_AT_ANY_ANGLE: f64 = 20.407198535851574; // yaw=60.65789523301863, pitch=0
 const MAX_HEIGHT_AT_ANY_ANGLE: f64 = 34.65183977799737; // yaw=45, pitch=20.29798422703834
 pub const ASPECT_RATIO: f64 = MAX_WIDTH_AT_ANY_ANGLE / MAX_HEIGHT_AT_ANY_ANGLE;
@@ -952,11 +953,11 @@ pub fn brute_force_bounds() {
                     }
                 }
 
-                if w*2.0 > max_w {
-                    max_w = w*2.0;
+                if w * 2.0 > max_w {
+                    max_w = w * 2.0;
                     best_yaw = yaw;
                     best_pitch = pitch;
-                } else if w*2.0 == max_w && best_yaw.abs()+best_pitch.abs() > yaw.abs()+pitch.abs() {
+                } else if w * 2.0 == max_w && best_yaw.abs() + best_pitch.abs() > yaw.abs() + pitch.abs() {
                     best_yaw = yaw;
                     best_pitch = pitch;
                 }
@@ -967,8 +968,8 @@ pub fn brute_force_bounds() {
         } else {
             scale /= 2.0;
         }
-        let new_yaw_offset = best_yaw - scale/2.0;
-        let new_pitch_offset = best_pitch - scale/2.0;
+        let new_yaw_offset = best_yaw - scale / 2.0;
+        let new_pitch_offset = best_pitch - scale / 2.0;
         if new_yaw_offset == yaw_offset || new_pitch_offset == pitch_offset {
             break;
         }
@@ -1004,11 +1005,11 @@ pub fn brute_force_bounds() {
                     }
                 }
 
-                if h*2.0 > max_h {
-                    max_h = h*2.0;
+                if h * 2.0 > max_h {
+                    max_h = h * 2.0;
                     best_yaw = yaw;
                     best_pitch = pitch;
-                } else if h*2.0 == max_h && best_yaw.abs()+best_pitch.abs() > yaw.abs()+pitch.abs() {
+                } else if h * 2.0 == max_h && best_yaw.abs() + best_pitch.abs() > yaw.abs() + pitch.abs() {
                     best_yaw = yaw;
                     best_pitch = pitch;
                 }
@@ -1019,8 +1020,8 @@ pub fn brute_force_bounds() {
         } else {
             scale /= 2.0;
         }
-        let new_yaw_offset = best_yaw - scale/2.0;
-        let new_pitch_offset = best_pitch - scale/2.0;
+        let new_yaw_offset = best_yaw - scale / 2.0;
+        let new_pitch_offset = best_pitch - scale / 2.0;
         if new_yaw_offset == yaw_offset || new_pitch_offset == pitch_offset {
             break;
         }

@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
-use gpui::{App, AppContext, AvailableSpace, Bounds, Element, Entity, IntoElement, RenderImage, Size, Style, Task, px, size};
+use gpui::{
+    App, AppContext, AvailableSpace, Bounds, Element, Entity, IntoElement, RenderImage, Size, Style, Task, px, size,
+};
 use schema::{minecraft_profile::SkinVariant, unique_bytes::UniqueBytes};
 
 use crate::interface_config::InterfaceConfig;
 
 pub const DEFAULT_YAW: f64 = 22.5;
 pub const DEFAULT_PITCH: f64 = 10.5;
-pub const DEFAULT_ANIMATION: f64 = 1.0/16.0;
+pub const DEFAULT_ANIMATION: f64 = 1.0 / 16.0;
 
 struct RenderedPlayerModel {
     image: Arc<RenderImage>,
@@ -49,7 +51,8 @@ impl PlayerModelState {
             if let Some(rendered) = entity.rendered.take() {
                 cx.drop_image(rendered.image, None);
             }
-        }).detach();
+        })
+        .detach();
         entity
     }
 
@@ -57,9 +60,14 @@ impl PlayerModelState {
         let Some(rendered) = &self.rendered else {
             return true;
         };
-        return rendered.width != width || rendered.height != height || rendered.yaw != self.yaw
-            || rendered.pitch != self.pitch || rendered.animation != self.animation
-            || rendered.variant != self.variant || rendered.skin != self.skin || rendered.cape != self.cape
+        return rendered.width != width
+            || rendered.height != height
+            || rendered.yaw != self.yaw
+            || rendered.pitch != self.pitch
+            || rendered.animation != self.animation
+            || rendered.variant != self.variant
+            || rendered.skin != self.skin
+            || rendered.cape != self.cape
             || rendered.zoom != zoom;
     }
 }
@@ -70,9 +78,7 @@ pub struct PlayerModel {
 
 impl PlayerModel {
     pub fn new(state: &Entity<PlayerModelState>) -> Self {
-        Self {
-            state: state.clone(),
-        }
+        Self { state: state.clone() }
     }
 }
 
@@ -103,21 +109,22 @@ impl Element for PlayerModel {
         window: &mut gpui::Window,
         _cx: &mut gpui::App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let layout_id = window.request_measured_layout(Style::default(), move |known, available_space, _window, _cx| {
-            let height = if let Some(height) = known.height {
-                height
-            } else {
-                match available_space.height {
-                    AvailableSpace::Definite(pixels) => pixels,
-                    AvailableSpace::MinContent => px(0.0),
-                    AvailableSpace::MaxContent => px(1000.0),
-                }
-            };
+        let layout_id =
+            window.request_measured_layout(Style::default(), move |known, available_space, _window, _cx| {
+                let height = if let Some(height) = known.height {
+                    height
+                } else {
+                    match available_space.height {
+                        AvailableSpace::Definite(pixels) => pixels,
+                        AvailableSpace::MinContent => px(0.0),
+                        AvailableSpace::MaxContent => px(1000.0),
+                    }
+                };
 
-            let width = px(height.as_f32() * crate::skin_renderer::ASPECT_RATIO as f32);
+                let width = px(height.as_f32() * crate::skin_renderer::ASPECT_RATIO as f32);
 
-            size(width, height)
-        });
+                size(width, height)
+            });
 
         (layout_id, ())
     }
@@ -160,9 +167,22 @@ impl Element for PlayerModel {
 
                 let (send, recv) = tokio::sync::oneshot::channel();
 
-                cx.background_executor().spawn(async move {
-                    send.send(crate::skin_renderer::render_skin_3d(&skin, cape.as_deref(), variant, image_width, image_height, yaw, pitch, animation, 0.0, zoom))
-                }).detach();
+                cx.background_executor()
+                    .spawn(async move {
+                        send.send(crate::skin_renderer::render_skin_3d(
+                            &skin,
+                            cape.as_deref(),
+                            variant,
+                            image_width,
+                            image_height,
+                            yaw,
+                            pitch,
+                            animation,
+                            0.0,
+                            zoom,
+                        ))
+                    })
+                    .detach();
 
                 let skin = state.skin.clone();
                 let cape = state.cape.clone();

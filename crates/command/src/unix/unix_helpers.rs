@@ -1,4 +1,8 @@
-use std::{ffi::{CString, OsString}, io::ErrorKind, os::unix::ffi::OsStringExt};
+use std::{
+    ffi::{CString, OsString},
+    io::ErrorKind,
+    os::unix::ffi::OsStringExt,
+};
 
 use libc::c_char;
 
@@ -20,7 +24,11 @@ impl_is_minus_one! { i8 i16 i32 i64 isize }
 /// Converts native return values to Result using the *-1 means error is in `errno`*  convention.
 /// Non-error values are `Ok`-wrapped.
 pub fn cvt<T: IsMinusOne>(t: T) -> std::io::Result<T> {
-    if t.is_minus_one() { Err(std::io::Error::last_os_error()) } else { Ok(t) }
+    if t.is_minus_one() {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(t)
+    }
 }
 
 /// `-1` → look at `errno` → retry on `EINTR`. Otherwise `Ok()`-wrap the closure return value.
@@ -31,7 +39,7 @@ where
 {
     loop {
         match cvt(f()) {
-            Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(ref e) if e.kind() == ErrorKind::Interrupted => {},
             other => return other,
         }
     }
@@ -80,7 +88,9 @@ impl RawStringVec {
     }
 
     pub fn ensure_null_terminated(&mut self) {
-        if let Some(last) = self.0.last() && last.is_null() {
+        if let Some(last) = self.0.last()
+            && last.is_null()
+        {
             return;
         }
         self.0.push(std::ptr::null_mut());
