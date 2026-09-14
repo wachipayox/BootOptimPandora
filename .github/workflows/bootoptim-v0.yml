@@ -9,7 +9,8 @@ on:
     paths:
       - "bootoptim-v0/**"
       - "crates/command/**"
-      - "crates/backend/src/launch/**"
+      - "crates/bridge/**"
+      - "crates/backend/**"
       - ".github/workflows/bootoptim-v0.yml"
 
 permissions:
@@ -33,6 +34,9 @@ jobs:
       - name: Run portable helper tests
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
 
+      - name: Test launch probe schema and phase ordering
+        run: cargo test -p bridge launch_probe --frozen
+
   windows-v0:
     runs-on: windows-2022
     timeout-minutes: 45
@@ -47,6 +51,9 @@ jobs:
 
       - name: Test standalone interposer
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc
+
+      - name: Test launch probe schema and phase ordering
+        run: cargo test -p bridge launch_probe --frozen --target x86_64-pc-windows-msvc
 
       - name: Test deterministic library order
         shell: pwsh
