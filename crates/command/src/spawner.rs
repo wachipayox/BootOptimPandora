@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::OpenOptions,
     io::{Error, ErrorKind, Write},
     sync::mpsc,
@@ -52,7 +52,7 @@ pub fn spawn(command: PandoraCommand, spawn_type: SpawnType) -> tokio::sync::one
     if is_probe_minecraft_launch(&command) {
         probe_event("classpath_resolution", "inclusive_end", None);
         probe_event("native_extraction", "inclusive_end", None);
-        probe_event("wrapper_arguments", "ready", None);
+        probe_event("wrapper_arguments", "inclusive_end", None);
     }
 
     static SPAWNING_CHANNEL: OnceCell<mpsc::Sender<SpawnInfo>> = OnceCell::new();
@@ -152,30 +152,47 @@ fn handle_spawn(mut command: PandoraCommand, spawn_type: SpawnType, context: &mu
         probe_event("java_spawn", "end", Some(if result.is_ok() { "ok" } else { "error" }));
         if result.is_ok() {
             probe_event("launcher_pre_java", "end", Some("ok"));
+            probe_java_to_menu_unobserved();
         }
     }
     result
 }
 
+fn probe_path() -> Option<&'static OsString> {
+    static PATH: OnceCell<Option<OsString>> = OnceCell::new();
+    PATH.get_or_init(|| std::env::var_os(LAUNCH_PROBE_ENV).filter(|v| !v.is_empty())).as_ref()
+}
+
 fn is_probe_minecraft_launch(command: &PandoraCommand) -> bool {
-    std::env::var_os(LAUNCH_PROBE_ENV).is_some()
+    probe_path().is_some()
         && command.args.iter().any(|arg| arg.0 == OsStr::new("com.moulberry.pandora.LaunchWrapper"))
 }
 
 fn probe_event(phase: &str, event: &str, outcome: Option<&str>) {
-    let Some(path) = std::env::var_os(LAUNCH_PROBE_ENV) else {
-        return;
-    };
-    let mut options = OpenOptions::new();
-    options.create(true).append(true);
-    let Ok(mut file) = options.open(path) else {
+    let Some(path) = probe_path() else {
         return;
     };
     let now = monotonic_ns();
-    if let Some(outcome) = outcome {
-        let _ = writeln!(file, "{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"{event}\",\"network\":false,\"outcome\":\"{outcome}\"}}");
+    let line = if let Some(outcome) = outcome {
+        format!("{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"{event}\",\"network\":false,\"outcome\":\"{outcome}\"}}\n")
     } else {
-        let _ = writeln!(file, "{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"{event}\",\"network\":false}}");
+        format!("{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"{event}\",\"network\":false}}\n")
+    };
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+fn probe_java_to_menu_unobserved() {
+    let Some(path) = probe_path() else {
+        return;
+    };
+    let now = monotonic_ns();
+    let line = format!(
+        "{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"java_to_menu\",\"event\":\"unobserved\",\"network\":false,\"observed\":false,\"duration_ns\":null}}\n"
+    );
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
     }
 }
 
