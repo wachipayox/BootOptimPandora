@@ -99,6 +99,7 @@ impl PandoraCommand {
     }
 
     pub async fn spawn(mut self) -> std::io::Result<PandoraChild> {
+        crate::spawner::probe_minecraft_command_ready(&self);
         let training = self.maybe_bootoptim_prepare();
         let result = crate::spawner::spawn(self, SpawnType::Normal)
             .await
@@ -131,6 +132,7 @@ impl PandoraCommand {
     }
 
     pub async fn spawn_sandboxed(self, sandbox: PandoraSandbox) -> std::io::Result<PandoraChild> {
+        crate::spawner::probe_minecraft_command_ready(&self);
         crate::spawner::spawn(self, SpawnType::Sandboxed(sandbox))
             .await
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "spawning thread has shutdown"))
@@ -199,13 +201,27 @@ impl PandoraCommand {
             preflight.env("BOOTOPTIM_APPCDS_MODE", mode);
         }
 
+        let probe_preflight = crate::spawner::is_probe_minecraft_launch(self);
+        if probe_preflight {
+            crate::spawner::probe_event("appcds_preflight", "begin", None);
+        }
         let output = match preflight.output() {
             Ok(output) => output,
             Err(error) => {
+                if probe_preflight {
+                    crate::spawner::probe_event("appcds_preflight", "end", Some("error"));
+                }
                 log::warn!("BOOTOPTIM_INTERPOSER status=helper-spawn-error activation=stock error={error}");
                 return None;
             }
         };
+        if probe_preflight {
+            crate::spawner::probe_event(
+                "appcds_preflight",
+                "end",
+                Some(if output.status.success() { "ok" } else { "error" }),
+            );
+        }
         if !output.status.success() {
             log::warn!(
                 "BOOTOPTIM_INTERPOSER status=helper-error activation=stock exit_code={:?} stderr_bytes={}",
