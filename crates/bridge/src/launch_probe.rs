@@ -96,6 +96,30 @@ fn network_event(source: &str) {
     ));
 }
 
+pub fn network_observed(source: &'static str) {
+    if !enabled() || !network_source_allowed(source) {
+        return;
+    }
+    let guard = state().lock();
+    if !guard.active {
+        return;
+    }
+    drop(guard);
+    network_event(source);
+}
+
+fn network_source_allowed(source: &str) -> bool {
+    matches!(
+        source,
+        "assets"
+            | "libraries"
+            | "java_runtime"
+            | "metadata"
+            | "loader_metadata"
+            | "log_configuration"
+    )
+}
+
 pub fn request(modal_key: usize) {
     let Some(path) = output_path() else {
         return;
@@ -202,7 +226,7 @@ pub fn tracker_created(modal_key: usize, tracker_key: usize, title: &str) {
     }
     if title.starts_with("Downloading ") {
         if let Some(source) = network_source(kind) {
-            network_event(source);
+            network_observed(source);
         }
     }
 }
@@ -222,7 +246,7 @@ pub fn tracker_title_changed(modal_key: usize, tracker_key: usize, title: &str) 
     drop(guard);
 
     if let Some(source) = source {
-        network_event(source);
+        network_observed(source);
     }
 }
 
@@ -456,11 +480,19 @@ mod tests {
     }
 
     #[test]
-    fn network_source_is_fixed_metadata_only() {
-        assert_eq!(network_source(TrackerKind::Assets), Some("assets"));
-        assert_eq!(network_source(TrackerKind::Libraries), Some("libraries"));
-        assert_eq!(network_source(TrackerKind::JavaRuntime), Some("java_runtime"));
-        assert_eq!(network_source(TrackerKind::Other), None);
+    fn network_sources_are_fixed_metadata_only() {
+        for source in [
+            "assets",
+            "libraries",
+            "java_runtime",
+            "metadata",
+            "loader_metadata",
+            "log_configuration",
+        ] {
+            assert!(network_source_allowed(source));
+        }
+        assert!(!network_source_allowed("https://example.invalid/private"));
+        assert!(!network_source_allowed("account-name"));
     }
 
     #[test]
