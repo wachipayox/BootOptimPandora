@@ -112,6 +112,9 @@ unsafe impl Sync for BackendHandle {}
 
 impl BackendHandle {
     pub fn send(&self, message: MessageToBackend) {
+        if let MessageToBackend::StartInstance { modal_action, .. } = &message {
+            crate::launch_probe::request(modal_action.probe_key());
+        }
         #[cfg(debug_assertions)]
         self.sender.try_send((message, None)).unwrap();
         #[cfg(not(debug_assertions))]
