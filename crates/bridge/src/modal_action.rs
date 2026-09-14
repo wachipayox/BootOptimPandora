@@ -319,6 +319,7 @@ impl ProgressTracker {
 #[cfg(test)]
 mod asset_verification_mode_tests {
     use super::{AssetVerificationMode, ModalAction};
+    use crate::{instance::InstanceID, message::MessageToBackend};
 
     #[test]
     fn default_and_legacy_actions_fail_closed_to_full_verification() {
@@ -338,6 +339,33 @@ mod asset_verification_mode_tests {
         assert_eq!(bridged_clone.asset_verification_mode(), AssetVerificationMode::Normal);
 
         let tracker = bridged_clone.push_tracker("assets".into());
+        assert_eq!(tracker.asset_verification_mode(), AssetVerificationMode::Normal);
+    }
+
+    #[tokio::test]
+    async fn normal_launch_intent_survives_start_message_and_async_handoff() {
+        let message = MessageToBackend::StartInstance {
+            id: InstanceID::dangling(),
+            quick_play: None,
+            live_game_output: None,
+            modal_action: ModalAction::normal_launch(),
+        };
+        let (send, mut receive) = tokio::sync::mpsc::unbounded_channel();
+
+        let producer = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            assert!(send.send(message).is_ok());
+        });
+        producer.await.expect("async message producer must complete");
+
+        let received = receive.recv().await.expect("start message must arrive");
+        let modal_action = match received {
+            MessageToBackend::StartInstance { modal_action, .. } => modal_action,
+            _ => panic!("unexpected message variant"),
+        };
+
+        assert_eq!(modal_action.asset_verification_mode(), AssetVerificationMode::Normal);
+        let tracker = modal_action.push_tracker("assets".into());
         assert_eq!(tracker.asset_verification_mode(), AssetVerificationMode::Normal);
     }
 }
