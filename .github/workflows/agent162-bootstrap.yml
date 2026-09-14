@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   apply:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,13 +55,17 @@ jobs:
               text = text.replace(old_markers, new_markers, 1)
           ci.write_text(text, encoding="utf-8")
 
-          Path("bootoptim-v0/.agent162-do-assets.tmp").unlink()
-          Path(".github/workflows/agent162-bootstrap.yml").unlink()
+          for path in [
+              "bootoptim-v0/.agent162-do-assets.tmp",
+              ".github/workflows/agent162-bootstrap.yml",
+              ".github/workflows/agent162-mac-bootstrap.yml",
+          ]:
+              Path(path).unlink(missing_ok=True)
           PY
           cargo fmt --all
           cargo test -p backend asset_attribution --frozen
           git config user.name "agent162-bootstrap"
           git config user.email "agent162-bootstrap@users.noreply.github.com"
-          git add crates/backend/src/lib.rs crates/backend/src/launch/mod.rs crates/backend/src/asset_probe.rs bootoptim-v0/ASSET_ATTRIBUTION_PROBE.md .github/workflows/bootoptim-v0.yml bootoptim-v0/.agent162-do-assets.tmp .github/workflows/agent162-bootstrap.yml
+          git add -A
           git commit -m "Diagnostic: wire asset attribution probe"
           git push origin HEAD:agent162/assets-attribution-probe-20260914
