@@ -37,3 +37,11 @@ of the v0 AppCDS measurement prototype and must not silently expand its scope.
   happens after normal game closure; it must not present it as startup time.
 - Training/promotion stays opt-in, fail-open and per-profile. A delayed or
   cancelled training attempt must never make the game unlaunchable.
+
+## Offline / non-premium development mode
+
+- The launcher UI must expose an obvious **Add offline account** path, rather
+  than requiring a Microsoft-login browser flow or hidden account screens.
+- It must clearly label this as a development/local-server mode and let the
+  user choose its username and select it per instance. It must not imply that
+  offline accounts can join authenticated servers.
