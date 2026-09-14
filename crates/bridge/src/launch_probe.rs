@@ -38,6 +38,7 @@ struct ProbeState {
     prelaunch_done: bool,
     version_done: bool,
     post_resolution_started: bool,
+    loader_network_emitted: bool,
     trackers: Vec<TrackerRecord>,
 }
 
@@ -94,15 +95,15 @@ fn outcome_event(phase: &str, outcome: &str) {
     outcome_event_at(monotonic_ns(), phase, outcome);
 }
 
-fn network_event(source: &str) {
+fn network_event(phase: &str, source: &str) {
     append_line(&format!(
-        "{{\"schema\":\"{SCHEMA}\",\"mono_ns\":{},\"phase\":\"network_download\",\"event\":\"observed\",\"network\":true,\"source\":\"{source}\"}}",
+        "{{\"schema\":\"{SCHEMA}\",\"mono_ns\":{},\"phase\":\"{phase}\",\"event\":\"observed\",\"network\":true,\"source\":\"{source}\"}}",
         monotonic_ns()
     ));
 }
 
-pub fn network_observed(source: &'static str) {
-    if !enabled() || !network_source_allowed(source) {
+pub fn network_download_observed(source: &'static str) {
+    if !enabled() || !network_download_source_allowed(source) {
         return;
     }
     let guard = state().lock();
@@ -110,11 +111,27 @@ pub fn network_observed(source: &'static str) {
         return;
     }
     drop(guard);
-    network_event(source);
+    network_event("network_download", source);
 }
 
-fn network_source_allowed(source: &str) -> bool {
-    matches!(source, "assets" | "libraries" | "java_runtime")
+pub fn network_request_observed(source: &'static str) {
+    if !enabled() || !network_request_source_allowed(source) {
+        return;
+    }
+    let guard = state().lock();
+    if !guard.active {
+        return;
+    }
+    drop(guard);
+    network_event("network_request", source);
+}
+
+fn network_download_source_allowed(source: &str) -> bool {
+    matches!(source, "assets" | "libraries" | "java_runtime" | "tracked_other")
+}
+
+fn network_request_source_allowed(source: &str) -> bool {
+    matches!(source, "account_login" | "loader_sha1")
 }
 
 pub fn request(modal_key: usize) {
@@ -261,10 +278,11 @@ pub fn tracker_created(modal_key: usize, tracker_key: usize, title: &str) {
         event_at(at, phase_name(begin_kind), "begin", false);
     }
 
+    if title == "Logging in" {
+        network_request_observed("account_login");
+    }
     if title.starts_with("Downloading ") {
-        if let Some(source) = network_source(kind) {
-            network_observed(source);
-        }
+        network_download_observed(network_source(kind).unwrap_or("tracked_other"));
     }
 }
 
@@ -279,12 +297,9 @@ pub fn tracker_title_changed(modal_key: usize, tracker_key: usize, title: &str) 
     let Some(record) = guard.trackers.iter().find(|v| v.key == tracker_key) else {
         return;
     };
-    let source = network_source(record.kind);
+    let source = network_source(record.kind).unwrap_or("tracked_other");
     drop(guard);
-
-    if let Some(source) = source {
-        network_observed(source);
-    }
+    network_download_observed(source);
 }
 
 pub fn tracker_finished(modal_key: usize, tracker_key: usize, error: bool) {
@@ -354,6 +369,32 @@ pub fn tracker_add_count(
 ) {
     // Intentionally unused for phase attribution. Earlier probe revisions inferred boundaries
     // from parent progress totals; that was brittle for custom Java and Forge-like nested work.
+}
+
+pub fn tracker_total_changed(modal_key: usize, tracker_key: usize, total_count: usize) {
+    if !enabled() {
+        return;
+    }
+    let should_emit = {
+        let mut guard = state().lock();
+        if !guard.active || guard.modal_key != modal_key || guard.loader_network_emitted {
+            return;
+        }
+        let Some(record) = guard.trackers.iter().find(|r| r.key == tracker_key) else {
+            return;
+        };
+        if record.kind != TrackerKind::Parent || total_count != 13 {
+            return;
+        }
+        guard.loader_network_emitted = true;
+        true
+    };
+    if should_emit {
+        // In the pinned launcher, total=13 is the Forge/NeoForge outer progress shape:
+        // create_launch_version has added seven steps and immediately enters the
+        // create_forgelike path, which always attempts the installer SHA-1 request.
+        network_request_observed("loader_sha1");
+    }
 }
 
 pub fn cancel(modal_key: usize) {
@@ -526,16 +567,19 @@ mod tests {
             ],
             ..ProbeState::default()
         };
-        assert!(state.trackers.iter().filter(|r| !r.finished).count() == 0);
+        assert_eq!(state.trackers.iter().filter(|r| !r.finished).count(), 0);
     }
 
     #[test]
     fn network_sources_are_fixed_and_non_sensitive() {
-        for source in ["assets", "libraries", "java_runtime"] {
-            assert!(network_source_allowed(source));
+        for source in ["assets", "libraries", "java_runtime", "tracked_other"] {
+            assert!(network_download_source_allowed(source));
         }
-        assert!(!network_source_allowed("metadata-url"));
-        assert!(!network_source_allowed("account-name"));
+        for source in ["account_login", "loader_sha1"] {
+            assert!(network_request_source_allowed(source));
+        }
+        assert!(!network_download_source_allowed("https://example.invalid/private"));
+        assert!(!network_request_source_allowed("account-name"));
     }
 
     #[test]
