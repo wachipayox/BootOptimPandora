@@ -53,5 +53,8 @@ jobs:
       - name: Test asset verification intent propagation
         run: cargo test -p bridge asset_verification_mode --frozen --target ${{ matrix.platform.target }}
 
+      - name: Test asset prefix directory deduplication
+        run: cargo test -p backend bootoptim_asset_prefix_directory_tests --frozen --target ${{ matrix.platform.target }}
+
       - name: Run build command
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}
