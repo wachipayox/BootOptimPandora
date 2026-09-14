@@ -138,7 +138,7 @@ fn handle_spawn(mut command: PandoraCommand, spawn_type: SpawnType, context: &mu
 
             #[cfg(target_os = "macos")]
             {
-                crate::unix::macos::sandbox::spawn(command, sandbox)
+                crate::unix::macos::sandbox::spawn(command, sandbox, context)
             }
         },
     };
