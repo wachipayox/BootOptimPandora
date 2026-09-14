@@ -1,19 +1,12 @@
-use std::{io::ErrorKind, path::{Path, PathBuf}};
+use std::{collections::HashSet, io::ErrorKind, path::{Path, PathBuf}};
 
 use ustr::Ustr;
 
 use super::LoadAssetObjectsError;
 
+#[derive(Default)]
 pub(super) struct AssetPrefixDirectories {
-    prepared: [bool; 256],
-}
-
-impl Default for AssetPrefixDirectories {
-    fn default() -> Self {
-        Self {
-            prepared: [false; 256],
-        }
-    }
+    prepared: HashSet<[u8; 2]>,
 }
 
 impl AssetPrefixDirectories {
@@ -27,15 +20,16 @@ impl AssetPrefixDirectories {
             return Err(LoadAssetObjectsError::InvalidHash(hash));
         }
 
-        // decode_to_slice above proves an exact 40-character hexadecimal SHA-1,
-        // so this byte slice is the same safe prefix stock Pandora used.
+        // decode_to_slice above proves an exact 40-byte ASCII hexadecimal SHA-1,
+        // so this is the same safe two-byte string prefix stock Pandora used.
+        let prefix = [hash.as_bytes()[0], hash.as_bytes()[1]];
         let prefix_path = assets_objects_dir.join(&hash.as_str()[..2]);
-        self.prepare_prefix(expected_hash[0], &prefix_path);
+        self.prepare_prefix(prefix, &prefix_path);
 
         Ok((expected_hash, prefix_path.join(hash.as_str())))
     }
 
-    fn prepare_prefix(&mut self, prefix: u8, prefix_path: &Path) {
+    fn prepare_prefix(&mut self, prefix: [u8; 2], prefix_path: &Path) {
         prepare_prefix_with(
             &mut self.prepared,
             prefix,
@@ -47,8 +41,8 @@ impl AssetPrefixDirectories {
 }
 
 fn prepare_prefix_with<CreateDir, IsDir>(
-    prepared: &mut [bool; 256],
-    prefix: u8,
+    prepared: &mut HashSet<[u8; 2]>,
+    prefix: [u8; 2],
     prefix_path: &Path,
     create_dir: CreateDir,
     is_dir: IsDir,
@@ -56,8 +50,7 @@ fn prepare_prefix_with<CreateDir, IsDir>(
     CreateDir: FnOnce(&Path) -> std::io::Result<()>,
     IsDir: FnOnce(&Path) -> bool,
 {
-    let slot = &mut prepared[prefix as usize];
-    if *slot {
+    if prepared.contains(&prefix) {
         return;
     }
 
@@ -71,7 +64,7 @@ fn prepare_prefix_with<CreateDir, IsDir>(
     };
 
     if ready {
-        *slot = true;
+        prepared.insert(prefix);
     }
 }
 
@@ -118,14 +111,14 @@ mod bootoptim_asset_prefix_directory_tests {
 
     #[test]
     fn repeated_prefix_is_created_once_after_success() {
-        let mut prepared = [false; 256];
+        let mut prepared = HashSet::new();
         let mut create_calls = 0;
         let path = Path::new("ab");
 
         for _ in 0..3 {
             prepare_prefix_with(
                 &mut prepared,
-                0xab,
+                *b"ab",
                 path,
                 |_| {
                     create_calls += 1;
@@ -136,47 +129,37 @@ mod bootoptim_asset_prefix_directory_tests {
         }
 
         assert_eq!(create_calls, 1);
-        assert!(prepared[0xab]);
+        assert!(prepared.contains(b"ab"));
     }
 
     #[test]
     fn already_existing_directory_is_confirmed_then_deduplicated() {
-        let mut prepared = [false; 256];
-        let mut create_calls = 0;
-        let mut is_dir_calls = 0;
-        let path = Path::new("cd");
+        let root = temp_root("existing");
+        fs::create_dir(root.join("cd")).unwrap();
+        let mut prefixes = AssetPrefixDirectories::default();
+        let first_hash = Ustr::from("cd00000000000000000000000000000000000000");
+        let second_hash = Ustr::from("cd11111111111111111111111111111111111111");
 
-        for _ in 0..2 {
-            prepare_prefix_with(
-                &mut prepared,
-                0xcd,
-                path,
-                |_| {
-                    create_calls += 1;
-                    Err(io::Error::from(ErrorKind::AlreadyExists))
-                },
-                |_| {
-                    is_dir_calls += 1;
-                    true
-                },
-            );
-        }
+        let (_, first_path) = prefixes.object_path(&root, first_hash).unwrap();
+        let (_, second_path) = prefixes.object_path(&root, second_hash).unwrap();
 
-        assert_eq!(create_calls, 1);
-        assert_eq!(is_dir_calls, 1);
-        assert!(prepared[0xcd]);
+        assert_eq!(first_path, root.join("cd").join(first_hash.as_str()));
+        assert_eq!(second_path, root.join("cd").join(second_hash.as_str()));
+        assert!(prefixes.prepared.contains(b"cd"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn permission_failure_is_ignored_and_retried() {
-        let mut prepared = [false; 256];
+        let mut prepared = HashSet::new();
         let mut create_calls = 0;
         let path = Path::new("ef");
 
         for _ in 0..2 {
             prepare_prefix_with(
                 &mut prepared,
-                0xef,
+                *b"ef",
                 path,
                 |_| {
                     create_calls += 1;
@@ -187,7 +170,38 @@ mod bootoptim_asset_prefix_directory_tests {
         }
 
         assert_eq!(create_calls, 2);
-        assert!(!prepared[0xef]);
+        assert!(!prepared.contains(b"ef"));
+    }
+
+    #[test]
+    fn prefix_identity_preserves_hash_case() {
+        let mut prepared = HashSet::new();
+        let mut create_calls = 0;
+
+        prepare_prefix_with(
+            &mut prepared,
+            *b"ab",
+            Path::new("ab"),
+            |_| {
+                create_calls += 1;
+                Ok(())
+            },
+            |_| false,
+        );
+        prepare_prefix_with(
+            &mut prepared,
+            *b"AB",
+            Path::new("AB"),
+            |_| {
+                create_calls += 1;
+                Ok(())
+            },
+            |_| false,
+        );
+
+        assert_eq!(create_calls, 2);
+        assert!(prepared.contains(b"ab"));
+        assert!(prepared.contains(b"AB"));
     }
 
     #[test]
