@@ -1,8 +1,16 @@
-use std::{io::{Error, ErrorKind}, sync::mpsc};
+use std::{
+    ffi::OsStr,
+    fs::OpenOptions,
+    io::{Error, ErrorKind, Write},
+    sync::mpsc,
+};
 
 use once_cell::sync::OnceCell;
 
 use crate::{PandoraChild, PandoraCommand, PandoraSandbox};
+
+const LAUNCH_PROBE_ENV: &str = "BOOTOPTIM_LAUNCH_PROBE";
+const LAUNCH_PROBE_SCHEMA: &str = "bootoptim.launch_probe.v1";
 
 pub enum SpawnType {
     Normal,
@@ -41,6 +49,12 @@ fn illegal_filename_char(b: u8) -> bool {
 pub fn spawn(command: PandoraCommand, spawn_type: SpawnType) -> tokio::sync::oneshot::Receiver<std::io::Result<PandoraChild>> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
 
+    if is_probe_minecraft_launch(&command) {
+        probe_event("classpath_resolution", "inclusive_end", None);
+        probe_event("native_extraction", "inclusive_end", None);
+        probe_event("wrapper_arguments", "ready", None);
+    }
+
     static SPAWNING_CHANNEL: OnceCell<mpsc::Sender<SpawnInfo>> = OnceCell::new();
     let channel = SPAWNING_CHANNEL.get_or_init(|| {
         let (send, recv) = mpsc::channel::<SpawnInfo>();
@@ -74,12 +88,21 @@ pub fn spawn(command: PandoraCommand, spawn_type: SpawnType) -> tokio::sync::one
 }
 
 fn handle_spawn(mut command: PandoraCommand, spawn_type: SpawnType, context: &mut SpawnContext) -> std::io::Result<PandoraChild> {
-    match spawn_type {
+    let probe_minecraft = is_probe_minecraft_launch(&command);
+    if probe_minecraft {
+        probe_event("java_spawn", "begin", None);
+    }
+
+    let result = match spawn_type {
         SpawnType::Normal => {
             #[cfg(unix)]
-            return crate::unix::unix_spawn::spawn(command, context);
+            {
+                crate::unix::unix_spawn::spawn(command, context)
+            }
             #[cfg(windows)]
-            return crate::windows::windows_spawn::spawn(command, context);
+            {
+                crate::windows::windows_spawn::spawn(command, context)
+            }
         },
         SpawnType::Elevated => {
             command.stdin = crate::PandoraStdioWriteMode::Null;
@@ -87,30 +110,119 @@ fn handle_spawn(mut command: PandoraCommand, spawn_type: SpawnType, context: &mu
             command.stderr = crate::PandoraStdioReadMode::Null;
 
             if command.inherit_env.is_some() || !command.env.is_empty() {
-                return Err(Error::new(ErrorKind::InvalidInput, "cannot set custom environment for elevated process"));
+                Err(Error::new(ErrorKind::InvalidInput, "cannot set custom environment for elevated process"))
+            } else {
+                #[cfg(target_os = "linux")]
+                {
+                    crate::unix::linux::pkexec::spawn(command, context)
+                }
+                #[cfg(windows)]
+                {
+                    crate::windows::runas::spawn(command, context)
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    crate::unix::macos::elevated::spawn(command)
+                }
             }
-
-            #[cfg(target_os = "linux")]
-            return crate::unix::linux::pkexec::spawn(command, context);
-            #[cfg(windows)]
-            return crate::windows::runas::spawn(command, context);
-            #[cfg(target_os = "macos")]
-            return crate::unix::macos::elevated::spawn(command);
         },
         SpawnType::Sandboxed(sandbox) => {
             #[cfg(target_os = "linux")]
-            return crate::unix::linux::bwrap::spawn(command, sandbox, context);
+            {
+                crate::unix::linux::bwrap::spawn(command, sandbox, context)
+            }
 
             #[cfg(windows)]
             {
                 if sandbox.name.as_encoded_bytes().iter().any(|b| illegal_filename_char(*b)) {
-                    return Err(Error::new(ErrorKind::InvalidInput, "name contained illegal character"));
+                    Err(Error::new(ErrorKind::InvalidInput, "name contained illegal character"))
+                } else {
+                    crate::windows::appcontainer::spawn(command, sandbox, context)
                 }
-                return crate::windows::appcontainer::spawn(command, sandbox, context);
             }
 
             #[cfg(target_os = "macos")]
-            return crate::unix::macos::sandbox::spawn(command, sandbox, context);
+            {
+                crate::unix::macos::sandbox::spawn(command, sandbox, context)
+            }
         },
+    };
+
+    if probe_minecraft {
+        probe_event("java_spawn", "end", Some(if result.is_ok() { "ok" } else { "error" }));
+        if result.is_ok() {
+            probe_event("launcher_pre_java", "end", Some("ok"));
+        }
     }
+    result
+}
+
+fn is_probe_minecraft_launch(command: &PandoraCommand) -> bool {
+    std::env::var_os(LAUNCH_PROBE_ENV).is_some()
+        && command.args.iter().any(|arg| arg.0 == OsStr::new("com.moulberry.pandora.LaunchWrapper"))
+}
+
+fn probe_event(phase: &str, event: &str, outcome: Option<&str>) {
+    let Some(path) = std::env::var_os(LAUNCH_PROBE_ENV) else {
+        return;
+    };
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    let Ok(mut file) = options.open(path) else {
+        return;
+    };
+    let now = monotonic_ns();
+    if let Some(outcome) = outcome {
+        let _ = writeln!(file, "{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"{event}\",\"network\":false,\"outcome\":\"{outcome}\"}}");
+    } else {
+        let _ = writeln!(file, "{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"{event}\",\"network\":false}}");
+    }
+}
+
+#[cfg(windows)]
+fn monotonic_ns() -> u64 {
+    #[link(name = "Kernel32")]
+    unsafe extern "system" {
+        fn QueryPerformanceCounter(value: *mut i64) -> i32;
+        fn QueryPerformanceFrequency(value: *mut i64) -> i32;
+    }
+    let mut ticks = 0_i64;
+    let mut frequency = 0_i64;
+    unsafe {
+        if QueryPerformanceCounter(&mut ticks) == 0 || QueryPerformanceFrequency(&mut frequency) == 0 || frequency <= 0 {
+            return 0;
+        }
+    }
+    ((ticks.max(0) as u128 * 1_000_000_000_u128) / frequency as u128).min(u64::MAX as u128) as u64
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn monotonic_ns() -> u64 {
+    #[repr(C)]
+    struct Timespec {
+        tv_sec: i64,
+        tv_nsec: i64,
+    }
+    unsafe extern "C" {
+        fn clock_gettime(clock_id: i32, tp: *mut Timespec) -> i32;
+    }
+    #[cfg(target_os = "linux")]
+    const CLOCK_MONOTONIC: i32 = 1;
+    #[cfg(target_os = "macos")]
+    const CLOCK_MONOTONIC: i32 = 6;
+
+    let mut ts = Timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe {
+        if clock_gettime(CLOCK_MONOTONIC, &mut ts) != 0 {
+            return 0;
+        }
+    }
+    (ts.tv_sec.max(0) as u128 * 1_000_000_000_u128 + ts.tv_nsec.max(0) as u128).min(u64::MAX as u128) as u64
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn monotonic_ns() -> u64 {
+    use std::{sync::OnceLock, time::Instant};
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_nanos().min(u64::MAX as u128) as u64
 }
