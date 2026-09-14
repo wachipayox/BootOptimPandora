@@ -21,14 +21,15 @@ fn run() -> Result<(), String> {
     // `probe_request` has already called launch_probe::request(0), exactly as a
     // StartInstanceByName launch does. Drive the same bridge state machine far
     // enough to cover the historical post-join parent count that used to open
-    // the invalid inclusive classpath/native/wrapper envelopes.
+    // the invalid inclusive classpath/native/wrapper envelopes. With no managed
+    // Java tracker, that old external/configured-Java shape was 5/7.
     crate::launch_probe::backend_dispatch(MODAL_KEY);
     crate::launch_probe::instance_config_loaded();
     crate::launch_probe::modal_clear(MODAL_KEY);
     crate::launch_probe::modal_clear(MODAL_KEY);
     crate::launch_probe::tracker_created(MODAL_KEY, PARENT_TRACKER_KEY, "Launching");
     crate::launch_probe::tracker_add_count(MODAL_KEY, PARENT_TRACKER_KEY, 2, 7);
-    crate::launch_probe::tracker_add_count(MODAL_KEY, PARENT_TRACKER_KEY, 6, 7);
+    crate::launch_probe::tracker_add_count(MODAL_KEY, PARENT_TRACKER_KEY, 5, 7);
 
     let trace = std::fs::read_to_string(&path)
         .map_err(|error| format!("unable to read bridge-stage packaged probe trace: {error}"))?;
