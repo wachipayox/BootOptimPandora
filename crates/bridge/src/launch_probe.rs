@@ -1,5 +1,4 @@
 use std::{
-    cell::Cell,
     fs::OpenOptions,
     io::Write,
     path::PathBuf,
@@ -10,10 +9,6 @@ use parking_lot::Mutex;
 
 const ENV_NAME: &str = "BOOTOPTIM_LAUNCH_PROBE";
 const SCHEMA: &str = "bootoptim.launch_probe.v1";
-
-thread_local! {
-    static BACKEND_DISPATCH_MODAL: Cell<Option<usize>> = const { Cell::new(None) };
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TrackerKind {
@@ -35,6 +30,7 @@ struct TrackerRecord {
 struct ProbeState {
     active: bool,
     modal_key: usize,
+    config_dispatch_ready: bool,
     config_done: bool,
     account_done: bool,
     prelaunch_done: bool,
@@ -153,26 +149,24 @@ pub fn backend_dispatch(modal_key: usize) {
     if !enabled() {
         return;
     }
-    let guard = state().lock();
+    let mut guard = state().lock();
     if !guard.active || guard.modal_key != modal_key {
         return;
     }
-    drop(guard);
-    BACKEND_DISPATCH_MODAL.with(|slot| slot.set(Some(modal_key)));
+    guard.config_dispatch_ready = true;
 }
 
 pub fn instance_config_loaded() {
     if !enabled() {
         return;
     }
-    let dispatched = BACKEND_DISPATCH_MODAL.with(Cell::get);
     let mut guard = state().lock();
-    if !guard.active || guard.config_done || dispatched != Some(guard.modal_key) {
+    if !guard.active || guard.config_done || !guard.config_dispatch_ready {
         return;
     }
+    guard.config_dispatch_ready = false;
     guard.config_done = true;
     drop(guard);
-    BACKEND_DISPATCH_MODAL.with(|slot| slot.set(None));
     event("instance_config", "end", false);
     event("account_selection", "begin", false);
 }
@@ -329,8 +323,8 @@ pub fn cancel(modal_key: usize) {
         return;
     }
     guard.active = false;
+    guard.config_dispatch_ready = false;
     drop(guard);
-    BACKEND_DISPATCH_MODAL.with(|slot| slot.set(None));
     outcome_event("launch", "cancelled");
 }
 
@@ -343,8 +337,8 @@ pub fn error(modal_key: usize) {
         return;
     }
     guard.active = false;
+    guard.config_dispatch_ready = false;
     drop(guard);
-    BACKEND_DISPATCH_MODAL.with(|slot| slot.set(None));
     outcome_event("launch", "error");
 }
 
