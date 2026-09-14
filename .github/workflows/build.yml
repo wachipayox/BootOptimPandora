@@ -41,11 +41,14 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install needed packages on Linux
-        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig1-dev libudev-dev
         if: contains(matrix.platform.os, 'ubuntu')
 
       - name: Install mold linker
         uses: rui314/setup-mold@v1
+
+      - name: Run verification I/O coordinator tests
+        run: 'cargo test -p backend fs::tests:: --frozen --target ${{ matrix.platform.target }}'
 
       - name: Run build command
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}
