@@ -52,12 +52,39 @@ pub struct BackendReceiver {
     processed_serial: AtomicSetSerial,
 }
 
+fn probe_dispatch(message: &MessageToBackend) {
+    match message {
+        MessageToBackend::StartInstance { modal_action, .. } => {
+            crate::launch_probe::backend_dispatch(modal_action.probe_key());
+        }
+        MessageToBackend::StartInstanceByName { .. } => {
+            crate::launch_probe::backend_dispatch(0);
+        }
+        _ => {}
+    }
+}
+
+fn probe_request(message: &MessageToBackend) {
+    match message {
+        MessageToBackend::StartInstance { modal_action, .. } => {
+            crate::launch_probe::request(modal_action.probe_key());
+        }
+        MessageToBackend::StartInstanceByName { .. } => {
+            // Name-based launches construct their ModalAction inside the backend. A zero key
+            // is a temporary sentinel adopted by the first modal/tracker callback.
+            crate::launch_probe::request(0);
+        }
+        _ => {}
+    }
+}
+
 impl BackendReceiver {
     pub async fn recv(&mut self) -> Option<MessageToBackend> {
         let (message, serial) = self.receiver.recv().await?;
         if let Some(serial) = serial {
             self.processed_serial.set(serial);
         }
+        probe_dispatch(&message);
         Some(message)
     }
 
@@ -66,6 +93,7 @@ impl BackendReceiver {
         if let Some(serial) = serial {
             self.processed_serial.set(serial);
         }
+        probe_dispatch(&message);
         Some(message)
     }
 }
@@ -112,6 +140,7 @@ unsafe impl Sync for BackendHandle {}
 
 impl BackendHandle {
     pub fn send(&self, message: MessageToBackend) {
+        probe_request(&message);
         #[cfg(debug_assertions)]
         self.sender.try_send((message, None)).unwrap();
         #[cfg(not(debug_assertions))]
@@ -123,6 +152,7 @@ impl BackendHandle {
             return;
         }
 
+        probe_request(&message);
         let next_serial = self.next_serial.next();
         serial.set(next_serial);
 

@@ -9,7 +9,8 @@ on:
     paths:
       - "bootoptim-v0/**"
       - "crates/command/**"
-      - "crates/backend/src/launch/**"
+      - "crates/bridge/**"
+      - "crates/backend/**"
       - ".github/workflows/bootoptim-v0.yml"
 
 permissions:
@@ -33,6 +34,9 @@ jobs:
       - name: Run portable helper tests
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
 
+      - name: Test launch probe schema and phase ordering
+        run: cargo test -p bridge launch_probe --frozen
+
   windows-v0:
     runs-on: windows-2022
     timeout-minutes: 45
@@ -47,6 +51,12 @@ jobs:
 
       - name: Test standalone interposer
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc
+
+      - name: Test launch probe schema and phase ordering
+        run: cargo test -p bridge launch_probe --frozen --target x86_64-pc-windows-msvc
+
+      - name: Test direct Java spawn probe filter
+        run: cargo test -p command launch_probe_tests --frozen --target x86_64-pc-windows-msvc
 
       - name: Test deterministic library order
         shell: pwsh
@@ -69,6 +79,17 @@ jobs:
 
       - name: Build patched Pandora
         run: cargo build --release --frozen --target x86_64-pc-windows-msvc
+
+      - name: Verify packaged Pandora probe linkage
+        shell: pwsh
+        run: |
+          $exe = "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe"
+          $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
+          foreach ($marker in @("bootoptim.launch_probe.v1", "launcher_pre_java", "java_spawn")) {
+            if (-not $ascii.Contains($marker)) {
+              throw "release Pandora binary missing launch-probe marker: $marker"
+            }
+          }
 
       - name: Assemble reproducible test artifact
         shell: pwsh
