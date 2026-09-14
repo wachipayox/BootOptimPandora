@@ -1,0 +1,138 @@
+name: Agent 165 composed A-B artifact
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-packaged-probe-contract:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Pin semantic contract tests
+        shell: pwsh
+        run: |
+          cargo test -p bridge asset_verification_mode_tests --frozen --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p bridge launch_probe --frozen --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p command launch_probe_tests --frozen --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build AppCDS interposer
+        run: cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Build packaged Pandora
+        run: cargo build --release --frozen --target x86_64-pc-windows-msvc
+
+      - name: Execute packaged probe contract selftest
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe"
+          $probe = Join-Path $env:RUNNER_TEMP "agent165-probe-contract.jsonl"
+          $fakeDir = Join-Path $env:RUNNER_TEMP "agent165-fake-java-bin"
+          New-Item -ItemType Directory -Force $fakeDir | Out-Null
+          $fakeJava = Join-Path $fakeDir "java.exe"
+          Copy-Item "$env:SystemRoot/System32/cmd.exe" $fakeJava -Force
+          Remove-Item $probe -ErrorAction SilentlyContinue
+
+          & $exe --internal-set-traverse-acls __bootoptim_probe_contract_selftest__ $probe $fakeJava
+          if ($LASTEXITCODE -ne 0) { throw "packaged EXE probe selftest exited $LASTEXITCODE" }
+          if (-not (Test-Path $probe)) { throw "packaged EXE did not create probe JSONL" }
+
+          $lines = @(Get-Content $probe | Where-Object { $_.Trim().Length -gt 0 })
+          if ($lines.Count -eq 0) { throw "probe JSONL is empty" }
+          $events = @($lines | ForEach-Object { $_ | ConvertFrom-Json })
+
+          if ($events[0].phase -ne "launcher_pre_java" -or $events[0].event -ne "begin") {
+            throw "first probe event is not launcher_pre_java.begin"
+          }
+          $rootBegins = @($events | Where-Object { $_.phase -eq "launcher_pre_java" -and $_.event -eq "begin" })
+          $rootEnds = @($events | Where-Object { $_.phase -eq "launcher_pre_java" -and $_.event -eq "end" })
+          if ($rootBegins.Count -ne 1 -or $rootEnds.Count -ne 1) {
+            throw "probe must contain exactly one root begin and one root end"
+          }
+
+          $legacy = @($events | Where-Object { $_.event -eq "inclusive_end" })
+          if ($legacy.Count -ne 0) { throw "legacy inclusive_end event survived packaged composition" }
+
+          foreach ($phase in @("classpath_resolution", "native_extraction", "wrapper_arguments")) {
+            $phaseEvents = @($events | Where-Object { $_.phase -eq $phase })
+            if (@($phaseEvents | Where-Object { $_.event -eq "inclusive_end" }).Count -ne 0) {
+              throw "$phase emitted forbidden inclusive_end"
+            }
+            if (@($phaseEvents | Where-Object { $_.event -eq "unobserved" }).Count -ne 1) {
+              throw "$phase must be explicitly unobserved in packaged selftest"
+            }
+          }
+
+          $observedPairs = 0
+          foreach ($phase in @("assets_verify_download", "libraries_classpath_inputs", "java_runtime")) {
+            $begins = @($events | Where-Object { $_.phase -eq $phase -and $_.event -eq "begin" }).Count
+            $ends = @($events | Where-Object { $_.phase -eq $phase -and $_.event -eq "end" }).Count
+            $unobserved = @($events | Where-Object { $_.phase -eq $phase -and $_.event -eq "unobserved" }).Count
+            if (($begins -eq 1 -and $ends -eq 1 -and $unobserved -eq 0)) {
+              $observedPairs++
+            } elseif ($begins -eq 0 -and $ends -eq 0 -and $unobserved -eq 1) {
+              # explicit absence is valid
+            } else {
+              throw "$phase is neither a valid observed span nor one explicit unobserved event"
+            }
+          }
+          if ($observedPairs -lt 1) { throw "selftest did not exercise any observed phase" }
+
+          $javaSpawnBegin = @($events | Where-Object { $_.phase -eq "java_spawn" -and $_.event -eq "begin" })
+          $javaSpawnEnd = @($events | Where-Object { $_.phase -eq "java_spawn" -and $_.event -eq "end" })
+          if ($javaSpawnBegin.Count -ne 1 -or $javaSpawnEnd.Count -ne 1) {
+            throw "java_spawn must be one complete observed span"
+          }
+
+          $rootEndIndex = -1
+          $javaEndIndex = -1
+          for ($i = 0; $i -lt $events.Count; $i++) {
+            if ($events[$i].phase -eq "launcher_pre_java" -and $events[$i].event -eq "end") { $rootEndIndex = $i }
+            if ($events[$i].phase -eq "java_spawn" -and $events[$i].event -eq "end") { $javaEndIndex = $i }
+          }
+          if ($javaEndIndex -lt 0 -or $rootEndIndex -le $javaEndIndex) {
+            throw "root end must occur after java_spawn end"
+          }
+
+          Copy-Item $probe "agent165-probe-contract.jsonl"
+          Write-Host "packaged probe contract OK"
+
+      - name: Assemble immutable Windows artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "bootoptim-v0/dist-agent165" | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe" "bootoptim-v0/dist-agent165/BootOptimPandora.exe"
+          Copy-Item "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe" "bootoptim-v0/dist-agent165/bootoptim-launch-interposer.exe"
+          Copy-Item "agent165-probe-contract.jsonl" "bootoptim-v0/dist-agent165/probe-contract.jsonl"
+          "${{ github.sha }}" | Set-Content -Encoding ascii "bootoptim-v0/dist-agent165/COMMIT.txt"
+          $files = @(
+            "bootoptim-v0/dist-agent165/BootOptimPandora.exe",
+            "bootoptim-v0/dist-agent165/bootoptim-launch-interposer.exe"
+          )
+          $hashes = foreach ($file in $files) {
+            $h = Get-FileHash -Algorithm SHA256 $file
+            "{0}  {1}" -f $h.Hash.ToLowerInvariant(), (Split-Path $file -Leaf)
+          }
+          $hashes | Set-Content -Encoding ascii "bootoptim-v0/dist-agent165/SHA256SUMS.txt"
+          Get-Content "bootoptim-v0/dist-agent165/SHA256SUMS.txt"
+
+      - name: Upload immutable Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootoptim-pandora-agent165-${{ github.sha }}-windows-x86_64
+          path: bootoptim-v0/dist-agent165/*
+          if-no-files-found: error
