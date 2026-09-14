@@ -47,11 +47,18 @@ jobs:
       - name: Install mold linker
         uses: rui314/setup-mold@v1
 
-      - name: Test USN asset-cache fail-closed foundation
+      - name: Test USN asset-cache runtime gates
         run: cargo test -p backend asset_usn_cache --frozen --target ${{ matrix.platform.target }}
+
+      - name: Test fixed-size USN protocol
+        run: cargo test -p backend usn_protocol --frozen --target ${{ matrix.platform.target }}
 
       - name: Test asset verification intent propagation
         run: cargo test -p bridge asset_verification_mode --frozen --target ${{ matrix.platform.target }}
+
+      - name: Build ephemeral USN helper
+        if: contains(matrix.platform.os, 'windows')
+        run: cargo build -p backend --bin bootoptim-usn-helper --release --frozen --target ${{ matrix.platform.target }}
 
       - name: Run build command
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}
