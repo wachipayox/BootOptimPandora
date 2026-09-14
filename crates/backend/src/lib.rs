@@ -8,6 +8,7 @@ pub use backend::*;
 mod backend_filesystem;
 mod backend_handler;
 mod account;
+mod asset_probe;
 mod arcfactory;
 mod curseforge_manual_download;
 mod directories;

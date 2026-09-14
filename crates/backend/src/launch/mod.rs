@@ -1632,8 +1632,11 @@ async fn do_asset_objects_load(
     let disk_semaphore = tokio::sync::Semaphore::new(32);
     let started_downloading = AtomicBool::new(false);
 
-    let mut total_size = 0;
+    let planned_objects = assets_index.objects.len() as u64;
+    let planned_bytes = assets_index.objects.values().map(|asset| u64::from(asset.size)).sum::<u64>();
+    let attribution_probe = crate::asset_probe::AssetAttributionProbe::for_launch(planned_objects, planned_bytes);
 
+    let mut total_size = 0;
     let mut tasks = Vec::new();
 
     let _ = std::fs::create_dir_all(&assets_objects_dir);
@@ -1641,6 +1644,9 @@ async fn do_asset_objects_load(
     for (_, asset) in &assets_index.objects {
         let mut expected_hash = [0u8; 20];
         let Ok(_) = hex::decode_to_slice(asset.hash.as_str(), &mut expected_hash) else {
+            if let Some(probe) = &attribution_probe {
+                probe.finish("error");
+            }
             return Err(LoadAssetObjectsError::InvalidHash(asset.hash));
         };
 
@@ -1653,6 +1659,7 @@ async fn do_asset_objects_load(
         let started_downloading = &started_downloading;
         let download_semaphore = &download_semaphore;
         let disk_semaphore = &disk_semaphore;
+        let attribution_probe = attribution_probe.clone();
 
         let url = format!("https://resources.download.minecraft.net/{}/{}", &asset.hash[..2], &asset.hash);
 
@@ -1660,9 +1667,16 @@ async fn do_asset_objects_load(
             let valid_hash_on_disk = {
                 let path = path.clone();
                 let permit = disk_semaphore.acquire().await.unwrap();
-                let result = tokio::task::spawn_blocking(move || {
-                    crate::fs::check_sha1_hash(&path, expected_hash).unwrap_or(false)
-                }).await.unwrap();
+                let result = if let Some(probe) = &attribution_probe {
+                    let probe = Arc::clone(probe);
+                    tokio::task::spawn_blocking(move || probe.hash_path(&path, expected_hash)).await.unwrap()
+                } else {
+                    tokio::task::spawn_blocking(move || {
+                        crate::fs::check_sha1_hash(&path, expected_hash).unwrap_or(false)
+                    })
+                    .await
+                    .unwrap()
+                };
                 drop(permit);
                 result
             };
@@ -1678,11 +1692,41 @@ async fn do_asset_objects_load(
             }
 
             let permit = download_semaphore.acquire().await.unwrap();
-            let response = http_client.get(&url).send().await?;
-            let bytes = Arc::new(response.bytes().await?);
+            let download_guard = attribution_probe.as_ref().map(|probe| probe.begin_download());
+
+            let response = match http_client.get(&url).send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    if let Some(probe) = &attribution_probe {
+                        probe.record_network_error();
+                    }
+                    drop(download_guard);
+                    drop(permit);
+                    return Err(error.into());
+                },
+            };
+            let bytes = match response.bytes().await {
+                Ok(bytes) => Arc::new(bytes),
+                Err(error) => {
+                    if let Some(probe) = &attribution_probe {
+                        probe.record_network_error();
+                    }
+                    drop(download_guard);
+                    drop(permit);
+                    return Err(error.into());
+                },
+            };
+
+            if let Some(probe) = &attribution_probe {
+                probe.record_downloaded_body(bytes.len());
+            }
+            drop(download_guard);
             drop(permit);
 
             if bytes.len() != asset.size as usize {
+                if let Some(probe) = &attribution_probe {
+                    probe.record_size_failure();
+                }
                 return Err(LoadAssetObjectsError::WrongResponseSize(asset.size as usize, bytes.len()));
             }
 
@@ -1695,10 +1739,15 @@ async fn do_asset_objects_load(
                     let actual_hash = hasher.finalize();
 
                     expected_hash == *actual_hash
-                }).await.unwrap()
+                })
+                .await
+                .unwrap()
             };
 
             if !correct_hash {
+                if let Some(probe) = &attribution_probe {
+                    probe.record_download_hash_failure();
+                }
                 return Err(LoadAssetObjectsError::WrongHash);
             }
 
@@ -1711,9 +1760,13 @@ async fn do_asset_objects_load(
 
     assets_tracker.set_total(total_size as usize);
 
-    futures::future::try_join_all(tasks).await?;
+    let result = futures::future::try_join_all(tasks).await.map(|_| ());
 
-    Ok(())
+    if let Some(probe) = &attribution_probe {
+        probe.finish(if result.is_ok() { "ok" } else { "error" });
+    }
+
+    result
 }
 
 #[derive(thiserror::Error, Debug)]
