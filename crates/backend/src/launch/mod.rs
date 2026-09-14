@@ -629,7 +629,7 @@ impl Launcher {
                         if crate::fs::check_sha1_hash(&path, expected_hash).unwrap_or(false) {
                             return None;
                         }
-                    };
+                    }
                 }
 
                 if let Ok(bytes) = builtin.bytes() {
@@ -733,7 +733,7 @@ impl Launcher {
             let jar_zip = jar_file.read_zip()?;
 
             let Some(manifest_file) = jar_zip.by_name("META-INF/MANIFEST.MF") else {
-                return Err(LaunchError::MissingFileInZipError(Cow::Borrowed("META-INF/MANIFEST.MF")));
+                return Err(LaunchError::MissingFileInZipError(Cow::Borrowed("install_profile.json")));
             };
 
             let manifest_bytes = manifest_file.bytes()?;
@@ -1050,7 +1050,13 @@ impl Launcher {
             self.directories.assets_objects_dir.clone()
         };
 
-        let result = do_asset_objects_load(http_client, assets_index, assets_dir, &assets_tracker).await;
+        let result = do_asset_objects_load(
+            http_client,
+            assets_index,
+            assets_dir,
+            version_info.asset_index.sha1.as_str(),
+            &assets_tracker,
+        ).await;
 
         assets_tracker.set_finished(ProgressTrackerFinishType::from_err(result.is_err()));
 
@@ -1625,6 +1631,7 @@ async fn do_asset_objects_load(
     http_client: &reqwest::Client,
     assets_index: Arc<AssetsIndex>,
     assets_objects_dir: Arc<Path>,
+    asset_index_sha1: &str,
     assets_tracker: &ProgressTracker,
 ) -> Result<(), LoadAssetObjectsError> {
     // Limit max concurrent connections to 8 to avoid ratelimiting issues
@@ -1633,10 +1640,32 @@ async fn do_asset_objects_load(
     let started_downloading = AtomicBool::new(false);
 
     let mut total_size = 0;
-
     let mut tasks = Vec::new();
 
     let _ = std::fs::create_dir_all(&assets_objects_dir);
+
+    let verification_mode = assets_tracker.asset_verification_mode();
+    let expected_hashes = assets_index.objects.iter()
+        .map(|(_, asset)| asset.hash.to_string())
+        .collect::<Vec<_>>();
+    let cache_root = Arc::clone(&assets_objects_dir);
+    let cache_index_sha1 = asset_index_sha1.to_owned();
+    let cache_session = tokio::task::spawn_blocking(move || {
+        crate::asset_usn_cache::AssetUsnCacheSession::begin(
+            verification_mode,
+            &cache_index_sha1,
+            cache_root,
+            expected_hashes,
+        )
+    }).await.unwrap_or_else(|_| {
+        crate::asset_usn_cache::AssetUsnCacheSession::begin(
+            bridge::modal_action::AssetVerificationMode::FullVerification,
+            "",
+            Arc::clone(&assets_objects_dir),
+            Vec::new(),
+        )
+    });
+    let cache_session = Arc::new(cache_session);
 
     for (_, asset) in &assets_index.objects {
         let mut expected_hash = [0u8; 20];
@@ -1653,16 +1682,24 @@ async fn do_asset_objects_load(
         let started_downloading = &started_downloading;
         let download_semaphore = &download_semaphore;
         let disk_semaphore = &disk_semaphore;
+        let cache_session = Arc::clone(&cache_session);
+        let expected_sha1 = asset.hash.to_string();
 
         let url = format!("https://resources.download.minecraft.net/{}/{}", &asset.hash[..2], &asset.hash);
 
         let task = async move {
             let valid_hash_on_disk = {
-                let path = path.clone();
+                let verify_path = path.clone();
+                let stock_path = path.clone();
                 let permit = disk_semaphore.acquire().await.unwrap();
-                let result = tokio::task::spawn_blocking(move || {
-                    crate::fs::check_sha1_hash(&path, expected_hash).unwrap_or(false)
-                }).await.unwrap();
+                let result = match tokio::task::spawn_blocking(move || {
+                    cache_session.verify_existing(&verify_path, &expected_sha1, expected_hash)
+                }).await {
+                    Ok(result) => result,
+                    Err(_) => tokio::task::spawn_blocking(move || {
+                        crate::fs::check_sha1_hash(&stock_path, expected_hash).unwrap_or(false)
+                    }).await.unwrap_or(false),
+                };
                 drop(permit);
                 result
             };
@@ -1712,6 +1749,9 @@ async fn do_asset_objects_load(
     assets_tracker.set_total(total_size as usize);
 
     futures::future::try_join_all(tasks).await?;
+
+    let cache_session = Arc::clone(&cache_session);
+    let _ = tokio::task::spawn_blocking(move || cache_session.finish()).await;
 
     Ok(())
 }
