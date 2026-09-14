@@ -65,7 +65,7 @@ pub fn spawn(command: PandoraCommand, spawn_type: SpawnType) -> tokio::sync::one
                 unsafe {
                     _ = windows::Win32::System::Com::CoInitializeEx(
                         None,
-                        windows::Win32::System::Com::COINIT_APARTMENTTHREADED |  windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
+                        windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
                     );
                 }
 
@@ -138,7 +138,7 @@ fn handle_spawn(mut command: PandoraCommand, spawn_type: SpawnType, context: &mu
 
             #[cfg(target_os = "macos")]
             {
-                crate::unix::macos::sandbox::spawn(command, sandbox, context)
+                crate::unix::macos::sandbox::spawn(command, sandbox)
             }
         },
     };
@@ -147,7 +147,7 @@ fn handle_spawn(mut command: PandoraCommand, spawn_type: SpawnType, context: &mu
         probe_event("java_spawn", "end", Some(if result.is_ok() { "ok" } else { "error" }));
         if result.is_ok() {
             probe_event("launcher_pre_java", "end", Some("ok"));
-            probe_java_to_menu_unobserved();
+            probe_unobserved("java_to_menu");
         }
     }
     result
@@ -178,9 +178,14 @@ pub(crate) fn probe_minecraft_command_ready(command: &PandoraCommand) {
     if !is_probe_minecraft_launch(command) {
         return;
     }
-    probe_event("classpath_resolution", "inclusive_end", None);
-    probe_event("native_extraction", "inclusive_end", None);
-    probe_event("wrapper_arguments", "inclusive_end", None);
+
+    // Pandora does not expose distinct boundaries for these three pieces of post-I/O
+    // preparation. The old probe emitted three identical inferred envelopes and could
+    // open them after their command-ready end. Preserve the phase vocabulary but state
+    // explicitly that no duration is observed rather than fabricating a span.
+    probe_unobserved("classpath_resolution");
+    probe_unobserved("native_extraction");
+    probe_unobserved("wrapper_arguments");
 }
 
 pub(crate) fn probe_event(phase: &str, event: &str, outcome: Option<&str>) {
@@ -198,13 +203,13 @@ pub(crate) fn probe_event(phase: &str, event: &str, outcome: Option<&str>) {
     }
 }
 
-fn probe_java_to_menu_unobserved() {
+fn probe_unobserved(phase: &str) {
     let Some(path) = probe_path() else {
         return;
     };
     let now = monotonic_ns();
     let line = format!(
-        "{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"java_to_menu\",\"event\":\"unobserved\",\"network\":false,\"observed\":false,\"duration_ns\":null}}\n"
+        "{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"unobserved\",\"network\":false,\"observed\":false,\"duration_ns\":null}}\n"
     );
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = file.write_all(line.as_bytes());
