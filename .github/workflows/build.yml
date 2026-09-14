@@ -47,11 +47,26 @@ jobs:
       - name: Install mold linker
         uses: rui314/setup-mold@v1
 
-      - name: Test USN asset-cache fail-closed foundation
+      - name: Test USN asset-cache runtime gates
         run: cargo test -p backend asset_usn_cache --frozen --target ${{ matrix.platform.target }}
+
+      - name: Test fixed-size USN protocol
+        run: cargo test -p backend usn_protocol --frozen --target ${{ matrix.platform.target }}
 
       - name: Test asset verification intent propagation
         run: cargo test -p bridge asset_verification_mode --frozen --target ${{ matrix.platform.target }}
+
+      - name: Build ephemeral USN helper
+        if: contains(matrix.platform.os, 'windows')
+        run: cargo build -p backend --bin bootoptim-usn-helper --release --frozen --target ${{ matrix.platform.target }}
+
+      - name: Pin ephemeral USN helper into Pandora build
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          $helper = "target/${{ matrix.platform.target }}/release/bootoptim-usn-helper.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $helper).Hash.ToLowerInvariant()
+          "BOOTOPTIM_ASSET_USN_HELPER_SHA256_PIN=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run build command
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}

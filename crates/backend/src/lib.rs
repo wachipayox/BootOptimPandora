@@ -6,6 +6,7 @@ mod backend;
 pub use backend::*;
 
 mod asset_usn_cache;
+mod usn_protocol;
 mod backend_filesystem;
 mod backend_handler;
 mod account;

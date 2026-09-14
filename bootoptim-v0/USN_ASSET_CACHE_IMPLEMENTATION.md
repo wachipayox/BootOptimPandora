@@ -1,84 +1,110 @@
-# Agent 160 — USN asset-cache implementation foundation
+# Agent 160 — authenticated NTFS/USN asset-cache runtime
 
-Base: `agent159/usn-assets-cache-research-20260914@7fa54866d73146f7894b392ced5c8ee6bb6704da`.
+Runtime base: `agent161/asset-verification-intent-20260914@635171f4241320c0de4507fbb67ed45f1cfabd17` (PR #10). That base contains PR #9's fail-closed manifest/identity foundation and the stock-owned `AssetVerificationMode::{Normal, FullVerification}` propagation needed to distinguish eligible normal launches from full verification.
 
-This change deliberately stops at a **compilable fail-closed foundation**. It does not claim a cache hit, performance improvement, TTMM saving, or a requirement for administrator privileges. Pandora's existing asset SHA-1 verification remains authoritative on every launch.
+This runtime remains **default-off**, Windows/NTFS-only and experimental. It does not claim a Start -> Java saving, TTMM saving, or a requirement for administrator privileges. Only the narrow metadata helper is elevated; Pandora and Java/Minecraft remain non-elevated.
 
-## Why this PR does not partially wire the elevated path
+## Exact authorization boundary
 
-`USN_ASSET_CACHE_ARCHITECTURE.md` requires four properties at the exact instant SHA-1 would otherwise be skipped:
+`AssetUsnCacheRuntime::can_skip_sha1()` can return true only when all of the runtime and evidence gates have already produced `ReuseDecision::VerifiedReuse`:
 
-1. a per-invocation elevated helper with the narrow volume-GUID/FileId/USN capability only;
-2. an authenticated local-only named pipe with explicit DACL, random nonce and both peer-PID checks;
-3. a Pandora-owned file handle opened with `FILE_FLAG_OPEN_REPARSE_POINT` while WRITE/DELETE sharing is denied;
-4. journal + volume + FileId + USN evidence obtained while that same protected file object is still held, followed by a final identity re-check.
+- `BOOTOPTIM_ASSET_USN_CACHE=1`;
+- `AssetVerificationMode::Normal` exactly;
+- canonical launcher-managed `.../assets/objects` layout (not `resources` and not `virtual/legacy`);
+- exact asset-index SHA-1 and expected Mojang object SHA-1;
+- local filesystem exactly NTFS;
+- protected Pandora file handle opened with `FILE_FLAG_OPEN_REPARSE_POINT` and only `FILE_SHARE_READ`, so write/delete sharing is denied during the decision;
+- no final-component reparse point and a regular file;
+- exact volume GUID and serial;
+- exact `UsnJournalID` and provable journal continuity;
+- exact NTFS FileId and file USN;
+- unchanged identity when Pandora re-reads the still-open handle immediately before acceptance.
 
-Landing only some of those pieces would create a dangerous intermediate state in which later code could accidentally treat partial metadata as permission to skip content hashing. The next implementation step is therefore one indivisible block: **helper + pipe authentication + same-handle verifier + atomic manifest publication + Windows mutation/TOCTOU tests**. Until that entire block exists and its tests pass, the production integration latch must remain false.
+Size, mtime and path existence are never acceptance inputs. Any unavailable, malformed, ambiguous or mismatching evidence executes Pandora's SHA-1 path.
 
-## Code in this foundation
+`FullVerification`, including PR #10's default/legacy/CLI/unknown launch paths, never consumes the cache. A future explicit repair action must remain `FullVerification` at its authoritative origin.
 
-`crates/backend/src/asset_usn_cache.rs` adds:
+## Elevated helper and trust root
 
-- explicit opt-in property `BOOTOPTIM_ASSET_USN_CACHE=1`; absence or any other value is off;
-- schema-v1 cache structures for exact asset-index SHA-1, volume GUID/serial, `UsnJournalID`, snapshot `FirstUsn`/`LowestValidUsn`/`NextUsn`, and per-object expected SHA-1/FileId/last-USN;
-- strict manifest validation: unknown/duplicate struct fields are rejected by Serde, schema and hash/FileId formats are checked, partial asset counts fail, duplicate object SHA-1s fail, invalid/negative/internally inconsistent USNs fail, malformed/truncated JSON fails;
-- a pure reuse decision function requiring every identity/continuity/TOCTOU gate from the architecture, including exact current asset-index SHA-1 and exact expected object SHA-1 before any file identity may qualify;
-- explicit miss reasons for UAC/helper/timeout/protocol/ACL/PID failures, non-NTFS, reparse/non-regular files, freeze-handle failure, index/object-hash/volume/journal/FileId/USN changes, journal regression/truncation and final handle-identity change;
-- `AssetUsnCacheRuntime::can_skip_sha1`, which is intentionally hard-wired to `false` in this PR. Setting the opt-in variable cannot change asset verification behavior.
+`bootoptim-usn-helper` is a Windows GUI-subsystem helper launched per eligible session with `ShellExecuteExW(..., "runas", ...)`. It is not a service and installs no driver, task, registry autorun or persistent privileged process.
 
-The module is compiled into `backend`; it is not hooked into `do_asset_objects_load` yet because there is no complete privileged evidence provider. Consequently this branch performs exactly the same SHA-1 path as its base.
+The helper capability is deliberately narrow:
 
-## Automated tests in this PR
+- one exact local `\\?\Volume{GUID}\` per session;
+- fixed-size 16-byte FileIds only;
+- `FSCTL_QUERY_USN_JOURNAL`;
+- `OpenFileById`;
+- `FSCTL_READ_FILE_USN_DATA`;
+- metadata responses only.
 
-Portable state-machine tests prove `FullSha1` for:
+There is no file-path, content, directory-enumeration, write, delete, rename, registry, network or command-execution request.
 
-- feature off and explicit repair;
-- same-size/restored-mtime mutation represented by changed file USN;
-- truncate/restore represented by changed file USN;
-- delete/recreate/FileId replacement;
-- journal-ID restamp, `NextUsn` regression, `FirstUsn` crossing the cached snapshot, and `LowestValidUsn` crossing the cached snapshot;
-- asset-index SHA-1, expected object SHA-1, volume and final handle-identity changes;
-- helper missing, UAC denial, helper crash, timeout, malformed protocol, invalid pipe ACL and invalid peer PID;
-- non-NTFS, reparse, non-regular file and inability to acquire the write/delete-denying freeze handle;
-- corrupt/truncated/unknown-schema/invalid-USN/partial/duplicate cache manifests;
-- the runtime safety latch remaining false even when the feature is explicitly requested.
+The runtime helper path comes from `BOOTOPTIM_ASSET_USN_HELPER`, but that pathname is **not** a trust root. The Windows build first compiles the helper, computes its SHA-256 and compiles Pandora with that digest in `BOOTOPTIM_ASSET_USN_HELPER_SHA256_PIN`. At runtime `BOOTOPTIM_ASSET_USN_HELPER_SHA256` must be strict lowercase SHA-256 and must equal the embedded pin. Pandora then hashes the actual helper bytes while holding a read handle that denies write/delete replacement; those bytes must also match the embedded pin before elevation. A missing/invalid build pin, runtime mismatch, reparse/directory helper, open/hash failure or replacement ambiguity falls back before elevation.
 
-The existing repository build workflow is the compile/test gate. No separate workflow is needed for the portable foundation.
+## Pipe authentication and bounded failure
 
-## Required Windows tests in the next indivisible block
+Each helper invocation gets a cryptographically random nonce and named pipe. Pandora creates the pipe with `PIPE_REJECT_REMOTE_CLIENTS`, `FILE_FLAG_FIRST_PIPE_INSTANCE` and a protected DACL limited to the current user plus Administrators and SYSTEM. Pandora checks the connected client PID against the exact process handle returned by `ShellExecuteExW`; the helper checks the named-pipe server PID. Both sides also validate fixed protocol magic/version, nonce and handshake PID.
 
-Before `can_skip_sha1` may ever return true, Windows CI/capability tests must use a temporary NTFS tree and prove all of the following against real handles and a real helper session:
+Messages are fixed-size. Connect and response waits are bounded. Helper/session failure is latched for the launch so a failed helper cannot cause one timeout per asset.
 
-- same-size content mutation with original mtime restored changes the file USN and causes stock SHA-1;
-- truncate/restore causes stock SHA-1;
-- delete/recreate cannot retain the accepted FileId identity;
-- `UsnJournalID` restamp, `NextUsn` regression, and either returned valid lower bound (`FirstUsn` or `LowestValidUsn`) crossing the cached snapshot boundary cause full-index miss;
-- corrupt/partial cache cannot be consumed;
-- helper absent, UAC cancelled/denied, helper crash, timeout and malformed protocol all continue launch through stock verification;
-- reparse points and non-NTFS volumes are ineligible;
-- explicit repair ignores a valid cache;
-- with a writer/delete-compatible handle already open, inability to obtain the required protected handle forces stock SHA-1;
-- while the candidate protected handle is held, conflicting write/delete cannot race the decision;
-- baseline SHA-1 and FileId/USN snapshot are taken from the same protected handle, and hit identity is re-read before close;
-- named pipe uses a random per-invocation name, `PIPE_REJECT_REMOTE_CLIENTS`, explicit DACL and validated helper/server PIDs;
-- helper accepts only the selected local volume GUID and fixed-size FileIds, with no arbitrary path/content operations.
+Teardown sends the shutdown message best-effort and closes the pipe. It intentionally does not call `FlushFileBuffers`: waiting for a hung helper to consume shutdown bytes would violate the stock-fallback contract.
 
-## Activation and fallback contract
+## Journal race closure
 
-The future candidate remains default-off. `BOOTOPTIM_ASSET_USN_CACHE=1` may only request the experiment; it never overrides an eligibility failure. UAC cancellation, helper absence/failure, invalid pipe/session evidence, non-NTFS/reparse, cache corruption, identity mismatch, I/O error or repair request must execute Pandora's existing complete asset SHA-1/download-repair behavior and must not block launch.
+A file-USN response must not combine metadata from two journal eras. For every `File` request the helper:
 
-No service is installed and Pandora/Java must remain non-elevated. Only the ephemeral capability helper may receive the elevated token.
+1. queries and validates the journal state;
+2. opens the FileId and reads its current USN;
+3. queries the journal again;
+4. requires the same nonzero `UsnJournalID` and nondecreasing `FirstUsn`, `LowestValidUsn` and `NextUsn`;
+5. returns the **second** journal state with the file USN.
 
-## Physical acceptance gate after the full block lands
+A journal reset/restamp, regression, invalid lower bound or query failure inside that window returns a capability failure and therefore stock SHA-1.
 
-Do not call the cache an optimization until Windows CI is green and the following is measured on the target HDD laptop:
+## Same-handle baseline and reuse
 
-1. first cache-enabled launch performs full stock SHA-1 and publishes a complete baseline only after every object is verified;
-2. unchanged second launch records Start -> Java and `assets_verify_download` with the PR7 probe;
-3. disposable same-size+mtime-restored mutation, delete/recreate and cache-corruption fixtures all force stock SHA-1/repair;
-4. UAC cancel/helper absence still launches through stock verification;
-5. journal reset/restamp testing is performed only on a disposable test volume/fixture;
-6. compare the valid-cache result with scheduler 158 under comparable cold/warm cache state;
-7. repeat on the fast PC/SSD to measure elevation/IPC overhead.
+On a cache miss, Pandora hashes an existing eligible object through the same protected handle used for identity checks. A valid SHA-1 may then be snapshotted through the helper while the handle is still held, followed by a final handle-identity reread.
 
-These are launcher Start -> Java measurements only. They are not Java-process -> menu / TTMM results. Administrator elevation must not become mandatory unless that physical comparison demonstrates a material launcher-only benefit that justifies the consent cost.
+If an object needs download/repair, Pandora's existing downloader remains authoritative. The protected handle is released before the write. After all normal asset tasks finish, the final object is reopened and must pass full SHA-1 plus the protected-handle/FileId/USN sequence before entering a baseline.
+
+On a candidate hit, Pandora holds the protected handle while the helper obtains current journal/FileId/USN evidence and then re-reads the handle identity. Content SHA-1 is omitted only after the pure decision function returns `VerifiedReuse` and the runtime gate confirms normal mode + explicit opt-in.
+
+## Manifest publication
+
+The schema-v1 manifest is untrusted input and is accepted only for the exact asset-index SHA-1, exact volume identity and complete set of unique physical Mojang object hashes. Unknown schema/fields, malformed hashes/FileIds, negative or inconsistent USNs, duplicate/partial entries and truncated/corrupt JSON invalidate reuse.
+
+A new manifest is published only after every expected physical object has a valid snapshot and a final journal query still belongs to the initial journal. Publication uses a random create-new temp file, `sync_all`, then `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)`. Any capability failure prevents publication.
+
+The v1 runtime is restricted to the canonical `assets/objects` layout, so it never creates USN state inside `resources` or `virtual/legacy` trees.
+
+## Automated gates
+
+Portable tests cover the complete decision matrix, manifest rejection, normal-vs-full-verification intent, fixed-size protocol/path-channel rejection and journal transition consistency.
+
+Windows tests/capability checks cover, where the hosted filesystem supports them:
+
+- protected-handle writer/delete exclusion;
+- same-size content mutation with restored mtime changing real NTFS USN;
+- truncate/restore with restored mtime changing real NTFS USN;
+- delete/recreate changing real NTFS FileId;
+- reparse-point ineligibility;
+- strict lowercase helper-digest syntax.
+
+The cross-platform build workflow runs the cache/protocol/intent tests. On Windows it builds the helper first, computes its SHA-256, injects that digest into the Pandora build and then performs the full release build. The BootOptim v0 workflow likewise packages the matching helper, Pandora executable and `SHA256SUMS.txt` for the physical gate.
+
+Hosted CI cannot exercise interactive UAC consent/cancellation or destructively restamp the host journal. Those remain physical/disposable-fixture gates rather than claimed hosted coverage.
+
+## Physical acceptance gate
+
+Do not call this an optimization win until current-head Windows CI is green and the target-machine protocol has been completed.
+
+1. Use the matching Pandora/helper pair produced by CI and verify `SHA256SUMS.txt`.
+2. Run stock and candidate from comparable asset/cache states; candidate activation requires `BOOTOPTIM_ASSET_USN_CACHE=1`, the packaged helper path, and the exact helper SHA-256.
+3. The first eligible candidate run must still perform complete SHA-1 and may publish a baseline only after successful verification.
+4. Only the unchanged second run is a reuse candidate.
+5. Exercise disposable same-size+mtime-restored mutation, truncate/restore, delete/recreate, corrupt manifest, helper absence/hash mismatch, UAC cancel, timeout/malformed protocol and journal restamp/discontinuity; every case must fall back to stock SHA-1/repair.
+6. Confirm `resources` and `virtual/legacy` remain stock-only and produce no cache state.
+7. Compare HDD Start -> Java / `assets_verify_download` against stock and PR #8 under equivalent cold/warm states, separating unmatched repair/download work.
+8. Repeat on SSD/fast PC to measure elevation/IPC overhead.
+
+These measurements are launcher Start -> Java only. They are not Java-process -> menu / TTMM evidence, and no mandatory-admin claim follows from this implementation.
