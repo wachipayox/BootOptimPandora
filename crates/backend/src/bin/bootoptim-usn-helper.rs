@@ -173,7 +173,7 @@ mod windows_helper {
         Some((handle, serial as u64))
     }
 
-    fn journal_state(volume: Handle) -> Option<(u64, i64, i64, i64)> {
+    fn journal_state(volume: Handle) -> Option<usn_protocol::JournalState> {
         let mut out = [0u8; 128];
         let mut returned = 0u32;
         let ok = unsafe {
@@ -247,22 +247,37 @@ mod windows_helper {
             response.status = ResponseStatus::NonNtfs;
             return response;
         };
-        let Some((journal_id, first, lowest, next)) = journal_state(volume.0) else {
+        let Some(before) = journal_state(volume.0) else {
             response.status = ResponseStatus::IoError;
             return response;
         };
+        if !usn_protocol::journal_state_is_valid(before) {
+            response.status = ResponseStatus::IoError;
+            return response;
+        }
+
+        let mut current = before;
         response.volume_serial = serial;
-        response.journal_id = journal_id;
-        response.first_usn = first;
-        response.lowest_valid_usn = lowest;
-        response.next_usn = next;
         if request.kind == RequestKind::File {
             let Some(usn) = file_usn(volume.0, request.file_id) else {
                 response.status = ResponseStatus::NotFound;
                 return response;
             };
+            let Some(after) = journal_state(volume.0) else {
+                response.status = ResponseStatus::IoError;
+                return response;
+            };
+            if !usn_protocol::journal_transition_is_consistent(before, after) {
+                response.status = ResponseStatus::IoError;
+                return response;
+            }
+            current = after;
             response.file_usn = usn;
         }
+        response.journal_id = current.0;
+        response.first_usn = current.1;
+        response.lowest_valid_usn = current.2;
+        response.next_usn = current.3;
         response.status = ResponseStatus::Ok;
         response
     }

@@ -78,6 +78,27 @@ pub struct Response {
     pub file_usn: i64,
 }
 
+pub type JournalState = (u64, i64, i64, i64);
+
+pub fn journal_state_is_valid(state: JournalState) -> bool {
+    let (journal_id, first_usn, lowest_valid_usn, next_usn) = state;
+    journal_id != 0
+        && first_usn >= 0
+        && lowest_valid_usn >= 0
+        && next_usn >= 0
+        && next_usn >= first_usn
+        && next_usn >= lowest_valid_usn
+}
+
+pub fn journal_transition_is_consistent(before: JournalState, after: JournalState) -> bool {
+    journal_state_is_valid(before)
+        && journal_state_is_valid(after)
+        && before.0 == after.0
+        && after.1 >= before.1
+        && after.2 >= before.2
+        && after.3 >= before.3
+}
+
 fn put_header(out: &mut [u8]) {
     out[..8].copy_from_slice(&MAGIC);
     out[8..10].copy_from_slice(&VERSION.to_le_bytes());
@@ -231,5 +252,19 @@ mod tests {
         assert!(volume_guid_bytes(r"C:\assets\object").is_none());
         assert!(volume_guid_bytes(r"\\server\share\").is_none());
         assert!(volume_guid_bytes(r"\\?\Volume{12345678-1234-5678-9abc-def012345678}\assets").is_none());
+    }
+
+    #[test]
+    fn journal_transition_requires_same_monotonic_valid_journal() {
+        let before = (7, 10, 20, 100);
+        assert!(journal_transition_is_consistent(before, (7, 11, 21, 101)));
+        assert!(journal_transition_is_consistent(before, before));
+
+        assert!(!journal_transition_is_consistent(before, (8, 11, 21, 101)));
+        assert!(!journal_transition_is_consistent(before, (7, 9, 21, 101)));
+        assert!(!journal_transition_is_consistent(before, (7, 11, 19, 101)));
+        assert!(!journal_transition_is_consistent(before, (7, 11, 21, 99)));
+        assert!(!journal_transition_is_consistent(before, (7, 11, 21, -1)));
+        assert!(!journal_transition_is_consistent((0, 10, 20, 100), before));
     }
 }
