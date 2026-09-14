@@ -41,7 +41,7 @@ impl AssetPrefixDirectories {
             prefix,
             prefix_path,
             |path| std::fs::create_dir(path),
-            Path::is_dir,
+            |path| path.is_dir(),
         );
     }
 }
@@ -76,7 +76,7 @@ fn prepare_prefix_with<CreateDir, IsDir>(
 }
 
 #[cfg(test)]
-mod tests {
+mod bootoptim_asset_prefix_directory_tests {
     use std::{
         fs,
         io,
