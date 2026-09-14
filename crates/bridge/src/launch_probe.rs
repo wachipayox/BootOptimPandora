@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     fs::OpenOptions,
     io::Write,
     path::PathBuf,
@@ -9,6 +10,10 @@ use parking_lot::Mutex;
 
 const ENV_NAME: &str = "BOOTOPTIM_LAUNCH_PROBE";
 const SCHEMA: &str = "bootoptim.launch_probe.v1";
+
+thread_local! {
+    static BACKEND_DISPATCH_MODAL: Cell<Option<usize>> = const { Cell::new(None) };
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TrackerKind {
@@ -24,7 +29,6 @@ struct TrackerRecord {
     key: usize,
     kind: TrackerKind,
     top_level: bool,
-    finished: bool,
 }
 
 #[derive(Debug, Default)]
@@ -121,16 +125,30 @@ pub fn request(modal_key: usize) {
     };
 }
 
+pub fn backend_dispatch(modal_key: usize) {
+    if !enabled() {
+        return;
+    }
+    let guard = state().lock();
+    if !guard.active || guard.modal_key != modal_key {
+        return;
+    }
+    drop(guard);
+    BACKEND_DISPATCH_MODAL.with(|slot| slot.set(Some(modal_key)));
+}
+
 pub fn instance_config_loaded() {
     if !enabled() {
         return;
     }
+    let dispatched = BACKEND_DISPATCH_MODAL.with(Cell::get);
     let mut guard = state().lock();
-    if !guard.active || guard.config_done {
+    if !guard.active || guard.config_done || dispatched != Some(guard.modal_key) {
         return;
     }
     guard.config_done = true;
     drop(guard);
+    BACKEND_DISPATCH_MODAL.with(|slot| slot.set(None));
     event("instance_config", "end", false);
     event("account_selection", "begin", false);
 }
@@ -176,7 +194,6 @@ pub fn tracker_created(modal_key: usize, tracker_key: usize, title: &str) {
         key: tracker_key,
         kind,
         top_level,
-        finished: false,
     });
     drop(guard);
 
@@ -217,21 +234,18 @@ pub fn tracker_finished(modal_key: usize, tracker_key: usize, error: bool) {
     if !guard.active || guard.modal_key != modal_key {
         return;
     }
-    let Some(record) = guard.trackers.iter_mut().find(|v| v.key == tracker_key) else {
+    let Some(record) = guard.trackers.iter().find(|v| v.key == tracker_key).copied() else {
         return;
     };
-    record.finished = true;
-    let kind = record.kind;
-    let top_level = record.top_level;
 
-    if kind == TrackerKind::Parent {
+    if record.kind == TrackerKind::Parent {
         guard.active = false;
         return;
     }
     drop(guard);
 
-    if top_level {
-        outcome_event(phase_name(kind), if error { "error" } else { "ok" });
+    if record.top_level {
+        outcome_event(phase_name(record.kind), if error { "error" } else { "ok" });
     }
 }
 
@@ -292,6 +306,7 @@ pub fn cancel(modal_key: usize) {
     }
     guard.active = false;
     drop(guard);
+    BACKEND_DISPATCH_MODAL.with(|slot| slot.set(None));
     outcome_event("launch", "cancelled");
 }
 
@@ -305,6 +320,7 @@ pub fn error(modal_key: usize) {
     }
     guard.active = false;
     drop(guard);
+    BACKEND_DISPATCH_MODAL.with(|slot| slot.set(None));
     outcome_event("launch", "error");
 }
 
