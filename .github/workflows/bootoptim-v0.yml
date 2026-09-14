@@ -58,6 +58,10 @@ jobs:
       - name: Test direct Java spawn probe filter
         run: cargo test -p command launch_probe_tests --frozen --target x86_64-pc-windows-msvc
 
+      - name: Test asset attribution contracts
+        shell: pwsh
+        run: cargo test -p backend asset_attribution --frozen --target x86_64-pc-windows-msvc
+
       - name: Test deterministic library order
         shell: pwsh
         run: cargo test -p backend bootoptim_library_order_tests --frozen --target x86_64-pc-windows-msvc
@@ -85,7 +89,7 @@ jobs:
         run: |
           $exe = "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe"
           $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
-          foreach ($marker in @("bootoptim.launch_probe.v1", "launcher_pre_java", "java_spawn")) {
+          foreach ($marker in @("bootoptim.launch_probe.v1", "bootoptim.asset_attribution.v1", "launcher_pre_java", "java_spawn")) {
             if (-not $ascii.Contains($marker)) {
               throw "release Pandora binary missing launch-probe marker: $marker"
             }
