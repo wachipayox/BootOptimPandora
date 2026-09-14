@@ -18,6 +18,10 @@ impl ModalAction {
     pub fn refcnt(&self) -> usize {
         Arc::strong_count(&self.0)
     }
+
+    pub fn probe_key(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
 }
 
 impl Deref for ModalAction {
@@ -55,6 +59,10 @@ impl Drop for ModalActionInner {
 }
 
 impl ModalActionInner {
+    fn probe_key(&self) -> usize {
+        self as *const Self as usize
+    }
+
     pub fn add_finish_effect(&self, effect: impl FnOnce() + Send + 'static) {
         self.finish_effects.lock().push(Box::new(effect));
     }
@@ -64,6 +72,9 @@ impl ModalActionInner {
     }
 
     pub fn set_finished(&self) {
+        if self.request_cancel.is_cancelled() {
+            crate::launch_probe::cancel(self.probe_key());
+        }
         for effect in self.finish_effects.lock().drain(..) {
             (effect)();
         }
@@ -76,6 +87,7 @@ impl ModalActionInner {
     }
 
     pub fn set_finished_with_error(&self, error: Arc<str>) {
+        crate::launch_probe::error(self.probe_key());
         *self.error.write() = Some(error);
         self.set_finished();
     }
@@ -110,8 +122,10 @@ impl ModalActionInner {
             finished_at: AtomicOptionInstant::none(),
             finish_type: AtomicProgressTrackerFinishType::new(ProgressTrackerFinishType::Normal),
             title: RwLock::new(title),
+            probe_modal_key: self.probe_key(),
         }));
 
+        crate::launch_probe::tracker_created(self.probe_key(), tracker.probe_key(), &tracker.get_title());
         self.trackers.write().push(tracker.clone());
         self.notify.notify_one();
 
@@ -119,6 +133,7 @@ impl ModalActionInner {
     }
 
     pub fn clear_trackers(&self) {
+        crate::launch_probe::modal_clear(self.probe_key());
         self.trackers.write().clear();
         self.notify.notify_one();
     }
@@ -151,6 +166,7 @@ struct ProgressTrackerInner {
     finished_at: AtomicOptionInstant,
     finish_type: AtomicProgressTrackerFinishType,
     title: RwLock<Arc<str>>,
+    probe_modal_key: usize,
 }
 
 #[atomic_enum::atomic_enum]
@@ -182,6 +198,10 @@ impl std::fmt::Debug for ProgressTrackerInner {
 }
 
 impl ProgressTracker {
+    fn probe_key(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+
     // pub fn id(&self) -> usize {
     //     Arc::as_ptr(&self.0).addr()
     // }
@@ -191,6 +211,7 @@ impl ProgressTracker {
     }
 
     pub fn set_title(&self, title: Arc<str>) {
+        crate::launch_probe::tracker_title_changed(self.0.probe_modal_key, self.probe_key(), &title);
         *self.0.title.write() = title;
         self.0.notify.notify_one();
     }
@@ -212,8 +233,10 @@ impl ProgressTracker {
     }
 
     pub fn set_finished(&self, finish_type: ProgressTrackerFinishType) {
+        let is_error = finish_type == ProgressTrackerFinishType::Error;
         self.0.finish_type.store(finish_type, Ordering::SeqCst);
         let _ = self.0.finished_at.compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
+        crate::launch_probe::tracker_finished(self.0.probe_modal_key, self.probe_key(), is_error);
         self.0.notify.notify_one();
     }
 
@@ -227,6 +250,7 @@ impl ProgressTracker {
 
     pub fn add_count(&self, count: usize) {
         self.0.count.fetch_add(count, Ordering::SeqCst);
+        crate::launch_probe::tracker_add_count(self.0.probe_modal_key, self.probe_key());
         self.0.notify.notify_one();
     }
 
