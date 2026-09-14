@@ -250,10 +250,10 @@ pub fn tracker_created(modal_key: usize, tracker_key: usize, title: &str) {
         if top_level {
             begins.push((now, kind));
         } else if kind == TrackerKind::Assets && !guard.version_done {
-            // Asset loading is only entered by the outer try_join4, never by Forge/NeoForge
-            // launch-version construction. At this point, any still-live Java/library tracker
-            // also belongs to that outer group; nested verifier trackers had to finish before
-            // create_launch_version could return.
+            // Fallback for an unexpected progress shape. In the pinned launcher the parent
+            // progress boundary marks create_launch_version completion before these futures
+            // are polled. Asset loading is also unique to the outer try_join4, so this still
+            // gives a conservative attribution if that progress contract ever changes.
             guard.version_done = true;
             let mut earliest = now;
             for record in &mut guard.trackers {
@@ -307,9 +307,7 @@ pub fn tracker_finished(modal_key: usize, tracker_key: usize, error: bool) {
         return;
     }
 
-    let mut phase_end = None;
-    let mut start_post_envelope = false;
-    {
+    let phase_end = {
         let mut guard = state().lock();
         if !guard.active || guard.modal_key != modal_key {
             return;
@@ -326,39 +324,20 @@ pub fn tracker_finished(modal_key: usize, tracker_key: usize, error: bool) {
             guard.active = false;
             return;
         }
-        if top_level {
-            phase_end = Some(kind);
-        }
-
-        if guard.version_done && !guard.post_resolution_started && observable_outer_group_finished(&guard) {
-            guard.post_resolution_started = true;
-            start_post_envelope = true;
-        }
-    }
+        top_level.then_some(kind)
+    };
 
     if let Some(kind) = phase_end {
         outcome_event(phase_name(kind), if error { "error" } else { "ok" });
     }
-    if start_post_envelope {
-        // log_configuration is the fourth try_join4 sibling but has no progress tracker in
-        // this Pandora revision. These are therefore conservative upper-bound envelopes:
-        // they may include a short untracked log-config tail before the real post-join work.
-        event("classpath_resolution", "inclusive_begin", false);
-        event("native_extraction", "inclusive_begin", false);
-        event("wrapper_arguments", "inclusive_begin", false);
-    }
 }
 
-fn observable_outer_group_finished(state: &ProbeState) -> bool {
-    let has_assets = state.trackers.iter().any(|r| r.top_level && r.kind == TrackerKind::Assets);
-    let has_libraries = state.trackers.iter().any(|r| r.top_level && r.kind == TrackerKind::Libraries);
-    has_assets
-        && has_libraries
-        && state
-            .trackers
-            .iter()
-            .filter(|r| r.top_level && matches!(r.kind, TrackerKind::Assets | TrackerKind::Libraries | TrackerKind::JavaRuntime))
-            .all(|r| r.finished)
+fn is_version_resolution_boundary(current_count: usize, total_count: usize) -> bool {
+    total_count >= 5 && current_count == total_count - 5
+}
+
+fn is_post_join_boundary(current_count: usize, total_count: usize) -> bool {
+    total_count >= 1 && current_count == total_count - 1
 }
 
 fn is_loader_sha1_request_boundary(current_count: usize, total_count: usize) -> bool {
@@ -371,13 +350,17 @@ pub fn tracker_add_count(
     current_count: usize,
     total_count: usize,
 ) {
-    if !enabled() || !is_loader_sha1_request_boundary(current_count, total_count) {
+    if !enabled() {
         return;
     }
 
-    let should_emit = {
+    let mut emit_loader_network = false;
+    let mut end_version = false;
+    let mut start_post_envelope = false;
+
+    {
         let mut guard = state().lock();
-        if !guard.active || guard.modal_key != modal_key || guard.loader_network_emitted {
+        if !guard.active || guard.modal_key != modal_key {
             return;
         }
         let Some(record) = guard.trackers.iter().find(|r| r.key == tracker_key) else {
@@ -386,14 +369,41 @@ pub fn tracker_add_count(
         if record.kind != TrackerKind::Parent {
             return;
         }
-        guard.loader_network_emitted = true;
-        true
-    };
 
-    if should_emit {
+        if is_loader_sha1_request_boundary(current_count, total_count) && !guard.loader_network_emitted {
+            guard.loader_network_emitted = true;
+            emit_loader_network = true;
+        }
+
+        if !guard.version_done && is_version_resolution_boundary(current_count, total_count) {
+            guard.version_done = true;
+            end_version = true;
+        }
+
+        if guard.version_done
+            && !guard.post_resolution_started
+            && is_post_join_boundary(current_count, total_count)
+        {
+            guard.post_resolution_started = true;
+            start_post_envelope = true;
+        }
+    }
+
+    if emit_loader_network {
         // Pinned Forge/NeoForge create_forgelike code increments the parent tracker to 1/13
         // immediately before constructing the join whose right-hand future is download_sha1.
         network_request_observed("loader_sha1");
+    }
+    if end_version {
+        outcome_event("version_loader_resolution", "ok");
+    }
+    if start_post_envelope {
+        // The parent progress increment happens only after try_join4 has returned, including
+        // the untracked log_configuration sibling. This is therefore a race-free post-join
+        // boundary; the three scopes remain inclusive because Pandora interleaves their work.
+        event("classpath_resolution", "inclusive_begin", false);
+        event("native_extraction", "inclusive_begin", false);
+        event("wrapper_arguments", "inclusive_begin", false);
     }
 }
 
@@ -546,28 +556,13 @@ mod tests {
     }
 
     #[test]
-    fn outer_group_completion_requires_assets_libraries_and_all_observed_siblings() {
-        let mut state = ProbeState::default();
-        state.trackers = vec![
-            TrackerRecord { key: 1, kind: TrackerKind::Assets, created_ns: 1, top_level: true, finished: true },
-            TrackerRecord { key: 2, kind: TrackerKind::Libraries, created_ns: 2, top_level: true, finished: true },
-            TrackerRecord { key: 3, kind: TrackerKind::JavaRuntime, created_ns: 3, top_level: true, finished: false },
-        ];
-        assert!(!observable_outer_group_finished(&state));
-        state.trackers[2].finished = true;
-        assert!(observable_outer_group_finished(&state));
-    }
-
-    #[test]
-    fn completed_nested_trackers_are_not_outer_candidates() {
-        let state = ProbeState {
-            trackers: vec![
-                TrackerRecord { key: 1, kind: TrackerKind::JavaRuntime, created_ns: 1, top_level: false, finished: true },
-                TrackerRecord { key: 2, kind: TrackerKind::Libraries, created_ns: 2, top_level: false, finished: true },
-            ],
-            ..ProbeState::default()
-        };
-        assert_eq!(state.trackers.iter().filter(|r| !r.finished).count(), 0);
+    fn progress_boundaries_cover_pinned_loader_shapes() {
+        for (version_done, post_join, total) in [(2, 6, 7), (5, 9, 10), (8, 12, 13)] {
+            assert!(is_version_resolution_boundary(version_done, total));
+            assert!(is_post_join_boundary(post_join, total));
+            assert!(!is_version_resolution_boundary(version_done.saturating_sub(1), total));
+            assert!(!is_post_join_boundary(post_join.saturating_sub(1), total));
+        }
     }
 
     #[test]
