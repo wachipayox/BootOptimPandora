@@ -11,10 +11,37 @@ use atomic_time::AtomicOptionInstant;
 use parking_lot::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssetVerificationMode {
+    Normal,
+    FullVerification,
+}
+
+impl Default for AssetVerificationMode {
+    fn default() -> Self {
+        Self::FullVerification
+    }
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct ModalAction(Arc<ModalActionInner>);
 
 impl ModalAction {
+    /// Constructs the action used by Pandora's existing normal GUI launch path.
+    ///
+    /// `Default` deliberately remains fail-closed (`FullVerification`) so that
+    /// legacy or future callers cannot accidentally become eligible for a
+    /// verification fast path without positively declaring normal-launch intent.
+    pub fn normal_launch() -> Self {
+        let mut inner = ModalActionInner::default();
+        inner.asset_verification_mode = AssetVerificationMode::Normal;
+        Self(Arc::new(inner))
+    }
+
+    pub fn asset_verification_mode(&self) -> AssetVerificationMode {
+        self.0.asset_verification_mode
+    }
+
     pub fn refcnt(&self) -> usize {
         Arc::strong_count(&self.0)
     }
@@ -47,6 +74,7 @@ pub struct ModalActionInner {
     error: RwLock<Option<Arc<str>>>,
     visit_url: RwLock<Option<ModalActionVisitUrl>>,
     trackers: Arc<RwLock<Vec<ProgressTracker>>>,
+    asset_verification_mode: AssetVerificationMode,
     pub request_cancel: CancellationToken,
 }
 
@@ -123,6 +151,7 @@ impl ModalActionInner {
             finish_type: AtomicProgressTrackerFinishType::new(ProgressTrackerFinishType::Normal),
             title: RwLock::new(title),
             probe_modal_key: self.probe_key(),
+            asset_verification_mode: self.asset_verification_mode,
         }));
 
         if crate::launch_probe::enabled() {
@@ -153,6 +182,7 @@ impl std::fmt::Debug for ModalActionInner {
             .field("error", &self.error)
             .field("visit_url", &self.visit_url)
             .field("trackers", &self.trackers)
+            .field("asset_verification_mode", &self.asset_verification_mode)
             .field("request_cancel", &self.request_cancel)
             .finish()
     }
@@ -169,6 +199,7 @@ struct ProgressTrackerInner {
     finish_type: AtomicProgressTrackerFinishType,
     title: RwLock<Arc<str>>,
     probe_modal_key: usize,
+    asset_verification_mode: AssetVerificationMode,
 }
 
 #[atomic_enum::atomic_enum]
@@ -195,6 +226,7 @@ impl std::fmt::Debug for ProgressTrackerInner {
             .field("count", &self.count)
             .field("total", &self.total)
             .field("finished_at", &self.finished_at.load(Ordering::Relaxed))
+            .field("asset_verification_mode", &self.asset_verification_mode)
             .finish()
     }
 }
@@ -207,6 +239,10 @@ impl ProgressTracker {
     // pub fn id(&self) -> usize {
     //     Arc::as_ptr(&self.0).addr()
     // }
+
+    pub fn asset_verification_mode(&self) -> AssetVerificationMode {
+        self.0.asset_verification_mode
+    }
 
     pub fn get_title(&self) -> Arc<str> {
         self.0.title.read().clone()
@@ -277,5 +313,59 @@ impl ProgressTracker {
     pub fn set_total(&self, total: usize) {
         self.0.total.store(total, Ordering::SeqCst);
         self.0.notify.notify_one();
+    }
+}
+
+#[cfg(test)]
+mod asset_verification_mode_tests {
+    use super::{AssetVerificationMode, ModalAction};
+    use crate::{instance::InstanceID, message::MessageToBackend};
+
+    #[test]
+    fn default_and_legacy_actions_fail_closed_to_full_verification() {
+        let action = ModalAction::default();
+        assert_eq!(action.asset_verification_mode(), AssetVerificationMode::FullVerification);
+
+        let tracker = action.push_tracker("assets".into());
+        assert_eq!(tracker.asset_verification_mode(), AssetVerificationMode::FullVerification);
+    }
+
+    #[test]
+    fn normal_launch_intent_survives_clone_and_tracker_creation() {
+        let action = ModalAction::normal_launch();
+        let bridged_clone = action.clone();
+
+        assert_eq!(action.asset_verification_mode(), AssetVerificationMode::Normal);
+        assert_eq!(bridged_clone.asset_verification_mode(), AssetVerificationMode::Normal);
+
+        let tracker = bridged_clone.push_tracker("assets".into());
+        assert_eq!(tracker.asset_verification_mode(), AssetVerificationMode::Normal);
+    }
+
+    #[tokio::test]
+    async fn normal_launch_intent_survives_start_message_and_async_handoff() {
+        let message = MessageToBackend::StartInstance {
+            id: InstanceID::dangling(),
+            quick_play: None,
+            live_game_output: None,
+            modal_action: ModalAction::normal_launch(),
+        };
+        let (send, mut receive) = tokio::sync::mpsc::unbounded_channel();
+
+        let producer = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            assert!(send.send(message).is_ok());
+        });
+        producer.await.expect("async message producer must complete");
+
+        let received = receive.recv().await.expect("start message must arrive");
+        let modal_action = match received {
+            MessageToBackend::StartInstance { modal_action, .. } => modal_action,
+            _ => panic!("unexpected message variant"),
+        };
+
+        assert_eq!(modal_action.asset_verification_mode(), AssetVerificationMode::Normal);
+        let tracker = modal_action.push_tracker("assets".into());
+        assert_eq!(tracker.asset_verification_mode(), AssetVerificationMode::Normal);
     }
 }

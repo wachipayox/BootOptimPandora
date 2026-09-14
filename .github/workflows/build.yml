@@ -47,5 +47,11 @@ jobs:
       - name: Install mold linker
         uses: rui314/setup-mold@v1
 
+      - name: Test USN asset-cache fail-closed foundation
+        run: cargo test -p backend asset_usn_cache --frozen --target ${{ matrix.platform.target }}
+
+      - name: Test asset verification intent propagation
+        run: cargo test -p bridge asset_verification_mode --frozen --target ${{ matrix.platform.target }}
+
       - name: Run build command
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}
