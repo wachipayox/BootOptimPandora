@@ -22,10 +22,24 @@ pub fn create_pair() -> (BackendReceiver, BackendHandle, FrontendReceiver, Front
     let frontend_serial = AtomicSetSerial::default();
 
     (
-        BackendReceiver { receiver: backend_recv, processed_serial: backend_serial.clone() },
-        BackendHandle { sender: backend_send, processed_serial: backend_serial.clone(), next_serial: Default::default() },
-        FrontendReceiver { receiver: frontend_recv, processed_serial: frontend_serial.clone() },
-        FrontendHandle { sender: frontend_send, processed_serial: frontend_serial.clone(), next_serial: Default::default() }
+        BackendReceiver {
+            receiver: backend_recv,
+            processed_serial: backend_serial.clone(),
+        },
+        BackendHandle {
+            sender: backend_send,
+            processed_serial: backend_serial.clone(),
+            next_serial: Default::default(),
+        },
+        FrontendReceiver {
+            receiver: frontend_recv,
+            processed_serial: frontend_serial.clone(),
+        },
+        FrontendHandle {
+            sender: frontend_send,
+            processed_serial: frontend_serial.clone(),
+            next_serial: Default::default(),
+        }
     )
 }
 
@@ -40,28 +54,34 @@ pub struct BackendReceiver {
 
 fn probe_dispatch(message: &MessageToBackend) {
     match message {
-        MessageToBackend::StartInstance { modal_action, .. } => crate::launch_probe::backend_dispatch(modal_action.probe_key()),
-        MessageToBackend::StartInstanceByName { .. } => crate::launch_probe::backend_dispatch(0),
+        MessageToBackend::StartInstance { modal_action, .. } => {
+            crate::launch_probe::backend_dispatch(modal_action.probe_key());
+        }
+        MessageToBackend::StartInstanceByName { .. } => {
+            crate::launch_probe::backend_dispatch(0);
+        }
         _ => {}
     }
 }
 
 fn probe_request(message: &MessageToBackend) {
     match message {
-        MessageToBackend::StartInstance { modal_action, .. } => crate::launch_probe::request(modal_action.probe_key()),
+        MessageToBackend::StartInstance { modal_action, .. } => {
+            crate::launch_probe::request(modal_action.probe_key());
+        }
         MessageToBackend::StartInstanceByName { .. } => {
-            if let Some(result) = crate::packaged_probe_selftest::run_if_requested() {
+            // Name-based launches construct their ModalAction inside the backend. A zero key
+            // is a temporary sentinel adopted by the first modal/tracker callback.
+            crate::launch_probe::request(0);
+            if let Some(result) = crate::packaged_probe_selftest::finish_bridge_stage_if_requested() {
                 match result {
                     Ok(()) => std::process::exit(0),
                     Err(error) => {
-                        eprintln!("BOOTOPTIM_PACKAGED_PROBE_SELFTEST=error {error}");
+                        eprintln!("BOOTOPTIM_PACKAGED_PROBE_SELFTEST_BRIDGE=error {error}");
                         std::process::exit(2);
                     }
                 }
             }
-            // Name-based launches construct their ModalAction inside the backend. A zero key
-            // is a temporary sentinel adopted by the first modal/tracker callback.
-            crate::launch_probe::request(0);
         }
         _ => {}
     }
@@ -70,14 +90,18 @@ fn probe_request(message: &MessageToBackend) {
 impl BackendReceiver {
     pub async fn recv(&mut self) -> Option<MessageToBackend> {
         let (message, serial) = self.receiver.recv().await?;
-        if let Some(serial) = serial { self.processed_serial.set(serial); }
+        if let Some(serial) = serial {
+            self.processed_serial.set(serial);
+        }
         probe_dispatch(&message);
         Some(message)
     }
 
     pub fn try_recv(&mut self) -> Option<MessageToBackend> {
         let (message, serial) = self.receiver.try_recv().ok()?;
-        if let Some(serial) = serial { self.processed_serial.set(serial); }
+        if let Some(serial) = serial {
+            self.processed_serial.set(serial);
+        }
         probe_dispatch(&message);
         Some(message)
     }
@@ -95,13 +119,17 @@ pub struct FrontendReceiver {
 impl FrontendReceiver {
     pub async fn recv(&mut self) -> Option<MessageToFrontend> {
         let (message, serial) = self.receiver.recv().await?;
-        if let Some(serial) = serial { self.processed_serial.set(serial); }
+        if let Some(serial) = serial {
+            self.processed_serial.set(serial);
+        }
         Some(message)
     }
 
     pub fn try_recv(&mut self) -> Option<MessageToFrontend> {
         let (message, serial) = self.receiver.try_recv().ok()?;
-        if let Some(serial) = serial { self.processed_serial.set(serial); }
+        if let Some(serial) = serial {
+            self.processed_serial.set(serial);
+        }
         Some(message)
     }
 }
@@ -129,17 +157,23 @@ impl BackendHandle {
     }
 
     pub fn send_with_serial(&self, message: MessageToBackend, serial: &AtomicOptionSerial) {
-        if let Some(serial) = serial.get() && self.processed_serial.get() < serial { return; }
+        if let Some(serial) = serial.get() && self.processed_serial.get() < serial {
+            return;
+        }
+
         probe_request(&message);
         let next_serial = self.next_serial.next();
         serial.set(next_serial);
+
         #[cfg(debug_assertions)]
         self.sender.try_send((message, Some(next_serial))).unwrap();
         #[cfg(not(debug_assertions))]
         let _ = self.sender.send((message, Some(next_serial)));
     }
 
-    pub fn is_closed(&self) -> bool { self.sender.is_closed() }
+    pub fn is_closed(&self) -> bool {
+        self.sender.is_closed()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -158,25 +192,62 @@ unsafe impl Sync for FrontendHandle {}
 impl FrontendHandle {
     pub fn send(&self, message: MessageToFrontend) {
         #[cfg(debug_assertions)]
-        if let Err(tokio::sync::mpsc::error::TrySendError::Full(v)) = self.sender.try_send((message, None)) { panic!("Sender is full, unable to send message: {v:?}"); }
+        if let Err(tokio::sync::mpsc::error::TrySendError::Full(v)) = self.sender.try_send((message, None)) {
+            panic!("Sender is full, unable to send message: {v:?}");
+        }
         #[cfg(not(debug_assertions))]
         let _ = self.sender.send((message, None));
     }
 
     pub fn send_with_serial(&self, message: MessageToFrontend, serial: &AtomicOptionSerial) {
-        if let Some(serial) = serial.get() && self.processed_serial.get() < serial { return; }
+        if let Some(serial) = serial.get() && self.processed_serial.get() < serial {
+            return;
+        }
+
         let next_serial = self.next_serial.next();
         serial.set(next_serial);
+
         #[cfg(debug_assertions)]
-        if let Err(tokio::sync::mpsc::error::TrySendError::Full(v)) = self.sender.try_send((message, Some(next_serial))) { panic!("Sender is full, unable to send message: {v:?}"); };
+        if let Err(tokio::sync::mpsc::error::TrySendError::Full(v)) = self.sender.try_send((message, Some(next_serial))) {
+            panic!("Sender is full, unable to send message: {v:?}");
+        };
         #[cfg(not(debug_assertions))]
         let _ = self.sender.send((message, Some(next_serial)));
     }
 
-    pub fn send_info(&self, info: impl Into<Arc<str>>) { self.send(MessageToFrontend::AddNotification { notification_type: BridgeNotificationType::Info, message: info.into() }) }
-    pub fn send_success(&self, success: impl Into<Arc<str>>) { self.send(MessageToFrontend::AddNotification { notification_type: BridgeNotificationType::Success, message: success.into() }) }
-    pub fn send_warning(&self, warning: impl Into<Arc<str>>) { self.send(MessageToFrontend::AddNotification { notification_type: BridgeNotificationType::Warning, message: warning.into() }) }
-    pub fn send_error(&self, error: impl Into<Arc<str>>) { self.send(MessageToFrontend::AddNotification { notification_type: BridgeNotificationType::Error, message: error.into() }) }
-    pub fn is_closed(&self) -> bool { self.sender.is_closed() }
-    pub fn last_serial(&self) -> Serial { self.processed_serial.get() }
+    pub fn send_info(&self, info: impl Into<Arc<str>>) {
+        self.send(MessageToFrontend::AddNotification {
+            notification_type: BridgeNotificationType::Info,
+            message: info.into()
+        })
+    }
+
+    pub fn send_success(&self, success: impl Into<Arc<str>>) {
+        self.send(MessageToFrontend::AddNotification {
+            notification_type: BridgeNotificationType::Success,
+            message: success.into()
+        })
+    }
+
+    pub fn send_warning(&self, warning: impl Into<Arc<str>>) {
+        self.send(MessageToFrontend::AddNotification {
+            notification_type: BridgeNotificationType::Warning,
+            message: warning.into()
+        })
+    }
+
+    pub fn send_error(&self, error: impl Into<Arc<str>>) {
+        self.send(MessageToFrontend::AddNotification {
+            notification_type: BridgeNotificationType::Error,
+            message: error.into()
+        })
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.sender.is_closed()
+    }
+
+    pub fn last_serial(&self) -> Serial {
+        self.processed_serial.get()
+    }
 }
