@@ -629,7 +629,7 @@ impl Launcher {
                         if crate::fs::check_sha1_hash(&path, expected_hash).unwrap_or(false) {
                             return None;
                         }
-                    }
+                    };
                 }
 
                 if let Ok(bytes) = builtin.bytes() {
@@ -733,7 +733,7 @@ impl Launcher {
             let jar_zip = jar_file.read_zip()?;
 
             let Some(manifest_file) = jar_zip.by_name("META-INF/MANIFEST.MF") else {
-                return Err(LaunchError::MissingFileInZipError(Cow::Borrowed("install_profile.json")));
+                return Err(LaunchError::MissingFileInZipError(Cow::Borrowed("META-INF/MANIFEST.MF")));
             };
 
             let manifest_bytes = manifest_file.bytes()?;
