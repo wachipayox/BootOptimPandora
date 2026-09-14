@@ -7,7 +7,7 @@
 
 use std::{collections::HashSet, path::Path};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub(crate) const ASSET_USN_CACHE_ENV: &str = "BOOTOPTIM_ASSET_USN_CACHE";
@@ -47,7 +47,7 @@ impl AssetUsnCacheRuntime {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CacheManifest {
     pub schema: u32,
@@ -55,13 +55,14 @@ pub(crate) struct CacheManifest {
     pub volume_guid: String,
     pub volume_serial: u64,
     pub journal_id: u64,
-    pub snapshot_next_usn: i64,
+    pub snapshot_first_usn: i64,
     pub snapshot_lowest_valid_usn: i64,
+    pub snapshot_next_usn: i64,
     pub asset_count: u32,
     pub assets: Vec<CachedAsset>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CachedAsset {
     pub expected_sha1: String,
@@ -112,8 +113,10 @@ fn validate_manifest(manifest: &CacheManifest) -> Result<(), ManifestError> {
     if !is_volume_guid(&manifest.volume_guid) {
         return Err(ManifestError::VolumeGuid);
     }
-    if manifest.snapshot_next_usn < 0
+    if manifest.snapshot_first_usn < 0
         || manifest.snapshot_lowest_valid_usn < 0
+        || manifest.snapshot_next_usn < 0
+        || manifest.snapshot_next_usn < manifest.snapshot_first_usn
         || manifest.snapshot_next_usn < manifest.snapshot_lowest_valid_usn
     {
         return Err(ManifestError::Usn);
@@ -124,7 +127,11 @@ fn validate_manifest(manifest: &CacheManifest) -> Result<(), ManifestError> {
 
     let mut seen = HashSet::with_capacity(manifest.assets.len());
     for asset in &manifest.assets {
-        if !is_lower_hex(&asset.expected_sha1, 40) || !is_lower_hex(&asset.file_id, 32) || asset.last_usn < 0 {
+        if !is_lower_hex(&asset.expected_sha1, 40)
+            || !is_lower_hex(&asset.file_id, 32)
+            || asset.last_usn < 0
+            || asset.last_usn > manifest.snapshot_next_usn
+        {
             return Err(ManifestError::AssetEntry);
         }
         if !seen.insert(asset.expected_sha1.as_str()) {
@@ -166,6 +173,7 @@ pub(crate) enum MissReason {
     NotRegularFile,
     FreezeHandleUnavailable,
     AssetIndexMismatch,
+    AssetSha1Mismatch,
     VolumeMismatch,
     JournalIdMismatch,
     JournalRegression,
@@ -192,11 +200,13 @@ pub(crate) struct HitEvidence<'a> {
     pub regular_file: bool,
     pub freeze_handle_held: bool,
     pub asset_index_sha1: &'a str,
+    pub expected_asset_sha1: &'a str,
     pub volume_guid: &'a str,
     pub volume_serial: u64,
     pub journal_id: u64,
-    pub current_next_usn: i64,
+    pub current_first_usn: i64,
     pub current_lowest_valid_usn: i64,
+    pub current_next_usn: i64,
     pub current_file_id: &'a str,
     pub current_file_usn: i64,
     pub handle_identity_unchanged: bool,
@@ -238,19 +248,28 @@ pub(crate) fn evaluate_hit(
     if evidence.asset_index_sha1 != manifest.asset_index_sha1 {
         return ReuseDecision::FullSha1(AssetIndexMismatch);
     }
+    if evidence.expected_asset_sha1 != cached.expected_sha1 {
+        return ReuseDecision::FullSha1(AssetSha1Mismatch);
+    }
     if evidence.volume_guid != manifest.volume_guid || evidence.volume_serial != manifest.volume_serial {
         return ReuseDecision::FullSha1(VolumeMismatch);
     }
     if evidence.journal_id != manifest.journal_id {
         return ReuseDecision::FullSha1(JournalIdMismatch);
     }
-    if evidence.current_next_usn < 0 || evidence.current_lowest_valid_usn < 0 || evidence.current_file_usn < 0 {
+    if evidence.current_first_usn < 0
+        || evidence.current_lowest_valid_usn < 0
+        || evidence.current_next_usn < 0
+        || evidence.current_file_usn < 0
+        || evidence.current_next_usn < evidence.current_first_usn
+        || evidence.current_next_usn < evidence.current_lowest_valid_usn
+    {
         return ReuseDecision::FullSha1(InvalidUsn);
     }
     if evidence.current_next_usn < manifest.snapshot_next_usn {
         return ReuseDecision::FullSha1(JournalRegression);
     }
-    if evidence.current_lowest_valid_usn > manifest.snapshot_next_usn {
+    if evidence.current_first_usn.max(evidence.current_lowest_valid_usn) > manifest.snapshot_next_usn {
         return ReuseDecision::FullSha1(JournalDiscontinuity);
     }
     if evidence.current_file_id != cached.file_id {
@@ -270,8 +289,9 @@ pub(crate) fn evaluate_hit(
 mod tests {
     use super::*;
 
-    const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
-    const SHA2: &str = "1123456789abcdef0123456789abcdef01234567";
+    const INDEX_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+    const ASSET_SHA: &str = "1123456789abcdef0123456789abcdef01234567";
+    const OTHER_SHA: &str = "2123456789abcdef0123456789abcdef01234567";
     const FILE_ID: &str = "00112233445566778899aabbccddeeff";
     const FILE_ID2: &str = "10112233445566778899aabbccddeeff";
     const VOLUME: &str = r"\\?\Volume{12345678-1234-5678-9abc-def012345678}\";
@@ -279,15 +299,16 @@ mod tests {
     fn manifest() -> CacheManifest {
         CacheManifest {
             schema: 1,
-            asset_index_sha1: SHA.into(),
+            asset_index_sha1: INDEX_SHA.into(),
             volume_guid: VOLUME.into(),
             volume_serial: 7,
             journal_id: 11,
-            snapshot_next_usn: 1_000,
+            snapshot_first_usn: 50,
             snapshot_lowest_valid_usn: 100,
+            snapshot_next_usn: 1_000,
             asset_count: 1,
             assets: vec![CachedAsset {
-                expected_sha1: SHA2.into(),
+                expected_sha1: ASSET_SHA.into(),
                 file_id: FILE_ID.into(),
                 last_usn: 900,
             }],
@@ -303,21 +324,23 @@ mod tests {
             reparse_point: false,
             regular_file: true,
             freeze_handle_held: true,
-            asset_index_sha1: SHA,
+            asset_index_sha1: INDEX_SHA,
+            expected_asset_sha1: ASSET_SHA,
             volume_guid: VOLUME,
             volume_serial: 7,
             journal_id: 11,
-            current_next_usn: 1_200,
+            current_first_usn: 50,
             current_lowest_valid_usn: 100,
+            current_next_usn: 1_200,
             current_file_id: FILE_ID,
             current_file_usn: 900,
             handle_identity_unchanged: true,
         }
     }
 
-    fn miss(mut evidence: HitEvidence<'static>, reason: MissReason) {
-        assert_eq!(evaluate_hit(&manifest(), &manifest().assets[0], &evidence), ReuseDecision::FullSha1(reason));
-        evidence.feature_requested = false;
+    fn miss(evidence: HitEvidence<'static>, reason: MissReason) {
+        let m = manifest();
+        assert_eq!(evaluate_hit(&m, &m.assets[0], &evidence), ReuseDecision::FullSha1(reason));
     }
 
     #[test]
@@ -362,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn journal_restamp_regression_and_truncation_miss() {
+    fn journal_restamp_regression_and_both_lower_bounds_miss() {
         let mut e = evidence();
         e.journal_id += 1;
         miss(e, MissReason::JournalIdMismatch);
@@ -374,13 +397,21 @@ mod tests {
         let mut e = evidence();
         e.current_lowest_valid_usn = 1_001;
         miss(e, MissReason::JournalDiscontinuity);
+
+        let mut e = evidence();
+        e.current_first_usn = 1_001;
+        miss(e, MissReason::JournalDiscontinuity);
     }
 
     #[test]
-    fn asset_index_volume_and_identity_changes_miss() {
+    fn asset_index_asset_hash_volume_and_identity_changes_miss() {
         let mut e = evidence();
-        e.asset_index_sha1 = SHA2;
+        e.asset_index_sha1 = OTHER_SHA;
         miss(e, MissReason::AssetIndexMismatch);
+
+        let mut e = evidence();
+        e.expected_asset_sha1 = OTHER_SHA;
+        miss(e, MissReason::AssetSha1Mismatch);
 
         let mut e = evidence();
         e.volume_serial = 8;
@@ -436,6 +467,10 @@ mod tests {
         assert_eq!(parse_manifest(&serde_json::to_vec(&m).unwrap()), Err(ManifestError::Schema));
 
         let mut m = manifest();
+        m.snapshot_first_usn = 1_001;
+        assert_eq!(parse_manifest(&serde_json::to_vec(&m).unwrap()), Err(ManifestError::Usn));
+
+        let mut m = manifest();
         m.asset_count = 2;
         assert_eq!(parse_manifest(&serde_json::to_vec(&m).unwrap()), Err(ManifestError::AssetCount));
 
@@ -445,7 +480,7 @@ mod tests {
         assert_eq!(parse_manifest(&serde_json::to_vec(&m).unwrap()), Err(ManifestError::DuplicateAsset));
 
         let duplicate_top_level = format!(
-            r#"{{"schema":1,"schema":1,"asset_index_sha1":"{SHA}","volume_guid":"{VOLUME}","volume_serial":7,"journal_id":11,"snapshot_next_usn":1000,"snapshot_lowest_valid_usn":100,"asset_count":0,"assets":[]}}"#
+            r#"{{"schema":1,"schema":1,"asset_index_sha1":"{INDEX_SHA}","volume_guid":"{VOLUME}","volume_serial":7,"journal_id":11,"snapshot_first_usn":50,"snapshot_lowest_valid_usn":100,"snapshot_next_usn":1000,"asset_count":0,"assets":[]}}"#
         );
         assert_eq!(parse_manifest(duplicate_top_level.as_bytes()), Err(ManifestError::Json));
     }
