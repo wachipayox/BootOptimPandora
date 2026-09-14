@@ -19,4 +19,3 @@ indexmap.workspace = true
 parking_lot.workspace = true
 once_cell.workspace = true
 directories.workspace = true
-command.workspace = true
