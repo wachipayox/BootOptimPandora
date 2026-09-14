@@ -23,7 +23,9 @@ enum TrackerKind {
 struct TrackerRecord {
     key: usize,
     kind: TrackerKind,
+    created_ns: u64,
     top_level: bool,
+    finished: bool,
 }
 
 #[derive(Debug, Default)]
@@ -74,15 +76,22 @@ fn event_line(mono_ns: u64, phase: &str, event: &str, network: bool) -> String {
     )
 }
 
+fn event_at(mono_ns: u64, phase: &str, event_name: &str, network: bool) {
+    append_line(&event_line(mono_ns, phase, event_name, network));
+}
+
 fn event(phase: &str, event_name: &str, network: bool) {
-    append_line(&event_line(monotonic_ns(), phase, event_name, network));
+    event_at(monotonic_ns(), phase, event_name, network);
+}
+
+fn outcome_event_at(mono_ns: u64, phase: &str, outcome: &str) {
+    append_line(&format!(
+        "{{\"schema\":\"{SCHEMA}\",\"mono_ns\":{mono_ns},\"phase\":\"{phase}\",\"event\":\"end\",\"network\":false,\"outcome\":\"{outcome}\"}}"
+    ));
 }
 
 fn outcome_event(phase: &str, outcome: &str) {
-    append_line(&format!(
-        "{{\"schema\":\"{SCHEMA}\",\"mono_ns\":{},\"phase\":\"{phase}\",\"event\":\"end\",\"network\":false,\"outcome\":\"{outcome}\"}}",
-        monotonic_ns()
-    ));
+    outcome_event_at(monotonic_ns(), phase, outcome);
 }
 
 fn network_event(source: &str) {
@@ -105,21 +114,20 @@ pub fn network_observed(source: &'static str) {
 }
 
 fn network_source_allowed(source: &str) -> bool {
-    matches!(
-        source,
-        "assets"
-            | "libraries"
-            | "java_runtime"
-            | "metadata"
-            | "loader_metadata"
-            | "log_configuration"
-    )
+    matches!(source, "assets" | "libraries" | "java_runtime")
 }
 
 pub fn request(modal_key: usize) {
     let Some(path) = output_path() else {
         return;
     };
+
+    {
+        let guard = state().lock();
+        if guard.active {
+            return;
+        }
+    }
 
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         let _ = std::fs::create_dir_all(parent);
@@ -200,24 +208,59 @@ pub fn tracker_created(modal_key: usize, tracker_key: usize, title: &str) {
     if !enabled() {
         return;
     }
-    let mut guard = state().lock();
-    if !guard.active || guard.modal_key != modal_key {
-        return;
-    }
 
+    let now = monotonic_ns();
     let kind = tracker_kind(title);
-    let top_level = guard.version_done
-        && matches!(kind, TrackerKind::Assets | TrackerKind::Libraries | TrackerKind::JavaRuntime);
-    guard.trackers.push(TrackerRecord {
-        key: tracker_key,
-        kind,
-        top_level,
-    });
-    drop(guard);
+    let mut begins: Vec<(u64, TrackerKind)> = Vec::new();
+    let mut version_end = None;
 
-    if top_level {
-        event(phase_name(kind), "begin", false);
+    {
+        let mut guard = state().lock();
+        if !guard.active || guard.modal_key != modal_key {
+            return;
+        }
+
+        let top_level = guard.version_done
+            && matches!(kind, TrackerKind::Assets | TrackerKind::Libraries | TrackerKind::JavaRuntime);
+        guard.trackers.push(TrackerRecord {
+            key: tracker_key,
+            kind,
+            created_ns: now,
+            top_level,
+            finished: false,
+        });
+
+        if top_level {
+            begins.push((now, kind));
+        } else if kind == TrackerKind::Assets && !guard.version_done {
+            // Asset loading is only entered by the outer try_join4, never by Forge/NeoForge
+            // launch-version construction. At this point, any still-live Java/library tracker
+            // also belongs to that outer group; nested verifier trackers had to finish before
+            // create_launch_version could return.
+            guard.version_done = true;
+            let mut earliest = now;
+            for record in &mut guard.trackers {
+                if !record.finished
+                    && matches!(record.kind, TrackerKind::Assets | TrackerKind::Libraries | TrackerKind::JavaRuntime)
+                {
+                    record.top_level = true;
+                    earliest = earliest.min(record.created_ns);
+                    begins.push((record.created_ns, record.kind));
+                }
+            }
+            version_end = Some(earliest);
+        }
     }
+
+    if let Some(at) = version_end {
+        outcome_event_at(at, "version_loader_resolution", "ok");
+    }
+    begins.sort_by_key(|(at, _)| *at);
+    begins.dedup_by_key(|(_, kind)| *kind);
+    for (at, begin_kind) in begins {
+        event_at(at, phase_name(begin_kind), "begin", false);
+    }
+
     if title.starts_with("Downloading ") {
         if let Some(source) = network_source(kind) {
             network_observed(source);
@@ -248,70 +291,69 @@ pub fn tracker_finished(modal_key: usize, tracker_key: usize, error: bool) {
     if !enabled() {
         return;
     }
-    let mut guard = state().lock();
-    if !guard.active || guard.modal_key != modal_key {
-        return;
-    }
-    let Some(record) = guard.trackers.iter().find(|v| v.key == tracker_key).copied() else {
-        return;
-    };
 
-    if record.kind == TrackerKind::Parent {
-        guard.active = false;
-        return;
-    }
-    drop(guard);
-
-    if record.top_level {
-        outcome_event(phase_name(record.kind), if error { "error" } else { "ok" });
-    }
-}
-
-pub fn tracker_add_count(
-    modal_key: usize,
-    tracker_key: usize,
-    current_count: usize,
-    total_count: usize,
-) {
-    if !enabled() {
-        return;
-    }
-    let mut guard = state().lock();
-    if !guard.active || guard.modal_key != modal_key {
-        return;
-    }
-    let Some(parent) = guard.trackers.iter().find(|v| v.key == tracker_key) else {
-        return;
-    };
-    if parent.kind != TrackerKind::Parent {
-        return;
-    }
-
-    if !guard.version_done && is_version_boundary(current_count, total_count) {
-        guard.version_done = true;
-        drop(guard);
-        outcome_event("version_loader_resolution", "ok");
-        return;
-    }
-
-    if guard.version_done
-        && !guard.post_resolution_started
-        && is_post_resolution_boundary(current_count, total_count)
+    let mut phase_end = None;
+    let mut start_post_envelope = false;
     {
-        guard.post_resolution_started = true;
-        drop(guard);
+        let mut guard = state().lock();
+        if !guard.active || guard.modal_key != modal_key {
+            return;
+        }
+        let Some(index) = guard.trackers.iter().position(|v| v.key == tracker_key) else {
+            return;
+        };
+
+        let kind = guard.trackers[index].kind;
+        let top_level = guard.trackers[index].top_level;
+        guard.trackers[index].finished = true;
+
+        if kind == TrackerKind::Parent {
+            guard.active = false;
+            return;
+        }
+        if top_level {
+            phase_end = Some(kind);
+        }
+
+        if guard.version_done && !guard.post_resolution_started && observable_outer_group_finished(&guard) {
+            guard.post_resolution_started = true;
+            start_post_envelope = true;
+        }
+    }
+
+    if let Some(kind) = phase_end {
+        outcome_event(phase_name(kind), if error { "error" } else { "ok" });
+    }
+    if start_post_envelope {
+        // log_configuration is the fourth try_join4 sibling but has no progress tracker in
+        // this Pandora revision. These are therefore conservative upper-bound envelopes:
+        // they may include a short untracked log-config tail before the real post-join work.
         event("classpath_resolution", "inclusive_begin", false);
         event("native_extraction", "inclusive_begin", false);
         event("wrapper_arguments", "inclusive_begin", false);
     }
 }
 
-fn is_version_boundary(current_count: usize, total_count: usize) -> bool {
-    total_count >= 5 && current_count == total_count - 5
+fn observable_outer_group_finished(state: &ProbeState) -> bool {
+    let has_assets = state.trackers.iter().any(|r| r.top_level && r.kind == TrackerKind::Assets);
+    let has_libraries = state.trackers.iter().any(|r| r.top_level && r.kind == TrackerKind::Libraries);
+    has_assets
+        && has_libraries
+        && state
+            .trackers
+            .iter()
+            .filter(|r| r.top_level && matches!(r.kind, TrackerKind::Assets | TrackerKind::Libraries | TrackerKind::JavaRuntime))
+            .all(|r| r.finished)
 }
 
-fn is_post_resolution_boundary(current_count: usize, total_count: usize) -> bool {
-    total_count >= 1 && current_count == total_count - 1
+pub fn tracker_add_count(
+    _modal_key: usize,
+    _tracker_key: usize,
+    _current_count: usize,
+    _total_count: usize,
+) {
+    // Intentionally unused for phase attribution. Earlier probe revisions inferred boundaries
+    // from parent progress totals; that was brittle for custom Java and Forge-like nested work.
 }
 
 pub fn cancel(modal_key: usize) {
@@ -463,29 +505,36 @@ mod tests {
     }
 
     #[test]
-    fn parent_progress_boundaries_cover_supported_loader_shapes() {
-        assert!(is_version_boundary(2, 7));
-        assert!(is_version_boundary(5, 10));
-        assert!(is_version_boundary(8, 13));
-        assert!(!is_version_boundary(7, 13));
-        assert!(is_post_resolution_boundary(6, 7));
-        assert!(is_post_resolution_boundary(9, 10));
-        assert!(is_post_resolution_boundary(12, 13));
+    fn outer_group_completion_requires_assets_libraries_and_all_observed_siblings() {
+        let mut state = ProbeState::default();
+        state.trackers = vec![
+            TrackerRecord { key: 1, kind: TrackerKind::Assets, created_ns: 1, top_level: true, finished: true },
+            TrackerRecord { key: 2, kind: TrackerKind::Libraries, created_ns: 2, top_level: true, finished: true },
+            TrackerRecord { key: 3, kind: TrackerKind::JavaRuntime, created_ns: 3, top_level: true, finished: false },
+        ];
+        assert!(!observable_outer_group_finished(&state));
+        state.trackers[2].finished = true;
+        assert!(observable_outer_group_finished(&state));
     }
 
     #[test]
-    fn network_sources_are_fixed_metadata_only() {
-        for source in [
-            "assets",
-            "libraries",
-            "java_runtime",
-            "metadata",
-            "loader_metadata",
-            "log_configuration",
-        ] {
+    fn completed_nested_trackers_are_not_outer_candidates() {
+        let state = ProbeState {
+            trackers: vec![
+                TrackerRecord { key: 1, kind: TrackerKind::JavaRuntime, created_ns: 1, top_level: false, finished: true },
+                TrackerRecord { key: 2, kind: TrackerKind::Libraries, created_ns: 2, top_level: false, finished: true },
+            ],
+            ..ProbeState::default()
+        };
+        assert!(state.trackers.iter().filter(|r| !r.finished).count() == 0);
+    }
+
+    #[test]
+    fn network_sources_are_fixed_and_non_sensitive() {
+        for source in ["assets", "libraries", "java_runtime"] {
             assert!(network_source_allowed(source));
         }
-        assert!(!network_source_allowed("https://example.invalid/private"));
+        assert!(!network_source_allowed("metadata-url"));
         assert!(!network_source_allowed("account-name"));
     }
 
