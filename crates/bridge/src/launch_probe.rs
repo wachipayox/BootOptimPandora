@@ -29,11 +29,12 @@ struct TrackerRecord {
 struct ProbeState {
     active: bool,
     modal_key: usize,
-    request_ns: u64,
     config_done: bool,
     account_done: bool,
     prelaunch_done: bool,
     version_done: bool,
+    assets_finished: bool,
+    libraries_finished: bool,
     post_resolution_started: bool,
     trackers: Vec<TrackerRecord>,
 }
@@ -97,7 +98,6 @@ pub fn request(modal_key: usize) {
     *state().lock() = ProbeState {
         active: true,
         modal_key,
-        request_ns: now,
         ..ProbeState::default()
     };
 }
@@ -165,8 +165,7 @@ pub fn tracker_created(modal_key: usize, tracker_key: usize, title: &str) {
         } else {
             drop(guard);
         }
-        let phase = phase_name(kind);
-        event(phase, "begin", title.starts_with("Downloading "));
+        event(phase_name(kind), "begin", title.starts_with("Downloading "));
     }
 }
 
@@ -202,18 +201,22 @@ pub fn tracker_finished(modal_key: usize, tracker_key: usize, error: bool) {
     };
 
     if record.kind == TrackerKind::Parent {
-        let request_ns = guard.request_ns;
         guard.active = false;
         drop(guard);
-        let now = monotonic_ns();
         append_line(&format!(
-            "{{\"schema\":\"{SCHEMA}\",\"mono_ns\":{now},\"phase\":\"launcher_pre_java\",\"event\":\"summary\",\"network\":false,\"duration_ns\":{},\"java_to_menu_observed\":false,\"java_to_menu_ns\":null}}",
-            now.saturating_sub(request_ns)
+            "{{\"schema\":\"{SCHEMA}\",\"mono_ns\":{},\"phase\":\"java_to_menu\",\"event\":\"unobserved\",\"network\":false,\"observed\":false,\"duration_ns\":null}}",
+            monotonic_ns()
         ));
         if error {
             outcome_event("launch", "error");
         }
         return;
+    }
+
+    match record.kind {
+        TrackerKind::Assets => guard.assets_finished = true,
+        TrackerKind::Libraries => guard.libraries_finished = true,
+        _ => {}
     }
     drop(guard);
 
@@ -237,21 +240,12 @@ pub fn tracker_add_count(modal_key: usize, tracker_key: usize) {
         return;
     }
 
-    let assets_done = phase_tracker_finished_hint(&guard, TrackerKind::Assets);
-    let libraries_done = phase_tracker_finished_hint(&guard, TrackerKind::Libraries);
-    if assets_done && libraries_done {
+    if guard.assets_finished && guard.libraries_finished {
         guard.post_resolution_started = true;
         drop(guard);
         event("classpath_resolution", "inclusive_begin", false);
         event("native_extraction", "inclusive_begin", false);
     }
-}
-
-// Tracker completion itself is emitted to the file, but the in-memory state deliberately
-// stays tiny. Once both required trackers exist, a parent progress increment after their
-// join is the conservative start of the post-resolution envelope.
-fn phase_tracker_finished_hint(state: &ProbeState, kind: TrackerKind) -> bool {
-    state.trackers.iter().any(|v| v.kind == kind)
 }
 
 pub fn cancel(modal_key: usize) {
@@ -358,7 +352,7 @@ mod tests {
         assert!(!line.contains('/'));
         assert!(!line.contains('\\'));
         assert!(!line.to_ascii_lowercase().contains("token"));
-        assert!(!line.to_ascii_lowercase().contains("account"));
+        assert!(!line.to_ascii_lowercase().contains("username"));
     }
 
     #[test]
@@ -375,13 +369,14 @@ mod tests {
                 "wrapper_arguments" => 7,
                 "java_spawn" => 8,
                 "launcher_pre_java" => 9,
+                "java_to_menu" => 10,
                 _ => 255,
             }
         }
         let serial = [
             "launch_request", "instance_config", "account_selection", "prelaunch",
             "version_loader_resolution", "assets_verify_download", "native_extraction",
-            "wrapper_arguments", "java_spawn", "launcher_pre_java",
+            "wrapper_arguments", "java_spawn", "launcher_pre_java", "java_to_menu",
         ];
         assert!(serial.windows(2).all(|w| rank(w[0]) <= rank(w[1])));
         assert_eq!(rank("assets_verify_download"), rank("libraries_classpath_inputs"));
