@@ -4,7 +4,7 @@ use sha1::{Digest, Sha1};
 use std::{
     fs::OpenOptions,
     io::{Seek, SeekFrom, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
