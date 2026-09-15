@@ -14,7 +14,7 @@ on:
       - '.github/workflows/bootoptim-usn-clean.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   rust-focused:
@@ -27,8 +27,33 @@ jobs:
           components: rustfmt
       - name: Install backend system dependencies
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
-      - name: Format affected crates
-        run: cargo fmt --check --package backend --package bridge --package frontend
+      - name: Format workspace packages in runner
+        run: |
+          cargo fmt --package backend --package bridge --package frontend
+          cargo fmt --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
+      - name: Commit formatting only for scoped Rust diff
+        shell: bash
+        run: |
+          git add -- \
+            bootoptim-v0/usn-unprivileged-probe/src/main.rs \
+            crates/backend/src/asset_probe_context.rs \
+            crates/backend/src/asset_usn_cache.rs \
+            crates/backend/src/asset_usn_cache/activation_probe.rs \
+            crates/backend/src/asset_usn_cache/windows.rs \
+            crates/backend/src/asset_usn_cache/windows/direct_integration_tests.rs \
+            crates/backend/src/asset_usn_cache/windows_direct.rs \
+            crates/backend/src/launch/mod.rs \
+            crates/backend/src/lib.rs \
+            crates/bridge/src/modal_action.rs \
+            crates/frontend/src/root.rs
+          if git diff --cached --quiet; then
+            echo 'scoped Rust diff already rustfmt-clean'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'style: format scoped USN candidate'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
       - name: Check backend
         run: cargo check -p backend --frozen
       - name: Test asset verification authority
