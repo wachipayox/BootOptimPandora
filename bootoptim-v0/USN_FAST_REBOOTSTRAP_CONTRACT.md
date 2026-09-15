@@ -32,6 +32,8 @@ If the direct USN capability itself cannot be established, an existing canonical
 
 With a usable same-era manifest, FileId/USN/handle changes or a missing/nonregular/reparse candidate invalidate only that object. `verify_existing` returns a miss and Pandora's existing repair/download path runs. The downloaded body keeps the stock expected-size check and SHA-1 check against the published Mojang object hash before it is written. After a successful phase, only metadata for that final individually verified object is added to the USN baseline.
 
+A verifier worker `JoinError` is also an individual miss. It must not run the historical compensating `check_sha1_hash` over the existing asset pathname: the object goes directly through the same repair/download path, and only that downloaded body is SHA-1 verified.
+
 Thus SHA-1 remains allowed and required for the object being downloaded/repaired; it is never used to audit the rest of the cache.
 
 ## Publication and failure model
@@ -66,6 +68,7 @@ Focused backend tests must prove:
 3. unchanged next run -> `verified_reuse` with no content SHA-1;
 4. same-size/restored-mtime mutation after rebootstrap -> `individual_repair_verification` on the next run via changed USN, without hashing the existing object;
 5. delete/recreate after rebootstrap -> individual repair via changed FileId;
-6. telemetry distinguishes `fast_rebootstrap`, `verified_reuse` and `individual_repair_verification`.
+6. telemetry distinguishes `fast_rebootstrap`, `verified_reuse` and `individual_repair_verification`;
+7. verifier-worker failure cannot fall back to hashing the existing asset object and instead requests the normal single-object repair path.
 
 Hosted CI is semantic/packaging evidence only. Physical acceptance measures only `assets_verify_download`; it must not be reported as TTMM. A corrupt/missing-manifest physical run should show fast rebootstrap and zero stock SHA-1 object reads, while a subsequent single-object mutation should request exactly one repair/download verification.
