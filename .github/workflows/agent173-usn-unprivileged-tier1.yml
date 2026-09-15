@@ -1,0 +1,34 @@
+name: Agent 173 USN unprivileged Tier 1
+
+on:
+  push:
+    branches:
+      - agent173/usn-unprivileged-capability-20260915
+    paths:
+      - bootoptim-v0/usn-unprivileged-probe/**
+      - .github/workflows/agent173-usn-unprivileged-tier1.yml
+  workflow_dispatch:
+
+jobs:
+  rust-minimal-windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Rust fmt
+        run: cargo fmt --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml -- --check
+
+      - name: Rust check
+        run: cargo check --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
+
+      - name: Rust unit tests
+        run: cargo test --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
+
+      - name: Dev semantic probe under a restricted token
+        run: cargo run --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
