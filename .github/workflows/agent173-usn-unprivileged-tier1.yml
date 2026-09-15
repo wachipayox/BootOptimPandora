@@ -6,6 +6,8 @@ on:
       - agent173/usn-unprivileged-capability-20260915
     paths:
       - bootoptim-v0/usn-unprivileged-probe/**
+      - crates/backend/src/asset_usn_cache.rs
+      - crates/backend/src/asset_usn_cache/**
       - .github/workflows/agent173-usn-unprivileged-tier1.yml
   workflow_dispatch:
 
@@ -21,14 +23,14 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Rust fmt
-        run: cargo fmt --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
+      - name: Rust fmt check
+        run: cargo fmt --all -- --check
 
-      - name: Rust check
-        run: cargo check --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
+      - name: Backend Rust check
+        run: cargo check -p backend
 
-      - name: Rust unit tests
-        run: cargo test --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
+      - name: Asset USN cache tests
+        run: cargo test -p backend asset_usn_cache
 
-      - name: Dev semantic probe under a restricted token
+      - name: Restricted-token capability probe
         run: cargo run --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
