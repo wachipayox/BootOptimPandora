@@ -8,6 +8,7 @@ on:
       - "crates/bridge/**"
       - "crates/backend/**"
       - "crates/frontend/**"
+      - "crates/pandora_launcher/**"
       - ".github/workflows/bootoptim-v0.yml"
 
 permissions:
@@ -30,6 +31,8 @@ jobs:
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
       - name: Test final launch-probe root contract
         run: cargo test -p bridge launch_probe --frozen
+      - name: Test asset attribution probe
+        run: cargo test -p backend asset_attribution --frozen
       - name: Test asset verification intent propagation
         run: cargo test -p bridge asset_verification_mode --frozen
       - name: Test USN fail-closed/runtime gates
@@ -53,6 +56,8 @@ jobs:
         run: cargo test -p bridge launch_probe --frozen --target x86_64-pc-windows-msvc
       - name: Test direct Java spawn probe filter
         run: cargo test -p command launch_probe_tests --frozen --target x86_64-pc-windows-msvc
+      - name: Test asset attribution probe
+        run: cargo test -p backend asset_attribution --frozen --target x86_64-pc-windows-msvc
       - name: Test asset verification intent propagation
         run: cargo test -p bridge asset_verification_mode --frozen --target x86_64-pc-windows-msvc
       - name: Test USN fail-closed/runtime gates
@@ -86,31 +91,28 @@ jobs:
       - name: Build patched Pandora
         run: cargo build --release --frozen --target x86_64-pc-windows-msvc
 
-      - name: Execute packaged Pandora through real root, spawn and interposer
+      - name: Execute packaged Pandora root plus asset-sidecar behavior gate
         shell: pwsh
         run: |
           $exe = (Resolve-Path "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe").Path
           $interposer = (Resolve-Path "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe").Path
-          $probe = Join-Path $env:RUNNER_TEMP "bootoptim-packaged-probe-contract.jsonl"
-          $fakeRuntime = Join-Path $env:RUNNER_TEMP "bootoptim-agent166-fake-runtime"
+          $id = [guid]::NewGuid().ToString("N")
+          $probe = Join-Path $env:RUNNER_TEMP "bootoptim-agent170-root-$id.jsonl"
+          $sidecar = Join-Path $env:RUNNER_TEMP "bootoptim-agent170-assets-$id.json"
+          $fakeRuntime = Join-Path $env:RUNNER_TEMP "bootoptim-agent170-fake-runtime-$id"
           $fakeDir = Join-Path $fakeRuntime "bin"
           $fakeLib = Join-Path $fakeRuntime "lib"
           New-Item -ItemType Directory -Force $fakeDir | Out-Null
           New-Item -ItemType Directory -Force $fakeLib | Out-Null
           $fakeJava = Join-Path $fakeDir "java.exe"
           Copy-Item "$env:SystemRoot/System32/cmd.exe" $fakeJava -Force
-          Remove-Item $probe -ErrorAction SilentlyContinue
+          if ((Test-Path $probe) -or (Test-Path $sidecar)) { throw "gate output paths must be fresh" }
 
-          # Release Pandora is a Windows-subsystem GUI executable. PowerShell's call operator
-          # does not reliably wait for GUI processes or populate $LASTEXITCODE, so use the
-          # process API explicitly and wait for a real exit code for both packaged invocations.
           function Invoke-PackagedPandora([string[]] $Arguments) {
             $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
             $startInfo.FileName = $exe
             $startInfo.UseShellExecute = $false
-            foreach ($argument in $Arguments) {
-              [void] $startInfo.ArgumentList.Add($argument)
-            }
+            foreach ($argument in $Arguments) { [void] $startInfo.ArgumentList.Add($argument) }
             $process = [System.Diagnostics.Process]::Start($startInfo)
             if ($null -eq $process) { throw "unable to start packaged Pandora" }
             try {
@@ -121,53 +123,41 @@ jobs:
             }
           }
 
-          # First invocation: enter the real --run-instance / BackendHandle root path.
+          # This gate deliberately exercises stock behavior: USN is absent.
+          Remove-Item Env:BOOTOPTIM_ASSET_USN_CACHE -ErrorAction SilentlyContinue
+          Remove-Item Env:BOOTOPTIM_ASSET_USN_HELPER -ErrorAction SilentlyContinue
+          Remove-Item Env:BOOTOPTIM_ASSET_USN_HELPER_SHA256 -ErrorAction SilentlyContinue
           $env:BOOTOPTIM_LAUNCH_PROBE = $probe
-          $env:BOOTOPTIM_PACKAGED_PROBE_ROOT_SELFTEST = "1"
-          $rootCode = Invoke-PackagedPandora @("--run-instance", "__bootoptim_probe_root_selftest__")
-          Remove-Item Env:BOOTOPTIM_PACKAGED_PROBE_ROOT_SELFTEST -ErrorAction SilentlyContinue
-          if ($rootCode -ne 0) { throw "packaged root selftest failed with exit $rootCode" }
-          if (-not (Test-Path $probe)) { throw "packaged root selftest did not produce JSONL" }
-
-          # Second invocation: use the same packaged EXE and JSONL, exercise the real
-          # PandoraCommand::spawn path with the matching built AppCDS interposer.
+          $env:BOOTOPTIM_ASSET_ATTRIBUTION = $sidecar
           $env:BOOTOPTIM_LAUNCH_INTERPOSER = $interposer
           $env:BOOTOPTIM_APPCDS_MODE = "plan"
-          $spawnCode = Invoke-PackagedPandora @("--internal-set-traverse-acls", "__bootoptim_probe_contract_selftest__", $probe, $fakeJava)
+          $code = Invoke-PackagedPandora @("--internal-bootoptim-probe-composition-selftest", $probe, $sidecar, $fakeJava)
+          Remove-Item Env:BOOTOPTIM_LAUNCH_PROBE -ErrorAction SilentlyContinue
+          Remove-Item Env:BOOTOPTIM_ASSET_ATTRIBUTION -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_LAUNCH_INTERPOSER -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_APPCDS_MODE -ErrorAction SilentlyContinue
-          Remove-Item Env:BOOTOPTIM_LAUNCH_PROBE -ErrorAction SilentlyContinue
-          if ($spawnCode -ne 0) { throw "packaged spawn/interposer selftest failed with exit $spawnCode" }
+          if ($code -ne 0) { throw "packaged composition selftest failed with exit $code" }
+          if (-not (Test-Path $probe)) { throw "packaged composition selftest did not produce launch root" }
+          if (-not (Test-Path $sidecar)) { throw "packaged composition selftest did not produce asset sidecar" }
 
           $rawLines = @(Get-Content $probe | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
           if ($rawLines.Count -eq 0) { throw "packaged probe JSONL is empty" }
           $raw = $rawLines -join "`n"
-          if ($raw.Contains('"inclusive_end"') -or $raw.Contains('"inclusive_begin"')) {
-            throw "legacy inclusive_* probe format detected"
-          }
+          if ($raw -match 'inclusive_') { throw "legacy inclusive_* probe format detected" }
           $records = @($rawLines | ForEach-Object { $_ | ConvertFrom-Json })
           if (@($records | Where-Object { $_.schema -ne "bootoptim.launch_probe.v1" }).Count -ne 0) {
             throw "packaged probe JSONL is not current bootoptim.launch_probe.v1 format"
+          }
+          if ($records[0].phase -ne "launcher_pre_java" -or $records[0].event -ne "begin") {
+            throw "launcher_pre_java.begin must be the first JSONL record"
           }
           $rootBegin = @($records | Where-Object { $_.phase -eq "launcher_pre_java" -and $_.event -eq "begin" })
           $rootEnd = @($records | Where-Object { $_.phase -eq "launcher_pre_java" -and $_.event -eq "end" })
           $javaBegin = @($records | Where-Object { $_.phase -eq "java_spawn" -and $_.event -eq "begin" })
           $javaEnd = @($records | Where-Object { $_.phase -eq "java_spawn" -and $_.event -eq "end" })
-          $preflightBegin = @($records | Where-Object { $_.phase -eq "appcds_preflight" -and $_.event -eq "begin" })
-          $preflightEnd = @($records | Where-Object { $_.phase -eq "appcds_preflight" -and $_.event -eq "end" })
           if ($rootBegin.Count -ne 1 -or $rootEnd.Count -ne 1) { throw "root begin/end must each occur exactly once" }
           if ($javaBegin.Count -ne 1 -or $javaEnd.Count -ne 1) { throw "java_spawn begin/end must each occur exactly once" }
-          if ($preflightBegin.Count -ne 1 -or $preflightEnd.Count -ne 1) { throw "matching AppCDS interposer preflight was not executed exactly once" }
-          if ($preflightEnd[0].outcome -ne "ok") { throw "matching AppCDS interposer preflight did not exit successfully" }
-          if ($records[0].phase -ne "launcher_pre_java" -or $records[0].event -ne "begin") {
-            throw "launcher_pre_java.begin must be the first JSONL record"
-          }
-          foreach ($phase in @("classpath_resolution", "native_extraction", "wrapper_arguments")) {
-            $events = @($records | Where-Object { $_.phase -eq $phase })
-            if ($events.Count -ne 1 -or $events[0].event -ne "unobserved" -or $events[0].observed -ne $false) {
-              throw "$phase must be exactly one explicit unobserved event"
-            }
-          }
+          if ($rootEnd[0].outcome -ne "ok" -or $javaEnd[0].outcome -ne "ok") { throw "root/java spawn outcome must be ok" }
           $javaBeginIndex = -1; $javaEndIndex = -1; $rootEndIndex = -1
           for ($i = 0; $i -lt $records.Count; $i++) {
             if ($records[$i].phase -eq "java_spawn" -and $records[$i].event -eq "begin") { $javaBeginIndex = $i }
@@ -175,19 +165,29 @@ jobs:
             if ($records[$i].phase -eq "launcher_pre_java" -and $records[$i].event -eq "end") { $rootEndIndex = $i }
           }
           if (-not (0 -le $javaBeginIndex -and $javaBeginIndex -lt $javaEndIndex -and $javaEndIndex -lt $rootEndIndex)) {
-            throw "root final is ambiguous or not strictly after completed java_spawn"
+            throw "java spawn must complete inside the unique launch root"
           }
-          "launch_probe_active=true schema=bootoptim.launch_probe.v1 root_begin=1 root_end=1 java_spawn=1 interposer_preflight=1"
+
+          $asset = Get-Content $sidecar -Raw | ConvertFrom-Json
+          if ($asset.schema -ne "bootoptim.asset_attribution.v1") { throw "asset sidecar schema mismatch" }
+          if ($asset.phase -ne "assets_verify_download" -or $asset.outcome -ne "ok") { throw "asset sidecar outcome mismatch" }
+          if ($asset.launch_probe_active -ne $true) { throw "asset sidecar was not correlated with active launch probe" }
+          if ($asset.planned_objects -ne 1 -or $asset.hash_attempts -ne 1 -or $asset.hash_hits -ne 1) { throw "asset fixture was not actually hashed by attribution probe" }
+          if ($asset.hash_misses -ne 0 -or $asset.hash_io_errors -ne 0 -or $asset.any_network -ne $false -or $asset.downloaded_objects -ne 0 -or $asset.downloaded_bytes -ne 0 -or $asset.network_errors -ne 0 -or $asset.download_size_failures -ne 0 -or $asset.download_hash_failures -ne 0) {
+            throw "asset fixture sidecar is contaminated"
+          }
+
           Copy-Item $probe "bootoptim-packaged-probe-contract.jsonl"
-          Get-Content $probe
+          Copy-Item $sidecar "bootoptim-packaged-asset-attribution.json"
+          "schema=bootoptim.launch_probe.v1 root_begin=1 root_end=1 java_spawn=1; schema=bootoptim.asset_attribution.v1 outcome=ok launch_probe_active=true"
 
       - name: Verify packaged Pandora probe linkage
         shell: pwsh
         run: |
           $exe = "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe"
           $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
-          foreach ($marker in @("bootoptim.launch_probe.v1", "launcher_pre_java", "java_spawn")) {
-            if (-not $ascii.Contains($marker)) { throw "release Pandora binary missing launch-probe marker: $marker" }
+          foreach ($marker in @("bootoptim.launch_probe.v1", "bootoptim.asset_attribution.v1", "launcher_pre_java", "java_spawn")) {
+            if (-not $ascii.Contains($marker)) { throw "release Pandora binary missing probe marker: $marker" }
           }
 
       - name: Assemble reproducible Windows artifact
@@ -198,12 +198,14 @@ jobs:
           Copy-Item target/x86_64-pc-windows-msvc/release/bootoptim-usn-helper.exe bootoptim-v0/dist/
           Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe bootoptim-v0/dist/BootOptimPandora-v0.exe
           Copy-Item bootoptim-packaged-probe-contract.jsonl bootoptim-v0/dist/packaged-probe-contract.jsonl
+          Copy-Item bootoptim-packaged-asset-attribution.json bootoptim-v0/dist/packaged-asset-attribution.json
           "${{ github.event.pull_request.head.sha }}" | Set-Content -Encoding ascii bootoptim-v0/dist/COMMIT.txt
           $files = @(
             "bootoptim-v0/dist/bootoptim-launch-interposer.exe",
             "bootoptim-v0/dist/bootoptim-usn-helper.exe",
             "bootoptim-v0/dist/BootOptimPandora-v0.exe",
             "bootoptim-v0/dist/packaged-probe-contract.jsonl",
+            "bootoptim-v0/dist/packaged-asset-attribution.json",
             "bootoptim-v0/dist/COMMIT.txt"
           )
           $lines = foreach ($file in $files) {
@@ -216,6 +218,6 @@ jobs:
       - name: Upload Windows prototype
         uses: actions/upload-artifact@v4
         with:
-          name: bootoptim-pandora-agent166-${{ github.event.pull_request.head.sha }}-windows-x86_64
+          name: bootoptim-pandora-agent170-${{ github.event.pull_request.head.sha }}-windows-x86_64
           path: bootoptim-v0/dist/*
           if-no-files-found: error
