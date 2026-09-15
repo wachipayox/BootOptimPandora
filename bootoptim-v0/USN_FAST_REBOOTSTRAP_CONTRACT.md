@@ -10,7 +10,7 @@ It does not change AppCDS, classpath/module-path, mods, modpack update semantics
 
 On Windows, the canonical launcher `assets/objects` tree now uses the fast policy by default for **every launch authority**, including GUI normal launch, CLI/legacy/default/unknown authority and the historical `FullVerification` marker. The inherited `BOOTOPTIM_ASSET_USN_CACHE=1` variable remains harmless for existing physical scripts but is no longer an opt-in and cannot be used to restore a whole-cache SHA-1 startup pass.
 
-`FullVerification` therefore no longer means “hash every asset at startup” for this Windows asset-object path. There is deliberately no `strict_full_sha1` setting and no startup route in this policy that cryptographically scans all asset objects.
+`FullVerification` therefore no longer means “hash every asset at startup” for this Windows asset-object path. There is deliberately no `strict_full_sha1` setting and no startup route in this policy that cryptographically scans all asset objects. The superseded private Windows methods from PR #27 that could hash existing objects or baseline the whole cache by content have been removed rather than left dormant.
 
 This candidate does not redefine non-Windows asset integrity semantics; its default-policy claim is specifically the Windows/NTFS path inherited from PR #27.
 
@@ -68,7 +68,8 @@ Focused backend tests must prove:
 3. unchanged next run -> `verified_reuse` with no content SHA-1;
 4. same-size/restored-mtime mutation after rebootstrap -> `individual_repair_verification` on the next run via changed USN, without hashing the existing object;
 5. delete/recreate after rebootstrap -> individual repair via changed FileId;
-6. telemetry distinguishes `fast_rebootstrap`, `verified_reuse` and `individual_repair_verification`;
-7. verifier-worker failure cannot fall back to hashing the existing asset object and instead requests the normal single-object repair path.
+6. telemetry distinguishes `fast_rebootstrap`, `verified_reuse` and `individual_repair_verification`.
+
+Static source review additionally requires that a verifier-worker failure cannot fall back to hashing the existing asset object and instead requests the normal single-object repair path, and that no dormant Windows bulk-content baseline helper remains callable.
 
 Hosted CI is semantic/packaging evidence only. Physical acceptance measures only `assets_verify_download`; it must not be reported as TTMM. A corrupt/missing-manifest physical run should show fast rebootstrap and zero stock SHA-1 object reads, while a subsequent single-object mutation should request exactly one repair/download verification.
