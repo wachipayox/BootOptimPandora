@@ -106,14 +106,18 @@ jobs:
           $json = Get-Content $probe -Raw | ConvertFrom-Json
           if ($json.schema -ne "bootoptim.appcds_preflight_probe.v1" -or $json.mode -ne "plan" -or $json.decision -ne "STOCK") { throw "wrong preflight probe contract" }
           if ($null -ne $json.top_ns.classify_cache -or $null -ne $json.top_ns.promote_archive) { throw "plan mode must not classify/promote" }
-          Copy-Item (Join-Path $fixture ".bootoptim\appcds\launch-plan.json") (Join-Path $fixture "plan-stock.json")
+          $stockPlan = Join-Path $fixture "plan-stock.json"
+          $currentPlan = Join-Path $fixture ".bootoptim\appcds\launch-plan.json"
+          Copy-Item $currentPlan $stockPlan
           Remove-Item $probe
           $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE = "1"
           $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE_PROBE = $identityProbe
           $env:BOOTOPTIM_APPCDS_PREFLIGHT_PROBE = $probe
           $decision = & $interposer --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea -- $java -cp $classpath com.moulberry.pandora.LaunchWrapper
           if ($LASTEXITCODE -ne 0 -or ($decision | Out-String).Trim() -ne "STOCK") { throw "hard-closed identity-cache run failed" }
-          if (-not (Compare-Object (Get-Content (Join-Path $fixture "plan-stock.json") -Raw) (Get-Content (Join-Path $fixture ".bootoptim\appcds\launch-plan.json") -Raw) -SyncWindow 0)) { } else { throw "identity-cache request changed plan bytes while source authority is unavailable" }
+          $stockBytes = [System.IO.File]::ReadAllBytes($stockPlan)
+          $currentBytes = [System.IO.File]::ReadAllBytes($currentPlan)
+          if ($stockBytes.Length -ne $currentBytes.Length -or (Compare-Object $stockBytes $currentBytes -SyncWindow 0)) { throw "identity-cache request changed plan bytes while source authority is unavailable" }
           $identity = Get-Content $identityProbe -Raw | ConvertFrom-Json
           if ($identity.schema -ne "bootoptim.appcds_identity_cache_probe.v1") { throw "wrong identity-cache probe schema" }
           if ($identity.runtime_reuse_authorized -ne $false -or $identity.reused_files -ne 0 -or $identity.reused_bytes -ne 0) { throw "hard-closed runtime reported reuse" }
