@@ -149,7 +149,12 @@ pub fn decode_request(input: &[u8]) -> Option<Request> {
     volume_guid.copy_from_slice(&input[44..93]);
     let mut file_id = [0; 16];
     file_id.copy_from_slice(&input[96..112]);
-    Some(Request { kind, nonce, volume_guid, file_id })
+    Some(Request {
+        kind,
+        nonce,
+        volume_guid,
+        file_id,
+    })
 }
 
 pub fn encode_response(value: Response) -> [u8; RESPONSE_LEN] {
@@ -191,10 +196,7 @@ pub fn decode_response(input: &[u8]) -> Option<Response> {
 
 pub fn volume_guid_bytes(value: &str) -> Option<[u8; VOLUME_GUID_LEN]> {
     let bytes = value.as_bytes();
-    if bytes.len() != VOLUME_GUID_LEN
-        || !value.starts_with(r"\\?\Volume{")
-        || !value.ends_with(r"}\")
-    {
+    if bytes.len() != VOLUME_GUID_LEN || !value.starts_with(r"\\?\Volume{") || !value.ends_with(r"}\") {
         return None;
     }
     let uuid = &bytes[11..47];
@@ -223,7 +225,12 @@ mod tests {
     fn round_trip_is_fixed_size_and_rejects_unknowns() {
         let nonce = [7; NONCE_LEN];
         let volume_guid = volume_guid_bytes(r"\\?\Volume{12345678-1234-5678-9abc-def012345678}\").unwrap();
-        let request = Request { kind: RequestKind::File, nonce, volume_guid, file_id: [9; 16] };
+        let request = Request {
+            kind: RequestKind::File,
+            nonce,
+            volume_guid,
+            file_id: [9; 16],
+        };
         let bytes = encode_request(request);
         assert_eq!(bytes.len(), REQUEST_LEN);
         assert_eq!(decode_request(&bytes), Some(request));

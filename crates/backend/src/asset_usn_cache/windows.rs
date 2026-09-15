@@ -39,7 +39,7 @@ impl WindowsSession {
                 // but no manifest will be published because query failure latches
                 // `capability_failed` for the session.
                 return FastVerifyResult::FastRebootstrap;
-            }
+            },
         };
 
         if current.file_id != before.file_id
@@ -56,10 +56,7 @@ impl WindowsSession {
         }
 
         if let Some(manifest) = &self.cached
-            && let Some(cached) = manifest
-                .assets
-                .iter()
-                .find(|asset| asset.expected_sha1 == expected_sha1)
+            && let Some(cached) = manifest.assets.iter().find(|asset| asset.expected_sha1 == expected_sha1)
         {
             let current_id = hex::encode(current.file_id);
             let evidence = HitEvidence {
@@ -91,7 +88,7 @@ impl WindowsSession {
                 ReuseDecision::VerifiedReuse => {
                     self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
                     return FastVerifyResult::VerifiedReuse;
-                }
+                },
                 ReuseDecision::FullSha1(
                     MissReason::JournalIdMismatch
                     | MissReason::JournalRegression
@@ -102,13 +99,13 @@ impl WindowsSession {
                     // rebuild a fresh USN baseline without reading every byte.
                     self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
                     return FastVerifyResult::FastRebootstrap;
-                }
+                },
                 ReuseDecision::FullSha1(_) => {
                     // Under a complete same-era manifest, a changed FileId/USN
                     // is a per-object invalidation. The caller will download/
                     // repair this object and verify that downloaded body by SHA-1.
                     return FastVerifyResult::IndividualRepairVerification;
-                }
+                },
             }
         }
 
@@ -128,12 +125,7 @@ impl WindowsSession {
         }
 
         for expected in &self.expected_hashes {
-            if self
-                .snapshots
-                .lock()
-                .ok()
-                .is_some_and(|map| map.contains_key(expected))
-            {
+            if self.snapshots.lock().ok().is_some_and(|map| map.contains_key(expected)) {
                 continue;
             }
             let path = self.assets_root.join(&expected[..2]).join(expected);
@@ -156,10 +148,7 @@ impl WindowsSession {
             return;
         };
         if snapshots.len() != self.expected_hashes.len()
-            || self
-                .expected_hashes
-                .iter()
-                .any(|hash| !snapshots.contains_key(hash))
+            || self.expected_hashes.iter().any(|hash| !snapshots.contains_key(hash))
         {
             return;
         }

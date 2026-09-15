@@ -13,8 +13,8 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -128,8 +128,7 @@ impl ActivationProbe {
     }
 
     pub(crate) fn record_individual_repair_verification(&self) {
-        self.individual_repair_verification_files
-            .fetch_add(1, Ordering::Relaxed);
+        self.individual_repair_verification_files.fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn record_stock_sha1(&self) {
@@ -171,9 +170,7 @@ impl ActivationProbe {
             publication_state,
             verified_reuse_files: self.verified_reuse_files.load(Ordering::Relaxed),
             fast_rebootstrap_files: self.fast_rebootstrap_files.load(Ordering::Relaxed),
-            individual_repair_verification_files: self
-                .individual_repair_verification_files
-                .load(Ordering::Relaxed),
+            individual_repair_verification_files: self.individual_repair_verification_files.load(Ordering::Relaxed),
             stock_sha1_files: self.stock_sha1_files.load(Ordering::Relaxed),
         };
 
@@ -181,18 +178,10 @@ impl ActivationProbe {
             return;
         };
         bytes.push(b'\n');
-        if let Some(parent) = self
-            .output_path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        {
+        if let Some(parent) = self.output_path.parent().filter(|path| !path.as_os_str().is_empty()) {
             let _ = std::fs::create_dir_all(parent);
         }
-        let Ok(mut output) = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&self.output_path)
-        else {
+        let Ok(mut output) = OpenOptions::new().write(true).create_new(true).open(&self.output_path) else {
             return;
         };
         let _ = output.write_all(&bytes);
@@ -213,9 +202,7 @@ fn mode_name(mode: AssetVerificationMode) -> &'static str {
 fn capability_reason(failure: CapabilityFailure) -> &'static str {
     match failure {
         CapabilityFailure::HelperMissing => "fast_rebootstrap_legacy_helper_missing",
-        CapabilityFailure::HelperIdentityMismatch => {
-            "fast_rebootstrap_legacy_helper_identity_mismatch"
-        },
+        CapabilityFailure::HelperIdentityMismatch => "fast_rebootstrap_legacy_helper_identity_mismatch",
         CapabilityFailure::UacDenied => "fast_rebootstrap_legacy_uac_denied",
         CapabilityFailure::HelperCrash => "fast_rebootstrap_legacy_helper_crash",
         CapabilityFailure::Timeout => "fast_rebootstrap_legacy_helper_timeout",
@@ -241,22 +228,12 @@ mod tests {
     use super::*;
 
     fn temp_path(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "bootoptim-usn-activation-probe-{label}-{}.json",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("bootoptim-usn-activation-probe-{label}-{}.json", std::process::id()))
     }
 
     #[test]
     fn asset_usn_cache_probe_sidecar_is_default_off() {
-        assert!(ActivationProbe::from_path(
-            None,
-            true,
-            AssetVerificationMode::Normal,
-            true,
-            false,
-        )
-        .is_none());
+        assert!(ActivationProbe::from_path(None, true, AssetVerificationMode::Normal, true, false,).is_none());
     }
 
     #[test]
@@ -279,18 +256,14 @@ mod tests {
         probe.record_fast_rebootstrap();
         probe.finish(&manifest);
 
-        let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
         assert_eq!(value["schema"], SCHEMA);
         assert_eq!(value["policy"], POLICY);
         assert_eq!(value["capability_mode"], CAPABILITY_MODE);
         assert_eq!(value["elevation_requested"], false);
         assert_eq!(value["verification_mode"], "full_verification");
         assert_eq!(value["session_state"], "degraded_fast");
-        assert_eq!(
-            value["decision_reason"],
-            "fast_rebootstrap_direct_capability_io"
-        );
+        assert_eq!(value["decision_reason"], "fast_rebootstrap_direct_capability_io");
         assert_eq!(value["publication_state"], "not_attempted");
         assert_eq!(value["fast_rebootstrap_files"], 1);
         assert_eq!(value["stock_sha1_files"], 0);
@@ -305,14 +278,8 @@ mod tests {
         let _ = std::fs::remove_file(&output);
         let _ = std::fs::remove_file(&manifest);
 
-        let probe = ActivationProbe::from_path(
-            Some(output.clone()),
-            true,
-            AssetVerificationMode::Normal,
-            true,
-            false,
-        )
-        .unwrap();
+        let probe =
+            ActivationProbe::from_path(Some(output.clone()), true, AssetVerificationMode::Normal, true, false).unwrap();
         probe.session_attempted();
         probe.session_ready();
         probe.record_verified_reuse();
@@ -321,8 +288,7 @@ mod tests {
         std::fs::write(&manifest, b"manifest").unwrap();
         probe.finish(&manifest);
 
-        let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
         assert_eq!(value["policy"], "fast_rebootstrap");
         assert_eq!(value["publication_state"], "created");
         assert_eq!(value["verified_reuse_files"], 1);

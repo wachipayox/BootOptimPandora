@@ -45,12 +45,8 @@ fn corrupt_manifest_fast_rebootstrap_reads_no_asset_content() {
 
     let runtime = AssetUsnCacheRuntime::requested_for_test(true);
     let index_sha1 = "0123456789abcdef0123456789abcdef01234567";
-    let session = WindowsSession::begin(
-        index_sha1,
-        Arc::<Path>::from(objects.as_path()),
-        vec![expected_sha1.clone()],
-    )
-    .unwrap();
+    let session =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
 
     asset_probe_context::reset_hash_observed();
     assert_eq!(
@@ -85,12 +81,8 @@ fn mutation_after_fast_rebootstrap_is_detected_by_usn_next_run() {
     let runtime = AssetUsnCacheRuntime::requested_for_test(true);
     let index_sha1 = "0123456789abcdef0123456789abcdef01234567";
 
-    let bootstrap = WindowsSession::begin(
-        index_sha1,
-        Arc::<Path>::from(objects.as_path()),
-        vec![expected_sha1.clone()],
-    )
-    .unwrap();
+    let bootstrap =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     asset_probe_context::reset_hash_observed();
     assert_eq!(
         bootstrap.verify_existing_fast(&runtime, &asset, &expected_sha1),
@@ -100,12 +92,8 @@ fn mutation_after_fast_rebootstrap_is_detected_by_usn_next_run() {
     bootstrap.finish_fast();
     drop(bootstrap);
 
-    let unchanged = WindowsSession::begin(
-        index_sha1,
-        Arc::<Path>::from(objects.as_path()),
-        vec![expected_sha1.clone()],
-    )
-    .unwrap();
+    let unchanged =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     asset_probe_context::reset_hash_observed();
     assert_eq!(
         unchanged.verify_existing_fast(&runtime, &asset, &expected_sha1),
@@ -119,17 +107,11 @@ fn mutation_after_fast_rebootstrap_is_detected_by_usn_next_run() {
     writer.seek(SeekFrom::Start(0)).unwrap();
     writer.write_all(mutated).unwrap();
     writer.sync_all().unwrap();
-    writer
-        .set_times(std::fs::FileTimes::new().set_modified(modified))
-        .unwrap();
+    writer.set_times(std::fs::FileTimes::new().set_modified(modified)).unwrap();
     drop(writer);
 
-    let changed = WindowsSession::begin(
-        index_sha1,
-        Arc::<Path>::from(objects.as_path()),
-        vec![expected_sha1.clone()],
-    )
-    .unwrap();
+    let changed =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     asset_probe_context::reset_hash_observed();
     assert_eq!(
         changed.verify_existing_fast(&runtime, &asset, &expected_sha1),
@@ -156,12 +138,8 @@ fn delete_recreate_after_rebootstrap_requests_individual_repair() {
 
     let runtime = AssetUsnCacheRuntime::requested_for_test(true);
     let index_sha1 = "0123456789abcdef0123456789abcdef01234567";
-    let bootstrap = WindowsSession::begin(
-        index_sha1,
-        Arc::<Path>::from(objects.as_path()),
-        vec![expected_sha1.clone()],
-    )
-    .unwrap();
+    let bootstrap =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     assert_eq!(
         bootstrap.verify_existing_fast(&runtime, &asset, &expected_sha1),
         FastVerifyResult::FastRebootstrap
@@ -172,12 +150,8 @@ fn delete_recreate_after_rebootstrap_requests_individual_repair() {
     std::fs::remove_file(&asset).unwrap();
     std::fs::write(&asset, original).unwrap();
 
-    let recreated = WindowsSession::begin(
-        index_sha1,
-        Arc::<Path>::from(objects.as_path()),
-        vec![expected_sha1.clone()],
-    )
-    .unwrap();
+    let recreated =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     assert_eq!(
         recreated.verify_existing_fast(&runtime, &asset, &expected_sha1),
         FastVerifyResult::IndividualRepairVerification
