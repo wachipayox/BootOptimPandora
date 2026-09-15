@@ -3,14 +3,15 @@ name: BootOptim v0 interposer
 on:
   push:
     branches:
-      - "agent151/bootoptim-launch-interposer-v0-20260913"
-      - "agent152/deterministic-classpath-hidden-preflight-20260913"
+      - "agent165/composed-ab-base-20260915"
+      - "agent165/composed-ab-candidate-20260915"
   pull_request:
     paths:
       - "bootoptim-v0/**"
       - "crates/command/**"
       - "crates/bridge/**"
       - "crates/backend/**"
+      - "crates/frontend/**"
       - ".github/workflows/bootoptim-v0.yml"
 
 permissions:
@@ -25,43 +26,35 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Run portable helper tests
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
-
       - name: Test launch probe schema and phase ordering
         run: cargo test -p bridge launch_probe --frozen
+      - name: Test asset verification intent propagation
+        run: cargo test -p bridge asset_verification_mode --frozen
 
   windows-v0:
     runs-on: windows-2022
     timeout-minutes: 45
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-
       - name: Test standalone interposer
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc
-
       - name: Test launch probe schema and phase ordering
         run: cargo test -p bridge launch_probe --frozen --target x86_64-pc-windows-msvc
-
+      - name: Test asset verification intent propagation
+        run: cargo test -p bridge asset_verification_mode --frozen --target x86_64-pc-windows-msvc
       - name: Test direct Java spawn probe filter
         run: cargo test -p command launch_probe_tests --frozen --target x86_64-pc-windows-msvc
-
       - name: Test deterministic library order
         shell: pwsh
         run: cargo test -p backend bootoptim_library_order_tests --frozen --target x86_64-pc-windows-msvc
-
       - name: Repeat deterministic order in independent processes
         shell: pwsh
         run: |
@@ -69,45 +62,108 @@ jobs:
             cargo test -p backend deterministic_across_equivalent_collections --frozen --target x86_64-pc-windows-msvc
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-
       - name: Test hidden preflight pipe semantics
         shell: pwsh
         run: cargo test -p command bootoptim_windows_preflight_tests --frozen --target x86_64-pc-windows-msvc
-
       - name: Build standalone interposer
         run: cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml --release --locked --target x86_64-pc-windows-msvc
-
       - name: Build patched Pandora
         run: cargo build --release --frozen --target x86_64-pc-windows-msvc
+      - name: Execute packaged Pandora probe contract
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe").Path
+          $probe = Join-Path $env:RUNNER_TEMP "bootoptim-packaged-probe-contract.jsonl"
+          Remove-Item $probe -ErrorAction SilentlyContinue
 
+          $env:BOOTOPTIM_LAUNCH_PROBE = $probe
+          $env:BOOTOPTIM_PACKAGED_PROBE_SELFTEST_BRIDGE = "1"
+          $bridgeProcess = Start-Process -FilePath $exe -ArgumentList @("--run-instance", "__bootoptim_probe_contract_selftest__") -Wait -PassThru
+          $bridgeCode = $bridgeProcess.ExitCode
+          Remove-Item Env:BOOTOPTIM_PACKAGED_PROBE_SELFTEST_BRIDGE -ErrorAction SilentlyContinue
+          if ($bridgeCode -ne 0) { throw "packaged bridge probe stage failed with exit $bridgeCode" }
+
+          $env:BOOTOPTIM_PACKAGED_PROBE_SELFTEST_COMMAND = "1"
+          $commandProcess = Start-Process -FilePath $exe -ArgumentList @("--internal-set-traverse-acls", "__bootoptim_probe_selftest__", "__bootoptim_probe_selftest__") -Wait -PassThru
+          $commandCode = $commandProcess.ExitCode
+          Remove-Item Env:BOOTOPTIM_PACKAGED_PROBE_SELFTEST_COMMAND -ErrorAction SilentlyContinue
+          Remove-Item Env:BOOTOPTIM_LAUNCH_PROBE -ErrorAction SilentlyContinue
+          if ($commandCode -ne 0) { throw "packaged command probe stage failed with exit $commandCode" }
+          if (-not (Test-Path $probe)) { throw "packaged probe contract did not produce JSONL" }
+
+          $lines = @(Get-Content $probe | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          if ($lines.Count -eq 0) { throw "packaged probe contract produced empty JSONL" }
+          $events = @($lines | ForEach-Object { $_ | ConvertFrom-Json })
+
+          if ($events[0].phase -ne "launcher_pre_java" -or $events[0].event -ne "begin") {
+            throw "first record must be launcher_pre_java.begin"
+          }
+          if (@($events | Where-Object { $_.event -eq "inclusive_begin" -or $_.event -eq "inclusive_end" }).Count -ne 0) {
+            throw "legacy inclusive_* event present"
+          }
+
+          function Count-Event([string]$phase, [string]$event) {
+            return @($events | Where-Object { $_.phase -eq $phase -and $_.event -eq $event }).Count
+          }
+          if ((Count-Event "launcher_pre_java" "begin") -ne 1 -or (Count-Event "launcher_pre_java" "end") -ne 1) {
+            throw "launcher_pre_java begin/end must each occur exactly once"
+          }
+          if ((Count-Event "java_spawn" "begin") -ne 1 -or (Count-Event "java_spawn" "end") -ne 1) {
+            throw "java_spawn begin/end must each occur exactly once"
+          }
+
+          foreach ($phase in @("classpath_resolution", "native_extraction", "wrapper_arguments")) {
+            $matching = @($events | Where-Object { $_.phase -eq $phase })
+            if ($matching.Count -ne 1) { throw "$phase must occur exactly once" }
+            $item = $matching[0]
+            if ($item.event -ne "unobserved" -or $item.observed -ne $false -or $null -ne $item.duration_ns) {
+              throw "$phase must be explicit unobserved with null duration"
+            }
+          }
+
+          $javaBegin = [array]::FindIndex($events, [Predicate[object]]{ param($e) $e.phase -eq "java_spawn" -and $e.event -eq "begin" })
+          $javaEnd = [array]::FindIndex($events, [Predicate[object]]{ param($e) $e.phase -eq "java_spawn" -and $e.event -eq "end" })
+          $rootEnd = [array]::FindIndex($events, [Predicate[object]]{ param($e) $e.phase -eq "launcher_pre_java" -and $e.event -eq "end" })
+          if (-not ($javaBegin -ge 0 -and $javaBegin -lt $javaEnd -and $javaEnd -lt $rootEnd)) {
+            throw "java_spawn must close before launcher_pre_java.end"
+          }
+
+          $observedPair = $false
+          foreach ($phase in @("instance_config", "account_selection", "prelaunch", "version_loader_resolution")) {
+            if ((Count-Event $phase "begin") -eq 1 -and (Count-Event $phase "end") -eq 1) { $observedPair = $true }
+          }
+          $explicitUnobserved = @($events | Where-Object { $_.event -eq "unobserved" -and $_.observed -eq $false -and $null -eq $_.duration_ns }).Count -gt 0
+          if (-not $observedPair -and -not $explicitUnobserved) {
+            throw "trace contains neither an observed phase pair nor explicit unobserved phase"
+          }
+
+          for ($i = 1; $i -lt $events.Count; $i++) {
+            if ([uint64]$events[$i].mono_ns -lt [uint64]$events[$i - 1].mono_ns) {
+              throw "probe timestamp moved backwards at record $i"
+            }
+          }
+          Get-Content $probe
       - name: Verify packaged Pandora probe linkage
         shell: pwsh
         run: |
           $exe = "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe"
           $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
           foreach ($marker in @("bootoptim.launch_probe.v1", "launcher_pre_java", "java_spawn")) {
-            if (-not $ascii.Contains($marker)) {
-              throw "release Pandora binary missing launch-probe marker: $marker"
-            }
+            if (-not $ascii.Contains($marker)) { throw "release Pandora binary missing launch-probe marker: $marker" }
           }
-
       - name: Assemble reproducible test artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force bootoptim-v0/dist | Out-Null
           Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe bootoptim-v0/dist/
           Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe bootoptim-v0/dist/BootOptimPandora-v0.exe
-          $files = @(
-            "bootoptim-v0/dist/bootoptim-launch-interposer.exe",
-            "bootoptim-v0/dist/BootOptimPandora-v0.exe"
-          )
+          $files = @("bootoptim-v0/dist/bootoptim-launch-interposer.exe", "bootoptim-v0/dist/BootOptimPandora-v0.exe")
           $lines = foreach ($file in $files) {
             $h = Get-FileHash -Algorithm SHA256 $file
             "{0}  {1}" -f $h.Hash.ToLowerInvariant(), (Split-Path $file -Leaf)
           }
           $lines | Set-Content -Encoding ascii bootoptim-v0/dist/SHA256SUMS.txt
           Get-Content bootoptim-v0/dist/SHA256SUMS.txt
-
       - name: Upload Windows prototype
         uses: actions/upload-artifact@v4
         with:

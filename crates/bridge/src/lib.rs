@@ -6,6 +6,7 @@ pub mod install;
 pub mod instance;
 pub mod keep_alive;
 pub mod launch_probe;
+mod packaged_probe_selftest;
 pub mod message;
 pub mod meta;
 pub mod modal_action;

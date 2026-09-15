@@ -73,6 +73,15 @@ fn probe_request(message: &MessageToBackend) {
             // Name-based launches construct their ModalAction inside the backend. A zero key
             // is a temporary sentinel adopted by the first modal/tracker callback.
             crate::launch_probe::request(0);
+            if let Some(result) = crate::packaged_probe_selftest::finish_bridge_stage_if_requested() {
+                match result {
+                    Ok(()) => std::process::exit(0),
+                    Err(error) => {
+                        eprintln!("BOOTOPTIM_PACKAGED_PROBE_SELFTEST_BRIDGE=error {error}");
+                        std::process::exit(2);
+                    }
+                }
+            }
         }
         _ => {}
     }

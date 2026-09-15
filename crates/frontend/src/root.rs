@@ -155,7 +155,7 @@ pub fn start_instance(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let modal_action = ModalAction::default();
+    let modal_action = ModalAction::normal_launch();
 
     // Remove any stale live game outputs
     if let Some(instance_entry) = data.instances.read(cx).entries.get(&id).cloned() {
