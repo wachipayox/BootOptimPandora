@@ -6,6 +6,7 @@ on:
       - "agent151/bootoptim-launch-interposer-v0-20260913"
       - "agent152/deterministic-classpath-hidden-preflight-20260913"
       - "agent167/appcds-preflight-attribution-20260915"
+      - "agent168/appcds-identity-cache-runtime-20260915"
   pull_request:
     paths:
       - "bootoptim-v0/**"
@@ -28,13 +29,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Run portable helper tests
+      - name: Run portable helper and capability tests
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
-
       - name: Test launch probe schema and phase ordering
         run: cargo test -p bridge launch_probe --frozen
 
@@ -44,25 +42,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-
-      - name: Test standalone interposer
+      - name: Test standalone interposer and shared capability
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc
-
       - name: Test launch probe schema and phase ordering
         run: cargo test -p bridge launch_probe --frozen --target x86_64-pc-windows-msvc
-
       - name: Test direct Java spawn probe filter
         run: cargo test -p command launch_probe_tests --frozen --target x86_64-pc-windows-msvc
-
       - name: Test deterministic library order
         shell: pwsh
         run: cargo test -p backend bootoptim_library_order_tests --frozen --target x86_64-pc-windows-msvc
-
       - name: Repeat deterministic order in independent processes
         shell: pwsh
         run: |
@@ -70,14 +62,20 @@ jobs:
             cargo test -p backend deterministic_across_equivalent_collections --frozen --target x86_64-pc-windows-msvc
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-
       - name: Test hidden preflight pipe semantics
         shell: pwsh
         run: cargo test -p command bootoptim_windows_preflight_tests --frozen --target x86_64-pc-windows-msvc
 
+      - name: Build capability-minimal USN helper
+        run: cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml -p bootoptim-ntfs-usn-capability --bin bootoptim-usn-helper --release --locked --target x86_64-pc-windows-msvc
+      - name: Pin capability helper into interposer build
+        shell: pwsh
+        run: |
+          $helper = "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-usn-helper.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $helper).Hash.ToLowerInvariant()
+          "BOOTOPTIM_APPCDS_USN_HELPER_SHA256_PIN=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Build standalone interposer
         run: cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml --release --locked --target x86_64-pc-windows-msvc
-
       - name: Build patched Pandora
         run: cargo build --release --frozen --target x86_64-pc-windows-msvc
 
@@ -95,63 +93,55 @@ jobs:
           [System.IO.File]::WriteAllBytes((Join-Path $fixture "mods\mod.jar"), [byte[]](9,10,11,12))
           [System.IO.File]::WriteAllText((Join-Path $fixture "config\fml.toml"), "probe=true`n")
           [System.IO.File]::WriteAllText((Join-Path $fixture "options.txt"), "resourcePacks:[`"vanilla`"]`nincompatibleResourcePacks:[]`n")
-
-          $helper = (Resolve-Path "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe").Path
+          $interposer = (Resolve-Path "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe").Path
           $launcher = (Resolve-Path "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe").Path
           $java = Join-Path $fixture "runtime\bin\java.exe"
           $classpath = Join-Path $fixture "library.jar"
           $probe = Join-Path $fixture "preflight-probe.json"
           $env:BOOTOPTIM_APPCDS_MODE = "plan"
           $env:BOOTOPTIM_APPCDS_PREFLIGHT_PROBE = $probe
-          $decision = & $helper --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea -- $java -cp $classpath com.moulberry.pandora.LaunchWrapper
-          if ($LASTEXITCODE -ne 0) { throw "preflight helper exited $LASTEXITCODE" }
-          if (($decision | Out-String).Trim() -ne "STOCK") { throw "unexpected plan decision: $decision" }
-          if (-not (Test-Path $probe)) { throw "preflight probe sidecar missing" }
+          $decision = & $interposer --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea -- $java -cp $classpath com.moulberry.pandora.LaunchWrapper
+          if ($LASTEXITCODE -ne 0 -or ($decision | Out-String).Trim() -ne "STOCK") { throw "preflight contract failed" }
           $json = Get-Content $probe -Raw | ConvertFrom-Json
-          if ($json.schema -ne "bootoptim.appcds_preflight_probe.v1") { throw "wrong preflight probe schema" }
-          if ($json.mode -ne "plan" -or $json.decision -ne "STOCK") { throw "wrong preflight mode/decision" }
-          if ($null -eq $json.top_ns.build_launch_plan -or $null -eq $json.top_ns.lock_attempt -or $null -eq $json.top_ns.persist_plan) { throw "missing top-level preflight buckets" }
-          if ($null -eq $json.build_plan_ns.classpath -or $null -eq $json.build_plan_ns.mods -or $null -eq $json.build_plan_ns.pack_inputs) { throw "missing build-plan buckets" }
-          if ($null -ne $json.top_ns.classify_cache -or $null -ne $json.top_ns.promote_archive) { throw "plan mode must not classify/promote cache" }
-          if ($json.inventory.classpath.files -ne 1 -or $json.inventory.mods.files -ne 1) { throw "unexpected aggregate inventory" }
+          if ($json.schema -ne "bootoptim.appcds_preflight_probe.v1" -or $json.mode -ne "plan" -or $json.decision -ne "STOCK") { throw "wrong preflight probe contract" }
+          if ($null -ne $json.top_ns.classify_cache -or $null -ne $json.top_ns.promote_archive) { throw "plan mode must not classify/promote" }
+          Copy-Item (Join-Path $fixture ".bootoptim\appcds\launch-plan.json") (Join-Path $fixture "plan-stock.json")
+          Remove-Item $probe
+          $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE = "1"
+          $env:BOOTOPTIM_APPCDS_PREFLIGHT_PROBE = $probe
+          $decision = & $interposer --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea -- $java -cp $classpath com.moulberry.pandora.LaunchWrapper
+          if ($LASTEXITCODE -ne 0 -or ($decision | Out-String).Trim() -ne "STOCK") { throw "hard-closed identity-cache run failed" }
+          if (-not (Compare-Object (Get-Content (Join-Path $fixture "plan-stock.json") -Raw) (Get-Content (Join-Path $fixture ".bootoptim\appcds\launch-plan.json") -Raw) -SyncWindow 0)) { } else { throw "identity-cache request changed plan bytes while source authority is unavailable" }
           Copy-Item $probe "bootoptim-v0/preflight-probe-selftest.json"
+          Remove-Item Env:BOOTOPTIM_APPCDS_IDENTITY_CACHE -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_APPCDS_PREFLIGHT_PROBE -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_APPCDS_MODE -ErrorAction SilentlyContinue
 
-      - name: Verify packaged Pandora probe linkage
+      - name: Verify packaged binary linkage
         shell: pwsh
         run: |
           $exe = "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe"
           $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
-          foreach ($marker in @("bootoptim.launch_probe.v1", "launcher_pre_java", "java_spawn")) {
-            if (-not $ascii.Contains($marker)) {
-              throw "release Pandora binary missing launch-probe marker: $marker"
-            }
-          }
-          $helper = "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe"
+          foreach ($marker in @("bootoptim.launch_probe.v1", "launcher_pre_java", "java_spawn")) { if (-not $ascii.Contains($marker)) { throw "release Pandora binary missing $marker" } }
+          $interposer = "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe"
+          $helper = "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-usn-helper.exe"
+          $interposerAscii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($interposer))
           $helperAscii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($helper))
-          if (-not $helperAscii.Contains("bootoptim.appcds_preflight_probe.v1")) {
-            throw "release interposer missing preflight-probe schema marker"
-          }
+          if (-not $interposerAscii.Contains("bootoptim.appcds_preflight_probe.v1")) { throw "release interposer missing preflight marker" }
+          if (-not $helperAscii.Contains("BOPUSN01")) { throw "release USN helper missing fixed protocol marker" }
 
       - name: Assemble reproducible test artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force bootoptim-v0/dist | Out-Null
           Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe bootoptim-v0/dist/
+          Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-usn-helper.exe bootoptim-v0/dist/
           Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe bootoptim-v0/dist/BootOptimPandora-v0.exe
           Copy-Item bootoptim-v0/preflight-probe-selftest.json bootoptim-v0/dist/APPCDS_PREFLIGHT_PROBE_SELFTEST.json
-          $files = @(
-            "bootoptim-v0/dist/bootoptim-launch-interposer.exe",
-            "bootoptim-v0/dist/BootOptimPandora-v0.exe"
-          )
-          $lines = foreach ($file in $files) {
-            $h = Get-FileHash -Algorithm SHA256 $file
-            "{0}  {1}" -f $h.Hash.ToLowerInvariant(), (Split-Path $file -Leaf)
-          }
+          $files = @("bootoptim-v0/dist/bootoptim-launch-interposer.exe","bootoptim-v0/dist/bootoptim-usn-helper.exe","bootoptim-v0/dist/BootOptimPandora-v0.exe")
+          $lines = foreach ($file in $files) { $h=Get-FileHash -Algorithm SHA256 $file; "{0}  {1}" -f $h.Hash.ToLowerInvariant(),(Split-Path $file -Leaf) }
           $lines | Set-Content -Encoding ascii bootoptim-v0/dist/SHA256SUMS.txt
           Get-Content bootoptim-v0/dist/SHA256SUMS.txt
-
       - name: Upload Windows prototype
         uses: actions/upload-artifact@v4
         with:
