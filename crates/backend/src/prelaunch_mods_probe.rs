@@ -76,8 +76,16 @@ impl Fixture {
 
         write_pattern(&mods_dir.join("user-added.jar"), extra_bytes, 0x33)?;
         write_pattern(&mods_dir.join("notes.txt"), 4096, 0x44)?;
-        write_pattern(&mods_dir.join("mcef-cache/cache.bin"), extra_bytes / 2, 0x55)?;
-        write_pattern(&mods_dir.join(".connector/cache.bin"), extra_bytes / 2, 0x66)?;
+        write_pattern(
+            &mods_dir.join("mcef-cache/cache.bin"),
+            extra_bytes / 2,
+            0x55,
+        )?;
+        write_pattern(
+            &mods_dir.join(".connector/cache.bin"),
+            extra_bytes / 2,
+            0x66,
+        )?;
 
         Ok(Self {
             _temp: temp,
@@ -109,7 +117,8 @@ fn write_pattern(path: &Path, len: usize, seed: u8) -> io::Result<()> {
 fn process_cpu_ns() -> Option<u128> {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     let result = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
-    (result == 0).then_some(ts.tv_sec.max(0) as u128 * 1_000_000_000 + ts.tv_nsec.max(0) as u128)
+    (result == 0)
+        .then_some(ts.tv_sec.max(0) as u128 * 1_000_000_000 + ts.tv_nsec.max(0) as u128)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -117,7 +126,9 @@ fn process_cpu_ns() -> Option<u128> {
     None
 }
 
-fn measured<T>(op: impl FnOnce() -> io::Result<(T, u64, u64, u64)>) -> io::Result<(T, PhaseSample)> {
+fn measured<T>(
+    op: impl FnOnce() -> io::Result<(T, u64, u64, u64)>,
+) -> io::Result<(T, PhaseSample)> {
     let wall_start = Instant::now();
     let cpu_start = process_cpu_ns();
     let (value, bytes, files, dirs) = op()?;
@@ -138,7 +149,10 @@ fn measured<T>(op: impl FnOnce() -> io::Result<(T, u64, u64, u64)>) -> io::Resul
     ))
 }
 
-fn scan_unknown_top_level(mods_dir: &Path, known: &BTreeSet<PathBuf>) -> io::Result<(Vec<PathBuf>, u64, u64)> {
+fn scan_unknown_top_level(
+    mods_dir: &Path,
+    known: &BTreeSet<PathBuf>,
+) -> io::Result<(Vec<PathBuf>, u64, u64)> {
     let mut unknown = Vec::new();
     let mut files = 0;
     let mut dirs = 0;
@@ -181,7 +195,11 @@ fn copy_extra(from: &Path, to: &Path) -> io::Result<(u64, u64, u64)> {
     }
 }
 
-fn restore_stock_layout(instance_root: &Path, mods_dir: &Path, sandbox: bool) -> io::Result<PhaseSample> {
+fn restore_stock_layout(
+    instance_root: &Path,
+    mods_dir: &Path,
+    sandbox: bool,
+) -> io::Result<PhaseSample> {
     let original_mods = instance_root.join("original_mods");
     let (_, sample) = measured(|| {
         let mut bytes = 0;
@@ -213,11 +231,15 @@ fn restore_stock_layout(instance_root: &Path, mods_dir: &Path, sandbox: bool) ->
     Ok(sample)
 }
 
-fn run_stock_filesystem_cycle(fixture: &Fixture, sandbox: bool) -> io::Result<HashMap<&'static str, PhaseSample>> {
+fn run_stock_filesystem_cycle(
+    fixture: &Fixture,
+    sandbox: bool,
+) -> io::Result<HashMap<&'static str, PhaseSample>> {
     let mut samples = HashMap::new();
 
     let (unknown, scan) = measured(|| {
-        let (unknown, files, dirs) = scan_unknown_top_level(&fixture.mods_dir, &fixture.known_top_level)?;
+        let (unknown, files, dirs) =
+            scan_unknown_top_level(&fixture.mods_dir, &fixture.known_top_level)?;
         Ok((unknown, 0, files, dirs))
     })?;
     samples.insert("scan_mods_top_level", scan);
@@ -249,7 +271,10 @@ fn run_stock_filesystem_cycle(fixture: &Fixture, sandbox: bool) -> io::Result<Ha
         let mut files = 0;
         let mut dirs = 0;
         for relative in &unknown {
-            let (b, f, d) = copy_extra(&original_mods.join(relative), &fixture.mods_dir.join(relative))?;
+            let (b, f, d) = copy_extra(
+                &original_mods.join(relative),
+                &fixture.mods_dir.join(relative),
+            )?;
             bytes += b;
             files += f;
             dirs += d;
@@ -266,7 +291,11 @@ fn run_stock_filesystem_cycle(fixture: &Fixture, sandbox: bool) -> io::Result<Ha
     })?;
     samples.insert("write_modpack_extra_file", modpack_extra);
 
-    write_pattern(&fixture.mods_dir.join(".connector/cache.bin"), 96 * 1024, 0x99)?;
+    write_pattern(
+        &fixture.mods_dir.join(".connector/cache.bin"),
+        96 * 1024,
+        0x99,
+    )?;
     let restore = restore_stock_layout(&fixture.instance_root, &fixture.mods_dir, sandbox)?;
     samples.insert("restore_original_mods", restore);
 
@@ -302,7 +331,10 @@ fn fail_open_reuse_allowed(
     previous_exit_clean: bool,
     original_mods_absent: bool,
 ) -> bool {
-    previous_exit_clean && prepared_layout_present && original_mods_absent && prior == Some(current)
+    previous_exit_clean
+        && prepared_layout_present
+        && original_mods_absent
+        && prior == Some(current)
 }
 
 #[test]
@@ -366,7 +398,8 @@ fn sandbox_restore_does_not_merge_runtime_connector_cache() -> io::Result<()> {
 #[test]
 fn interrupted_prelaunch_can_restore_original_layout_fail_open() -> io::Result<()> {
     let fixture = Fixture::create(8, 4096, 16 * 1024)?;
-    let (unknown, _, _) = scan_unknown_top_level(&fixture.mods_dir, &fixture.known_top_level)?;
+    let (unknown, _, _) =
+        scan_unknown_top_level(&fixture.mods_dir, &fixture.known_top_level)?;
     let original_mods = fixture.instance_root.join("original_mods");
     fs::rename(&fixture.mods_dir, &original_mods)?;
     fs::create_dir_all(&fixture.mods_dir)?;
