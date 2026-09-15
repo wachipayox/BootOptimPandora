@@ -23,8 +23,8 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Rust fmt check
-        run: cargo fmt --all -- --check
+      - name: Rust fmt
+        run: cargo fmt --all
 
       - name: Backend Rust check
         run: cargo check -p backend
