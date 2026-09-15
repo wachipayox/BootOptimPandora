@@ -23,10 +23,8 @@ pub struct ModalAction(Arc<ModalActionInner>);
 
 impl ModalAction {
     pub fn normal_gui_launch() -> Self {
-        let inner = ModalActionInner {
-            appcds_launch_authority: AppCdsLaunchAuthority::NormalGui,
-            ..Default::default()
-        };
+        let mut inner = ModalActionInner::default();
+        inner.appcds_launch_authority = AppCdsLaunchAuthority::NormalGui;
         Self(Arc::new(inner))
     }
 
