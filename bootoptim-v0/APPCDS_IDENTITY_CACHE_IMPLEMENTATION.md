@@ -25,9 +25,9 @@ The shared crate contains only:
 
 It contains no `AssetVerificationMode`, Mojang SHA-1, asset index, `assets/objects` path rule, downloader or repair policy. Pandora, the AppCDS interposer and Java/Minecraft are never elevated by this crate.
 
-The AppCDS side now has a policy engine for per-file digest records keyed by exact role + encoded path and authorized by volume/journal/FileId/file-USN/same-handle evidence. Size exists only as diagnostic consistency data and is explicitly not consulted by the reuse decision. Tests pin same-size/mtime-style mutation as a USN miss, rename as a record-key miss, delete/recreate as FileId miss, journal restamp/regression/discontinuity, capability/UAC failure and handle-identity failure.
+The AppCDS side now has a policy engine for per-file digest records keyed by exact role + encoded path and authorized by volume/journal/FileId/file-USN/same-handle evidence. Size exists only as diagnostic consistency data and is explicitly not consulted by the reuse decision. Tests pin same-size/mtime-style mutation as a USN miss, rename as a record-key miss, delete/recreate as FileId miss, journal restamp/regression/discontinuity, every shared-capability failure and handle-identity failure.
 
-The aggregate sidecar schema `bootoptim.appcds_identity_cache_probe.v1` is also present. It contains only reused/stock/miss file and byte counters plus whether runtime reuse is authorized. It piggybacks on PR #19's aggregate inventory, so physical use should enable both sidecars. It never writes paths, hashes, argv or per-file timings and uses `create_new`.
+The aggregate sidecar schema `bootoptim.appcds_identity_cache_probe.v1` is also present. It contains only reused/stock/miss file and byte counters, whether runtime reuse is authorized, and a boolean `helper_pin_compiled`; the helper digest itself is never emitted. It piggybacks on PR #19's aggregate inventory, so physical use must enable both sidecars. It never writes paths, hashes, argv or per-file timings and uses `create_new`.
 
 ## Concrete integration incompatibility: launch-source authority
 
@@ -47,12 +47,13 @@ The BootOptim v0 workflow now:
 
 1. runs portable and Windows tests for the interposer and shared capability crate;
 2. builds the capability-minimal `bootoptim-usn-helper.exe` first;
-3. hashes that exact helper before the interposer release build and exports the intended AppCDS helper pin;
+3. hashes that exact helper before the interposer release build, compiles the lower-hex SHA-256 pin into the interposer, and requires the packaged probe to report `helper_pin_compiled=true`;
 4. builds the exact release interposer and patched Pandora;
 5. executes the packaged interposer against a synthetic `plan` fixture;
-6. repeats with `BOOTOPTIM_APPCDS_IDENTITY_CACHE=1` and requires the launch-plan bytes to remain identical while source authority is unavailable;
-7. verifies protocol/probe markers in the release binaries;
-8. packages Pandora, interposer and capability helper together in `SHA256SUMS.txt`.
+6. repeats with `BOOTOPTIM_APPCDS_IDENTITY_CACHE=1` and requires `launch-plan.json` to be byte-for-byte identical while source authority is unavailable;
+7. requires `runtime_reuse_authorized=false`, `reused_files=0`, `reused_bytes=0`, and positive aggregate stock/miss evidence;
+8. verifies protocol/probe markers in the release binaries;
+9. packages Pandora, interposer and capability helper together in `SHA256SUMS.txt`.
 
 This gate proves only the hard-closed integration and release artifact. Interactive UAC behavior and physical performance are not established by hosted CI.
 
