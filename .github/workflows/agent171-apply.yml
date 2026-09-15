@@ -1,0 +1,247 @@
+name: Agent171 apply patch
+on:
+  push:
+    branches: ["agent171/appcds-gui-launch-authority-20260915"]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply authority-only patch
+        shell: python
+        run: |
+          import pathlib
+
+          def patch(path, old, new, count=1):
+              p = pathlib.Path(path)
+              text = p.read_text()
+              if text.count(old) < count:
+                  raise SystemExit(f"missing patch anchor in {path}: {old[:80]!r}")
+              text = text.replace(old, new, count)
+              p.write_text(text)
+
+          # Stock-owned authority: default is fail-closed Unknown; only the audited GUI Start constructor is NormalGui.
+          patch("crates/bridge/src/modal_action.rs",
+                "#[derive(Default, Clone, Debug)]\npub struct ModalAction(Arc<ModalActionInner>);",
+                "#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]\npub enum AppCdsLaunchAuthority {\n    #[default]\n    Unknown,\n    NormalGui,\n}\n\n#[derive(Default, Clone, Debug)]\npub struct ModalAction(Arc<ModalActionInner>);")
+          patch("crates/bridge/src/modal_action.rs",
+                "impl ModalAction {\n    pub fn refcnt(&self) -> usize {",
+                "impl ModalAction {\n    pub fn normal_gui_launch() -> Self {\n        let inner = ModalActionInner {\n            appcds_launch_authority: AppCdsLaunchAuthority::NormalGui,\n            ..Default::default()\n        };\n        Self(Arc::new(inner))\n    }\n\n    pub fn appcds_launch_authority(&self) -> AppCdsLaunchAuthority {\n        self.0.appcds_launch_authority\n    }\n\n    pub fn refcnt(&self) -> usize {")
+          patch("crates/bridge/src/modal_action.rs",
+                "pub struct ModalActionInner {\n    notify: Arc<tokio::sync::Notify>,",
+                "pub struct ModalActionInner {\n    appcds_launch_authority: AppCdsLaunchAuthority,\n    notify: Arc<tokio::sync::Notify>,")
+          with open("crates/bridge/src/modal_action.rs", "a") as f:
+              f.write(r'''
+
+#[cfg(test)]
+mod appcds_launch_authority_tests {
+    use super::*;
+
+    #[test]
+    fn default_and_legacy_actions_are_unknown() {
+        let action = ModalAction::default();
+        assert_eq!(action.appcds_launch_authority(), AppCdsLaunchAuthority::Unknown);
+        assert_eq!(action.clone().appcds_launch_authority(), AppCdsLaunchAuthority::Unknown);
+    }
+
+    #[test]
+    fn audited_gui_start_constructor_is_normal_gui_and_clone_preserves_it() {
+        let action = ModalAction::normal_gui_launch();
+        assert_eq!(action.appcds_launch_authority(), AppCdsLaunchAuthority::NormalGui);
+        assert_eq!(action.clone().appcds_launch_authority(), AppCdsLaunchAuthority::NormalGui);
+    }
+}
+''')
+
+          patch("crates/frontend/src/root.rs",
+                "pub fn start_instance(\n    id: InstanceID,\n    name: SharedString,\n    quick_play: Option<QuickPlayLaunch>,\n    data: &DataEntities,\n    window: &mut Window,\n    cx: &mut App,\n) {\n    let modal_action = ModalAction::default();",
+                "pub fn start_instance(\n    id: InstanceID,\n    name: SharedString,\n    quick_play: Option<QuickPlayLaunch>,\n    data: &DataEntities,\n    window: &mut Window,\n    cx: &mut App,\n) {\n    // This is the one audited GUI Start authority for AppCDS identity reuse.\n    // CLI/API/legacy callers do not enter through this constructor.\n    let modal_action = ModalAction::normal_gui_launch();")
+
+          # Preserve the authority through Launcher -> LaunchContext -> PandoraCommand without altering Java argv.
+          patch("crates/backend/src/launch/mod.rs",
+                "handle::FrontendHandle, message::{MessageToFrontend, QuickPlayLaunch}, modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath",
+                "handle::FrontendHandle, message::{MessageToFrontend, QuickPlayLaunch}, modal_action::{AppCdsLaunchAuthority, ModalAction, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath")
+          patch("crates/backend/src/launch/mod.rs",
+                "            rule_context: launch_rule_context,\n            login_info,\n        };",
+                "            rule_context: launch_rule_context,\n            login_info,\n            appcds_launch_authority: modal_action.appcds_launch_authority(),\n        };")
+          patch("crates/backend/src/launch/mod.rs",
+                "    pub rule_context: LaunchRuleContext,\n    pub login_info: MinecraftLoginInfo,\n}",
+                "    pub rule_context: LaunchRuleContext,\n    pub login_info: MinecraftLoginInfo,\n    pub appcds_launch_authority: AppCdsLaunchAuthority,\n}")
+          patch("crates/backend/src/launch/mod.rs",
+                "        for arg in iter {\n            command.arg(arg.to_os_string());\n        }\n\n        #[cfg(target_os = \"linux\")]",
+                "        for arg in iter {\n            command.arg(arg.to_os_string());\n        }\n        command.bootoptim_appcds_launch_authority(match self.appcds_launch_authority {\n            AppCdsLaunchAuthority::Unknown => command::BootOptimAppCdsLaunchAuthority::Unknown,\n            AppCdsLaunchAuthority::NormalGui => command::BootOptimAppCdsLaunchAuthority::NormalGui,\n        });\n\n        #[cfg(target_os = \"linux\")]")
+
+          patch("crates/command/src/command.rs",
+                "#[derive(Debug)]\nstruct BootOptimTraining {",
+                "#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]\npub enum BootOptimAppCdsLaunchAuthority {\n    #[default]\n    Unknown,\n    NormalGui,\n}\n\nimpl BootOptimAppCdsLaunchAuthority {\n    fn as_control_value(self) -> &'static str {\n        match self {\n            Self::Unknown => \"unknown\",\n            Self::NormalGui => \"normal-gui\",\n        }\n    }\n}\n\n#[derive(Debug)]\nstruct BootOptimTraining {")
+          patch("crates/command/src/command.rs",
+                "    pub(crate) stderr: PandoraStdioReadMode,\n    #[cfg(windows)]",
+                "    pub(crate) stderr: PandoraStdioReadMode,\n    bootoptim_appcds_launch_authority: BootOptimAppCdsLaunchAuthority,\n    #[cfg(windows)]")
+          patch("crates/command/src/command.rs",
+                "            stderr: Default::default(),\n            #[cfg(windows)]",
+                "            stderr: Default::default(),\n            bootoptim_appcds_launch_authority: Default::default(),\n            #[cfg(windows)]")
+          patch("crates/command/src/command.rs",
+                "    pub async fn spawn(mut self) -> std::io::Result<PandoraChild> {",
+                "    pub fn bootoptim_appcds_launch_authority(&mut self, authority: BootOptimAppCdsLaunchAuthority) {\n        self.bootoptim_appcds_launch_authority = authority;\n    }\n\n    pub async fn spawn(mut self) -> std::io::Result<PandoraChild> {")
+          patch("crates/command/src/command.rs",
+                "            .arg(\"--upstream-commit\")\n            .arg(BOOTOPTIM_PANDORA_UPSTREAM)\n            .arg(\"--\")",
+                "            .arg(\"--upstream-commit\")\n            .arg(BOOTOPTIM_PANDORA_UPSTREAM)\n            .arg(\"--appcds-launch-authority\")\n            .arg(self.bootoptim_appcds_launch_authority.as_control_value())\n            .arg(\"--\")")
+          with open("crates/command/src/command.rs", "a") as f:
+              f.write(r'''
+
+#[cfg(test)]
+mod bootoptim_appcds_authority_tests {
+    use super::*;
+
+    #[test]
+    fn pandora_command_defaults_to_unknown_authority() {
+        let command = PandoraCommand::new("java");
+        assert_eq!(command.bootoptim_appcds_launch_authority, BootOptimAppCdsLaunchAuthority::Unknown);
+    }
+
+    #[test]
+    fn only_explicit_normal_gui_maps_to_normal_gui_control_value() {
+        assert_eq!(BootOptimAppCdsLaunchAuthority::Unknown.as_control_value(), "unknown");
+        assert_eq!(BootOptimAppCdsLaunchAuthority::NormalGui.as_control_value(), "normal-gui");
+        let mut command = PandoraCommand::new("java");
+        command.bootoptim_appcds_launch_authority(BootOptimAppCdsLaunchAuthority::NormalGui);
+        assert_eq!(command.bootoptim_appcds_launch_authority, BootOptimAppCdsLaunchAuthority::NormalGui);
+    }
+}
+''')
+
+          # Interposer consumes only the launcher-supplied control field; absence stays Unknown.
+          patch("bootoptim-v0/interposer/src/part1.rs",
+                "    upstream_commit: String,\n    java_exe: OsString,",
+                "    upstream_commit: String,\n    identity_launch_authority: IdentityLaunchAuthority,\n    java_exe: OsString,")
+          patch("bootoptim-v0/interposer/src/part1.rs",
+                "    finish_identity_cache_probe(probe.inventory);",
+                "    finish_identity_cache_probe(probe.inventory, parsed.identity_launch_authority);")
+          patch("bootoptim-v0/interposer/src/part1.rs",
+                "    let mut upstream_commit = UPSTREAM_DEFAULT.to_string();\n    let mut i = 0usize;",
+                "    let mut upstream_commit = UPSTREAM_DEFAULT.to_string();\n    let mut identity_launch_authority = IdentityLaunchAuthority::Unknown;\n    let mut authority_seen = false;\n    let mut i = 0usize;")
+          patch("bootoptim-v0/interposer/src/part1.rs",
+                "        } else if args[i] == OsStr::new(\"--upstream-commit\") {\n            i += 1;\n            upstream_commit = args.get(i).map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();\n        } else {",
+                "        } else if args[i] == OsStr::new(\"--upstream-commit\") {\n            i += 1;\n            upstream_commit = args.get(i).map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();\n        } else if args[i] == OsStr::new(\"--appcds-launch-authority\") {\n            if authority_seen {\n                return Err(io::Error::new(io::ErrorKind::InvalidInput, \"duplicate launch authority\"));\n            }\n            authority_seen = true;\n            i += 1;\n            let value = args.get(i).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, \"missing launch authority\"))?;\n            identity_launch_authority = IdentityLaunchAuthority::from_control_arg(value.as_os_str())\n                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, \"invalid launch authority\"))?;\n        } else {")
+          patch("bootoptim-v0/interposer/src/part1.rs",
+                "    Ok(ParsedArgs { instance_dir, launcher_exe, upstream_commit, java_exe, java_args })",
+                "    Ok(ParsedArgs { instance_dir, launcher_exe, upstream_commit, identity_launch_authority, java_exe, java_args })")
+
+          patch("bootoptim-v0/interposer/src/part8.rs",
+                "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\nenum IdentityLaunchAuthority { Unknown, NormalGui }\n\n// PR #19's interposer invocation has no stock-owned field that distinguishes\n// GUI Start from --run-instance/legacy callers. An environment variable is not\n// accepted as proof of launch origin. Until such authority is propagated from\n// Pandora, runtime reuse stays hard closed even when the experiment is requested.\nfn current_identity_launch_authority() -> IdentityLaunchAuthority { IdentityLaunchAuthority::Unknown }",
+                "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\nenum IdentityLaunchAuthority { Unknown, NormalGui }\n\nimpl IdentityLaunchAuthority {\n    fn from_control_arg(value: &OsStr) -> Option<Self> {\n        if value == OsStr::new(\"unknown\") {\n            Some(Self::Unknown)\n        } else if value == OsStr::new(\"normal-gui\") {\n            Some(Self::NormalGui)\n        } else {\n            None\n        }\n    }\n}")
+          patch("bootoptim-v0/interposer/src/part8.rs",
+                "fn finish_identity_cache_probe(inventory: ProbeInventory) {\n    if !identity_cache_probe_requested() { return; }\n    write_identity_cache_probe(\n        identity_probe_counts(inventory),\n        current_identity_launch_authority() != IdentityLaunchAuthority::NormalGui,\n    );\n}",
+                "fn finish_identity_cache_probe(inventory: ProbeInventory, authority: IdentityLaunchAuthority) {\n    if !identity_cache_probe_requested() { return; }\n    write_identity_cache_probe(\n        identity_probe_counts(inventory),\n        authority != IdentityLaunchAuthority::NormalGui,\n    );\n}")
+          patch("bootoptim-v0/interposer/src/part8.rs",
+                "    #[test] fn runtime_source_is_hard_closed_until_pandora_propagates_authority(){assert_eq!(current_identity_launch_authority(),IdentityLaunchAuthority::Unknown);let c=cached();let mut e=evidence();e.authority=current_identity_launch_authority();assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::SourceUnknown));}",
+                "    #[test] fn unknown_source_never_authorizes_reuse(){let c=cached();let mut e=evidence();e.authority=IdentityLaunchAuthority::Unknown;assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::SourceUnknown));}\n    #[test] fn control_authority_is_explicit_and_fail_closed(){assert_eq!(IdentityLaunchAuthority::from_control_arg(OsStr::new(\"normal-gui\")),Some(IdentityLaunchAuthority::NormalGui));assert_eq!(IdentityLaunchAuthority::from_control_arg(OsStr::new(\"unknown\")),Some(IdentityLaunchAuthority::Unknown));assert_eq!(IdentityLaunchAuthority::from_control_arg(OsStr::new(\"gui\")),None);let base=vec![OsString::from(\"--instance-dir\"),OsString::from(\"x\"),OsString::from(\"--\"),OsString::from(\"java\")];assert_eq!(parse_args(base).unwrap().identity_launch_authority,IdentityLaunchAuthority::Unknown);}")
+
+          # CI: branch coverage, targeted propagation tests, release interposer control gate, packaged launcher markers.
+          patch(".github/workflows/bootoptim-v0.yml",
+                "      - \"agent168/appcds-identity-cache-runtime-20260915\"",
+                "      - \"agent168/appcds-identity-cache-runtime-20260915\"\n      - \"agent171/appcds-gui-launch-authority-20260915\"")
+          patch(".github/workflows/bootoptim-v0.yml",
+                "      - name: Test launch probe schema and phase ordering\n        run: cargo test -p bridge launch_probe --frozen\n",
+                "      - name: Test launch probe schema and phase ordering\n        run: cargo test -p bridge launch_probe --frozen\n      - name: Test AppCDS launch authority defaults and GUI constructor\n        run: cargo test -p bridge appcds_launch_authority --frozen\n      - name: Test AppCDS authority command transport\n        run: cargo test -p command bootoptim_appcds_authority --frozen\n", 1)
+          patch(".github/workflows/bootoptim-v0.yml",
+                "      - name: Test launch probe schema and phase ordering\n        run: cargo test -p bridge launch_probe --frozen --target x86_64-pc-windows-msvc\n",
+                "      - name: Test launch probe schema and phase ordering\n        run: cargo test -p bridge launch_probe --frozen --target x86_64-pc-windows-msvc\n      - name: Test AppCDS launch authority defaults and GUI constructor\n        run: cargo test -p bridge appcds_launch_authority --frozen --target x86_64-pc-windows-msvc\n      - name: Test AppCDS authority command transport\n        run: cargo test -p command bootoptim_appcds_authority --frozen --target x86_64-pc-windows-msvc\n", 1)
+          authority_step = r'''
+      - name: Execute packaged AppCDS launch-authority contract
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "bootoptim-preflight-probe-fixture"
+          $interposer = (Resolve-Path "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe").Path
+          $launcher = (Resolve-Path "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe").Path
+          $java = Join-Path $fixture "runtime\bin\java.exe"
+          $classpath = Join-Path $fixture "library.jar"
+          $stockPlan = Join-Path $fixture "plan-stock.json"
+          $currentPlan = Join-Path $fixture ".bootoptim\appcds\launch-plan.json"
+          $env:BOOTOPTIM_APPCDS_MODE = "plan"
+          $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE = "1"
+
+          $unknownProbe = Join-Path $fixture "identity-authority-unknown.json"
+          $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE_PROBE = $unknownProbe
+          $decision = & $interposer --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea --appcds-launch-authority unknown -- $java -cp $classpath com.moulberry.pandora.LaunchWrapper
+          if ($LASTEXITCODE -ne 0 -or ($decision | Out-String).Trim() -ne "STOCK") { throw "unknown-authority contract failed" }
+          $unknown = Get-Content $unknownProbe -Raw | ConvertFrom-Json
+          if ($unknown.runtime_reuse_authorized -ne $false) { throw "unknown authority authorized reuse" }
+          if (Compare-Object ([System.IO.File]::ReadAllBytes($stockPlan)) ([System.IO.File]::ReadAllBytes($currentPlan)) -SyncWindow 0) { throw "unknown authority changed plan bytes" }
+
+          $guiProbe = Join-Path $fixture "identity-authority-normal-gui.json"
+          $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE_PROBE = $guiProbe
+          $decision = & $interposer --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea --appcds-launch-authority normal-gui -- $java -cp $classpath com.moulberry.pandora.LaunchWrapper
+          if ($LASTEXITCODE -ne 0 -or ($decision | Out-String).Trim() -ne "STOCK") { throw "normal-gui authority contract failed" }
+          $gui = Get-Content $guiProbe -Raw | ConvertFrom-Json
+          if ($gui.runtime_reuse_authorized -ne $true) { throw "normal-gui authority was not preserved to interposer" }
+          if (Compare-Object ([System.IO.File]::ReadAllBytes($stockPlan)) ([System.IO.File]::ReadAllBytes($currentPlan)) -SyncWindow 0) { throw "normal-gui authority changed plan bytes" }
+          Copy-Item $guiProbe "bootoptim-v0/identity-authority-selftest.json"
+          Remove-Item Env:BOOTOPTIM_APPCDS_IDENTITY_CACHE -ErrorAction SilentlyContinue
+          Remove-Item Env:BOOTOPTIM_APPCDS_IDENTITY_CACHE_PROBE -ErrorAction SilentlyContinue
+          Remove-Item Env:BOOTOPTIM_APPCDS_MODE -ErrorAction SilentlyContinue
+
+'''
+          patch(".github/workflows/bootoptim-v0.yml",
+                "      - name: Verify packaged binary linkage\n",
+                authority_step + "      - name: Verify packaged binary linkage\n")
+          patch(".github/workflows/bootoptim-v0.yml",
+                "          foreach ($marker in @(\"bootoptim.launch_probe.v1\", \"launcher_pre_java\", \"java_spawn\")) { if (-not $ascii.Contains($marker)) { throw \"release Pandora binary missing $marker\" } }",
+                "          foreach ($marker in @(\"bootoptim.launch_probe.v1\", \"launcher_pre_java\", \"java_spawn\", \"--appcds-launch-authority\", \"normal-gui\")) { if (-not $ascii.Contains($marker)) { throw \"release Pandora binary missing $marker\" } }")
+          patch(".github/workflows/bootoptim-v0.yml",
+                "          Copy-Item bootoptim-v0/identity-cache-probe-selftest.json bootoptim-v0/dist/APPCDS_IDENTITY_CACHE_PROBE_SELFTEST.json",
+                "          Copy-Item bootoptim-v0/identity-cache-probe-selftest.json bootoptim-v0/dist/APPCDS_IDENTITY_CACHE_PROBE_SELFTEST.json\n          Copy-Item bootoptim-v0/identity-authority-selftest.json bootoptim-v0/dist/APPCDS_LAUNCH_AUTHORITY_SELFTEST.json")
+
+          pathlib.Path("bootoptim-v0/APPCDS_LAUNCH_AUTHORITY.md").write_text(r'''# Agent 171 — AppCDS GUI launch authority
+
+## Provenance and scope
+
+Base is exactly PR #21 head `agent168/appcds-identity-cache-runtime-20260915@7d39ca0fee2941f71d51361bbc89c383ed69f32e`. PR #21 is stacked on PR #20/#19 and ultimately the PR #7 launch-root lineage. `AGENTS.md` is absent at this authority snapshot (direct GitHub lookup returns 404).
+
+This change implements only the missing AppCDS launch-source authority. It does not change `AssetVerificationMode`, asset repair/download behavior, classpath/module-path/order, Java argv/plan bytes, AppCDS READY/TRAIN/lock/staging/promotion, UI, network, scheduler, Automodpack, MoreCulling/Properties canonicalization, or helper capability.
+
+## Authority contract
+
+`AppCdsLaunchAuthority` is stock-owned launch intent with exactly two values:
+
+- `Unknown` — default for every constructor/caller unless explicitly audited;
+- `NormalGui` — constructed only by the existing frontend `root::start_instance` GUI launch helper.
+
+`ModalAction::default()` remains `Unknown`, so backend `StartInstanceByName` (`--run-instance`), API/legacy callers that synthesize/default an action, tests that do not opt into the audited constructor, and future unknown routes cannot authorize AppCDS identity digest reuse. Quick-play launched through the same audited GUI helper carries `NormalGui`; no argument, path, environment value, asset mode, or filesystem observation is used to infer source.
+
+The immutable value is copied through the existing `ModalAction` into `Launcher::launch`, then `LaunchContext`, then a private `PandoraCommand` field. `PandoraCommand` emits one interposer **control** argument before `--`: `--appcds-launch-authority unknown|normal-gui`. It is not appended to Java argv and therefore cannot affect canonical launch-plan bytes. Missing control authority in direct/legacy interposer invocation is `Unknown`; duplicate or malformed control values are rejected and the helper main path fails open to `STOCK`.
+
+The AppCDS identity cache remains default-off (`BOOTOPTIM_APPCDS_IDENTITY_CACHE=1` is still required), Windows/NTFS/capability gated, and every uncertain helper/UAC/IPC/handle/journal/source case remains stock SHA-256. This authority is necessary permission only; it cannot override any other PR #21 miss/fallback gate.
+
+## Automated gates
+
+Portable and Windows tests prove default/legacy `Unknown`, explicit GUI constructor `NormalGui`, clone preservation, command transport default/explicit mapping, interposer control parsing, and `Unknown -> SourceUnknown` reuse rejection.
+
+The Windows packaged gate runs the release interposer against the same synthetic plan once with `unknown` and once with `normal-gui`; `runtime_reuse_authorized` must remain false for unknown and become true only for normal GUI, while `launch-plan.json` stays byte-for-byte identical to the stock baseline. The packaged Pandora EXE is also checked for the authority control markers. This proves transport/linkage only, not performance.
+
+## Physical protocol after green artifact
+
+Use only the matching green Windows artifact and verify `SHA256SUMS.txt`. Keep `BOOTOPTIM_APPCDS_MODE=plan`; combine the PR #7 valid Start->Java root probe with a fresh PR #19 AppCDS preflight sidecar and the aggregate identity-cache sidecar. Do not report Java->menu as part of this claim.
+
+1. **Fallback stock:** feature off. Launch through GUI Start and capture stock plan/probes.
+2. **Unknown fallback:** opt-in identity cache but launch through a non-audited/CLI/legacy route where available. Reuse must remain unauthorized and full SHA-256 stock; any UAC/helper activity caused solely by unknown source is a failure.
+3. **First GUI seed:** opt in and use the audited GUI Start path. This is baseline/seed only; require valid root/probe schemas and byte-identical plan versus stock for unchanged inputs.
+4. **Second GUI reuse candidate:** repeat unchanged GUI Start. Only this run may report reused identity bytes once the PR #21 cache consumer is composed; require the exact same plan bytes and SHA as stock/seed.
+5. Exercise feature-off, non-Windows/non-NTFS, missing/mismatched helper pin, UAC cancel/deny, IPC/protocol/PID/ACL failure, protected-handle failure, reparse/non-regular input, journal reset/regression/discontinuity, FileId/USN/final-handle mismatch, corrupt/partial cache and `Unknown` authority. Every case must full-SHA-256 fail open.
+
+Report `appcds_preflight`, PR #19 `build_launch_plan`, aggregate reused/stock bytes and outer PR #7 Start->Java separately. PR #19's physical `build_launch_plan` observation of 307.918 s is motivation only; it is not an A/B saving or TTMM claim. No startup saving is claimed by this authority PR.
+''')
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/bridge/src/modal_action.rs crates/frontend/src/root.rs crates/backend/src/launch/mod.rs crates/command/src/command.rs bootoptim-v0/interposer/src/part1.rs bootoptim-v0/interposer/src/part8.rs .github/workflows/bootoptim-v0.yml bootoptim-v0/APPCDS_LAUNCH_AUTHORITY.md
+          git commit -m "feat(appcds): propagate audited GUI launch authority"
+          git push origin HEAD:agent171/appcds-gui-launch-authority-20260915
