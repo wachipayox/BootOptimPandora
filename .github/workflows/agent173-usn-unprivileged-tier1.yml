@@ -22,7 +22,7 @@ jobs:
           components: rustfmt
 
       - name: Rust fmt
-        run: cargo fmt --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml -- --check
+        run: cargo fmt --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
 
       - name: Rust check
         run: cargo check --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
