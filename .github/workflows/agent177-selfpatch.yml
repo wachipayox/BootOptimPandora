@@ -19,8 +19,9 @@ jobs:
           ref: agent177/usn-fast-rebootstrap-20260916
           fetch-depth: 0
       - name: Replace asset verifier join-error SHA-1 fallback
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
 
           path = Path("crates/backend/src/launch/mod.rs")
@@ -61,6 +62,7 @@ jobs:
           if text.count(old) != 1:
               raise SystemExit(f"expected exactly one source match, found {text.count(old)}")
           path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
       - name: Commit code patch and remove one-shot workflow
         shell: bash
         run: |
