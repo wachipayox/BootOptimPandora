@@ -79,7 +79,7 @@ jobs:
       - name: Build patched Pandora
         run: cargo build --release --frozen --target x86_64-pc-windows-msvc
 
-      - name: Execute packaged preflight probe contract
+      - name: Execute packaged preflight and hard-closed identity-cache contract
         shell: pwsh
         run: |
           $fixture = Join-Path $env:RUNNER_TEMP "bootoptim-preflight-probe-fixture"
@@ -98,6 +98,7 @@ jobs:
           $java = Join-Path $fixture "runtime\bin\java.exe"
           $classpath = Join-Path $fixture "library.jar"
           $probe = Join-Path $fixture "preflight-probe.json"
+          $identityProbe = Join-Path $fixture "identity-cache-probe.json"
           $env:BOOTOPTIM_APPCDS_MODE = "plan"
           $env:BOOTOPTIM_APPCDS_PREFLIGHT_PROBE = $probe
           $decision = & $interposer --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea -- $java -cp $classpath com.moulberry.pandora.LaunchWrapper
@@ -108,12 +109,19 @@ jobs:
           Copy-Item (Join-Path $fixture ".bootoptim\appcds\launch-plan.json") (Join-Path $fixture "plan-stock.json")
           Remove-Item $probe
           $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE = "1"
+          $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE_PROBE = $identityProbe
           $env:BOOTOPTIM_APPCDS_PREFLIGHT_PROBE = $probe
           $decision = & $interposer --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea -- $java -cp $classpath com.moulberry.pandora.LaunchWrapper
           if ($LASTEXITCODE -ne 0 -or ($decision | Out-String).Trim() -ne "STOCK") { throw "hard-closed identity-cache run failed" }
           if (-not (Compare-Object (Get-Content (Join-Path $fixture "plan-stock.json") -Raw) (Get-Content (Join-Path $fixture ".bootoptim\appcds\launch-plan.json") -Raw) -SyncWindow 0)) { } else { throw "identity-cache request changed plan bytes while source authority is unavailable" }
+          $identity = Get-Content $identityProbe -Raw | ConvertFrom-Json
+          if ($identity.schema -ne "bootoptim.appcds_identity_cache_probe.v1") { throw "wrong identity-cache probe schema" }
+          if ($identity.runtime_reuse_authorized -ne $false -or $identity.reused_files -ne 0 -or $identity.reused_bytes -ne 0) { throw "hard-closed runtime reported reuse" }
+          if ($identity.stock_files -le 0 -or $identity.stock_bytes -le 0 -or $identity.miss_files -ne $identity.stock_files) { throw "identity-cache aggregate stock/miss counts invalid" }
           Copy-Item $probe "bootoptim-v0/preflight-probe-selftest.json"
+          Copy-Item $identityProbe "bootoptim-v0/identity-cache-probe-selftest.json"
           Remove-Item Env:BOOTOPTIM_APPCDS_IDENTITY_CACHE -ErrorAction SilentlyContinue
+          Remove-Item Env:BOOTOPTIM_APPCDS_IDENTITY_CACHE_PROBE -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_APPCDS_PREFLIGHT_PROBE -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_APPCDS_MODE -ErrorAction SilentlyContinue
 
@@ -127,7 +135,7 @@ jobs:
           $helper = "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-usn-helper.exe"
           $interposerAscii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($interposer))
           $helperAscii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($helper))
-          if (-not $interposerAscii.Contains("bootoptim.appcds_preflight_probe.v1")) { throw "release interposer missing preflight marker" }
+          foreach ($marker in @("bootoptim.appcds_preflight_probe.v1", "bootoptim.appcds_identity_cache_probe.v1")) { if (-not $interposerAscii.Contains($marker)) { throw "release interposer missing $marker" } }
           if (-not $helperAscii.Contains("BOPUSN01")) { throw "release USN helper missing fixed protocol marker" }
 
       - name: Assemble reproducible test artifact
@@ -138,6 +146,7 @@ jobs:
           Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-usn-helper.exe bootoptim-v0/dist/
           Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe bootoptim-v0/dist/BootOptimPandora-v0.exe
           Copy-Item bootoptim-v0/preflight-probe-selftest.json bootoptim-v0/dist/APPCDS_PREFLIGHT_PROBE_SELFTEST.json
+          Copy-Item bootoptim-v0/identity-cache-probe-selftest.json bootoptim-v0/dist/APPCDS_IDENTITY_CACHE_PROBE_SELFTEST.json
           $files = @("bootoptim-v0/dist/bootoptim-launch-interposer.exe","bootoptim-v0/dist/bootoptim-usn-helper.exe","bootoptim-v0/dist/BootOptimPandora-v0.exe")
           $lines = foreach ($file in $files) { $h=Get-FileHash -Algorithm SHA256 $file; "{0}  {1}" -f $h.Hash.ToLowerInvariant(),(Split-Path $file -Leaf) }
           $lines | Set-Content -Encoding ascii bootoptim-v0/dist/SHA256SUMS.txt
