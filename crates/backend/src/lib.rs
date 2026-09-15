@@ -5,6 +5,7 @@ use std::ffi::{OsStr, OsString};
 mod backend;
 pub use backend::*;
 
+mod asset_probe;
 mod asset_usn_cache;
 mod usn_protocol;
 mod backend_filesystem;
