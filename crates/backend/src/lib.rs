@@ -14,6 +14,8 @@ mod directories;
 mod duplicate;
 mod export;
 mod fs;
+#[cfg(test)]
+mod prelaunch_mods_probe;
 mod install_content;
 mod instance;
 mod java_manifest;
