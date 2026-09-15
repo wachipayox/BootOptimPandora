@@ -29,8 +29,11 @@ mod windows_probe {
     const VOLUME_NAME_GUID: u32 = 0x1;
     const FSCTL_QUERY_USN_JOURNAL: u32 = 0x0009_00f4;
     const FSCTL_READ_FILE_USN_DATA: u32 = 0x0009_00eb;
+    const TOKEN_DUPLICATE: u32 = 0x2;
     const TOKEN_QUERY: u32 = 0x8;
-    const TOKEN_ELEVATION_CLASS: u32 = 20;
+    const DISABLE_MAX_PRIVILEGE: u32 = 0x1;
+    const WIN_BUILTIN_ADMINISTRATORS_SID: i32 = 26;
+    const SECURITY_MAX_SID_SIZE: usize = 68;
 
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -51,8 +54,9 @@ mod windows_probe {
     }
 
     #[repr(C)]
-    struct TokenElevation {
-        token_is_elevated: u32,
+    struct SidAndAttributes {
+        sid: *mut c_void,
+        attributes: u32,
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +76,17 @@ mod windows_probe {
     impl Drop for OwnedHandle {
         fn drop(&mut self) {
             unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    struct RestrictedImpersonation {
+        _token: OwnedHandle,
+    }
+    impl Drop for RestrictedImpersonation {
+        fn drop(&mut self) {
+            unsafe {
+                RevertToSelf();
+            }
         }
     }
 
@@ -105,17 +120,103 @@ mod windows_probe {
     #[link(name = "advapi32")]
     unsafe extern "system" {
         fn OpenProcessToken(process: Handle, access: u32, token: *mut Handle) -> i32;
-        fn GetTokenInformation(
-            token: Handle,
-            class: u32,
-            info: *mut c_void,
-            info_len: u32,
-            returned: *mut u32,
+        fn CreateRestrictedToken(
+            existing_token: Handle,
+            flags: u32,
+            disable_sid_count: u32,
+            sids_to_disable: *const SidAndAttributes,
+            delete_privilege_count: u32,
+            privileges_to_delete: *const c_void,
+            restricted_sid_count: u32,
+            sids_to_restrict: *const SidAndAttributes,
+            new_token: *mut Handle,
         ) -> i32;
+        fn CreateWellKnownSid(
+            sid_type: i32,
+            domain_sid: *const c_void,
+            sid: *mut c_void,
+            sid_size: *mut u32,
+        ) -> i32;
+        fn ImpersonateLoggedOnUser(token: Handle) -> i32;
+        fn RevertToSelf() -> i32;
+        fn CheckTokenMembership(token: Handle, sid: *const c_void, is_member: *mut i32) -> i32;
     }
 
     fn wide(value: &OsStr) -> Vec<u16> {
         value.encode_wide().chain(Some(0)).collect()
+    }
+
+    fn administrators_sid() -> Result<[u8; SECURITY_MAX_SID_SIZE], String> {
+        let mut sid = [0u8; SECURITY_MAX_SID_SIZE];
+        let mut size = sid.len() as u32;
+        if unsafe {
+            CreateWellKnownSid(
+                WIN_BUILTIN_ADMINISTRATORS_SID,
+                null(),
+                sid.as_mut_ptr().cast(),
+                &mut size,
+            )
+        } == 0
+        {
+            return Err(format!("CreateWellKnownSid failed: {}", std::io::Error::last_os_error()));
+        }
+        Ok(sid)
+    }
+
+    fn effective_admin_member(admin_sid: &[u8; SECURITY_MAX_SID_SIZE]) -> Result<bool, String> {
+        let mut member = 0i32;
+        if unsafe { CheckTokenMembership(null_mut(), admin_sid.as_ptr().cast(), &mut member) } == 0 {
+            return Err(format!("CheckTokenMembership failed: {}", std::io::Error::last_os_error()));
+        }
+        Ok(member != 0)
+    }
+
+    fn enter_restricted_token() -> Result<RestrictedImpersonation, String> {
+        let admin_sid = administrators_sid()?;
+        let mut process_token = null_mut();
+        if unsafe {
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_DUPLICATE | TOKEN_QUERY,
+                &mut process_token,
+            )
+        } == 0
+        {
+            return Err(format!("OpenProcessToken failed: {}", std::io::Error::last_os_error()));
+        }
+        let process_token = OwnedHandle::new(process_token).ok_or_else(|| "invalid process token".to_string())?;
+        let disabled = SidAndAttributes {
+            sid: admin_sid.as_ptr().cast_mut().cast(),
+            attributes: 0,
+        };
+        let mut restricted = null_mut();
+        if unsafe {
+            CreateRestrictedToken(
+                process_token.0,
+                DISABLE_MAX_PRIVILEGE,
+                1,
+                &disabled,
+                0,
+                null(),
+                0,
+                null(),
+                &mut restricted,
+            )
+        } == 0
+        {
+            return Err(format!("CreateRestrictedToken failed: {}", std::io::Error::last_os_error()));
+        }
+        let restricted = OwnedHandle::new(restricted).ok_or_else(|| "invalid restricted token".to_string())?;
+        if unsafe { ImpersonateLoggedOnUser(restricted.0) } == 0 {
+            return Err(format!("ImpersonateLoggedOnUser failed: {}", std::io::Error::last_os_error()));
+        }
+        if effective_admin_member(&admin_sid)? {
+            unsafe {
+                RevertToSelf();
+            }
+            return Err("restricted token still has effective Administrators membership".into());
+        }
+        Ok(RestrictedImpersonation { _token: restricted })
     }
 
     fn protected_file(path: &Path) -> Result<File, String> {
@@ -166,7 +267,7 @@ mod windows_probe {
                 null_mut(),
             )
         })
-        .ok_or_else(|| format!("non-elevated volume open failed: {}", std::io::Error::last_os_error()))
+        .ok_or_else(|| format!("restricted volume open failed: {}", std::io::Error::last_os_error()))
     }
 
     fn parse_journal(bytes: &[u8], returned: u32) -> Option<JournalState> {
@@ -235,29 +336,6 @@ mod windows_probe {
         Ok(i64::from_le_bytes(output[24..32].try_into().unwrap()))
     }
 
-    fn token_is_elevated() -> Result<bool, String> {
-        let mut raw = null_mut();
-        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw) } == 0 {
-            return Err("OpenProcessToken failed".into());
-        }
-        let token = OwnedHandle::new(raw).ok_or_else(|| "invalid process token".to_string())?;
-        let mut elevation = TokenElevation { token_is_elevated: 0 };
-        let mut returned = 0u32;
-        if unsafe {
-            GetTokenInformation(
-                token.0,
-                TOKEN_ELEVATION_CLASS,
-                (&mut elevation as *mut TokenElevation).cast(),
-                std::mem::size_of::<TokenElevation>() as u32,
-                &mut returned,
-            )
-        } == 0
-        {
-            return Err("GetTokenInformation(TokenElevation) failed".into());
-        }
-        Ok(elevation.token_is_elevated != 0)
-    }
-
     fn snapshot(path: &Path) -> Result<(String, JournalState, i64), String> {
         let file = protected_file(path)?;
         let volume_guid = volume_guid_from_handle(file.as_raw_handle().cast())?;
@@ -276,33 +354,35 @@ mod windows_probe {
     }
 
     pub fn run() -> Result<(), String> {
-        let require_standard = std::env::args().any(|arg| arg == "--require-standard-user");
-        let elevated = token_is_elevated()?;
-        if require_standard && elevated {
-            return Err("probe unexpectedly ran elevated".into());
-        }
-
         let dir = std::env::temp_dir().join(format!("bootoptim-usn-unprivileged-{}", std::process::id()));
         std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
         let path = dir.join("asset");
         std::fs::write(&path, b"abcdefgh").map_err(|error| error.to_string())?;
-        let first = snapshot(&path)?;
 
+        let admin_sid = administrators_sid()?;
+        let was_admin = effective_admin_member(&admin_sid)?;
+        let restricted = enter_restricted_token()?;
+        if effective_admin_member(&admin_sid)? {
+            return Err("restricted probe unexpectedly has effective Administrators membership".into());
+        }
+
+        let first = snapshot(&path)?;
         let mut file = OpenOptions::new().write(true).open(&path).map_err(|error| error.to_string())?;
         file.seek(SeekFrom::Start(0)).map_err(|error| error.to_string())?;
         file.write_all(b"ABCDEFGH").map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
         let second = snapshot(&path)?;
+        drop(restricted);
 
         let _ = std::fs::remove_dir_all(&dir);
         if first.0 != second.0 || first.1.id != second.1.id || first.2 == second.2 {
-            return Err("mutation did not produce the expected stable-volume / changed-file-USN evidence".into());
+            return Err("mutation did not produce stable-volume / changed-file-USN evidence".into());
         }
 
         println!(
-            "ok elevated={} volume={} journal_id={} first_file_usn={} second_file_usn={}",
-            elevated, second.0, second.1.id, first.2, second.2
+            "ok original_admin_member={} restricted_admin_member=false volume={} journal_id={} first_file_usn={} second_file_usn={}",
+            was_admin, second.0, second.1.id, first.2, second.2
         );
         Ok(())
     }
