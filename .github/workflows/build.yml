@@ -2,8 +2,8 @@ name: build
 on:
   pull_request:
   push:
-    branches:
-      - "**"
+    branches-ignore:
+      - "agent173/usn-unprivileged-capability-20260915"
     tags-ignore:
       - "**"
 
