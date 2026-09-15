@@ -1,0 +1,258 @@
+name: Agent170 exact composition edit
+
+on:
+  push:
+    branches:
+      - agent170/pr18-pr13-usn-attribution-composition-20260915
+
+permissions:
+  contents: write
+
+jobs:
+  compose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply exact composition seams
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          launch = Path('crates/backend/src/launch/mod.rs')
+          text = launch.read_text()
+          start = text.index('async fn do_asset_objects_load(')
+          end = text.index('\n#[derive(thiserror::Error, Debug)]\npub enum LoadLibrariesError', start)
+          replacement = r'''async fn do_asset_objects_load(
+              http_client: &reqwest::Client,
+              assets_index: Arc<AssetsIndex>,
+              assets_objects_dir: Arc<Path>,
+              asset_index_sha1: &str,
+              assets_tracker: &ProgressTracker,
+          ) -> Result<(), LoadAssetObjectsError> {
+              // Limit max concurrent connections to 8 to avoid ratelimiting issues
+              let download_semaphore = tokio::sync::Semaphore::new(8);
+              let disk_semaphore = tokio::sync::Semaphore::new(32);
+              let started_downloading = AtomicBool::new(false);
+
+              let planned_objects = assets_index.objects.len() as u64;
+              let planned_bytes = assets_index.objects.iter().map(|(_, asset)| asset.size).sum();
+              let attribution_probe = crate::asset_probe::AssetAttributionProbe::for_launch(planned_objects, planned_bytes);
+
+              let mut total_size = 0;
+              let mut tasks = Vec::new();
+
+              let _ = std::fs::create_dir_all(&assets_objects_dir);
+
+              let verification_mode = assets_tracker.asset_verification_mode();
+              let expected_hashes = assets_index.objects.iter()
+                  .map(|(_, asset)| asset.hash.to_string())
+                  .collect::<Vec<_>>();
+              let cache_root = Arc::clone(&assets_objects_dir);
+              let cache_index_sha1 = asset_index_sha1.to_owned();
+              let cache_session = tokio::task::spawn_blocking(move || {
+                  crate::asset_usn_cache::AssetUsnCacheSession::begin(
+                      verification_mode,
+                      &cache_index_sha1,
+                      cache_root,
+                      expected_hashes,
+                  )
+              }).await.unwrap_or_else(|_| {
+                  crate::asset_usn_cache::AssetUsnCacheSession::begin(
+                      bridge::modal_action::AssetVerificationMode::FullVerification,
+                      "",
+                      Arc::clone(&assets_objects_dir),
+                      Vec::new(),
+                  )
+              });
+              let cache_session = Arc::new(cache_session);
+
+              for (_, asset) in &assets_index.objects {
+                  let mut expected_hash = [0u8; 20];
+                  let Ok(_) = hex::decode_to_slice(asset.hash.as_str(), &mut expected_hash) else {
+                      if let Some(probe) = &attribution_probe {
+                          probe.finish("error");
+                      }
+                      return Err(LoadAssetObjectsError::InvalidHash(asset.hash));
+                  };
+
+                  let mut path = assets_objects_dir.join(&asset.hash[..2]);
+                  let _ = std::fs::create_dir(&path);
+                  path.push(asset.hash.as_str());
+
+                  total_size += asset.size;
+
+                  let started_downloading = &started_downloading;
+                  let download_semaphore = &download_semaphore;
+                  let disk_semaphore = &disk_semaphore;
+                  let cache_session = Arc::clone(&cache_session);
+                  let expected_sha1 = asset.hash.to_string();
+                  let attribution_probe = attribution_probe.clone();
+
+                  let url = format!("https://resources.download.minecraft.net/{}/{}", &asset.hash[..2], &asset.hash);
+
+                  let task = async move {
+                      let valid_hash_on_disk = {
+                          let verify_path = path.clone();
+                          let stock_path = path.clone();
+                          let permit = disk_semaphore.acquire().await.unwrap();
+                          let scoped_probe = attribution_probe.clone();
+                          let result = match tokio::task::spawn_blocking(move || {
+                              crate::asset_probe_context::with_probe(scoped_probe, || {
+                                  cache_session.verify_existing(&verify_path, &expected_sha1, expected_hash)
+                              })
+                          }).await {
+                              Ok(result) => result,
+                              Err(_) => {
+                                  let fallback_probe = attribution_probe.clone();
+                                  tokio::task::spawn_blocking(move || {
+                                      fallback_probe.as_ref()
+                                          .map(|probe| probe.hash_path(&stock_path, expected_hash))
+                                          .unwrap_or_else(|| crate::fs::check_sha1_hash(&stock_path, expected_hash).unwrap_or(false))
+                                  }).await.unwrap_or(false)
+                              },
+                          };
+                          drop(permit);
+                          result
+                      };
+
+                      if valid_hash_on_disk {
+                          assets_tracker.add_count(asset.size as usize);
+                          return Ok(());
+                      }
+
+                      let was_downloading = started_downloading.swap(true, std::sync::atomic::Ordering::Relaxed);
+                      if !was_downloading {
+                          assets_tracker.set_title(Arc::from("Downloading game assets"));
+                      }
+
+                      let permit = download_semaphore.acquire().await.unwrap();
+                      let download_guard = attribution_probe.as_ref().map(|probe| probe.begin_download());
+                      let response = match http_client.get(&url).send().await {
+                          Ok(response) => response,
+                          Err(error) => {
+                              if let Some(probe) = &attribution_probe {
+                                  probe.record_network_error();
+                              }
+                              return Err(LoadAssetObjectsError::Reqwest(error));
+                          },
+                      };
+                      let bytes = match response.bytes().await {
+                          Ok(bytes) => Arc::new(bytes),
+                          Err(error) => {
+                              if let Some(probe) = &attribution_probe {
+                                  probe.record_network_error();
+                              }
+                              return Err(LoadAssetObjectsError::Reqwest(error));
+                          },
+                      };
+                      drop(download_guard);
+                      drop(permit);
+
+                      if let Some(probe) = &attribution_probe {
+                          probe.record_downloaded_body(bytes.len());
+                      }
+                      if bytes.len() != asset.size as usize {
+                          if let Some(probe) = &attribution_probe {
+                              probe.record_size_failure();
+                          }
+                          return Err(LoadAssetObjectsError::WrongResponseSize(asset.size as usize, bytes.len()));
+                      }
+
+                      let correct_hash = {
+                          let bytes = Arc::clone(&bytes);
+
+                          tokio::task::spawn_blocking(move || {
+                              let mut hasher = Sha1::new();
+                              hasher.update(&*bytes);
+                              let actual_hash = hasher.finalize();
+
+                              expected_hash == *actual_hash
+                          }).await.unwrap()
+                      };
+
+                      if !correct_hash {
+                          if let Some(probe) = &attribution_probe {
+                              probe.record_download_hash_failure();
+                          }
+                          return Err(LoadAssetObjectsError::WrongHash);
+                      }
+
+                      tokio::fs::write(path.clone(), &*bytes).await?;
+                      assets_tracker.add_count(asset.size as usize);
+                      Ok(())
+                  };
+                  tasks.push(task);
+              }
+
+              assets_tracker.set_total(total_size as usize);
+
+              let result = futures::future::try_join_all(tasks).await.map(|_| ());
+
+              if result.is_ok() {
+                  let cache_session = Arc::clone(&cache_session);
+                  let finish_probe = attribution_probe.clone();
+                  let _ = tokio::task::spawn_blocking(move || {
+                      crate::asset_probe_context::with_probe(finish_probe, || cache_session.finish())
+                  }).await;
+              }
+
+              if let Some(probe) = &attribution_probe {
+                  probe.finish(if result.is_ok() { "ok" } else { "error" });
+              }
+
+              result
+          }
+          '''
+          launch.write_text(text[:start] + replacement + text[end:])
+
+          main = Path('crates/pandora_launcher/src/main.rs')
+          text = main.read_text()
+          marker = '''    /// Internal function to set traversable ACLs in an elevated context
+              #[cfg(windows)]
+              #[arg(long, hide = false, num_args = 2..)]
+              internal_set_traverse_acls: Option<Vec<std::ffi::OsString>>,
+          }'''
+          insert = '''    /// Internal function to set traversable ACLs in an elevated context
+              #[cfg(windows)]
+              #[arg(long, hide = false, num_args = 2..)]
+              internal_set_traverse_acls: Option<Vec<std::ffi::OsString>>,
+              /// Internal packaged behavior gate for BootOptim root + asset attribution composition
+              #[cfg(windows)]
+              #[arg(long, hide = true, num_args = 3)]
+              internal_bootoptim_probe_composition_selftest: Option<Vec<std::ffi::OsString>>,
+          }'''
+          if marker not in text:
+              raise SystemExit('Cli marker not found')
+          text = text.replace(marker, insert, 1)
+          marker2 = '''    #[cfg(windows)]
+              if let Some(internal_set_traverse_acls) = cli.internal_set_traverse_acls {
+          '''
+          insert2 = '''    #[cfg(windows)]
+              if let Some(args) = cli.internal_bootoptim_probe_composition_selftest {
+                  if let Err(err) = backend::run_packaged_probe_composition_selftest(args) {
+                      eprintln!("BootOptim composition selftest failed: {err}");
+                      std::process::exit(1);
+                  } else {
+                      std::process::exit(0);
+                  }
+              }
+
+              #[cfg(windows)]
+              if let Some(internal_set_traverse_acls) = cli.internal_set_traverse_acls {
+          '''
+          if marker2 not in text:
+              raise SystemExit('main selftest marker not found')
+          text = text.replace(marker2, insert2, 1)
+          main.write_text(text)
+
+          Path('.github/workflows/agent170-compose.yml').unlink()
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add crates/backend/src/launch/mod.rs crates/pandora_launcher/src/main.rs .github/workflows/agent170-compose.yml
+          git commit -m 'agent170: compose PR18 USN verification with PR13 attribution'
+          git push origin HEAD:agent170/pr18-pr13-usn-attribution-composition-20260915
