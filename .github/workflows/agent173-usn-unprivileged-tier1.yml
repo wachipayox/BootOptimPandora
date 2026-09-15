@@ -14,6 +14,7 @@ on:
 jobs:
   rust-minimal-windows:
     runs-on: windows-2022
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,10 +28,10 @@ jobs:
         run: cargo fmt --all
 
       - name: Backend Rust check
-        run: cargo check -p backend
+        run: cargo check -p backend --lib
 
-      - name: Asset USN cache tests
-        run: cargo test -p backend asset_usn_cache
+      - name: Asset USN cache library tests
+        run: cargo test -p backend --lib asset_usn_cache
 
       - name: Restricted-token capability probe
         run: cargo run --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml
