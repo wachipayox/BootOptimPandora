@@ -1,0 +1,131 @@
+name: BootOptim AppCDS launch authority
+
+on:
+  push:
+    branches:
+      - "agent171/appcds-gui-launch-authority-20260915"
+  pull_request:
+    paths:
+      - "bootoptim-v0/**"
+      - "crates/bridge/**"
+      - "crates/frontend/**"
+      - "crates/backend/**"
+      - "crates/command/**"
+      - ".github/workflows/bootoptim-appcds-launch-authority.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootoptim-appcds-authority-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable-authority:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install command crate link dependency
+        run: sudo apt-get update --yes && sudo apt-get install --yes libseccomp-dev pkg-config
+      - name: Test bridge authority semantics
+        run: cargo test -p bridge appcds_launch_authority --frozen
+      - name: Test command authority transport state
+        run: cargo test -p command bootoptim_appcds_authority --frozen
+      - name: Test interposer fail-closed authority semantics
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked appcds_identity_cache_tests
+      - name: Prove NormalGui production origin is unique
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git grep -l 'ModalAction::normal_gui_launch()' -- 'crates/**/*.rs' | grep -v '^crates/bridge/src/modal_action.rs$' || true)
+          test "${#files[@]}" -eq 1
+          test "${files[0]}" = "crates/frontend/src/root.rs"
+          grep -F 'self.start_instance(id, quick_play, None, Default::default()).await' crates/backend/src/backend_handler.rs
+
+  windows-packaged-authority:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Test authority semantics on Windows target
+        run: |
+          cargo test -p bridge appcds_launch_authority --frozen --target x86_64-pc-windows-msvc
+          cargo test -p command bootoptim_appcds_authority --frozen --target x86_64-pc-windows-msvc
+          cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc appcds_identity_cache_tests
+      - name: Build capability-minimal USN helper
+        run: cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml -p bootoptim-ntfs-usn-capability --bin bootoptim-usn-helper --release --locked --target x86_64-pc-windows-msvc
+      - name: Pin capability helper into release interposer
+        shell: pwsh
+        run: |
+          $helper = "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-usn-helper.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $helper).Hash.ToLowerInvariant()
+          "BOOTOPTIM_APPCDS_USN_HELPER_SHA256_PIN=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build release interposer and Pandora
+        run: |
+          cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml --release --locked --target x86_64-pc-windows-msvc
+          cargo build --release --frozen --target x86_64-pc-windows-msvc
+      - name: Execute real release EXE authority/plan gate
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "bootoptim-agent171-authority"
+          Remove-Item -Recurse -Force $fixture -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force (Join-Path $fixture "runtime\bin") | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $fixture "mods") | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $fixture "config") | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $fixture "runtime\bin\java.exe"), [byte[]](1,2,3,4))
+          [IO.File]::WriteAllText((Join-Path $fixture "runtime\release"), "JAVA_VERSION=`"25.0.4`"`nIMPLEMENTOR=`"BootOptim CI`"`n")
+          [IO.File]::WriteAllBytes((Join-Path $fixture "library.jar"), [byte[]](5,6,7,8))
+          [IO.File]::WriteAllBytes((Join-Path $fixture "mods\mod.jar"), [byte[]](9,10,11,12))
+          [IO.File]::WriteAllText((Join-Path $fixture "config\fml.toml"), "probe=true`n")
+          [IO.File]::WriteAllText((Join-Path $fixture "options.txt"), "resourcePacks:[`"vanilla`"]`nincompatibleResourcePacks:[]`n")
+          $interposer = (Resolve-Path "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe").Path
+          $launcher = (Resolve-Path "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe").Path
+          $java = Join-Path $fixture "runtime\bin\java.exe"
+          $cp = Join-Path $fixture "library.jar"
+          $plan = Join-Path $fixture ".bootoptim\appcds\launch-plan.json"
+          $baseline = Join-Path $fixture "launch-plan-stock.json"
+          $env:BOOTOPTIM_APPCDS_MODE = "plan"
+          Remove-Item Env:BOOTOPTIM_APPCDS_IDENTITY_CACHE -ErrorAction SilentlyContinue
+          Remove-Item Env:BOOTOPTIM_APPCDS_IDENTITY_CACHE_PROBE -ErrorAction SilentlyContinue
+          $decision = & $interposer --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea -- $java -cp $cp com.moulberry.pandora.LaunchWrapper
+          if ($LASTEXITCODE -ne 0 -or ($decision | Out-String).Trim() -ne "STOCK") { throw "omitted-authority baseline failed" }
+          Copy-Item $plan $baseline
+          $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE = "1"
+          $unknownProbe = Join-Path $fixture "authority-unknown.json"
+          $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE_PROBE = $unknownProbe
+          $decision = & $interposer --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea --appcds-launch-authority unknown -- $java -cp $cp com.moulberry.pandora.LaunchWrapper
+          if ($LASTEXITCODE -ne 0 -or ($decision | Out-String).Trim() -ne "STOCK") { throw "unknown authority failed" }
+          $unknown = Get-Content $unknownProbe -Raw | ConvertFrom-Json
+          if ($unknown.runtime_reuse_authorized -ne $false -or $unknown.reused_files -ne 0) { throw "unknown authority authorized reuse" }
+          if (Compare-Object ([IO.File]::ReadAllBytes($baseline)) ([IO.File]::ReadAllBytes($plan)) -SyncWindow 0) { throw "unknown authority changed plan bytes" }
+          $guiProbe = Join-Path $fixture "authority-normal-gui.json"
+          $env:BOOTOPTIM_APPCDS_IDENTITY_CACHE_PROBE = $guiProbe
+          $decision = & $interposer --instance-dir $fixture --launcher-exe $launcher --upstream-commit 4eb6c7849561151695288443c106519774ee05ea --appcds-launch-authority normal-gui -- $java -cp $cp com.moulberry.pandora.LaunchWrapper
+          if ($LASTEXITCODE -ne 0 -or ($decision | Out-String).Trim() -ne "STOCK") { throw "normal-gui authority failed" }
+          $gui = Get-Content $guiProbe -Raw | ConvertFrom-Json
+          if ($gui.runtime_reuse_authorized -ne $true) { throw "normal-gui authority did not reach interposer" }
+          if (Compare-Object ([IO.File]::ReadAllBytes($baseline)) ([IO.File]::ReadAllBytes($plan)) -SyncWindow 0) { throw "normal-gui authority changed plan bytes" }
+          Copy-Item $guiProbe "bootoptim-v0/APPCDS_LAUNCH_AUTHORITY_SELFTEST.json"
+          $pandoraAscii = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($launcher))
+          foreach ($marker in @("--appcds-launch-authority", "normal-gui")) { if (-not $pandoraAscii.Contains($marker)) { throw "release Pandora missing authority marker $marker" } }
+      - name: Assemble authority artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bootoptim-v0/dist-agent171 | Out-Null
+          Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe bootoptim-v0/dist-agent171/
+          Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-usn-helper.exe bootoptim-v0/dist-agent171/
+          Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe bootoptim-v0/dist-agent171/BootOptimPandora-v0.exe
+          Copy-Item bootoptim-v0/APPCDS_LAUNCH_AUTHORITY_SELFTEST.json bootoptim-v0/dist-agent171/
+          $files = @("bootoptim-v0/dist-agent171/bootoptim-launch-interposer.exe","bootoptim-v0/dist-agent171/bootoptim-usn-helper.exe","bootoptim-v0/dist-agent171/BootOptimPandora-v0.exe")
+          $lines = foreach ($file in $files) { $h=Get-FileHash -Algorithm SHA256 $file; "{0}  {1}" -f $h.Hash.ToLowerInvariant(),(Split-Path $file -Leaf) }
+          $lines | Set-Content -Encoding ascii bootoptim-v0/dist-agent171/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bootoptim-pandora-v0-agent171-windows-x86_64
+          path: bootoptim-v0/dist-agent171/*
+          if-no-files-found: error

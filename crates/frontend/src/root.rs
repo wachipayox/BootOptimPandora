@@ -155,7 +155,8 @@ pub fn start_instance(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let modal_action = ModalAction::default();
+    // Sole audited GUI Start authority for AppCDS identity reuse.
+    let modal_action = ModalAction::normal_gui_launch();
 
     // Remove any stale live game outputs
     if let Some(instance_entry) = data.instances.read(cx).entries.get(&id).cloned() {

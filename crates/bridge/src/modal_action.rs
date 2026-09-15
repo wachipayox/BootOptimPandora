@@ -11,10 +11,27 @@ use atomic_time::AtomicOptionInstant;
 use parking_lot::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AppCdsLaunchAuthority {
+    #[default]
+    Unknown,
+    NormalGui,
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct ModalAction(Arc<ModalActionInner>);
 
 impl ModalAction {
+    pub fn normal_gui_launch() -> Self {
+        let mut inner = ModalActionInner::default();
+        inner.appcds_launch_authority = AppCdsLaunchAuthority::NormalGui;
+        Self(Arc::new(inner))
+    }
+
+    pub fn appcds_launch_authority(&self) -> AppCdsLaunchAuthority {
+        self.0.appcds_launch_authority
+    }
+
     pub fn refcnt(&self) -> usize {
         Arc::strong_count(&self.0)
     }
@@ -41,6 +58,7 @@ pub struct ModalActionVisitUrl {
 
 #[derive(Default)]
 pub struct ModalActionInner {
+    appcds_launch_authority: AppCdsLaunchAuthority,
     notify: Arc<tokio::sync::Notify>,
     finished_at: AtomicOptionInstant,
     finish_effects: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
@@ -278,4 +296,12 @@ impl ProgressTracker {
         self.0.total.store(total, Ordering::SeqCst);
         self.0.notify.notify_one();
     }
+}
+
+
+#[cfg(test)]
+mod appcds_launch_authority_tests {
+    use super::*;
+    #[test] fn default_and_legacy_actions_are_unknown(){let a=ModalAction::default();assert_eq!(a.appcds_launch_authority(),AppCdsLaunchAuthority::Unknown);assert_eq!(a.clone().appcds_launch_authority(),AppCdsLaunchAuthority::Unknown);}
+    #[test] fn audited_gui_start_constructor_is_normal_gui_and_clone_preserves_it(){let a=ModalAction::normal_gui_launch();assert_eq!(a.appcds_launch_authority(),AppCdsLaunchAuthority::NormalGui);assert_eq!(a.clone().appcds_launch_authority(),AppCdsLaunchAuthority::NormalGui);}
 }

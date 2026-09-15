@@ -62,6 +62,7 @@ struct ParsedArgs {
     instance_dir: PathBuf,
     launcher_exe: Option<PathBuf>,
     upstream_commit: String,
+    identity_launch_authority: IdentityLaunchAuthority,
     java_exe: OsString,
     java_args: Vec<OsString>,
 }
@@ -139,7 +140,7 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
     let mut probe = PreflightProbe::from_env();
     let result = prepare_launch_inner(parsed, &mut probe);
     probe.finish(&result);
-    finish_identity_cache_probe(probe.inventory);
+    finish_identity_cache_probe(probe.inventory, parsed.identity_launch_authority);
     result
 }
 
@@ -309,6 +310,8 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
     let mut instance_dir = None;
     let mut launcher_exe = None;
     let mut upstream_commit = UPSTREAM_DEFAULT.to_string();
+    let mut identity_launch_authority = IdentityLaunchAuthority::Unknown;
+    let mut authority_seen = false;
     let mut i = 0usize;
     while i < args.len() {
         if args[i] == OsStr::new("--") {
@@ -324,6 +327,11 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
         } else if args[i] == OsStr::new("--upstream-commit") {
             i += 1;
             upstream_commit = args.get(i).map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        } else if args[i] == OsStr::new("--appcds-launch-authority") {
+            if authority_seen { return Err(io::Error::new(io::ErrorKind::InvalidInput, "duplicate launch authority")); }
+            authority_seen = true; i += 1;
+            let value = args.get(i).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing launch authority"))?;
+            identity_launch_authority = IdentityLaunchAuthority::from_control_arg(value.as_os_str()).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid launch authority"))?;
         } else {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "unknown control argument"));
         }
@@ -332,5 +340,5 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
     let java_exe = args.get(i).cloned().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing java"))?;
     let java_args = args.get(i + 1..).unwrap_or_default().to_vec();
     let instance_dir = instance_dir.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing instance"))?;
-    Ok(ParsedArgs { instance_dir, launcher_exe, upstream_commit, java_exe, java_args })
+    Ok(ParsedArgs { instance_dir, launcher_exe, upstream_commit, identity_launch_authority, java_exe, java_args })
 }

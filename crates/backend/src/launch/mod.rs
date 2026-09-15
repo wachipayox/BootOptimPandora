@@ -3,7 +3,7 @@ use std::{
 };
 
 use bridge::{
-    handle::FrontendHandle, message::{MessageToFrontend, QuickPlayLaunch}, modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
+    handle::FrontendHandle, message::{MessageToFrontend, QuickPlayLaunch}, modal_action::{AppCdsLaunchAuthority, ModalAction, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
 };
 #[cfg(windows)]
 use command::PandoraArg;
@@ -243,6 +243,7 @@ impl Launcher {
             log_configuration,
             rule_context: launch_rule_context,
             login_info,
+            appcds_launch_authority: modal_action.appcds_launch_authority(),
         };
 
         if modal_action.has_requested_cancel() {
@@ -2087,6 +2088,7 @@ pub struct LaunchContext {
     pub log_configuration: Option<OsString>,
     pub rule_context: LaunchRuleContext,
     pub login_info: MinecraftLoginInfo,
+    pub appcds_launch_authority: AppCdsLaunchAuthority,
 }
 
 impl LaunchContext {
@@ -2136,6 +2138,10 @@ impl LaunchContext {
         for arg in iter {
             command.arg(arg.to_os_string());
         }
+        command.bootoptim_appcds_launch_authority(match self.appcds_launch_authority {
+            AppCdsLaunchAuthority::Unknown => command::BootOptimAppCdsLaunchAuthority::Unknown,
+            AppCdsLaunchAuthority::NormalGui => command::BootOptimAppCdsLaunchAuthority::NormalGui,
+        });
 
         #[cfg(target_os = "linux")]
         if std::env::var_os("DISPLAY").is_none() {
