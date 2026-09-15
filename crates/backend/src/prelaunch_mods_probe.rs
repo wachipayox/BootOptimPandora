@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use std::{
+    cell::Cell,
     collections::{BTreeSet, HashMap},
     fs,
     io::{self, Write},
@@ -48,7 +49,6 @@ struct Fixture {
     instance_root: PathBuf,
     mods_dir: PathBuf,
     dot_minecraft: PathBuf,
-    content_library: PathBuf,
     managed: Vec<(PathBuf, PathBuf)>,
     known_top_level: BTreeSet<PathBuf>,
 }
@@ -84,7 +84,6 @@ impl Fixture {
             instance_root,
             mods_dir,
             dot_minecraft,
-            content_library,
             managed,
             known_top_level,
         })
@@ -127,13 +126,16 @@ fn measured<T>(op: impl FnOnce() -> io::Result<(T, u64, u64, u64)>) -> io::Resul
         (Some(start), Some(end)) => Some(end.saturating_sub(start)),
         _ => None,
     };
-    Ok((value, PhaseSample {
-        wall_ns: wall_start.elapsed().as_nanos(),
-        cpu_ns,
-        bytes,
-        files,
-        dirs,
-    }))
+    Ok((
+        value,
+        PhaseSample {
+            wall_ns: wall_start.elapsed().as_nanos(),
+            cpu_ns,
+            bytes,
+            files,
+            dirs,
+        },
+    ))
 }
 
 fn scan_unknown_top_level(mods_dir: &Path, known: &BTreeSet<PathBuf>) -> io::Result<(Vec<PathBuf>, u64, u64)> {
@@ -160,11 +162,8 @@ fn scan_unknown_top_level(mods_dir: &Path, known: &BTreeSet<PathBuf>) -> io::Res
 fn copy_extra(from: &Path, to: &Path) -> io::Result<(u64, u64, u64)> {
     if from.is_dir() {
         fs::create_dir_all(to)?;
-        let mut final_total = 0;
-        copy_content_recursive(from, to, false, &|copied, total| {
-            let _ = copied;
-            final_total = total;
-        })?;
+        let final_total = Cell::new(0_u64);
+        copy_content_recursive(from, to, false, &|_, total| final_total.set(total))?;
         let mut files = 0;
         let mut dirs = 1;
         for entry in walkdir::WalkDir::new(from).min_depth(1) {
@@ -175,7 +174,7 @@ fn copy_extra(from: &Path, to: &Path) -> io::Result<(u64, u64, u64)> {
                 dirs += 1;
             }
         }
-        Ok((final_total, files, dirs))
+        Ok((final_total.get(), files, dirs))
     } else {
         let bytes = fs::copy(from, to)?;
         Ok((bytes, 1, 0))
@@ -193,11 +192,11 @@ fn restore_stock_layout(instance_root: &Path, mods_dir: &Path, sandbox: bool) ->
             if connector.exists() {
                 let original_connector = original_mods.join(".connector");
                 fs::create_dir_all(&original_connector)?;
-                let mut final_total = 0;
+                let final_total = Cell::new(0_u64);
                 copy_content_recursive(&connector, &original_connector, false, &|_, total| {
-                    final_total = total;
+                    final_total.set(total);
                 })?;
-                bytes += final_total;
+                bytes += final_total.get();
                 dirs += 1;
                 files += walkdir::WalkDir::new(&connector)
                     .min_depth(1)
@@ -275,7 +274,10 @@ fn run_stock_filesystem_cycle(fixture: &Fixture, sandbox: bool) -> io::Result<Ha
 }
 
 fn emit_sample(phase: &str, sample: PhaseSample) {
-    let cpu = sample.cpu_ns.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string());
+    let cpu = sample
+        .cpu_ns
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string());
     eprintln!(
         "{{\"schema\":\"{SCHEMA}\",\"phase\":\"{phase}\",\"wall_ns\":{},\"cpu_ns\":{cpu},\"bytes\":{},\"files\":{},\"dirs\":{}}}",
         sample.wall_ns, sample.bytes, sample.files, sample.dirs
@@ -300,10 +302,7 @@ fn fail_open_reuse_allowed(
     previous_exit_clean: bool,
     original_mods_absent: bool,
 ) -> bool {
-    previous_exit_clean
-        && prepared_layout_present
-        && original_mods_absent
-        && prior == Some(current)
+    previous_exit_clean && prepared_layout_present && original_mods_absent && prior == Some(current)
 }
 
 #[test]
@@ -328,7 +327,10 @@ fn hosted_representative_prelaunch_filesystem_attribution() -> io::Result<()> {
     assert!(samples["copy_user_extra_entries"].bytes > 0);
     assert!(fixture.mods_dir.join("user-added.jar").is_file());
     assert!(fixture.mods_dir.join("mcef-cache/cache.bin").is_file());
-    assert_eq!(fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(), 96 * 1024);
+    assert_eq!(
+        fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(),
+        96 * 1024
+    );
     assert!(!fixture.instance_root.join("original_mods").exists());
     Ok(())
 }
@@ -338,8 +340,14 @@ fn repeated_layouts_preserve_user_visible_mods_and_connector_roundtrip() -> io::
     for _ in 0..2 {
         let fixture = Fixture::create(12, 8192, 32 * 1024)?;
         let _ = run_stock_filesystem_cycle(&fixture, false)?;
-        assert_eq!(fs::metadata(fixture.mods_dir.join("user-added.jar"))?.len(), 32 * 1024);
-        assert_eq!(fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(), 96 * 1024);
+        assert_eq!(
+            fs::metadata(fixture.mods_dir.join("user-added.jar"))?.len(),
+            32 * 1024
+        );
+        assert_eq!(
+            fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(),
+            96 * 1024
+        );
     }
     Ok(())
 }
@@ -348,7 +356,10 @@ fn repeated_layouts_preserve_user_visible_mods_and_connector_roundtrip() -> io::
 fn sandbox_restore_does_not_merge_runtime_connector_cache() -> io::Result<()> {
     let fixture = Fixture::create(4, 4096, 16 * 1024)?;
     let _ = run_stock_filesystem_cycle(&fixture, true)?;
-    assert_eq!(fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(), 8 * 1024);
+    assert_eq!(
+        fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(),
+        8 * 1024
+    );
     Ok(())
 }
 
@@ -360,13 +371,23 @@ fn interrupted_prelaunch_can_restore_original_layout_fail_open() -> io::Result<(
     fs::rename(&fixture.mods_dir, &original_mods)?;
     fs::create_dir_all(&fixture.mods_dir)?;
     for relative in unknown {
-        let _ = copy_extra(&original_mods.join(&relative), &fixture.mods_dir.join(&relative))?;
+        let _ = copy_extra(
+            &original_mods.join(&relative),
+            &fixture.mods_dir.join(&relative),
+        )?;
     }
-    write_pattern(&fixture.mods_dir.join(".connector/cache.bin"), 48 * 1024, 0x12)?;
+    write_pattern(
+        &fixture.mods_dir.join(".connector/cache.bin"),
+        48 * 1024,
+        0x12,
+    )?;
 
     let _ = restore_stock_layout(&fixture.instance_root, &fixture.mods_dir, false)?;
     assert!(fixture.mods_dir.join("user-added.jar").is_file());
-    assert_eq!(fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(), 48 * 1024);
+    assert_eq!(
+        fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(),
+        48 * 1024
+    );
     assert!(!original_mods.exists());
     Ok(())
 }
@@ -385,19 +406,57 @@ fn proposed_reuse_identity_invalidates_every_semantic_input_and_uncertain_state(
     assert!(fail_open_reuse_allowed(Some(&base), &base, true, true, true));
 
     let mut variants = Vec::new();
-    let mut changed = base.clone(); changed.managed_selection += 1; variants.push(changed);
-    let mut changed = base.clone(); changed.modpack_files += 1; variants.push(changed);
-    let mut changed = base.clone(); changed.disabled_children += 1; variants.push(changed);
-    let mut changed = base.clone(); changed.extra_entries += 1; variants.push(changed);
-    let mut changed = base.clone(); changed.config_inputs += 1; variants.push(changed);
-    let mut changed = base.clone(); changed.sync_targets += 1; variants.push(changed);
-    let mut changed = base.clone(); changed.sandbox = true; variants.push(changed);
+    let mut changed = base.clone();
+    changed.managed_selection += 1;
+    variants.push(changed);
+    let mut changed = base.clone();
+    changed.modpack_files += 1;
+    variants.push(changed);
+    let mut changed = base.clone();
+    changed.disabled_children += 1;
+    variants.push(changed);
+    let mut changed = base.clone();
+    changed.extra_entries += 1;
+    variants.push(changed);
+    let mut changed = base.clone();
+    changed.config_inputs += 1;
+    variants.push(changed);
+    let mut changed = base.clone();
+    changed.sync_targets += 1;
+    variants.push(changed);
+    let mut changed = base.clone();
+    changed.sandbox = true;
+    variants.push(changed);
 
     for changed in variants {
-        assert!(!fail_open_reuse_allowed(Some(&base), &changed, true, true, true));
+        assert!(!fail_open_reuse_allowed(
+            Some(&base),
+            &changed,
+            true,
+            true,
+            true
+        ));
     }
     assert!(!fail_open_reuse_allowed(None, &base, true, true, true));
-    assert!(!fail_open_reuse_allowed(Some(&base), &base, false, true, true));
-    assert!(!fail_open_reuse_allowed(Some(&base), &base, true, false, true));
-    assert!(!fail_open_reuse_allowed(Some(&base), &base, true, true, false));
+    assert!(!fail_open_reuse_allowed(
+        Some(&base),
+        &base,
+        false,
+        true,
+        true
+    ));
+    assert!(!fail_open_reuse_allowed(
+        Some(&base),
+        &base,
+        true,
+        false,
+        true
+    ));
+    assert!(!fail_open_reuse_allowed(
+        Some(&base),
+        &base,
+        true,
+        true,
+        false
+    ));
 }
