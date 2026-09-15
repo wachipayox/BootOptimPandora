@@ -6,6 +6,7 @@ mod backend;
 pub use backend::*;
 
 mod asset_probe;
+mod asset_probe_context;
 mod asset_usn_cache;
 mod usn_protocol;
 mod backend_filesystem;
