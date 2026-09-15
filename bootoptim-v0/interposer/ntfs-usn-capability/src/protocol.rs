@@ -49,4 +49,59 @@ pub fn volume_guid_bytes(value: &str) -> Option<[u8; VOLUME_GUID_LEN]> { let b=v
 pub fn volume_guid_str(value: &[u8; VOLUME_GUID_LEN]) -> Option<&str> { let s=std::str::from_utf8(value).ok()?; volume_guid_bytes(s)?; Some(s) }
 
 #[cfg(test)]
-mod tests { use super::*; #[test] fn fixed_round_trip() { let nonce=[7;NONCE_LEN]; let volume_guid=volume_guid_bytes(r"\\?\Volume{12345678-1234-5678-9abc-def012345678}\").unwrap(); let r=Request { kind:RequestKind::File, nonce, volume_guid, file_id:[9;16] }; assert_eq!(decode_request(&encode_request(r)),Some(r)); let mut bad=encode_request(r); bad[10]=99; assert_eq!(decode_request(&bad),None); } #[test] fn volume_is_not_path_channel(){ assert!(volume_guid_bytes(r"C:\assets\x").is_none()); } }
+mod tests {
+    use super::*;
+
+    fn volume() -> [u8; VOLUME_GUID_LEN] {
+        volume_guid_bytes(r"\\?\Volume{12345678-1234-5678-9abc-def012345678}\").unwrap()
+    }
+
+    #[test]
+    fn fixed_round_trip_and_reserved_bytes_are_strict() {
+        let nonce=[7;NONCE_LEN];
+        let request=Request { kind:RequestKind::File, nonce, volume_guid:volume(), file_id:[9;16] };
+        let bytes=encode_request(request);
+        assert_eq!(bytes.len(), REQUEST_LEN);
+        assert_eq!(decode_request(&bytes),Some(request));
+        let mut bad=bytes; bad[10]=99; assert_eq!(decode_request(&bad),None);
+        let mut bad=bytes; bad[11]=1; assert_eq!(decode_request(&bad),None);
+        let mut bad=bytes; bad[94]=1; assert_eq!(decode_request(&bad),None);
+        assert_eq!(decode_request(&bytes[..REQUEST_LEN-1]),None);
+    }
+
+    #[test]
+    fn handshake_and_response_reject_version_reserved_and_unknown_status() {
+        let nonce=[3;NONCE_LEN];
+        let handshake=Handshake{nonce,pid:77};
+        let mut hb=encode_handshake(handshake);
+        assert_eq!(decode_handshake(&hb),Some(handshake));
+        hb[8]=(VERSION as u8).wrapping_add(1);
+        assert_eq!(decode_handshake(&hb),None);
+
+        let response=Response{status:ResponseStatus::Ok,nonce,volume_serial:5,journal_id:7,first_usn:10,lowest_valid_usn:20,next_usn:100,file_id:[1;16],file_usn:90};
+        let bytes=encode_response(response);
+        assert_eq!(decode_response(&bytes),Some(response));
+        let mut bad=bytes; bad[10]=99; assert_eq!(decode_response(&bad),None);
+        let mut bad=bytes; bad[85]=1; assert_eq!(decode_response(&bad),None);
+    }
+
+    #[test]
+    fn journal_transition_requires_same_monotonic_valid_journal() {
+        let before=(7,10,20,100);
+        assert!(journal_transition_is_consistent(before,(7,11,21,101)));
+        assert!(journal_transition_is_consistent(before,before));
+        assert!(!journal_transition_is_consistent(before,(8,11,21,101)));
+        assert!(!journal_transition_is_consistent(before,(7,9,21,101)));
+        assert!(!journal_transition_is_consistent(before,(7,11,19,101)));
+        assert!(!journal_transition_is_consistent(before,(7,11,21,99)));
+        assert!(!journal_transition_is_consistent(before,(7,11,21,-1)));
+        assert!(!journal_transition_is_consistent((0,10,20,100),before));
+    }
+
+    #[test]
+    fn volume_is_not_path_channel(){
+        assert!(volume_guid_bytes(r"C:\assets\x").is_none());
+        assert!(volume_guid_bytes(r"\\server\share\").is_none());
+        assert!(volume_guid_bytes(r"\\?\Volume{12345678-1234-5678-9abc-def012345678}\assets").is_none());
+    }
+}
