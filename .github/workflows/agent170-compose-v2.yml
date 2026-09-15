@@ -1,0 +1,28 @@
+name: Agent170 final composition edit
+
+on:
+  push:
+    branches:
+      - agent170/pr18-pr13-usn-attribution-composition-20260915
+
+permissions:
+  contents: write
+
+jobs:
+  compose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply composition
+        run: python bootoptim-v0/agent170_compose.py
+      - name: Commit composition
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'agent170: compose PR18 USN verification with PR13 attribution'
+          git push origin HEAD:agent170/pr18-pr13-usn-attribution-composition-20260915
