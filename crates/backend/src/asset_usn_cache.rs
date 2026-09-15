@@ -122,7 +122,8 @@ impl AssetUsnCacheSession {
             );
         }
 
-        crate::fs::check_sha1_hash(path, expected_hash).unwrap_or(false)
+        crate::asset_probe_context::hash_path_if_active(path, expected_hash)
+            .unwrap_or_else(|| crate::fs::check_sha1_hash(path, expected_hash).unwrap_or(false))
     }
 
     pub(crate) fn finish(&self) {

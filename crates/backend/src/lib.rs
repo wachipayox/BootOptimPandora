@@ -5,7 +5,13 @@ use std::ffi::{OsStr, OsString};
 mod backend;
 pub use backend::*;
 
+mod asset_probe;
+mod asset_probe_context;
 mod asset_usn_cache;
+#[cfg(windows)]
+mod packaged_probe_selftest;
+#[cfg(windows)]
+pub use packaged_probe_selftest::run_packaged_probe_composition_selftest;
 mod usn_protocol;
 mod backend_filesystem;
 mod backend_handler;

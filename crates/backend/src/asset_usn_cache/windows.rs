@@ -398,7 +398,8 @@ impl WindowsSession {
         expected_hash: [u8; 20],
     ) -> bool {
         let Some((mut file, before)) = protected_file(path) else {
-            return crate::fs::check_sha1_hash(path, expected_hash).unwrap_or(false);
+            return crate::asset_probe_context::hash_path_if_active(path, expected_hash)
+                .unwrap_or_else(|| crate::fs::check_sha1_hash(path, expected_hash).unwrap_or(false));
         };
 
         if before.volume_guid != self.volume_guid || before.volume_serial != self.volume_serial {
@@ -713,6 +714,9 @@ fn identity_from_handle(handle: Handle) -> Option<FileIdentity> {
 }
 
 fn hash_file(file: &mut File, expected: [u8; 20]) -> Option<bool> {
+    if let Some(result) = crate::asset_probe_context::hash_open_file_if_active(file, expected) {
+        return Some(result);
+    }
     file.seek(SeekFrom::Start(0)).ok()?;
     let mut hasher = Sha1::new();
     let mut buffer = [0u8; 64 * 1024];
