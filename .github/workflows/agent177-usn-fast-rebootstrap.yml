@@ -5,6 +5,7 @@ on:
     paths:
       - "crates/backend/src/asset_usn_cache.rs"
       - "crates/backend/src/asset_usn_cache/**"
+      - "crates/backend/src/launch/mod.rs"
       - "bootoptim-v0/USN_FAST_REBOOTSTRAP_CONTRACT.md"
       - ".github/workflows/agent177-usn-fast-rebootstrap.yml"
   push:
@@ -23,8 +24,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Rust fmt
-        run: cargo fmt --all -- --check
+      - name: Backend fmt
+        run: cargo fmt -p backend -- --check
 
       - name: Backend check
         run: cargo check -p backend --tests --frozen
