@@ -4,11 +4,7 @@ This diagnostic is an **opt-in measurement harness** for the Pandora launch path
 
 ## Activation and artifact
 
-The probe is disabled unless `BOOTOPTIM_LAUNCH_PROBE` is present **before Pandora starts**. Its value is the output JSONL filename. Use a fresh filename for each physical run.
-
-When disabled, the probe does not open, scan, hash, or create any diagnostic file and does not add a subprocess. The normal Pandora/AppCDS launch path is unchanged. Probe activation is cached once per Pandora process, so setting the variable after Pandora has already started is intentionally unsupported.
-
-Example PowerShell activation from a temporary test directory:
+The probe is disabled unless `BOOTOPTIM_LAUNCH_PROBE` is present. Its value is the output JSONL filename. Use a fresh filename for every physical run and set the variable **before starting Pandora**.
 
 ```powershell
 $probe = Join-Path $PWD 'bootoptim-launch-probe-laptop-01.jsonl'
@@ -17,9 +13,9 @@ $env:BOOTOPTIM_LAUNCH_PROBE = $probe
 .\BootOptimPandora-v0.exe
 ```
 
-The GUI **Start** action truncates/starts the selected JSONL file for that launch. Run exactly one probed launch at a time; a second Start while the first probe is active is ignored by the probe rather than truncating the first artifact.
+When disabled, the probe creates no diagnostic file and adds no subprocess. Probe activation no longer permanently caches an early absent environment variable: an absence check cannot create the split state in which only the later command-spawn writer is active.
 
-After the one physical run, close Pandora and clear the opt-in variable:
+After the single run:
 
 ```powershell
 Remove-Item Env:BOOTOPTIM_LAUNCH_PROBE -ErrorAction SilentlyContinue
@@ -27,59 +23,84 @@ Get-FileHash $probe -Algorithm SHA256
 Copy-Item $probe <offline-destination>
 ```
 
-The main agent can then consume the copied JSONL offline together with its SHA-256. The artifact itself never contains the output filename, full instance path, Java path, account UUID/name, access token, command line, JVM arguments, URLs, or file names.
+The JSONL never stores the output filename, full instance path, Java path, account UUID/name, access token, command line, JVM arguments, URLs, or downloaded filenames.
 
-## JSONL schema
+## Mandatory root contract
 
-Every line is one JSON object with `schema="bootoptim.launch_probe.v1"` and a platform monotonic `mono_ns` timestamp. Windows uses `QueryPerformanceCounter`; Linux/macOS use `CLOCK_MONOTONIC`. Timestamps are comparable only within one boot/run and are intentionally not wall-clock timestamps.
+A successful trace that reaches direct Java process creation is valid only when all of the following are true:
 
-Common fields:
+1. The **first non-empty JSONL record** is `phase="launcher_pre_java", event="begin"`.
+2. That root begin occurs exactly once and precedes every launch child event.
+3. Every observed span has one begin before one end; timestamps never decrease in file order.
+4. `java_spawn.begin` and `java_spawn.end` both occur exactly once inside the open root.
+5. `launcher_pre_java.end` occurs exactly once, after `java_spawn.end`.
+6. `java_to_menu` follows as `event="unobserved", observed=false, duration_ns=null`.
 
-- `phase`: fixed phase identifier.
-- `event`: `instant`, `begin`, `end`, `inclusive_begin`, `inclusive_end`, `observed`, or `unobserved` where applicable.
-- `network`: `true` only for a fixed `network_request` / `network_download` observation.
-- `source`: a fixed non-sensitive source label. No URL, hostname, filename, account identifier, or token is persisted.
-- `outcome`: fixed `ok`, `error`, or `cancelled` where applicable.
+A trace missing either root boundary, containing a child outside the root, or containing a span end without its begin is **invalid and must not be used as a measurement**.
 
-The expected phase vocabulary is:
+The root starts at the concrete launch request. GUI Start uses `StartInstance`; the name-based launch path is also armed before backend launch and adopts the concrete launch modal when it becomes available. `send` and `send_with_serial` are both covered.
 
-1. `launch_request` — GUI Start message handed to the backend.
-2. `instance_config` — retrieval/reload of the `InstanceConfiguration` immediately after that concrete Start dispatch. No instance identity/path is written. Pandora has no separate monolithic config-validator call in this path; later semantic checks stay in their stock phases.
-3. `account_selection` — account selection/login acquisition required for launch. No identity is recorded. If Pandora actually enters its `Logging in` tracker rather than using an already-valid cached/offline account, the probe emits `network_request source="account_login"`.
-4. `prelaunch` — Pandora's existing prelaunch work before the launcher pipeline. Any existing progress tracker whose title explicitly switches to `Downloading ...` but is not one of the Java/assets/library trackers emits `network_download source="tracked_other"`.
-5. `version_loader_resolution` — Minecraft/loader launch-version resolution. The pinned parent `Launching` progress contract closes this phase only after `create_launch_version` has returned: Vanilla `2/7`, Fabric `5/10`, Forge/NeoForge `8/13`. Forge/NeoForge may create nested Java/library verifier trackers before that boundary; they therefore cannot be mistaken for the later outer group. The Forge/NeoForge `1/13` boundary is immediately before `create_forgelike` constructs the join containing the remote installer SHA-1 request, so the probe emits `network_request source="loader_sha1"` once for that route. This is an instantaneous route observation, not a network-duration estimate.
-6. `java_runtime`, `assets_verify_download`, `libraries_classpath_inputs` — the observable top-level concurrent preparation branches in Pandora's existing `try_join4`. Because the parent progress boundary above is reached before those futures are polled, top-level attribution is race-free even if the asset-index metadata fetch stalls before the asset tracker itself is created. A configured/external Java path may legitimately have no `java_runtime` tracker.
-7. `network_download` — an instantaneous observation when an existing tracker enters Pandora's explicit download path. Fixed `source` values are `assets`, `libraries`, `java_runtime`, or `tracked_other`. A long asset span with no `source="assets"` observation is therefore evidence that the measured asset time was local verification rather than asset download.
-8. `network_request` — an instantaneous observation for route-level HTTP that can be established without inspecting URLs or payloads. Fixed sources in v1 are `account_login` and `loader_sha1`.
-9. `classpath_resolution`, `native_extraction`, and `wrapper_arguments` — deliberately **inclusive and overlapping** post-join envelopes. They begin on the parent progress increment made by the outer code immediately after the complete `try_join4` returns. With Pandora-managed Java that increment is Vanilla `6/7`, Fabric `9/10`, Forge/NeoForge `12/13`. A configured/external Java path returns before creating a Java-runtime tracker and before that branch increments the parent, so the same exact post-join increment is one lower: `5/7`, `8/10`, `11/13`. The probe distinguishes the two cases by the presence of a top-level Java-runtime tracker; it therefore does not confuse a merely delayed managed runtime with custom Java. In all cases the untracked `log_configuration` sibling has completed before these envelopes begin. They end when Pandora has constructed the structured Minecraft command. Do not treat these scopes as exclusive timings or sum them.
-10. `appcds_preflight` — optional span emitted only when the existing BootOptim v0 helper actually reaches its preflight subprocess. It measures helper execution separately from wrapper preparation and Java spawn without changing AppCDS decisions.
-11. `java_spawn` — direct Java OS process-creation begin/end on Pandora's command-spawner thread. It is emitted only when the direct executable is `java`, `java.exe`, or `javaw.exe` and the Pandora LaunchWrapper marker is present. A custom external wrapper is therefore not falsely labelled as Java creation.
-12. `launcher_pre_java` — successful end boundary for Start→direct Java process creation. Compute the duration as `launcher_pre_java.end.mono_ns - launch_request.mono_ns`; do not add child spans because several overlap.
-13. `java_to_menu` — emitted as `unobserved`, `observed=false`, `duration_ns=null` immediately after successful direct Java creation. Pandora has no menu-ready signal usable here without reading/interpreting game output, and this PR intentionally does not read game logs to manufacture a TTMM value.
-14. `launch` — fixed terminal error/cancellation event when Pandora's existing modal action reports one before successful Java creation.
+The command-spawn layer is deliberately unable to create a late-only valid trace. Before it emits `appcds_preflight` or `java_spawn`, it requires the existing JSONL to begin with the root record above. If no root exists, the late writer emits no measured Java-spawn trace.
 
-### Network coverage boundary
+## Observable phases
 
-The probe records actual explicit downloader transitions from Pandora progress trackers plus the two route-level network requests above. It does **not** hook `reqwest` globally or inspect URLs, so small metadata refreshes are not claimed as individually timed HTTP spans. Their elapsed time remains inside the owning launch phase. This keeps the diagnostic low-intrusion and avoids attributing unrelated background HTTP to the measured launch. For the HDD question, the important distinction is direct: the asset verifier's span and whether it ever emitted `network_download source="assets"`.
+Each line has `schema="bootoptim.launch_probe.v1"` and a platform monotonic `mono_ns`. Windows uses `QueryPerformanceCounter`; Linux/macOS use `CLOCK_MONOTONIC`.
 
-### Why the parent progress contract is pinned
+The useful phase vocabulary is:
 
-This PR measures one exact Pandora base, not arbitrary future launcher versions. In that base, `launch_tracker.set_total(6)` covers the six outer launch steps, while loader-specific `create_launch_version` work extends the total by `+1` Vanilla, `+4` Fabric, or `+7` Forge/NeoForge. The outer code increments once immediately after `create_launch_version`, once in each managed Java/assets/libraries branch, once immediately after `try_join4`, and once after game process creation. A configured/external Java path returns before the managed-Java branch increment, shifting only the later parent counts by one. Unit tests pin the three totals (`7`, `10`, `13`), the `total-5` version boundary, and both exact post-join shapes (`total-1` with a top-level Java-runtime tracker, `total-2` without one). If that contract changes in a future rebase, tests/docs must change with it rather than silently shifting attribution.
+1. `launcher_pre_java.begin` — mandatory root at launch request.
+2. `launch_request` — launch handoff instant.
+3. `instance_config` — instance configuration retrieval/reload.
+4. `account_selection` — account selection/login acquisition.
+5. `prelaunch` — existing Pandora prelaunch work.
+6. `version_loader_resolution` — loader/version resolution. The pinned parent progress contract closes it at Vanilla `2/7`, Fabric `5/10`, Forge/NeoForge `8/13`. Forge/NeoForge `1/13` may emit `network_request source="loader_sha1"`.
+7. `java_runtime`, `assets_verify_download`, `libraries_classpath_inputs` — observable top-level concurrent preparation branches. A configured Java can legitimately leave `java_runtime` unobserved.
+8. `network_download` / `network_request` — fixed-source observations only; no URLs or payloads are stored.
+9. `classpath_resolution`, `native_extraction`, `wrapper_arguments` — **not timed**. They are always explicit `unobserved` markers because Pandora exposes no trustworthy independent boundaries for them.
+10. `appcds_preflight` — optional helper span when the existing preflight actually runs.
+11. `java_spawn` — direct Java OS process-creation begin/end. It requires executable basename `java`, `java.exe`, or `javaw.exe` and Pandora's `LaunchWrapper` marker.
+12. `launcher_pre_java.end` — mandatory successful root end after Java creation.
+13. `java_to_menu` — explicit `unobserved`; this harness does not parse game output to manufacture menu-ready timing.
+
+If `prelaunch`, `version_loader_resolution`, `assets_verify_download`, `libraries_classpath_inputs`, or `java_runtime` never appear at all before command construction, the probe records that absence as `unobserved` before Java spawn. It never invents a start/end duration. If a real begin was observed but its matching real end is missing, the trace remains contract-invalid rather than being repaired with a synthetic end.
+
+## Network boundary
+
+Explicit Pandora downloader transitions emit fixed `source` values: `assets`, `libraries`, `java_runtime`, or `tracked_other`. Account login and the pinned loader SHA-1 route can emit fixed `network_request` observations. The probe does not globally hook `reqwest`.
+
+## CI and packaged-binary gate
+
+CI tests the full trace contract on Linux and Windows, direct-Java filtering, disabled-environment behavior, existing deterministic/preflight regressions, and the patched Pandora release build. After the release build, CI inspects the exact `pandora_launcher.exe` that is copied into the downloadable artifact and refuses publication unless that binary contains the launch-probe schema plus the `launcher_pre_java` and `java_spawn` markers. This prevents a green library-only test from being mistaken for a packaged launcher containing the diagnostic route.
 
 ## One-run laptop protocol
 
-1. Use the Windows artifact from this PR only after its Windows Actions build/test job is green and verify `SHA256SUMS.txt` as in the existing v0 protocol.
-2. Keep the AppCDS mode and instance state exactly as intended for the run; this probe records an existing AppCDS preflight separately but does not reinterpret an AppCDS training run as a performance result.
-3. Set `BOOTOPTIM_LAUNCH_PROBE` to a new local JSONL filename **before starting Pandora**.
-4. Start Pandora, select the intended instance/account, press **Start exactly once**, and allow Pandora to reach successful direct Java creation. Do not modify the instance during the run and do not configure an external wrapper for this measurement.
-5. Once the Minecraft Java process has been created, the required pre-Java measurement is complete. Reaching the main menu can be noted separately by the physical operator, but this JSONL deliberately does not claim or infer Java→menu time.
-6. Exit normally, remove the environment variable, hash the JSONL, and copy the JSONL plus its hash to the offline handoff location.
-7. Inspect spans by monotonic timestamp. Treat `java_runtime`, `assets_verify_download`, and `libraries_classpath_inputs` as parallel siblings. Treat `classpath_resolution`, `native_extraction`, and `wrapper_arguments` as inclusive overlapping post-join envelopes. `appcds_preflight`, when present, is later and serial before `java_spawn`. Never sum overlapping scopes to derive Start→Java.
+1. Download only the Windows artifact produced by the final green PR #7 workflow. Extract `BootOptimPandora-v0.exe`, `bootoptim-launch-interposer.exe`, and `SHA256SUMS.txt` together.
+2. Verify both executable SHA-256 values against `SHA256SUMS.txt` **before starting Pandora**. Do not reuse hashes from an older PR #7 artifact.
+3. Open a fresh PowerShell in that extracted directory. Remove the intended JSONL path if it exists, set `BOOTOPTIM_LAUNCH_PROBE`, then start `BootOptimPandora-v0.exe` from that same PowerShell. Do not set/change the variable after Pandora is already running.
+4. Keep the intended AppCDS/helper settings unchanged for the measurement. Press **Start exactly once** on the intended instance; do not use an external Java wrapper.
+5. After successful Java creation and normal completion of the launch modal, close the processes normally, clear the environment variable, and hash/copy the JSONL offline.
+6. Before analysing durations, validate the structural sequence below. Reject the capture immediately if it does not match.
 
-## Critical path and current diagnostic hypothesis
+Required success skeleton (other observed child/network records may appear only between the root boundaries):
 
-Pandora starts Java-runtime preparation (unless a configured/external Java path is already selected), asset verification/download, library verification/download, and log-configuration loading concurrently and waits for all of them before post-join classpath/native/wrapper preparation. Therefore the longest unfinished sibling is on the critical path; sibling durations are not additive. The log-configuration branch has no dedicated child span in this revision, but the post-join parent increment guarantees that any log-config tail is finished before the later inclusive scopes begin.
+```text
+launcher_pre_java.begin
+launch_request.instant
+instance_config.begin
+... instance_config.end ...
+... prelaunch begin/end OR prelaunch.unobserved ...
+... version_loader_resolution begin/end OR unobserved ...
+... assets_verify_download begin/end OR unobserved ...
+... libraries_classpath_inputs begin/end OR unobserved ...
+classpath_resolution.unobserved
+native_extraction.unobserved
+wrapper_arguments.unobserved
+[appcds_preflight.begin
+ appcds_preflight.end]
+java_spawn.begin
+java_spawn.end
+launcher_pre_java.end
+java_to_menu.unobserved
+```
 
-The current code checks the SHA-1 of every asset object in the asset index before reusing it. On an HDD, that full verification fan-out is a plausible explanation for the physically observed long `Verifying integrity of game assets` stall. This PR does **not** optimize or cache that verification. A physical probe run should first establish whether `assets_verify_download` dominates the concurrent group and whether any `network_download` event with `source="assets"` is observed; only then should a separate optimization PR evaluate incremental verification.
-
-The historical BootOptim process-start→menu numbers and this launcher Start→Java boundary are different metrics. Neither this probe nor an AppCDS training run should be used to convert one into the other.
+Use `launcher_pre_java.end.mono_ns - launcher_pre_java.begin.mono_ns` only after this contract passes. Do not sum overlapping child spans. This document makes no performance claim.

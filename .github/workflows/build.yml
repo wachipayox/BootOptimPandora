@@ -47,6 +47,13 @@ jobs:
       - name: Install mold linker
         uses: rui314/setup-mold@v1
 
+      - name: Test final launch-probe root contract
+        run: cargo test -p bridge launch_probe --frozen --target ${{ matrix.platform.target }}
+
+      - name: Test direct Java spawn probe filter
+        if: contains(matrix.platform.os, 'windows')
+        run: cargo test -p command launch_probe_tests --frozen --target ${{ matrix.platform.target }}
+
       - name: Test USN asset-cache runtime gates
         run: cargo test -p backend asset_usn_cache --frozen --target ${{ matrix.platform.target }}
 

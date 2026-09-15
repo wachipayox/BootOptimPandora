@@ -52,15 +52,70 @@ pub struct BackendReceiver {
     processed_serial: AtomicSetSerial,
 }
 
+fn probe_dispatch(message: &MessageToBackend) {
+    match message {
+        MessageToBackend::StartInstance { modal_action, .. } => {
+            crate::launch_probe::backend_dispatch(modal_action.probe_key());
+        }
+        MessageToBackend::StartInstanceByName { .. } => {
+            crate::launch_probe::backend_dispatch(0);
+        }
+        _ => {}
+    }
+}
+
+fn run_packaged_probe_root_selftest_if_requested(name: &str) {
+    const ENV: &str = "BOOTOPTIM_PACKAGED_PROBE_ROOT_SELFTEST";
+    const SENTINEL: &str = "__bootoptim_probe_root_selftest__";
+    if name != SENTINEL || std::env::var_os(ENV).as_deref() != Some(std::ffi::OsStr::new("1")) {
+        return;
+    }
+    if !crate::launch_probe::enabled() {
+        eprintln!("{ENV}=1 with {SENTINEL} requires BOOTOPTIM_LAUNCH_PROBE");
+        std::process::exit(2);
+    }
+
+    const MODAL_KEY: usize = 0;
+    const PARENT_KEY: usize = 0xB007_0166;
+    const ASSETS_KEY: usize = 0xA55E_0166;
+    const LIBRARIES_KEY: usize = 0x1B16_0166;
+
+    crate::launch_probe::request(MODAL_KEY);
+    crate::launch_probe::backend_dispatch(MODAL_KEY);
+    crate::launch_probe::instance_config_loaded();
+    crate::launch_probe::modal_clear(MODAL_KEY);
+    crate::launch_probe::modal_clear(MODAL_KEY);
+    crate::launch_probe::tracker_created(MODAL_KEY, PARENT_KEY, "Launching");
+    crate::launch_probe::tracker_add_count(MODAL_KEY, PARENT_KEY, 2, 7);
+    crate::launch_probe::tracker_created(MODAL_KEY, ASSETS_KEY, "Verifying integrity of game assets");
+    crate::launch_probe::tracker_created(MODAL_KEY, LIBRARIES_KEY, "Verifying integrity of game libraries");
+    crate::launch_probe::tracker_finished(MODAL_KEY, ASSETS_KEY, false);
+    crate::launch_probe::tracker_finished(MODAL_KEY, LIBRARIES_KEY, false);
+    std::process::exit(0);
+}
+
+fn probe_request(message: &MessageToBackend) {
+    match message {
+        MessageToBackend::StartInstance { modal_action, .. } => {
+            crate::launch_probe::request(modal_action.probe_key());
+        }
+        MessageToBackend::StartInstanceByName { name, .. } => {
+            run_packaged_probe_root_selftest_if_requested(name);
+            // Name-based launches construct their ModalAction inside the backend. A zero key
+            // is a temporary sentinel adopted by the first modal/tracker callback.
+            crate::launch_probe::request(0);
+        }
+        _ => {}
+    }
+}
+
 impl BackendReceiver {
     pub async fn recv(&mut self) -> Option<MessageToBackend> {
         let (message, serial) = self.receiver.recv().await?;
         if let Some(serial) = serial {
             self.processed_serial.set(serial);
         }
-        if let MessageToBackend::StartInstance { modal_action, .. } = &message {
-            crate::launch_probe::backend_dispatch(modal_action.probe_key());
-        }
+        probe_dispatch(&message);
         Some(message)
     }
 
@@ -69,9 +124,7 @@ impl BackendReceiver {
         if let Some(serial) = serial {
             self.processed_serial.set(serial);
         }
-        if let MessageToBackend::StartInstance { modal_action, .. } = &message {
-            crate::launch_probe::backend_dispatch(modal_action.probe_key());
-        }
+        probe_dispatch(&message);
         Some(message)
     }
 }
@@ -118,9 +171,7 @@ unsafe impl Sync for BackendHandle {}
 
 impl BackendHandle {
     pub fn send(&self, message: MessageToBackend) {
-        if let MessageToBackend::StartInstance { modal_action, .. } = &message {
-            crate::launch_probe::request(modal_action.probe_key());
-        }
+        probe_request(&message);
         #[cfg(debug_assertions)]
         self.sender.try_send((message, None)).unwrap();
         #[cfg(not(debug_assertions))]
@@ -132,6 +183,7 @@ impl BackendHandle {
             return;
         }
 
+        probe_request(&message);
         let next_serial = self.next_serial.next();
         serial.set(next_serial);
 
