@@ -45,6 +45,29 @@ fn evaluate_identity_reuse(cached: &CachedIdentityDigest, evidence: &IdentityEvi
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 struct IdentityProbeCounts { reused_files:u64, reused_bytes:u64, stock_files:u64, stock_bytes:u64, miss_files:u64 }
 
+fn identity_cache_requested() -> bool { env::var_os(APPCDS_IDENTITY_CACHE_ENV).is_some_and(|value| value == "1") }
+fn identity_cache_probe_requested() -> bool { env::var_os(APPCDS_IDENTITY_CACHE_PROBE_ENV).is_some_and(|value| !value.is_empty()) }
+
+fn identity_probe_counts(inventory: ProbeInventory) -> IdentityProbeCounts {
+    let stock_files = (inventory.classpath_files
+        + inventory.module_path_files
+        + inventory.mod_files
+        + inventory.pack_input_files
+        + inventory.component_files) as u64;
+    let stock_bytes = inventory.classpath_bytes
+        .saturating_add(inventory.module_path_bytes)
+        .saturating_add(inventory.mod_bytes)
+        .saturating_add(inventory.pack_input_bytes)
+        .saturating_add(inventory.component_bytes);
+    IdentityProbeCounts {
+        reused_files: 0,
+        reused_bytes: 0,
+        stock_files,
+        stock_bytes,
+        miss_files: if identity_cache_requested() { stock_files } else { 0 },
+    }
+}
+
 fn write_identity_cache_probe(counts: IdentityProbeCounts, blocked_source: bool) {
     let Some(path) = env::var_os(APPCDS_IDENTITY_CACHE_PROBE_ENV).map(PathBuf::from) else { return; };
     let text = format!(
@@ -55,19 +78,12 @@ fn write_identity_cache_probe(counts: IdentityProbeCounts, blocked_source: bool)
     if let Ok(mut file) = OpenOptions::new().create_new(true).write(true).open(path) { let _ = file.write_all(text.as_bytes()); }
 }
 
-fn identity_cache_requested() -> bool { env::var_os(APPCDS_IDENTITY_CACHE_ENV).is_some_and(|value| value == "1") }
-
-// Piggyback on PR #19's aggregate inventory only when that probe was enabled.
-// No per-file path/hash/timing is added. While source authority is unavailable,
-// all observed candidate inventory is reported as stock/miss and reuse stays 0.
-impl Drop for PreflightProbe {
-    fn drop(&mut self) {
-        if env::var_os(APPCDS_IDENTITY_CACHE_PROBE_ENV).is_none() { return; }
-        let stock_files = (self.inventory.classpath_files + self.inventory.module_path_files + self.inventory.mod_files + self.inventory.pack_input_files + self.inventory.component_files) as u64;
-        let stock_bytes = self.inventory.classpath_bytes + self.inventory.module_path_bytes + self.inventory.mod_bytes + self.inventory.pack_input_bytes + self.inventory.component_bytes;
-        let requested = identity_cache_requested();
-        write_identity_cache_probe(IdentityProbeCounts { reused_files:0, reused_bytes:0, stock_files, stock_bytes, miss_files:if requested { stock_files } else { 0 } }, current_identity_launch_authority() != IdentityLaunchAuthority::NormalGui);
-    }
+fn finish_identity_cache_probe(inventory: ProbeInventory) {
+    if !identity_cache_probe_requested() { return; }
+    write_identity_cache_probe(
+        identity_probe_counts(inventory),
+        current_identity_launch_authority() != IdentityLaunchAuthority::NormalGui,
+    );
 }
 
 #[cfg(test)]
@@ -84,5 +100,6 @@ mod appcds_identity_cache_tests {
     #[test] fn journal_restamp_regression_and_discontinuity_miss(){let c=cached();let mut e=evidence();e.journal.journal_id=12;assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::Journal));let mut e=evidence();e.journal.next_usn=99;assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::Journal));let mut e=evidence();e.journal.first_usn=101;e.journal.lowest_valid_usn=101;assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::Journal));}
     #[test] fn helper_and_handle_failures_miss(){let c=cached();let mut e=evidence();e.capability=Err(UsnCapabilityFailure::UacDenied);assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::Capability));let mut e=evidence();e.handle_identity_unchanged=false;assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::Handle));}
     #[test] fn size_is_never_acceptance_input(){let mut c=cached();c.size=999999;assert!(evaluate_identity_reuse(&c,&evidence()).is_ok());}
+    #[test] fn aggregate_counts_cover_profiled_candidate_inventory(){let inventory=ProbeInventory{classpath_files:2,classpath_bytes:20,module_path_files:1,module_path_bytes:10,mod_files:3,mod_bytes:30,pack_input_files:4,pack_input_bytes:40,component_files:2,component_bytes:50};unsafe{env::set_var(APPCDS_IDENTITY_CACHE_ENV,"1")};let counts=identity_probe_counts(inventory);unsafe{env::remove_var(APPCDS_IDENTITY_CACHE_ENV)};assert_eq!(counts.reused_files,0);assert_eq!(counts.stock_files,12);assert_eq!(counts.stock_bytes,150);assert_eq!(counts.miss_files,12);}
     #[test] fn aggregate_probe_is_create_new_and_path_free(){let p=env::temp_dir().join(format!("bootoptim-id-probe-{}",unique_suffix()));unsafe{env::set_var(APPCDS_IDENTITY_CACHE_PROBE_ENV,&p)};write_identity_cache_probe(IdentityProbeCounts{reused_files:2,reused_bytes:20,stock_files:3,stock_bytes:30,miss_files:3},true);let text=fs::read_to_string(&p).unwrap();assert!(text.contains("bootoptim.appcds_identity_cache_probe.v1"));assert!(!text.contains("mod.jar"));write_identity_cache_probe(IdentityProbeCounts{reused_files:9,..Default::default()},true);let text2=fs::read_to_string(&p).unwrap();assert_eq!(text,text2);unsafe{env::remove_var(APPCDS_IDENTITY_CACHE_PROBE_ENV)};let _=fs::remove_file(p);}
 }
