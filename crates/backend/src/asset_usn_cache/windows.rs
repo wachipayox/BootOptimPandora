@@ -39,7 +39,7 @@ impl WindowsSession {
                 // but no manifest will be published because query failure latches
                 // `capability_failed` for the session.
                 return FastVerifyResult::FastRebootstrap;
-            },
+            }
         };
 
         if current.file_id != before.file_id
@@ -91,7 +91,7 @@ impl WindowsSession {
                 ReuseDecision::VerifiedReuse => {
                     self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
                     return FastVerifyResult::VerifiedReuse;
-                },
+                }
                 ReuseDecision::FullSha1(
                     MissReason::JournalIdMismatch
                     | MissReason::JournalRegression
@@ -102,13 +102,13 @@ impl WindowsSession {
                     // rebuild a fresh USN baseline without reading every byte.
                     self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
                     return FastVerifyResult::FastRebootstrap;
-                },
+                }
                 ReuseDecision::FullSha1(_) => {
                     // Under a complete same-era manifest, a changed FileId/USN
                     // is a per-object invalidation. The caller will download/
                     // repair this object and verify that downloaded body by SHA-1.
                     return FastVerifyResult::IndividualRepairVerification;
-                },
+                }
             }
         }
 
