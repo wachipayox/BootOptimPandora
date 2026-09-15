@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "bootoptim-launch-interposer"
 version = "0.1.0"
+dependencies = [
+ "bootoptim-ntfs-usn-capability",
+]
+
+[[package]]
+name = "bootoptim-ntfs-usn-capability"
+version = "0.1.0"
