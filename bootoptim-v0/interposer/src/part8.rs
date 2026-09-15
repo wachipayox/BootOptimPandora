@@ -1,7 +1,8 @@
-use bootoptim_ntfs_usn_capability::{CapabilityFailure as UsnCapabilityFailure, JournalSnapshot};
+use bootoptim_ntfs_usn_capability::{CapabilityFailure as UsnCapabilityFailure, JournalSnapshot, is_lower_hex};
 
 const APPCDS_IDENTITY_CACHE_ENV: &str = "BOOTOPTIM_APPCDS_IDENTITY_CACHE";
 const APPCDS_IDENTITY_CACHE_PROBE_ENV: &str = "BOOTOPTIM_APPCDS_IDENTITY_CACHE_PROBE";
+const APPCDS_USN_HELPER_SHA256_PIN: Option<&str> = option_env!("BOOTOPTIM_APPCDS_USN_HELPER_SHA256_PIN");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IdentityLaunchAuthority { Unknown, NormalGui }
@@ -11,6 +12,10 @@ enum IdentityLaunchAuthority { Unknown, NormalGui }
 // accepted as proof of launch origin. Until such authority is propagated from
 // Pandora, runtime reuse stays hard closed even when the experiment is requested.
 fn current_identity_launch_authority() -> IdentityLaunchAuthority { IdentityLaunchAuthority::Unknown }
+
+fn compiled_usn_helper_pin() -> Option<&'static str> {
+    APPCDS_USN_HELPER_SHA256_PIN.filter(|pin| is_lower_hex(pin, 64))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CachedIdentityDigest {
@@ -71,9 +76,10 @@ fn identity_probe_counts(inventory: ProbeInventory) -> IdentityProbeCounts {
 fn write_identity_cache_probe(counts: IdentityProbeCounts, blocked_source: bool) {
     let Some(path) = env::var_os(APPCDS_IDENTITY_CACHE_PROBE_ENV).map(PathBuf::from) else { return; };
     let text = format!(
-        "{{\n  \"schema\": \"bootoptim.appcds_identity_cache_probe.v1\",\n  \"runtime_reuse_authorized\": {},\n  \"reused_files\": {},\n  \"reused_bytes\": {},\n  \"stock_files\": {},\n  \"stock_bytes\": {},\n  \"miss_files\": {}\n}}\n",
-        if blocked_source { "false" } else { "true" }, counts.reused_files, counts.reused_bytes,
-        counts.stock_files, counts.stock_bytes, counts.miss_files
+        "{{\n  \"schema\": \"bootoptim.appcds_identity_cache_probe.v1\",\n  \"runtime_reuse_authorized\": {},\n  \"helper_pin_compiled\": {},\n  \"reused_files\": {},\n  \"reused_bytes\": {},\n  \"stock_files\": {},\n  \"stock_bytes\": {},\n  \"miss_files\": {}\n}}\n",
+        if blocked_source { "false" } else { "true" },
+        if compiled_usn_helper_pin().is_some() { "true" } else { "false" },
+        counts.reused_files, counts.reused_bytes, counts.stock_files, counts.stock_bytes, counts.miss_files
     );
     if let Ok(mut file) = OpenOptions::new().create_new(true).write(true).open(path) { let _ = file.write_all(text.as_bytes()); }
 }
@@ -102,5 +108,5 @@ mod appcds_identity_cache_tests {
     #[test] fn final_handle_change_misses(){let c=cached();let mut e=evidence();e.handle_identity_unchanged=false;assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::Handle));}
     #[test] fn size_is_never_acceptance_input(){let mut c=cached();c.size=999999;assert!(evaluate_identity_reuse(&c,&evidence()).is_ok());}
     #[test] fn aggregate_counts_cover_profiled_candidate_inventory(){let inventory=ProbeInventory{classpath_files:2,classpath_bytes:20,module_path_files:1,module_path_bytes:10,mod_files:3,mod_bytes:30,pack_input_files:4,pack_input_bytes:40,component_files:2,component_bytes:50};unsafe{env::set_var(APPCDS_IDENTITY_CACHE_ENV,"1")};let counts=identity_probe_counts(inventory);unsafe{env::remove_var(APPCDS_IDENTITY_CACHE_ENV)};assert_eq!(counts.reused_files,0);assert_eq!(counts.stock_files,12);assert_eq!(counts.stock_bytes,150);assert_eq!(counts.miss_files,12);}
-    #[test] fn aggregate_probe_is_create_new_and_path_free(){let p=env::temp_dir().join(format!("bootoptim-id-probe-{}",unique_suffix()));unsafe{env::set_var(APPCDS_IDENTITY_CACHE_PROBE_ENV,&p)};write_identity_cache_probe(IdentityProbeCounts{reused_files:2,reused_bytes:20,stock_files:3,stock_bytes:30,miss_files:3},true);let text=fs::read_to_string(&p).unwrap();assert!(text.contains("bootoptim.appcds_identity_cache_probe.v1"));assert!(!text.contains("mod.jar"));write_identity_cache_probe(IdentityProbeCounts{reused_files:9,..Default::default()},true);let text2=fs::read_to_string(&p).unwrap();assert_eq!(text,text2);unsafe{env::remove_var(APPCDS_IDENTITY_CACHE_PROBE_ENV)};let _=fs::remove_file(p);}
+    #[test] fn aggregate_probe_is_create_new_and_path_free(){let p=env::temp_dir().join(format!("bootoptim-id-probe-{}",unique_suffix()));unsafe{env::set_var(APPCDS_IDENTITY_CACHE_PROBE_ENV,&p)};write_identity_cache_probe(IdentityProbeCounts{reused_files:2,reused_bytes:20,stock_files:3,stock_bytes:30,miss_files:3},true);let text=fs::read_to_string(&p).unwrap();assert!(text.contains("bootoptim.appcds_identity_cache_probe.v1"));assert!(text.contains("\"helper_pin_compiled\":"));assert!(!text.contains("mod.jar"));write_identity_cache_probe(IdentityProbeCounts{reused_files:9,..Default::default()},true);let text2=fs::read_to_string(&p).unwrap();assert_eq!(text,text2);unsafe{env::remove_var(APPCDS_IDENTITY_CACHE_PROBE_ENV)};let _=fs::remove_file(p);}
 }
