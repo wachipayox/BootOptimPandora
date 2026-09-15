@@ -1,0 +1,43 @@
+name: Agent 179 clean recomposition bootstrap v2
+
+on:
+  push:
+    branches:
+      - agent179/usn-clean-promotion-20260916
+
+permissions:
+  contents: write
+
+jobs:
+  recompose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Execute approved recomposition without workflow self-mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path('.github/workflows/agent179-recompose.yml')
+          lines = p.read_text().splitlines()
+          marker = next(i for i, line in enumerate(lines) if line.strip() == 'run: |')
+          body = lines[marker + 1:]
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in body) + '\n'
+
+          start = script.index("cat > .github/workflows/bootoptim-usn-clean.yml <<'EOF'\n")
+          end_marker = "sed -i 's/^          //' .github/workflows/bootoptim-usn-clean.yml\n"
+          end = script.index(end_marker, start) + len(end_marker)
+          script = script[:start] + script[end:]
+          script = script.replace("rm .github/workflows/agent179-recompose.yml\n", "")
+          script = script.replace(
+              "                  bootoptim-v0/usn-unprivileged-probe \\\n                  .github/workflows/bootoptim-usn-clean.yml \\\n                  .github/workflows/agent179-recompose.yml\n",
+              "                  bootoptim-v0/usn-unprivileged-probe\n",
+          )
+          Path('/tmp/agent179-recompose.sh').write_text(script)
+          PY
+          bash /tmp/agent179-recompose.sh
