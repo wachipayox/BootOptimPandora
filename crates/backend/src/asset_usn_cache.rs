@@ -4,12 +4,13 @@
 //! `VerifiedReuse` decision while holding the protected file handle. Every
 //! unavailable or ambiguous capability falls back to Pandora's stock SHA-1.
 
-use std::{collections::HashSet, path::Path, sync::Arc};
+use std::{collections::HashSet, path::{Path, PathBuf}, sync::Arc};
 
 use bridge::modal_action::AssetVerificationMode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod activation_probe;
 #[cfg(windows)]
 mod windows;
 
@@ -63,6 +64,8 @@ impl AssetUsnCacheRuntime {
 pub(crate) struct AssetUsnCacheSession {
     runtime: AssetUsnCacheRuntime,
     mode: AssetVerificationMode,
+    manifest_path: PathBuf,
+    probe: Option<Arc<activation_probe::ActivationProbe>>,
     #[cfg(windows)]
     inner: Option<Arc<windows::WindowsSession>>,
 }
@@ -76,30 +79,76 @@ impl AssetUsnCacheSession {
     ) -> Self {
         let runtime = AssetUsnCacheRuntime::from_environment();
         let canonical_objects_layout = cache_layout_eligible(&assets_objects_dir);
+        let manifest_path = assets_objects_dir.join(".bootoptim-usn-assets-v1.json");
+        let probe = activation_probe::ActivationProbe::for_launch(
+            mode,
+            canonical_objects_layout,
+            &manifest_path,
+        );
 
         #[cfg(windows)]
         let inner = if runtime.requested()
             && mode == AssetVerificationMode::Normal
             && canonical_objects_layout
         {
-            windows::WindowsSession::begin(asset_index_sha1, assets_objects_dir, expected_hashes)
-                .ok()
-                .map(Arc::new)
+            if let Some(probe) = &probe {
+                probe.session_attempted();
+            }
+            match windows::WindowsSession::begin(asset_index_sha1, assets_objects_dir, expected_hashes) {
+                Ok(session) => {
+                    if let Some(probe) = &probe {
+                        probe.session_ready();
+                    }
+                    Some(Arc::new(session))
+                },
+                Err(failure) => {
+                    if let Some(probe) = &probe {
+                        probe.session_failed(failure);
+                    }
+                    None
+                },
+            }
         } else {
+            if let Some(probe) = &probe {
+                let reason = if !runtime.requested() {
+                    "feature_disabled"
+                } else if mode != AssetVerificationMode::Normal {
+                    "full_verification"
+                } else {
+                    "noncanonical_asset_layout"
+                };
+                probe.precondition_blocked(reason);
+            }
             None
         };
 
         #[cfg(not(windows))]
-        let _ = (
-            asset_index_sha1,
-            assets_objects_dir,
-            expected_hashes,
-            canonical_objects_layout,
-        );
+        {
+            let _ = (
+                asset_index_sha1,
+                assets_objects_dir,
+                expected_hashes,
+                canonical_objects_layout,
+            );
+            if let Some(probe) = &probe {
+                let reason = if !runtime.requested() {
+                    "feature_disabled"
+                } else if mode != AssetVerificationMode::Normal {
+                    "full_verification"
+                } else if !canonical_objects_layout {
+                    "noncanonical_asset_layout"
+                } else {
+                    "non_windows"
+                };
+                probe.precondition_blocked(reason);
+            }
+        }
 
         Self {
             runtime,
             mode,
+            manifest_path,
+            probe,
             #[cfg(windows)]
             inner,
         }
@@ -113,15 +162,32 @@ impl AssetUsnCacheSession {
     ) -> bool {
         #[cfg(windows)]
         if let Some(inner) = &self.inner {
-            return inner.verify_existing(
+            crate::asset_probe_context::reset_hash_observed();
+            let result = inner.verify_existing(
                 &self.runtime,
                 self.mode,
                 path,
                 expected_sha1,
                 expected_hash,
             );
+            let stock_sha1 = crate::asset_probe_context::take_hash_observed();
+            if let Some(probe) = &self.probe {
+                if stock_sha1 {
+                    probe.record_stock_sha1();
+                } else if result {
+                    probe.record_verified_reuse();
+                } else {
+                    // A valid USN reuse never returns false. Count any future
+                    // no-hash false path conservatively as stock/fallback.
+                    probe.record_stock_sha1();
+                }
+            }
+            return result;
         }
 
+        if let Some(probe) = &self.probe {
+            probe.record_stock_sha1();
+        }
         crate::asset_probe_context::hash_path_if_active(path, expected_hash)
             .unwrap_or_else(|| crate::fs::check_sha1_hash(path, expected_hash).unwrap_or(false))
     }
@@ -130,6 +196,9 @@ impl AssetUsnCacheSession {
         #[cfg(windows)]
         if let Some(inner) = &self.inner {
             inner.finish();
+        }
+        if let Some(probe) = &self.probe {
+            probe.finish(&self.manifest_path);
         }
     }
 }
