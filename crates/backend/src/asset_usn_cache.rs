@@ -1,10 +1,11 @@
-//! Default-off NTFS/USN asset verification cache.
+//! Windows NTFS/USN asset verification cache with a default fast policy.
 //!
-//! When requested, the active asset policy never turns cache uncertainty into a
-//! bulk SHA-1 audit. A complete same-era manifest may authorize `VerifiedReuse`.
-//! Missing/corrupt metadata is rebuilt from fresh USN/FileId snapshots without
-//! reading object content; a changed object under a usable baseline is repaired
-//! individually and the normal download path verifies that body by SHA-1.
+//! On Windows, the canonical launcher asset-object path must never turn cache
+//! uncertainty into a bulk SHA-1 audit. A complete same-era manifest may
+//! authorize `VerifiedReuse`. Missing/corrupt metadata is rebuilt from fresh
+//! USN/FileId snapshots without reading object content; a changed object under
+//! a usable baseline is repaired individually and the normal download path
+//! verifies that body by SHA-1.
 
 use std::{
     collections::HashSet,
@@ -20,6 +21,9 @@ mod activation_probe;
 #[cfg(windows)]
 mod windows;
 
+/// Kept for compatibility with existing physical scripts. The Windows fast
+/// policy is now the default and this variable no longer opts the launcher back
+/// into a whole-cache SHA-1 pass.
 pub(crate) const ASSET_USN_CACHE_ENV: &str = "BOOTOPTIM_ASSET_USN_CACHE";
 pub(crate) const ASSET_USN_HELPER_ENV: &str = "BOOTOPTIM_ASSET_USN_HELPER";
 pub(crate) const ASSET_USN_HELPER_SHA256_ENV: &str = "BOOTOPTIM_ASSET_USN_HELPER_SHA256";
@@ -48,8 +52,12 @@ pub(crate) struct AssetUsnCacheRuntime {
 
 impl AssetUsnCacheRuntime {
     pub(crate) fn from_environment() -> Self {
+        // Preserve the legacy variable as an accepted no-op input so existing
+        // physical scripts do not need to change, but do not expose an opt-out
+        // that could silently restore the forbidden bulk SHA-1 startup path.
+        let _legacy_request = std::env::var_os(ASSET_USN_CACHE_ENV);
         Self {
-            requested: std::env::var_os(ASSET_USN_CACHE_ENV).is_some_and(|value| value == "1"),
+            requested: cfg!(windows),
         }
     }
 
@@ -118,7 +126,7 @@ impl AssetUsnCacheSession {
         } else {
             if let Some(probe) = &probe {
                 let reason = if !runtime.requested() {
-                    "feature_disabled"
+                    "non_windows"
                 } else {
                     "noncanonical_asset_layout"
                 };
@@ -136,9 +144,7 @@ impl AssetUsnCacheSession {
                 canonical_objects_layout,
             );
             if let Some(probe) = &probe {
-                let reason = if !runtime.requested() {
-                    "feature_disabled"
-                } else if !canonical_objects_layout {
+                let reason = if !canonical_objects_layout {
                     "noncanonical_asset_layout"
                 } else {
                     "non_windows"
@@ -563,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn feature_is_default_fail_closed() {
+    fn explicitly_disabled_test_runtime_does_not_reuse() {
         let mut evidence = evidence();
         evidence.feature_requested = false;
         miss(evidence, MissReason::FeatureDisabled);
@@ -573,6 +579,12 @@ mod tests {
             AssetVerificationMode::Normal,
             ReuseDecision::VerifiedReuse
         ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_fast_policy_is_default_on() {
+        assert!(AssetUsnCacheRuntime::from_environment().requested());
     }
 
     #[test]
