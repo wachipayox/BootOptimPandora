@@ -405,6 +405,7 @@ mod preflight_probe_tests {
             instance_dir: d.clone(),
             launcher_exe: Some(launcher),
             upstream_commit: UPSTREAM_DEFAULT.to_string(),
+            identity_launch_authority: IdentityLaunchAuthority::Unknown,
             java_exe: java.into_os_string(),
             java_args: vec![
                 OsString::from("-cp"),
