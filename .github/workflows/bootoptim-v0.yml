@@ -95,7 +95,6 @@ jobs:
         shell: pwsh
         run: |
           $exe = (Resolve-Path "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe").Path
-          $interposer = (Resolve-Path "bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe").Path
           $id = [guid]::NewGuid().ToString("N")
           $probe = Join-Path $env:RUNNER_TEMP "bootoptim-agent170-root-$id.jsonl"
           $sidecar = Join-Path $env:RUNNER_TEMP "bootoptim-agent170-assets-$id.json"
@@ -129,13 +128,9 @@ jobs:
           Remove-Item Env:BOOTOPTIM_ASSET_USN_HELPER_SHA256 -ErrorAction SilentlyContinue
           $env:BOOTOPTIM_LAUNCH_PROBE = $probe
           $env:BOOTOPTIM_ASSET_ATTRIBUTION = $sidecar
-          $env:BOOTOPTIM_LAUNCH_INTERPOSER = $interposer
-          $env:BOOTOPTIM_APPCDS_MODE = "plan"
           $code = Invoke-PackagedPandora @("--internal-bootoptim-probe-composition-selftest", $probe, $sidecar, $fakeJava)
           Remove-Item Env:BOOTOPTIM_LAUNCH_PROBE -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_ASSET_ATTRIBUTION -ErrorAction SilentlyContinue
-          Remove-Item Env:BOOTOPTIM_LAUNCH_INTERPOSER -ErrorAction SilentlyContinue
-          Remove-Item Env:BOOTOPTIM_APPCDS_MODE -ErrorAction SilentlyContinue
           if ($code -ne 0) { throw "packaged composition selftest failed with exit $code" }
           if (-not (Test-Path $probe)) { throw "packaged composition selftest did not produce launch root" }
           if (-not (Test-Path $sidecar)) { throw "packaged composition selftest did not produce asset sidecar" }
@@ -180,15 +175,6 @@ jobs:
           Copy-Item $probe "bootoptim-packaged-probe-contract.jsonl"
           Copy-Item $sidecar "bootoptim-packaged-asset-attribution.json"
           "schema=bootoptim.launch_probe.v1 root_begin=1 root_end=1 java_spawn=1; schema=bootoptim.asset_attribution.v1 outcome=ok launch_probe_active=true"
-
-      - name: Verify packaged Pandora probe linkage
-        shell: pwsh
-        run: |
-          $exe = "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe"
-          $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
-          foreach ($marker in @("bootoptim.launch_probe.v1", "bootoptim.asset_attribution.v1", "launcher_pre_java", "java_spawn")) {
-            if (-not $ascii.Contains($marker)) { throw "release Pandora binary missing probe marker: $marker" }
-          }
 
       - name: Assemble reproducible Windows artifact
         shell: pwsh

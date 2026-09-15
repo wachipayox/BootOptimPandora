@@ -1627,7 +1627,7 @@ pub enum LoadAssetObjectsError {
     MetaLoadError(#[from] MetaLoadError),
 }
 
-async fn do_asset_objects_load(
+pub(crate) async fn do_asset_objects_load(
     http_client: &reqwest::Client,
     assets_index: Arc<AssetsIndex>,
     assets_objects_dir: Arc<Path>,
@@ -1638,6 +1638,15 @@ async fn do_asset_objects_load(
     let download_semaphore = tokio::sync::Semaphore::new(8);
     let disk_semaphore = tokio::sync::Semaphore::new(32);
     let started_downloading = AtomicBool::new(false);
+
+    let planned_objects = assets_index.objects.len() as u64;
+    let planned_bytes = assets_index.objects.iter()
+        .map(|(_, asset)| u64::from(asset.size))
+        .sum::<u64>();
+    let attribution_probe = crate::asset_probe::AssetAttributionProbe::for_launch(
+        planned_objects,
+        planned_bytes,
+    );
 
     let mut total_size = 0;
     let mut tasks = Vec::new();
@@ -1670,6 +1679,9 @@ async fn do_asset_objects_load(
     for (_, asset) in &assets_index.objects {
         let mut expected_hash = [0u8; 20];
         let Ok(_) = hex::decode_to_slice(asset.hash.as_str(), &mut expected_hash) else {
+            if let Some(probe) = &attribution_probe {
+                probe.finish("error");
+            }
             return Err(LoadAssetObjectsError::InvalidHash(asset.hash));
         };
 
@@ -1684,6 +1696,7 @@ async fn do_asset_objects_load(
         let disk_semaphore = &disk_semaphore;
         let cache_session = Arc::clone(&cache_session);
         let expected_sha1 = asset.hash.to_string();
+        let attribution_probe = attribution_probe.clone();
 
         let url = format!("https://resources.download.minecraft.net/{}/{}", &asset.hash[..2], &asset.hash);
 
@@ -1692,13 +1705,21 @@ async fn do_asset_objects_load(
                 let verify_path = path.clone();
                 let stock_path = path.clone();
                 let permit = disk_semaphore.acquire().await.unwrap();
+                let scoped_probe = attribution_probe.clone();
                 let result = match tokio::task::spawn_blocking(move || {
-                    cache_session.verify_existing(&verify_path, &expected_sha1, expected_hash)
+                    crate::asset_probe_context::with_probe(scoped_probe, || {
+                        cache_session.verify_existing(&verify_path, &expected_sha1, expected_hash)
+                    })
                 }).await {
                     Ok(result) => result,
-                    Err(_) => tokio::task::spawn_blocking(move || {
-                        crate::fs::check_sha1_hash(&stock_path, expected_hash).unwrap_or(false)
-                    }).await.unwrap_or(false),
+                    Err(_) => {
+                        let fallback_probe = attribution_probe.clone();
+                        tokio::task::spawn_blocking(move || {
+                            fallback_probe.as_ref()
+                                .map(|probe| probe.hash_path(&stock_path, expected_hash))
+                                .unwrap_or_else(|| crate::fs::check_sha1_hash(&stock_path, expected_hash).unwrap_or(false))
+                        }).await.unwrap_or(false)
+                    },
                 };
                 drop(permit);
                 result
@@ -1715,27 +1736,52 @@ async fn do_asset_objects_load(
             }
 
             let permit = download_semaphore.acquire().await.unwrap();
-            let response = http_client.get(&url).send().await?;
-            let bytes = Arc::new(response.bytes().await?);
+            let download_guard = attribution_probe.as_ref().map(|probe| probe.begin_download());
+            let response = match http_client.get(&url).send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    if let Some(probe) = &attribution_probe {
+                        probe.record_network_error();
+                    }
+                    return Err(LoadAssetObjectsError::Reqwest(error));
+                },
+            };
+            let bytes = match response.bytes().await {
+                Ok(bytes) => Arc::new(bytes),
+                Err(error) => {
+                    if let Some(probe) = &attribution_probe {
+                        probe.record_network_error();
+                    }
+                    return Err(LoadAssetObjectsError::Reqwest(error));
+                },
+            };
+            drop(download_guard);
             drop(permit);
 
+            if let Some(probe) = &attribution_probe {
+                probe.record_downloaded_body(bytes.len());
+            }
             if bytes.len() != asset.size as usize {
+                if let Some(probe) = &attribution_probe {
+                    probe.record_size_failure();
+                }
                 return Err(LoadAssetObjectsError::WrongResponseSize(asset.size as usize, bytes.len()));
             }
 
             let correct_hash = {
                 let bytes = Arc::clone(&bytes);
-
                 tokio::task::spawn_blocking(move || {
                     let mut hasher = Sha1::new();
                     hasher.update(&*bytes);
                     let actual_hash = hasher.finalize();
-
                     expected_hash == *actual_hash
                 }).await.unwrap()
             };
 
             if !correct_hash {
+                if let Some(probe) = &attribution_probe {
+                    probe.record_download_hash_failure();
+                }
                 return Err(LoadAssetObjectsError::WrongHash);
             }
 
@@ -1747,13 +1793,21 @@ async fn do_asset_objects_load(
     }
 
     assets_tracker.set_total(total_size as usize);
+    let result = futures::future::try_join_all(tasks).await.map(|_| ());
 
-    futures::future::try_join_all(tasks).await?;
+    if result.is_ok() {
+        let cache_session = Arc::clone(&cache_session);
+        let finish_probe = attribution_probe.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            crate::asset_probe_context::with_probe(finish_probe, || cache_session.finish())
+        }).await;
+    }
 
-    let cache_session = Arc::clone(&cache_session);
-    let _ = tokio::task::spawn_blocking(move || cache_session.finish()).await;
+    if let Some(probe) = &attribution_probe {
+        probe.finish(if result.is_ok() { "ok" } else { "error" });
+    }
 
-    Ok(())
+    result
 }
 
 #[derive(thiserror::Error, Debug)]

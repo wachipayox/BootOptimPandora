@@ -1,11 +1,13 @@
 #[cfg(windows)]
 use std::{
     ffi::OsString,
-    fs::OpenOptions,
-    io::{Error, ErrorKind, Write},
-    path::PathBuf,
+    io::{Error, ErrorKind},
+    path::{Path, PathBuf},
+    sync::Arc,
 };
 
+#[cfg(windows)]
+use bridge::modal_action::{ModalAction, ProgressTrackerFinishType};
 #[cfg(windows)]
 use command::{PandoraCommand, PandoraStdioReadMode, PandoraStdioWriteMode};
 #[cfg(windows)]
@@ -54,38 +56,51 @@ pub fn run_packaged_probe_composition_selftest(args: Vec<OsString>) -> std::io::
         .to_path_buf();
     std::fs::create_dir_all(&parent)?;
 
-    const MODAL: usize = 170;
-    const PARENT: usize = 1700;
-    const ASSETS: usize = 1701;
-    const LIBRARIES: usize = 1702;
-    bridge::launch_probe::request(MODAL);
-    bridge::launch_probe::backend_dispatch(MODAL);
-    bridge::launch_probe::instance_config_loaded();
-    bridge::launch_probe::modal_clear(MODAL);
-    bridge::launch_probe::modal_clear(MODAL);
-    bridge::launch_probe::tracker_created(MODAL, PARENT, "Launching");
-    bridge::launch_probe::tracker_created(MODAL, ASSETS, "Verifying integrity of game assets");
-
-    let fixture = sidecar_path.with_extension("asset-fixture");
-    let fixture_bytes = b"agent170-asset-fixture";
-    let mut fixture_file = OpenOptions::new().write(true).create_new(true).open(&fixture)?;
-    fixture_file.write_all(fixture_bytes)?;
-    drop(fixture_file);
-
-    let probe = crate::asset_probe::AssetAttributionProbe::for_launch(1, fixture_bytes.len() as u64)
-        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "asset attribution probe did not arm"))?;
+    let fixture_bytes = b"agent170-real-asset-loop-fixture";
     let expected: [u8; 20] = Sha1::digest(fixture_bytes).into();
-    if !probe.hash_path(&fixture, expected) {
-        return Err(Error::new(ErrorKind::InvalidData, "fixture SHA-1 unexpectedly failed"));
-    }
-    probe.finish("ok");
-    bridge::launch_probe::tracker_finished(MODAL, ASSETS, false);
-    bridge::launch_probe::tracker_created(MODAL, LIBRARIES, "Verifying integrity of game libraries");
-    bridge::launch_probe::tracker_finished(MODAL, LIBRARIES, false);
+    let expected_hex = hex::encode(expected);
+    let asset_root = sidecar_path.with_extension("asset-root");
+    let objects_path = asset_root.join("assets").join("objects");
+    let prefix_path = objects_path.join(&expected_hex[..2]);
+    std::fs::create_dir_all(&prefix_path)?;
+    let asset_path = prefix_path.join(&expected_hex);
+    std::fs::write(&asset_path, fixture_bytes)?;
+
+    let index_json = format!(
+        r#"{{"objects":{{"bootoptim/fixture":{{"hash":"{expected_hex}","size":{}}}}}}}"#,
+        fixture_bytes.len()
+    );
+    let assets_index: schema::assets_index::AssetsIndex = serde_json::from_str(&index_json)
+        .map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+
+    let modal = ModalAction::normal_launch();
+    let modal_key = modal.probe_key();
+    bridge::launch_probe::request(modal_key);
+    bridge::launch_probe::backend_dispatch(modal_key);
+    bridge::launch_probe::instance_config_loaded();
+    modal.clear_trackers();
+    modal.clear_trackers();
+    let _parent_tracker = modal.push_tracker(Arc::from("Launching"));
+    let assets_tracker = modal.push_tracker(Arc::from("Verifying integrity of game assets"));
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
+    let assets_objects_dir: Arc<Path> = Arc::from(objects_path.clone().into_boxed_path());
+    let client = reqwest::Client::new();
+    let asset_result = runtime.block_on(crate::launch::do_asset_objects_load(
+        &client,
+        Arc::new(assets_index),
+        assets_objects_dir,
+        "0000000000000000000000000000000000000000",
+        &assets_tracker,
+    ));
+    assets_tracker.set_finished(ProgressTrackerFinishType::from_err(asset_result.is_err()));
+    asset_result.map_err(|error| Error::new(
+        ErrorKind::Other,
+        format!("real asset-loop selftest failed: {error}"),
+    ))?;
+
     let spawn_result = runtime.block_on(async move {
         let mut command = PandoraCommand::new(fake_java);
         command.arg("com.moulberry.pandora.LaunchWrapper");
@@ -97,6 +112,6 @@ pub fn run_packaged_probe_composition_selftest(args: Vec<OsString>) -> std::io::
         Ok::<(), std::io::Error>(())
     });
 
-    let _ = std::fs::remove_file(fixture);
+    let _ = std::fs::remove_dir_all(asset_root);
     spawn_result
 }

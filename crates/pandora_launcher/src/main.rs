@@ -26,12 +26,26 @@ struct Cli {
     #[cfg(windows)]
     #[arg(long, hide = false, num_args = 2..)]
     internal_set_traverse_acls: Option<Vec<std::ffi::OsString>>,
+    /// Internal packaged behavior gate for BootOptim root + asset attribution composition
+    #[cfg(windows)]
+    #[arg(long, hide = true, num_args = 3)]
+    internal_bootoptim_probe_composition_selftest: Option<Vec<std::ffi::OsString>>,
 }
 
 pub mod panic;
 
 fn main() {
     let cli = Cli::parse();
+
+    #[cfg(windows)]
+    if let Some(args) = cli.internal_bootoptim_probe_composition_selftest {
+        if let Err(err) = backend::run_packaged_probe_composition_selftest(args) {
+            eprintln!("BootOptim composition selftest failed: {err}");
+            std::process::exit(1);
+        } else {
+            std::process::exit(0);
+        }
+    }
 
     #[cfg(windows)]
     if let Some(internal_set_traverse_acls) = cli.internal_set_traverse_acls {
