@@ -4,10 +4,7 @@
 //! one create-new JSON sidecar after the asset phase. Paths, asset hashes, FileIds,
 //! USNs, account data and command lines are deliberately excluded.
 
-use super::{
-    AssetVerificationMode, CapabilityFailure, ASSET_USN_CACHE_ENV, ASSET_USN_HELPER_ENV,
-    ASSET_USN_HELPER_SHA256_ENV,
-};
+use super::{AssetVerificationMode, CapabilityFailure, ASSET_USN_CACHE_ENV};
 use serde::Serialize;
 use std::{
     ffi::OsString,
@@ -21,15 +18,14 @@ use std::{
 };
 
 pub(crate) const ENV_NAME: &str = "BOOTOPTIM_ASSET_USN_PROBE";
-const SCHEMA: &str = "bootoptim.asset_usn_cache_probe.v1";
+const SCHEMA: &str = "bootoptim.asset_usn_cache_probe.v2";
+const CAPABILITY_MODE: &str = "direct_unprivileged_ntfs";
 
 pub(crate) struct ActivationProbe {
     output_path: PathBuf,
     requested: bool,
     verification_mode: &'static str,
     canonical_objects_layout: bool,
-    helper_path_configured: bool,
-    helper_sha256_configured: bool,
     manifest_present_before: bool,
     session_attempted: AtomicBool,
     session_state: Mutex<&'static str>,
@@ -45,8 +41,8 @@ struct Snapshot {
     requested: bool,
     verification_mode: &'static str,
     canonical_objects_layout: bool,
-    helper_path_configured: bool,
-    helper_sha256_configured: bool,
+    capability_mode: &'static str,
+    elevation_requested: bool,
     session_attempted: bool,
     session_state: &'static str,
     decision_reason: &'static str,
@@ -69,8 +65,6 @@ impl ActivationProbe {
             std::env::var_os(ASSET_USN_CACHE_ENV).is_some_and(|value| value == "1"),
             mode,
             canonical_objects_layout,
-            std::env::var_os(ASSET_USN_HELPER_ENV).is_some(),
-            std::env::var_os(ASSET_USN_HELPER_SHA256_ENV).is_some(),
             manifest_path.is_file(),
         )
     }
@@ -80,8 +74,6 @@ impl ActivationProbe {
         requested: bool,
         mode: AssetVerificationMode,
         canonical_objects_layout: bool,
-        helper_path_configured: bool,
-        helper_sha256_configured: bool,
         manifest_present_before: bool,
     ) -> Option<Arc<Self>> {
         Some(Arc::new(Self {
@@ -89,8 +81,6 @@ impl ActivationProbe {
             requested,
             verification_mode: mode_name(mode),
             canonical_objects_layout,
-            helper_path_configured,
-            helper_sha256_configured,
             manifest_present_before,
             session_attempted: AtomicBool::new(false),
             session_state: Mutex::new("not_attempted"),
@@ -112,7 +102,7 @@ impl ActivationProbe {
 
     pub(crate) fn session_ready(&self) {
         set_mutex(&self.session_state, "active");
-        set_mutex(&self.decision_reason, "capability_authenticated");
+        set_mutex(&self.decision_reason, "direct_capability_ready");
     }
 
     pub(crate) fn session_failed(&self, failure: CapabilityFailure) {
@@ -151,8 +141,8 @@ impl ActivationProbe {
             requested: self.requested,
             verification_mode: self.verification_mode,
             canonical_objects_layout: self.canonical_objects_layout,
-            helper_path_configured: self.helper_path_configured,
-            helper_sha256_configured: self.helper_sha256_configured,
+            capability_mode: CAPABILITY_MODE,
+            elevation_requested: false,
             session_attempted: self.session_attempted.load(Ordering::Relaxed),
             session_state,
             decision_reason,
@@ -168,7 +158,11 @@ impl ActivationProbe {
             return;
         };
         bytes.push(b'\n');
-        if let Some(parent) = self.output_path.parent().filter(|path| !path.as_os_str().is_empty()) {
+        if let Some(parent) = self
+            .output_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
             let _ = std::fs::create_dir_all(parent);
         }
         let Ok(mut output) = OpenOptions::new()
@@ -195,15 +189,15 @@ fn mode_name(mode: AssetVerificationMode) -> &'static str {
 
 fn capability_reason(failure: CapabilityFailure) -> &'static str {
     match failure {
-        CapabilityFailure::HelperMissing => "helper_missing",
-        CapabilityFailure::HelperIdentityMismatch => "helper_identity_mismatch",
-        CapabilityFailure::UacDenied => "uac_denied",
-        CapabilityFailure::HelperCrash => "helper_crash",
-        CapabilityFailure::Timeout => "helper_timeout",
-        CapabilityFailure::MalformedProtocol => "helper_protocol",
-        CapabilityFailure::InvalidPipeAcl => "invalid_pipe_acl",
-        CapabilityFailure::InvalidPeerPid => "invalid_peer_pid",
-        CapabilityFailure::Io => "capability_io",
+        CapabilityFailure::HelperMissing => "legacy_helper_missing",
+        CapabilityFailure::HelperIdentityMismatch => "legacy_helper_identity_mismatch",
+        CapabilityFailure::UacDenied => "legacy_uac_denied",
+        CapabilityFailure::HelperCrash => "legacy_helper_crash",
+        CapabilityFailure::Timeout => "legacy_helper_timeout",
+        CapabilityFailure::MalformedProtocol => "legacy_helper_protocol",
+        CapabilityFailure::InvalidPipeAcl => "legacy_invalid_pipe_acl",
+        CapabilityFailure::InvalidPeerPid => "legacy_invalid_peer_pid",
+        CapabilityFailure::Io => "direct_capability_io",
     }
 }
 
@@ -235,15 +229,13 @@ mod tests {
             true,
             AssetVerificationMode::Normal,
             true,
-            true,
-            true,
             false,
         )
         .is_none());
     }
 
     #[test]
-    fn asset_usn_cache_probe_reports_capability_cut_and_stock_fallback() {
+    fn asset_usn_cache_probe_reports_direct_capability_fallback() {
         let output = temp_path("capability");
         let manifest = temp_path("manifest");
         let _ = std::fs::remove_file(&output);
@@ -255,22 +247,21 @@ mod tests {
             AssetVerificationMode::Normal,
             true,
             false,
-            false,
-            false,
         )
         .unwrap();
         probe.session_attempted();
-        probe.session_failed(CapabilityFailure::HelperMissing);
+        probe.session_failed(CapabilityFailure::Io);
         probe.record_stock_sha1();
         probe.finish(&manifest);
 
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
         assert_eq!(value["schema"], SCHEMA);
+        assert_eq!(value["capability_mode"], CAPABILITY_MODE);
+        assert_eq!(value["elevation_requested"], false);
         assert_eq!(value["session_attempted"], true);
         assert_eq!(value["session_state"], "fallback");
-        assert_eq!(value["decision_reason"], "helper_missing");
-        assert_eq!(value["helper_path_configured"], false);
+        assert_eq!(value["decision_reason"], "direct_capability_io");
         assert_eq!(value["publication_state"], "not_attempted");
         assert_eq!(value["verified_reuse_files"], 0);
         assert_eq!(value["stock_sha1_files"], 1);
@@ -290,8 +281,6 @@ mod tests {
             true,
             AssetVerificationMode::Normal,
             true,
-            true,
-            true,
             false,
         )
         .unwrap();
@@ -304,7 +293,10 @@ mod tests {
 
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+        assert_eq!(value["capability_mode"], CAPABILITY_MODE);
+        assert_eq!(value["elevation_requested"], false);
         assert_eq!(value["session_state"], "active");
+        assert_eq!(value["decision_reason"], "direct_capability_ready");
         assert_eq!(value["publication_state"], "created");
         assert_eq!(value["verified_reuse_files"], 1);
         assert_eq!(value["stock_sha1_files"], 1);
