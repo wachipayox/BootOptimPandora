@@ -9,6 +9,8 @@ mod backend_filesystem;
 mod backend_handler;
 mod account;
 mod arcfactory;
+mod asset_probe_context;
+mod asset_usn_cache;
 mod curseforge_manual_download;
 mod directories;
 mod duplicate;
