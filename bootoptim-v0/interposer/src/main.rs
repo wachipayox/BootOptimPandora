@@ -3,5 +3,6 @@ include!("part2.rs");
 include!("part3.rs");
 include!("part6.rs");
 include!("part7.rs");
+include!("part8.rs");
 include!("part4.rs");
 include!("part5.rs");

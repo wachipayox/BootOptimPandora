@@ -139,6 +139,7 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
     let mut probe = PreflightProbe::from_env();
     let result = prepare_launch_inner(parsed, &mut probe);
     probe.finish(&result);
+    finish_identity_cache_probe(probe.inventory);
     result
 }
 
@@ -158,10 +159,10 @@ fn prepare_launch_inner(parsed: &ParsedArgs, probe: &mut PreflightProbe) -> io::
     // Hashing is read-only and can happen outside the cache lock. Publication of
     // the plan and every state transition is serialized so launch-plan.match can
     // never describe a different concurrent preflight. The original builder is
-    // kept byte-for-byte on the default path; only an explicitly enabled probe
-    // uses the separately tested profiled mirror.
+    // kept byte-for-byte on the default path; only an explicitly enabled
+    // attribution/identity probe uses the separately tested profiled mirror.
     let started = probe.stage_start();
-    let plan_result = if probe.enabled() {
+    let plan_result = if probe.enabled() || identity_cache_probe_requested() {
         build_launch_plan_profiled(parsed, probe)
     } else {
         build_launch_plan(parsed)
