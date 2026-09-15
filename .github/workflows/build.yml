@@ -9,6 +9,7 @@ on:
 
 jobs:
   build:
+    if: ${{ github.ref_name != 'agent175/prelaunch-mods-attribution-20260915' && github.head_ref != 'agent175/prelaunch-mods-attribution-20260915' }}
     strategy:
       fail-fast: true
       matrix:
