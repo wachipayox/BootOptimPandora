@@ -72,20 +72,20 @@ jobs:
       - name: Execute packaged Pandora probe contract
         shell: pwsh
         run: |
-          $exe = Resolve-Path "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe"
+          $exe = (Resolve-Path "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe").Path
           $probe = Join-Path $env:RUNNER_TEMP "bootoptim-packaged-probe-contract.jsonl"
           Remove-Item $probe -ErrorAction SilentlyContinue
 
           $env:BOOTOPTIM_LAUNCH_PROBE = $probe
           $env:BOOTOPTIM_PACKAGED_PROBE_SELFTEST_BRIDGE = "1"
-          & $exe --run-instance __bootoptim_probe_contract_selftest__
-          $bridgeCode = $LASTEXITCODE
+          $bridgeProcess = Start-Process -FilePath $exe -ArgumentList @("--run-instance", "__bootoptim_probe_contract_selftest__") -Wait -PassThru
+          $bridgeCode = $bridgeProcess.ExitCode
           Remove-Item Env:BOOTOPTIM_PACKAGED_PROBE_SELFTEST_BRIDGE -ErrorAction SilentlyContinue
           if ($bridgeCode -ne 0) { throw "packaged bridge probe stage failed with exit $bridgeCode" }
 
           $env:BOOTOPTIM_PACKAGED_PROBE_SELFTEST_COMMAND = "1"
-          & $exe --internal-set-traverse-acls __bootoptim_probe_selftest__ __bootoptim_probe_selftest__
-          $commandCode = $LASTEXITCODE
+          $commandProcess = Start-Process -FilePath $exe -ArgumentList @("--internal-set-traverse-acls", "__bootoptim_probe_selftest__", "__bootoptim_probe_selftest__") -Wait -PassThru
+          $commandCode = $commandProcess.ExitCode
           Remove-Item Env:BOOTOPTIM_PACKAGED_PROBE_SELFTEST_COMMAND -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_LAUNCH_PROBE -ErrorAction SilentlyContinue
           if ($commandCode -ne 0) { throw "packaged command probe stage failed with exit $commandCode" }
