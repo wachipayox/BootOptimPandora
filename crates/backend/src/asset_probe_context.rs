@@ -1,4 +1,8 @@
-use std::{cell::{Cell, RefCell}, path::Path, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    path::Path,
+    sync::Arc,
+};
 
 use crate::asset_probe::AssetAttributionProbe;
 

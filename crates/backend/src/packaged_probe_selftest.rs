@@ -32,9 +32,11 @@ pub fn run_packaged_probe_composition_selftest(args: Vec<OsString>) -> std::io::
     let trace_path = PathBuf::from(&args[0]);
     let sidecar_path = PathBuf::from(&args[1]);
     let fake_java = args[2].clone();
-    let configured_trace = std::env::var_os("BOOTOPTIM_LAUNCH_PROBE").map(PathBuf::from)
+    let configured_trace = std::env::var_os("BOOTOPTIM_LAUNCH_PROBE")
+        .map(PathBuf::from)
         .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "BOOTOPTIM_LAUNCH_PROBE is missing"))?;
-    let configured_sidecar = std::env::var_os(crate::asset_probe::ENV_NAME).map(PathBuf::from)
+    let configured_sidecar = std::env::var_os(crate::asset_probe::ENV_NAME)
+        .map(PathBuf::from)
         .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "BOOTOPTIM_ASSET_ATTRIBUTION is missing"))?;
     if configured_trace != trace_path || configured_sidecar != sidecar_path {
         return Err(Error::new(
@@ -70,8 +72,8 @@ pub fn run_packaged_probe_composition_selftest(args: Vec<OsString>) -> std::io::
         r#"{{"objects":{{"bootoptim/fixture":{{"hash":"{expected_hex}","size":{}}}}}}}"#,
         fixture_bytes.len()
     );
-    let assets_index: schema::assets_index::AssetsIndex = serde_json::from_str(&index_json)
-        .map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+    let assets_index: schema::assets_index::AssetsIndex =
+        serde_json::from_str(&index_json).map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
 
     let modal = ModalAction::normal_launch();
     let modal_key = modal.probe_key();
@@ -83,9 +85,7 @@ pub fn run_packaged_probe_composition_selftest(args: Vec<OsString>) -> std::io::
     let _parent_tracker = modal.push_tracker(Arc::from("Launching"));
     let assets_tracker = modal.push_tracker(Arc::from("Verifying integrity of game assets"));
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let assets_objects_dir: Arc<Path> = Arc::from(objects_path.clone().into_boxed_path());
     let client = reqwest::Client::new();
     let asset_result = runtime.block_on(crate::launch::do_asset_objects_load(
@@ -96,10 +96,7 @@ pub fn run_packaged_probe_composition_selftest(args: Vec<OsString>) -> std::io::
         &assets_tracker,
     ));
     assets_tracker.set_finished(ProgressTrackerFinishType::from_err(asset_result.is_err()));
-    asset_result.map_err(|error| Error::new(
-        ErrorKind::Other,
-        format!("real asset-loop selftest failed: {error}"),
-    ))?;
+    asset_result.map_err(|error| Error::new(ErrorKind::Other, format!("real asset-loop selftest failed: {error}")))?;
 
     let spawn_result = runtime.block_on(async move {
         let mut command = PandoraCommand::new(fake_java);

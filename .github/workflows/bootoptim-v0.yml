@@ -122,7 +122,7 @@ jobs:
             }
           }
 
-          # This gate deliberately exercises stock behavior: USN is absent.
+          # Prove the canonical Windows fast policy is default-on: the legacy cache env is absent.
           Remove-Item Env:BOOTOPTIM_ASSET_USN_CACHE -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_ASSET_USN_HELPER -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_ASSET_USN_HELPER_SHA256 -ErrorAction SilentlyContinue
@@ -167,7 +167,7 @@ jobs:
           if ($asset.schema -ne "bootoptim.asset_attribution.v1") { throw "asset sidecar schema mismatch" }
           if ($asset.phase -ne "assets_verify_download" -or $asset.outcome -ne "ok") { throw "asset sidecar outcome mismatch" }
           if ($asset.launch_probe_active -ne $true) { throw "asset sidecar was not correlated with active launch probe" }
-          if ($asset.planned_objects -ne 1 -or $asset.hash_attempts -ne 1 -or $asset.hash_hits -ne 1) { throw "asset fixture was not actually hashed by attribution probe" }
+          if ($asset.planned_objects -ne 1 -or $asset.hash_attempts -ne 0 -or $asset.hash_hits -ne 0) { throw "default Windows fast policy unexpectedly hashed the existing asset fixture" }
           if ($asset.hash_misses -ne 0 -or $asset.hash_io_errors -ne 0 -or $asset.any_network -ne $false -or $asset.downloaded_objects -ne 0 -or $asset.downloaded_bytes -ne 0 -or $asset.network_errors -ne 0 -or $asset.download_size_failures -ne 0 -or $asset.download_hash_failures -ne 0) {
             throw "asset fixture sidecar is contaminated"
           }

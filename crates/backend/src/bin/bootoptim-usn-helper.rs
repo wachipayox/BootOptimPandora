@@ -13,7 +13,7 @@ mod usn_protocol;
 mod windows_helper {
     use super::usn_protocol::{self, Handshake, Request, RequestKind, Response, ResponseStatus};
     use std::{
-        ffi::{c_void, OsStr},
+        ffi::{OsStr, c_void},
         mem::{size_of, zeroed},
         os::windows::ffi::OsStrExt,
         ptr::{null, null_mut},
@@ -72,18 +72,69 @@ mod windows_helper {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        fn CreateFileW(name: *const u16, access: u32, share: u32, security: *const c_void, creation: u32, flags: u32, template: Handle) -> Handle;
+        fn CreateFileW(
+            name: *const u16,
+            access: u32,
+            share: u32,
+            security: *const c_void,
+            creation: u32,
+            flags: u32,
+            template: Handle,
+        ) -> Handle;
         fn CloseHandle(handle: Handle) -> i32;
         fn ReadFile(handle: Handle, buffer: *mut c_void, len: u32, read: *mut u32, overlapped: *mut c_void) -> i32;
-        fn WriteFile(handle: Handle, buffer: *const c_void, len: u32, written: *mut u32, overlapped: *mut c_void) -> i32;
-        fn PeekNamedPipe(handle: Handle, buffer: *mut c_void, len: u32, read: *mut u32, available: *mut u32, left: *mut u32) -> i32;
-        fn SetNamedPipeHandleState(handle: Handle, mode: *mut u32, max_collection_count: *mut u32, collect_timeout: *mut u32) -> i32;
+        fn WriteFile(
+            handle: Handle,
+            buffer: *const c_void,
+            len: u32,
+            written: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+        fn PeekNamedPipe(
+            handle: Handle,
+            buffer: *mut c_void,
+            len: u32,
+            read: *mut u32,
+            available: *mut u32,
+            left: *mut u32,
+        ) -> i32;
+        fn SetNamedPipeHandleState(
+            handle: Handle,
+            mode: *mut u32,
+            max_collection_count: *mut u32,
+            collect_timeout: *mut u32,
+        ) -> i32;
         fn GetNamedPipeServerProcessId(handle: Handle, pid: *mut u32) -> i32;
         fn GetCurrentProcessId() -> u32;
         fn GetFileInformationByHandle(handle: Handle, info: *mut ByHandleFileInformation) -> i32;
-        fn GetVolumeInformationByHandleW(handle: Handle, volume_name: *mut u16, volume_name_len: u32, serial: *mut u32, max_component: *mut u32, flags: *mut u32, fs_name: *mut u16, fs_name_len: u32) -> i32;
-        fn DeviceIoControl(handle: Handle, code: u32, in_buffer: *const c_void, in_len: u32, out_buffer: *mut c_void, out_len: u32, returned: *mut u32, overlapped: *mut c_void) -> i32;
-        fn OpenFileById(volume: Handle, descriptor: *const FileIdDescriptor, access: u32, share: u32, security: *const c_void, flags: u32) -> Handle;
+        fn GetVolumeInformationByHandleW(
+            handle: Handle,
+            volume_name: *mut u16,
+            volume_name_len: u32,
+            serial: *mut u32,
+            max_component: *mut u32,
+            flags: *mut u32,
+            fs_name: *mut u16,
+            fs_name_len: u32,
+        ) -> i32;
+        fn DeviceIoControl(
+            handle: Handle,
+            code: u32,
+            in_buffer: *const c_void,
+            in_len: u32,
+            out_buffer: *mut c_void,
+            out_len: u32,
+            returned: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+        fn OpenFileById(
+            volume: Handle,
+            descriptor: *const FileIdDescriptor,
+            access: u32,
+            share: u32,
+            security: *const c_void,
+            flags: u32,
+        ) -> Handle;
     }
 
     struct OwnedHandle(Handle);
@@ -94,7 +145,9 @@ mod windows_helper {
     }
     impl Drop for OwnedHandle {
         fn drop(&mut self) {
-            unsafe { CloseHandle(self.0); }
+            unsafe {
+                CloseHandle(self.0);
+            }
         }
     }
 
@@ -123,7 +176,8 @@ mod windows_helper {
                 continue;
             }
             let mut read = 0u32;
-            let ok = unsafe { ReadFile(handle, output.as_mut_ptr().cast(), output.len() as u32, &mut read, null_mut()) };
+            let ok =
+                unsafe { ReadFile(handle, output.as_mut_ptr().cast(), output.len() as u32, &mut read, null_mut()) };
             return ok != 0 && read as usize == output.len();
         }
         false
@@ -136,7 +190,9 @@ mod windows_helper {
     }
 
     fn parse_nonce(value: &str) -> Option<[u8; usn_protocol::NONCE_LEN]> {
-        if value.len() != usn_protocol::NONCE_LEN * 2 || !value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+        if value.len() != usn_protocol::NONCE_LEN * 2
+            || !value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
             return None;
         }
         let mut out = [0u8; usn_protocol::NONCE_LEN];
@@ -155,15 +211,33 @@ mod windows_helper {
         let without_slash = volume_guid.strip_suffix('\\')?;
         let path = wide(OsStr::new(without_slash));
         let handle = OwnedHandle::new(unsafe {
-            CreateFileW(path.as_ptr(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, null(), OPEN_EXISTING, 0, null_mut())
+            CreateFileW(
+                path.as_ptr(),
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                null(),
+                OPEN_EXISTING,
+                0,
+                null_mut(),
+            )
         })?;
         let mut serial = 0u32;
         let mut max_component = 0u32;
         let mut flags = 0u32;
         let mut fs_name = [0u16; 16];
         if unsafe {
-            GetVolumeInformationByHandleW(handle.0, null_mut(), 0, &mut serial, &mut max_component, &mut flags, fs_name.as_mut_ptr(), fs_name.len() as u32)
-        } == 0 {
+            GetVolumeInformationByHandleW(
+                handle.0,
+                null_mut(),
+                0,
+                &mut serial,
+                &mut max_component,
+                &mut flags,
+                fs_name.as_mut_ptr(),
+                fs_name.len() as u32,
+            )
+        } == 0
+        {
             return None;
         }
         let fs_len = fs_name.iter().position(|c| *c == 0).unwrap_or(fs_name.len());
@@ -177,7 +251,16 @@ mod windows_helper {
         let mut out = [0u8; 128];
         let mut returned = 0u32;
         let ok = unsafe {
-            DeviceIoControl(volume, FSCTL_QUERY_USN_JOURNAL, null(), 0, out.as_mut_ptr().cast(), out.len() as u32, &mut returned, null_mut())
+            DeviceIoControl(
+                volume,
+                FSCTL_QUERY_USN_JOURNAL,
+                null(),
+                0,
+                out.as_mut_ptr().cast(),
+                out.len() as u32,
+                &mut returned,
+                null_mut(),
+            )
         };
         if ok == 0 || returned < 32 {
             return None;
@@ -220,7 +303,16 @@ mod windows_helper {
         let mut out = [0u8; 256];
         let mut returned = 0u32;
         let ok = unsafe {
-            DeviceIoControl(file.0, FSCTL_READ_FILE_USN_DATA, null(), 0, out.as_mut_ptr().cast(), out.len() as u32, &mut returned, null_mut())
+            DeviceIoControl(
+                file.0,
+                FSCTL_READ_FILE_USN_DATA,
+                null(),
+                0,
+                out.as_mut_ptr().cast(),
+                out.len() as u32,
+                &mut returned,
+                null_mut(),
+            )
         };
         if ok == 0 || returned < 32 || u16::from_le_bytes([out[4], out[5]]) != 2 {
             return None;
@@ -295,21 +387,37 @@ mod windows_helper {
                 _ => return 2,
             }
         }
-        let Some(pipe) = pipe_arg.and_then(|v| v.into_string().ok()) else { return 2; };
-        let Some(nonce_text) = nonce_arg.and_then(|v| v.into_string().ok()) else { return 2; };
-        let Some(nonce) = parse_nonce(&nonce_text) else { return 2; };
+        let Some(pipe) = pipe_arg.and_then(|v| v.into_string().ok()) else {
+            return 2;
+        };
+        let Some(nonce_text) = nonce_arg.and_then(|v| v.into_string().ok()) else {
+            return 2;
+        };
+        let Some(nonce) = parse_nonce(&nonce_text) else {
+            return 2;
+        };
         let expected_pipe = format!(r"\\.\pipe\BootOptimPandora-USN-v1-{nonce_text}");
-        if pipe != expected_pipe { return 2; }
-        let Some(server_pid) = server_pid_arg.and_then(|v| v.to_str().and_then(|s| s.parse::<u32>().ok())) else { return 2; };
-        if server_pid == 0 { return 2; }
+        if pipe != expected_pipe {
+            return 2;
+        }
+        let Some(server_pid) = server_pid_arg.and_then(|v| v.to_str().and_then(|s| s.parse::<u32>().ok())) else {
+            return 2;
+        };
+        if server_pid == 0 {
+            return 2;
+        }
 
         let pipe_wide = wide(OsStr::new(&pipe));
         let handle = OwnedHandle::new(unsafe {
             CreateFileW(pipe_wide.as_ptr(), GENERIC_READ | GENERIC_WRITE, 0, null(), OPEN_EXISTING, 0, null_mut())
         });
-        let Some(pipe_handle) = handle else { return 3; };
+        let Some(pipe_handle) = handle else {
+            return 3;
+        };
         let mut actual_server_pid = 0u32;
-        if unsafe { GetNamedPipeServerProcessId(pipe_handle.0, &mut actual_server_pid) } == 0 || actual_server_pid != server_pid {
+        if unsafe { GetNamedPipeServerProcessId(pipe_handle.0, &mut actual_server_pid) } == 0
+            || actual_server_pid != server_pid
+        {
             return 4;
         }
         let mut mode = PIPE_NOWAIT;
@@ -319,29 +427,54 @@ mod windows_helper {
 
         let deadline = Instant::now() + IO_TIMEOUT;
         let mut handshake_bytes = [0u8; usn_protocol::HANDSHAKE_LEN];
-        if !read_exact_timeout(pipe_handle.0, &mut handshake_bytes, deadline) { return 5; }
-        let Some(handshake) = usn_protocol::decode_handshake(&handshake_bytes) else { return 4; };
-        if handshake.nonce != nonce || handshake.pid != server_pid { return 4; }
-        let reply = usn_protocol::encode_handshake(Handshake { nonce, pid: unsafe { GetCurrentProcessId() } });
-        if !write_exact(pipe_handle.0, &reply) { return 5; }
+        if !read_exact_timeout(pipe_handle.0, &mut handshake_bytes, deadline) {
+            return 5;
+        }
+        let Some(handshake) = usn_protocol::decode_handshake(&handshake_bytes) else {
+            return 4;
+        };
+        if handshake.nonce != nonce || handshake.pid != server_pid {
+            return 4;
+        }
+        let reply = usn_protocol::encode_handshake(Handshake {
+            nonce,
+            pid: unsafe { GetCurrentProcessId() },
+        });
+        if !write_exact(pipe_handle.0, &reply) {
+            return 5;
+        }
 
         let mut session_volume: Option<[u8; usn_protocol::VOLUME_GUID_LEN]> = None;
         loop {
             let deadline = Instant::now() + IO_TIMEOUT;
             let mut request_bytes = [0u8; usn_protocol::REQUEST_LEN];
-            if !read_exact_timeout(pipe_handle.0, &mut request_bytes, deadline) { return 5; }
-            let Some(request) = usn_protocol::decode_request(&request_bytes) else { return 4; };
-            if request.nonce != nonce { return 4; }
-            if request.kind == RequestKind::Shutdown { return 0; }
-            if usn_protocol::volume_guid_str(&request.volume_guid).is_none() { return 4; }
-            if request.kind == RequestKind::Journal && request.file_id != [0; 16] { return 4; }
+            if !read_exact_timeout(pipe_handle.0, &mut request_bytes, deadline) {
+                return 5;
+            }
+            let Some(request) = usn_protocol::decode_request(&request_bytes) else {
+                return 4;
+            };
+            if request.nonce != nonce {
+                return 4;
+            }
+            if request.kind == RequestKind::Shutdown {
+                return 0;
+            }
+            if usn_protocol::volume_guid_str(&request.volume_guid).is_none() {
+                return 4;
+            }
+            if request.kind == RequestKind::Journal && request.file_id != [0; 16] {
+                return 4;
+            }
             match session_volume {
                 Some(volume) if volume != request.volume_guid => return 4,
                 None => session_volume = Some(request.volume_guid),
-                _ => {}
+                _ => {},
             }
             let response = query(request);
-            if !write_exact(pipe_handle.0, &usn_protocol::encode_response(response)) { return 5; }
+            if !write_exact(pipe_handle.0, &usn_protocol::encode_response(response)) {
+                return 5;
+            }
         }
     }
 }

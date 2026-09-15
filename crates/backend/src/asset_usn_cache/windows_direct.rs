@@ -4,12 +4,11 @@ use super::{
 };
 use bridge::modal_action::AssetVerificationMode;
 use rand::{rngs::OsRng, RngCore};
-use sha1::{Digest, Sha1};
 use std::{
     collections::{HashMap, HashSet},
     ffi::{c_void, OsStr},
     fs::{File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{Seek, SeekFrom, Write},
     mem::zeroed,
     os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle},
     path::{Path, PathBuf},
@@ -199,177 +198,6 @@ impl WindowsSession {
             volume: Mutex::new(volume),
             capability_failed: AtomicBool::new(false),
         })
-    }
-
-    pub(super) fn verify_existing(
-        &self,
-        runtime: &AssetUsnCacheRuntime,
-        mode: AssetVerificationMode,
-        path: &Path,
-        expected_sha1: &str,
-        expected_hash: [u8; 20],
-    ) -> bool {
-        let Some((mut file, before)) = protected_file(path) else {
-            return crate::asset_probe_context::hash_path_if_active(path, expected_hash)
-                .unwrap_or_else(|| crate::fs::check_sha1_hash(path, expected_hash).unwrap_or(false));
-        };
-
-        if before.volume_guid != self.volume_guid || before.volume_serial != self.volume_serial {
-            return hash_file(&mut file, expected_hash).unwrap_or(false);
-        }
-
-        if let Some(manifest) = &self.cached
-            && let Some(cached) = manifest
-                .assets
-                .iter()
-                .find(|asset| asset.expected_sha1 == expected_sha1)
-            && let Ok(current) = self.query_file(&file, before.file_id)
-            && current.file_id == before.file_id
-            && current.volume_serial == self.volume_serial
-            && current.journal_id == self.initial_journal_id
-        {
-            let after = identity_from_handle(file.as_raw_handle().cast()).filter(|value| *value == before);
-            let current_id = hex::encode(current.file_id);
-            let evidence = HitEvidence {
-                feature_requested: runtime.requested(),
-                verification_mode: mode,
-                capability: Ok(()),
-                ntfs: true,
-                reparse_point: false,
-                regular_file: true,
-                freeze_handle_held: true,
-                asset_index_sha1: &self.asset_index_sha1,
-                expected_asset_sha1: expected_sha1,
-                volume_guid: &before.volume_guid,
-                volume_serial: current.volume_serial,
-                journal_id: current.journal_id,
-                current_first_usn: current.first_usn,
-                current_lowest_valid_usn: current.lowest_valid_usn,
-                current_next_usn: current.next_usn,
-                current_file_id: &current_id,
-                current_file_usn: current.file_usn,
-                handle_identity_unchanged: after.is_some(),
-            };
-            let decision = evaluate_hit(manifest, cached, &evidence);
-            if runtime.can_skip_sha1(mode, decision) {
-                self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
-                return true;
-            }
-        }
-
-        let valid = hash_file(&mut file, expected_hash).unwrap_or(false);
-        if valid
-            && let Ok(current) = self.query_file(&file, before.file_id)
-            && current.file_id == before.file_id
-            && current.volume_serial == self.volume_serial
-            && current.journal_id == self.initial_journal_id
-            && valid_journal_reply(&current)
-            && current.file_usn >= 0
-            && identity_from_handle(file.as_raw_handle().cast()).is_some_and(|value| value == before)
-        {
-            self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
-        }
-        valid
-    }
-
-    pub(super) fn finish(&self) {
-        if self.capability_failed.load(AtomicOrdering::Acquire) {
-            return;
-        }
-
-        for expected in &self.expected_hashes {
-            if self
-                .snapshots
-                .lock()
-                .ok()
-                .is_some_and(|map| map.contains_key(expected))
-            {
-                continue;
-            }
-            let mut hash = [0u8; 20];
-            if hex::decode_to_slice(expected, &mut hash).is_err() {
-                return;
-            }
-            let path = self.assets_root.join(&expected[..2]).join(expected);
-            if !self.baseline_one(&path, expected, hash) {
-                return;
-            }
-        }
-
-        let Ok(final_journal) = self.query_journal() else {
-            return;
-        };
-        if final_journal.journal_id != self.initial_journal_id
-            || final_journal.volume_serial != self.volume_serial
-            || !valid_journal_reply(&final_journal)
-        {
-            return;
-        }
-
-        let Ok(snapshots) = self.snapshots.lock() else {
-            return;
-        };
-        if snapshots.len() != self.expected_hashes.len()
-            || self
-                .expected_hashes
-                .iter()
-                .any(|hash| !snapshots.contains_key(hash))
-        {
-            return;
-        }
-
-        let mut assets: Vec<CachedAsset> = snapshots.values().cloned().collect();
-        assets.sort_by(|left, right| left.expected_sha1.cmp(&right.expected_sha1));
-        let manifest = CacheManifest {
-            schema: 1,
-            asset_index_sha1: self.asset_index_sha1.clone(),
-            volume_guid: self.volume_guid.clone(),
-            volume_serial: self.volume_serial,
-            journal_id: final_journal.journal_id,
-            snapshot_first_usn: final_journal.first_usn,
-            snapshot_lowest_valid_usn: final_journal.lowest_valid_usn,
-            snapshot_next_usn: final_journal.next_usn,
-            asset_count: assets.len() as u32,
-            assets,
-        };
-        if validate_manifest(&manifest).is_err() {
-            return;
-        }
-        let Ok(bytes) = serde_json::to_vec(&manifest) else {
-            return;
-        };
-        let _ = atomic_publish(&self.manifest_path, &bytes);
-    }
-
-    fn baseline_one(&self, path: &Path, expected_sha1: &str, expected_hash: [u8; 20]) -> bool {
-        if self.capability_failed.load(AtomicOrdering::Acquire) {
-            return false;
-        }
-        let Some((mut file, before)) = protected_file(path) else {
-            return false;
-        };
-        if before.volume_guid != self.volume_guid || before.volume_serial != self.volume_serial {
-            return false;
-        }
-        if hash_file(&mut file, expected_hash) != Some(true) {
-            return false;
-        }
-        let Ok(current) = self.query_file(&file, before.file_id) else {
-            return false;
-        };
-        if current.file_id != before.file_id
-            || current.volume_serial != self.volume_serial
-            || current.journal_id != self.initial_journal_id
-            || !valid_journal_reply(&current)
-            || current.file_usn < 0
-        {
-            return false;
-        }
-        if !identity_from_handle(file.as_raw_handle().cast()).is_some_and(|value| value == before) {
-            return false;
-        }
-        self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
-        true
     }
 
     fn record_snapshot(&self, expected: &str, file_id: [u8; 16], file_usn: i64) {
@@ -625,23 +453,6 @@ fn file_usn_from_handle(handle: Handle) -> Result<([u8; 16], i64), CapabilityFai
         return Err(CapabilityFailure::Io);
     }
     Ok((file_id, file_usn))
-}
-
-fn hash_file(file: &mut File, expected: [u8; 20]) -> Option<bool> {
-    if let Some(result) = crate::asset_probe_context::hash_open_file_if_active(file, expected) {
-        return Some(result);
-    }
-    file.seek(SeekFrom::Start(0)).ok()?;
-    let mut hasher = Sha1::new();
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer).ok()?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Some(expected == *hasher.finalize())
 }
 
 fn wide(value: &OsStr) -> Vec<u16> {
