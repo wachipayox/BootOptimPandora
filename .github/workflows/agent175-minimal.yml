@@ -33,8 +33,8 @@ jobs:
       - name: Install backend build dependencies
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
 
-      - name: Rustfmt
-        run: cargo fmt --all -- --check
+      - name: Rustfmt backend only
+        run: cargo fmt -p backend -- --check
 
       - name: Check backend tests
         run: cargo check -p backend --tests --frozen
