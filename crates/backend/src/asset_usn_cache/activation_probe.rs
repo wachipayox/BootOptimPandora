@@ -1,10 +1,11 @@
 //! Compact opt-in diagnostic for the USN asset-cache activation boundary.
 //!
-//! This probe never authorizes reuse. It records only aggregate state and writes
-//! one create-new JSON sidecar after the asset phase. Paths, asset hashes, FileIds,
-//! USNs, account data and command lines are deliberately excluded.
+//! The Windows asset policy itself is default-on; only this diagnostic sidecar
+//! remains opt-in. The probe never authorizes reuse. It records aggregate state
+//! and writes one create-new JSON sidecar after the asset phase. Paths, asset
+//! hashes, FileIds, USNs, account data and command lines are deliberately excluded.
 
-use super::{AssetVerificationMode, CapabilityFailure, ASSET_USN_CACHE_ENV};
+use super::{AssetVerificationMode, CapabilityFailure};
 use serde::Serialize;
 use std::{
     ffi::OsString,
@@ -68,7 +69,7 @@ impl ActivationProbe {
     ) -> Option<Arc<Self>> {
         Self::from_path(
             configured_path(std::env::var_os(ENV_NAME)),
-            std::env::var_os(ASSET_USN_CACHE_ENV).is_some_and(|value| value == "1"),
+            cfg!(windows),
             mode,
             canonical_objects_layout,
             manifest_path.is_file(),
@@ -247,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn asset_usn_cache_probe_is_default_off() {
+    fn asset_usn_cache_probe_sidecar_is_default_off() {
         assert!(ActivationProbe::from_path(
             None,
             true,
