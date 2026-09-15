@@ -1,5 +1,7 @@
 include!("windows_direct.rs");
 
+use super::{MissReason, ReuseDecision};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FastVerifyResult {
     VerifiedReuse,
