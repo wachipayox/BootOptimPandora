@@ -76,16 +76,8 @@ impl Fixture {
 
         write_pattern(&mods_dir.join("user-added.jar"), extra_bytes, 0x33)?;
         write_pattern(&mods_dir.join("notes.txt"), 4096, 0x44)?;
-        write_pattern(
-            &mods_dir.join("mcef-cache/cache.bin"),
-            extra_bytes / 2,
-            0x55,
-        )?;
-        write_pattern(
-            &mods_dir.join(".connector/cache.bin"),
-            extra_bytes / 2,
-            0x66,
-        )?;
+        write_pattern(&mods_dir.join("mcef-cache/cache.bin"), extra_bytes / 2, 0x55)?;
+        write_pattern(&mods_dir.join(".connector/cache.bin"), extra_bytes / 2, 0x66)?;
 
         Ok(Self {
             _temp: temp,
@@ -117,8 +109,7 @@ fn write_pattern(path: &Path, len: usize, seed: u8) -> io::Result<()> {
 fn process_cpu_ns() -> Option<u128> {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     let result = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
-    (result == 0)
-        .then_some(ts.tv_sec.max(0) as u128 * 1_000_000_000 + ts.tv_nsec.max(0) as u128)
+    (result == 0).then_some(ts.tv_sec.max(0) as u128 * 1_000_000_000 + ts.tv_nsec.max(0) as u128)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -126,9 +117,7 @@ fn process_cpu_ns() -> Option<u128> {
     None
 }
 
-fn measured<T>(
-    op: impl FnOnce() -> io::Result<(T, u64, u64, u64)>,
-) -> io::Result<(T, PhaseSample)> {
+fn measured<T>(op: impl FnOnce() -> io::Result<(T, u64, u64, u64)>) -> io::Result<(T, PhaseSample)> {
     let wall_start = Instant::now();
     let cpu_start = process_cpu_ns();
     let (value, bytes, files, dirs) = op()?;
@@ -149,10 +138,7 @@ fn measured<T>(
     ))
 }
 
-fn scan_unknown_top_level(
-    mods_dir: &Path,
-    known: &BTreeSet<PathBuf>,
-) -> io::Result<(Vec<PathBuf>, u64, u64)> {
+fn scan_unknown_top_level(mods_dir: &Path, known: &BTreeSet<PathBuf>) -> io::Result<(Vec<PathBuf>, u64, u64)> {
     let mut unknown = Vec::new();
     let mut files = 0;
     let mut dirs = 0;
@@ -195,11 +181,7 @@ fn copy_extra(from: &Path, to: &Path) -> io::Result<(u64, u64, u64)> {
     }
 }
 
-fn restore_stock_layout(
-    instance_root: &Path,
-    mods_dir: &Path,
-    sandbox: bool,
-) -> io::Result<PhaseSample> {
+fn restore_stock_layout(instance_root: &Path, mods_dir: &Path, sandbox: bool) -> io::Result<PhaseSample> {
     let original_mods = instance_root.join("original_mods");
     let (_, sample) = measured(|| {
         let mut bytes = 0;
@@ -231,15 +213,11 @@ fn restore_stock_layout(
     Ok(sample)
 }
 
-fn run_stock_filesystem_cycle(
-    fixture: &Fixture,
-    sandbox: bool,
-) -> io::Result<HashMap<&'static str, PhaseSample>> {
+fn run_stock_filesystem_cycle(fixture: &Fixture, sandbox: bool) -> io::Result<HashMap<&'static str, PhaseSample>> {
     let mut samples = HashMap::new();
 
     let (unknown, scan) = measured(|| {
-        let (unknown, files, dirs) =
-            scan_unknown_top_level(&fixture.mods_dir, &fixture.known_top_level)?;
+        let (unknown, files, dirs) = scan_unknown_top_level(&fixture.mods_dir, &fixture.known_top_level)?;
         Ok((unknown, 0, files, dirs))
     })?;
     samples.insert("scan_mods_top_level", scan);
@@ -271,10 +249,7 @@ fn run_stock_filesystem_cycle(
         let mut files = 0;
         let mut dirs = 0;
         for relative in &unknown {
-            let (b, f, d) = copy_extra(
-                &original_mods.join(relative),
-                &fixture.mods_dir.join(relative),
-            )?;
+            let (b, f, d) = copy_extra(&original_mods.join(relative), &fixture.mods_dir.join(relative))?;
             bytes += b;
             files += f;
             dirs += d;
@@ -291,11 +266,7 @@ fn run_stock_filesystem_cycle(
     })?;
     samples.insert("write_modpack_extra_file", modpack_extra);
 
-    write_pattern(
-        &fixture.mods_dir.join(".connector/cache.bin"),
-        96 * 1024,
-        0x99,
-    )?;
+    write_pattern(&fixture.mods_dir.join(".connector/cache.bin"), 96 * 1024, 0x99)?;
     let restore = restore_stock_layout(&fixture.instance_root, &fixture.mods_dir, sandbox)?;
     samples.insert("restore_original_mods", restore);
 
@@ -303,10 +274,7 @@ fn run_stock_filesystem_cycle(
 }
 
 fn emit_sample(phase: &str, sample: PhaseSample) {
-    let cpu = sample
-        .cpu_ns
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "null".to_string());
+    let cpu = sample.cpu_ns.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string());
     eprintln!(
         "{{\"schema\":\"{SCHEMA}\",\"phase\":\"{phase}\",\"wall_ns\":{},\"cpu_ns\":{cpu},\"bytes\":{},\"files\":{},\"dirs\":{}}}",
         sample.wall_ns, sample.bytes, sample.files, sample.dirs
@@ -331,10 +299,7 @@ fn fail_open_reuse_allowed(
     previous_exit_clean: bool,
     original_mods_absent: bool,
 ) -> bool {
-    previous_exit_clean
-        && prepared_layout_present
-        && original_mods_absent
-        && prior == Some(current)
+    previous_exit_clean && prepared_layout_present && original_mods_absent && prior == Some(current)
 }
 
 #[test]
@@ -359,27 +324,18 @@ fn hosted_representative_prelaunch_filesystem_attribution() -> io::Result<()> {
     assert!(samples["copy_user_extra_entries"].bytes > 0);
     assert!(fixture.mods_dir.join("user-added.jar").is_file());
     assert!(fixture.mods_dir.join("mcef-cache/cache.bin").is_file());
-    assert_eq!(
-        fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(),
-        96 * 1024
-    );
+    assert_eq!(fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(), 96 * 1024);
     assert!(!fixture.instance_root.join("original_mods").exists());
     Ok(())
 }
 
 #[test]
 fn repeated_layouts_preserve_user_visible_mods_and_connector_roundtrip() -> io::Result<()> {
+    let fixture = Fixture::create(12, 8192, 32 * 1024)?;
     for _ in 0..2 {
-        let fixture = Fixture::create(12, 8192, 32 * 1024)?;
         let _ = run_stock_filesystem_cycle(&fixture, false)?;
-        assert_eq!(
-            fs::metadata(fixture.mods_dir.join("user-added.jar"))?.len(),
-            32 * 1024
-        );
-        assert_eq!(
-            fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(),
-            96 * 1024
-        );
+        assert_eq!(fs::metadata(fixture.mods_dir.join("user-added.jar"))?.len(), 32 * 1024);
+        assert_eq!(fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(), 96 * 1024);
     }
     Ok(())
 }
@@ -388,39 +344,25 @@ fn repeated_layouts_preserve_user_visible_mods_and_connector_roundtrip() -> io::
 fn sandbox_restore_does_not_merge_runtime_connector_cache() -> io::Result<()> {
     let fixture = Fixture::create(4, 4096, 16 * 1024)?;
     let _ = run_stock_filesystem_cycle(&fixture, true)?;
-    assert_eq!(
-        fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(),
-        8 * 1024
-    );
+    assert_eq!(fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(), 8 * 1024);
     Ok(())
 }
 
 #[test]
 fn interrupted_prelaunch_can_restore_original_layout_fail_open() -> io::Result<()> {
     let fixture = Fixture::create(8, 4096, 16 * 1024)?;
-    let (unknown, _, _) =
-        scan_unknown_top_level(&fixture.mods_dir, &fixture.known_top_level)?;
+    let (unknown, _, _) = scan_unknown_top_level(&fixture.mods_dir, &fixture.known_top_level)?;
     let original_mods = fixture.instance_root.join("original_mods");
     fs::rename(&fixture.mods_dir, &original_mods)?;
     fs::create_dir_all(&fixture.mods_dir)?;
     for relative in unknown {
-        let _ = copy_extra(
-            &original_mods.join(&relative),
-            &fixture.mods_dir.join(&relative),
-        )?;
+        let _ = copy_extra(&original_mods.join(&relative), &fixture.mods_dir.join(&relative))?;
     }
-    write_pattern(
-        &fixture.mods_dir.join(".connector/cache.bin"),
-        48 * 1024,
-        0x12,
-    )?;
+    write_pattern(&fixture.mods_dir.join(".connector/cache.bin"), 48 * 1024, 0x12)?;
 
     let _ = restore_stock_layout(&fixture.instance_root, &fixture.mods_dir, false)?;
     assert!(fixture.mods_dir.join("user-added.jar").is_file());
-    assert_eq!(
-        fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(),
-        48 * 1024
-    );
+    assert_eq!(fs::metadata(fixture.mods_dir.join(".connector/cache.bin"))?.len(), 48 * 1024);
     assert!(!original_mods.exists());
     Ok(())
 }
@@ -462,34 +404,10 @@ fn proposed_reuse_identity_invalidates_every_semantic_input_and_uncertain_state(
     variants.push(changed);
 
     for changed in variants {
-        assert!(!fail_open_reuse_allowed(
-            Some(&base),
-            &changed,
-            true,
-            true,
-            true
-        ));
+        assert!(!fail_open_reuse_allowed(Some(&base), &changed, true, true, true));
     }
     assert!(!fail_open_reuse_allowed(None, &base, true, true, true));
-    assert!(!fail_open_reuse_allowed(
-        Some(&base),
-        &base,
-        false,
-        true,
-        true
-    ));
-    assert!(!fail_open_reuse_allowed(
-        Some(&base),
-        &base,
-        true,
-        false,
-        true
-    ));
-    assert!(!fail_open_reuse_allowed(
-        Some(&base),
-        &base,
-        true,
-        true,
-        false
-    ));
+    assert!(!fail_open_reuse_allowed(Some(&base), &base, false, true, true));
+    assert!(!fail_open_reuse_allowed(Some(&base), &base, true, false, true));
+    assert!(!fail_open_reuse_allowed(Some(&base), &base, true, true, false));
 }
