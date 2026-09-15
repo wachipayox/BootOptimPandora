@@ -6,12 +6,9 @@ const APPCDS_USN_HELPER_SHA256_PIN: Option<&str> = option_env!("BOOTOPTIM_APPCDS
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IdentityLaunchAuthority { Unknown, NormalGui }
-
-// PR #19's interposer invocation has no stock-owned field that distinguishes
-// GUI Start from --run-instance/legacy callers. An environment variable is not
-// accepted as proof of launch origin. Until such authority is propagated from
-// Pandora, runtime reuse stays hard closed even when the experiment is requested.
-fn current_identity_launch_authority() -> IdentityLaunchAuthority { IdentityLaunchAuthority::Unknown }
+impl IdentityLaunchAuthority {
+    fn from_control_arg(value:&OsStr)->Option<Self>{if value==OsStr::new("unknown"){Some(Self::Unknown)}else if value==OsStr::new("normal-gui"){Some(Self::NormalGui)}else{None}}
+}
 
 fn compiled_usn_helper_pin() -> Option<&'static str> {
     APPCDS_USN_HELPER_SHA256_PIN.filter(|pin| is_lower_hex(pin, 64))
@@ -84,12 +81,9 @@ fn write_identity_cache_probe(counts: IdentityProbeCounts, blocked_source: bool)
     if let Ok(mut file) = OpenOptions::new().create_new(true).write(true).open(path) { let _ = file.write_all(text.as_bytes()); }
 }
 
-fn finish_identity_cache_probe(inventory: ProbeInventory) {
+fn finish_identity_cache_probe(inventory: ProbeInventory, authority: IdentityLaunchAuthority) {
     if !identity_cache_probe_requested() { return; }
-    write_identity_cache_probe(
-        identity_probe_counts(inventory),
-        current_identity_launch_authority() != IdentityLaunchAuthority::NormalGui,
-    );
+    write_identity_cache_probe(identity_probe_counts(inventory), authority != IdentityLaunchAuthority::NormalGui);
 }
 
 #[cfg(test)]
@@ -99,7 +93,8 @@ mod appcds_identity_cache_tests {
     fn cached()->CachedIdentityDigest { CachedIdentityDigest{role:"mod".into(),path_hex:PATH.into(),digest:"ab".repeat(32),size:8,journal:JournalSnapshot{volume_serial:7,journal_id:11,first_usn:10,lowest_valid_usn:20,next_usn:100},file_id:[3;16],file_usn:90} }
     fn evidence()->IdentityEvidence<'static>{IdentityEvidence{requested:true,authority:IdentityLaunchAuthority::NormalGui,capability:Ok(()),role:"mod",path_hex:PATH,journal:JournalSnapshot{volume_serial:7,journal_id:11,first_usn:10,lowest_valid_usn:20,next_usn:120},file_id:[3;16],file_usn:90,protected_handle_held:true,handle_identity_unchanged:true}}
     #[test] fn exact_evidence_is_only_reuse(){let c=cached();assert_eq!(evaluate_identity_reuse(&c,&evidence()).unwrap(),c.digest);}
-    #[test] fn runtime_source_is_hard_closed_until_pandora_propagates_authority(){assert_eq!(current_identity_launch_authority(),IdentityLaunchAuthority::Unknown);let c=cached();let mut e=evidence();e.authority=current_identity_launch_authority();assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::SourceUnknown));}
+    #[test] fn unknown_source_never_authorizes_reuse(){let c=cached();let mut e=evidence();e.authority=IdentityLaunchAuthority::Unknown;assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::SourceUnknown));}
+    #[test] fn control_authority_is_explicit_and_fail_closed(){assert_eq!(IdentityLaunchAuthority::from_control_arg(OsStr::new("normal-gui")),Some(IdentityLaunchAuthority::NormalGui));assert_eq!(IdentityLaunchAuthority::from_control_arg(OsStr::new("unknown")),Some(IdentityLaunchAuthority::Unknown));assert_eq!(IdentityLaunchAuthority::from_control_arg(OsStr::new("gui")),None);let a=vec![OsString::from("--instance-dir"),OsString::from("x"),OsString::from("--"),OsString::from("java")];assert_eq!(parse_args(a).unwrap().identity_launch_authority,IdentityLaunchAuthority::Unknown);}
     #[test] fn same_size_mtime_style_change_is_not_authority(){let c=cached();let mut e=evidence();e.file_usn=91;assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::FileUsn));}
     #[test] fn rename_changes_record_key(){let c=cached();let mut e=evidence();e.path_hex="00";assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::RecordMismatch));}
     #[test] fn delete_recreate_file_id_misses(){let c=cached();let mut e=evidence();e.file_id=[4;16];assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::FileId));}

@@ -19,6 +19,14 @@ fn configure_bootoptim_preflight(command: &mut std::process::Command) {
 #[cfg(not(windows))]
 fn configure_bootoptim_preflight(_command: &mut std::process::Command) {}
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BootOptimAppCdsLaunchAuthority {
+    #[default]
+    Unknown,
+    NormalGui,
+}
+impl BootOptimAppCdsLaunchAuthority { fn as_control_value(self)->&'static str { match self { Self::Unknown=>"unknown", Self::NormalGui=>"normal-gui" } } }
+
 #[derive(Debug)]
 struct BootOptimTraining {
     metadata: PathBuf,
@@ -35,6 +43,7 @@ pub struct PandoraCommand {
     pub(crate) stdin: PandoraStdioWriteMode,
     pub(crate) stdout: PandoraStdioReadMode,
     pub(crate) stderr: PandoraStdioReadMode,
+    bootoptim_appcds_launch_authority: BootOptimAppCdsLaunchAuthority,
     #[cfg(windows)]
     pub(crate) force_feedback: bool,
     #[cfg(unix)]
@@ -58,6 +67,7 @@ impl PandoraCommand {
             stdin: Default::default(),
             stdout: Default::default(),
             stderr: Default::default(),
+            bootoptim_appcds_launch_authority: Default::default(),
             #[cfg(windows)]
             force_feedback: false,
             #[cfg(unix)]
@@ -97,6 +107,8 @@ impl PandoraCommand {
     pub fn force_feedback(&mut self, force_feedback: bool) {
         self.force_feedback = force_feedback;
     }
+
+    pub fn bootoptim_appcds_launch_authority(&mut self, authority: BootOptimAppCdsLaunchAuthority) { self.bootoptim_appcds_launch_authority = authority; }
 
     pub async fn spawn(mut self) -> std::io::Result<PandoraChild> {
         crate::spawner::probe_minecraft_command_ready(&self);
@@ -167,6 +179,8 @@ impl PandoraCommand {
             .arg(&launcher_exe)
             .arg("--upstream-commit")
             .arg(BOOTOPTIM_PANDORA_UPSTREAM)
+            .arg("--appcds-launch-authority")
+            .arg(self.bootoptim_appcds_launch_authority.as_control_value())
             .arg("--")
             .arg(&self.executable.0);
         for arg in &self.args {
@@ -452,4 +466,12 @@ mod bootoptim_windows_preflight_tests {
         assert!(String::from_utf8_lossy(&output.stdout).contains("READY"));
         assert!(String::from_utf8_lossy(&output.stderr).contains("helper-diagnostic"));
     }
+}
+
+
+#[cfg(test)]
+mod bootoptim_appcds_authority_tests {
+ use super::*;
+ #[test] fn command_defaults_unknown(){let c=PandoraCommand::new("java");assert_eq!(c.bootoptim_appcds_launch_authority,BootOptimAppCdsLaunchAuthority::Unknown);}
+ #[test] fn explicit_normal_gui_is_distinct(){assert_eq!(BootOptimAppCdsLaunchAuthority::Unknown.as_control_value(),"unknown");assert_eq!(BootOptimAppCdsLaunchAuthority::NormalGui.as_control_value(),"normal-gui");let mut c=PandoraCommand::new("java");c.bootoptim_appcds_launch_authority(BootOptimAppCdsLaunchAuthority::NormalGui);assert_eq!(c.bootoptim_appcds_launch_authority,BootOptimAppCdsLaunchAuthority::NormalGui);}
 }
