@@ -136,23 +136,51 @@ fn main() {
 }
 
 fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
+    let mut probe = PreflightProbe::from_env();
+    let result = prepare_launch_inner(parsed, &mut probe);
+    probe.finish(&result);
+    result
+}
+
+fn prepare_launch_inner(parsed: &ParsedArgs, probe: &mut PreflightProbe) -> io::Result<PrepareDecision> {
     let mode = match env::var("BOOTOPTIM_APPCDS_MODE").ok().as_deref() {
         Some("auto") => Mode::Auto,
         _ => Mode::Plan,
     };
+    probe.set_mode(mode);
 
     let cache_dir = parsed.instance_dir.join(".bootoptim").join("appcds");
-    fs::create_dir_all(&cache_dir)?;
+    let started = probe.stage_start();
+    let cache_setup = fs::create_dir_all(&cache_dir);
+    probe.record_top("cache_dir_setup", started);
+    cache_setup?;
 
     // Hashing is read-only and can happen outside the cache lock. Publication of
     // the plan and every state transition is serialized so launch-plan.match can
-    // never describe a different concurrent preflight.
-    let plan = build_launch_plan(parsed)?;
-    let Some(_lock) = try_lock(&cache_dir.join("cache.lock"))? else {
+    // never describe a different concurrent preflight. The original builder is
+    // kept byte-for-byte on the default path; only an explicitly enabled probe
+    // uses the separately tested profiled mirror.
+    let started = probe.stage_start();
+    let plan_result = if probe.enabled() {
+        build_launch_plan_profiled(parsed, probe)
+    } else {
+        build_launch_plan(parsed)
+    };
+    probe.record_top("build_launch_plan", started);
+    let plan = plan_result?;
+
+    let started = probe.stage_start();
+    let lock_result = try_lock(&cache_dir.join("cache.lock"));
+    probe.record_top("lock_attempt", started);
+    let Some(_lock) = lock_result? else {
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=lock-busy");
         return Ok(PrepareDecision::Stock);
     };
-    let stable = persist_plan_and_compare(&cache_dir, &plan.bytes, &plan.sha256)?;
+
+    let started = probe.stage_start();
+    let stable_result = persist_plan_and_compare(&cache_dir, &plan.bytes, &plan.sha256);
+    probe.record_top("persist_plan", started);
+    let stable = stable_result?;
 
     if mode == Mode::Plan {
         eprintln!("BOOTOPTIM_INTERPOSER status=plan-only deterministic={}", if stable { "true" } else { "false" });
@@ -176,7 +204,10 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         return Ok(PrepareDecision::Stock);
     }
 
-    let (state, _) = classify_cache(&cache_dir, &plan.sha256)?;
+    let started = probe.stage_start();
+    let cache_result = classify_cache(&cache_dir, &plan.sha256);
+    probe.record_top("classify_cache", started);
+    let (state, _) = cache_result?;
     match state {
         CacheState::Ready => {
             cleanup_training_files(&cache_dir);
@@ -227,7 +258,10 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
             return Ok(PrepareDecision::Stock);
         }
 
-        promote_archive(&cache_dir, &training_archive, &plan.sha256)?;
+        let started = probe.stage_start();
+        let promotion_result = promote_archive(&cache_dir, &training_archive, &plan.sha256);
+        probe.record_top("promote_archive", started);
+        promotion_result?;
         let _ = fs::remove_file(&training_meta);
         let _ = fs::remove_file(&training_complete);
         write_state(&cache_dir, CacheState::Ready, "promotion-complete")?;
