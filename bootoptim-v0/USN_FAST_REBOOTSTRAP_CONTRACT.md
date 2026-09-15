@@ -6,11 +6,13 @@ Agent 177 starts exactly from PR #27 head `48a07528dff5b8249c8284545e4cc26efb23b
 
 It does not change AppCDS, classpath/module-path, mods, modpack update semantics, UI/login, Java launch, or background I/O. It does not add a service/helper/UAC requirement.
 
-## Default/request policy
+## Default policy
 
-`BOOTOPTIM_ASSET_USN_CACHE=1` remains the explicit, default-off request switch inherited from PR #27. Once requested on the canonical launcher `assets/objects` tree, **every launch authority uses the same fast policy**, including GUI normal launch, CLI/legacy/default/unknown authority and the historical `FullVerification` marker. `FullVerification` no longer means “hash every asset at startup” when this cache policy is requested.
+On Windows, the canonical launcher `assets/objects` tree now uses the fast policy by default for **every launch authority**, including GUI normal launch, CLI/legacy/default/unknown authority and the historical `FullVerification` marker. The inherited `BOOTOPTIM_ASSET_USN_CACHE=1` variable remains harmless for existing physical scripts but is no longer an opt-in and cannot be used to restore a whole-cache SHA-1 startup pass.
 
-There is deliberately no `strict_full_sha1` setting and no startup path in this policy that cryptographically scans all asset objects.
+`FullVerification` therefore no longer means “hash every asset at startup” for this Windows asset-object path. There is deliberately no `strict_full_sha1` setting and no startup route in this policy that cryptographically scans all asset objects.
+
+This candidate does not redefine non-Windows asset integrity semantics; its default-policy claim is specifically the Windows/NTFS path inherited from PR #27.
 
 ## Decisions
 
@@ -46,23 +48,24 @@ A capability failure is session-latched and prevents manifest publication. It do
 - `verified_reuse_files`;
 - `fast_rebootstrap_files`;
 - `individual_repair_verification_files`;
-- `stock_sha1_files` (expected to remain zero for a requested canonical fast-policy launch; retained to expose regressions/feature-off behavior);
+- `stock_sha1_files` (expected to remain zero on the canonical Windows fast-policy path; retained to expose out-of-scope/non-Windows or regression behavior);
 - direct capability/session/publication state and `elevation_requested=false`.
 
 `fast_rebootstrap` and `individual_repair_verification` are deliberately separate counters: the former carries reduced historical-integrity guarantees; the latter means the normal single-object repair/download verification path was requested.
 
 ## Strictness boundary
 
-There is no global strict startup mode in this candidate. The strict cryptographic boundary is per-object only: a missing object or a FileId/USN/handle invalidation reaches `individual_repair_verification`, and the downloaded/repaired object is SHA-1 verified before acceptance. No CLI/legacy/unknown authority can silently request a full-cache audit.
+There is no global strict startup mode in this candidate. The strict cryptographic boundary is per-object only: a missing object or a FileId/USN/handle invalidation reaches `individual_repair_verification`, and the downloaded/repaired object is SHA-1 verified before acceptance. No GUI/CLI/legacy/unknown authority can silently request a full-cache audit on the canonical Windows path.
 
 ## Required validation
 
 Focused backend tests must prove:
 
-1. corrupt manifest -> `fast_rebootstrap` with no content SHA-1 observation, followed by a valid metadata manifest;
-2. unchanged next run -> `verified_reuse` with no content SHA-1;
-3. same-size/restored-mtime mutation after rebootstrap -> `individual_repair_verification` on the next run via changed USN, without hashing the existing object;
-4. delete/recreate after rebootstrap -> individual repair via changed FileId;
-5. telemetry distinguishes `fast_rebootstrap`, `verified_reuse` and `individual_repair_verification`.
+1. Windows fast policy is selected without requiring the legacy cache environment variable;
+2. corrupt manifest -> `fast_rebootstrap` with no content SHA-1 observation, followed by a valid metadata manifest;
+3. unchanged next run -> `verified_reuse` with no content SHA-1;
+4. same-size/restored-mtime mutation after rebootstrap -> `individual_repair_verification` on the next run via changed USN, without hashing the existing object;
+5. delete/recreate after rebootstrap -> individual repair via changed FileId;
+6. telemetry distinguishes `fast_rebootstrap`, `verified_reuse` and `individual_repair_verification`.
 
 Hosted CI is semantic/packaging evidence only. Physical acceptance measures only `assets_verify_download`; it must not be reported as TTMM. A corrupt/missing-manifest physical run should show fast rebootstrap and zero stock SHA-1 object reads, while a subsequent single-object mutation should request exactly one repair/download verification.
