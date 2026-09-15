@@ -120,6 +120,7 @@ jobs:
           if ($stockBytes.Length -ne $currentBytes.Length -or (Compare-Object $stockBytes $currentBytes -SyncWindow 0)) { throw "identity-cache request changed plan bytes while source authority is unavailable" }
           $identity = Get-Content $identityProbe -Raw | ConvertFrom-Json
           if ($identity.schema -ne "bootoptim.appcds_identity_cache_probe.v1") { throw "wrong identity-cache probe schema" }
+          if ($identity.helper_pin_compiled -ne $true) { throw "release interposer did not consume exact USN helper pin" }
           if ($identity.runtime_reuse_authorized -ne $false -or $identity.reused_files -ne 0 -or $identity.reused_bytes -ne 0) { throw "hard-closed runtime reported reuse" }
           if ($identity.stock_files -le 0 -or $identity.stock_bytes -le 0 -or $identity.miss_files -ne $identity.stock_files) { throw "identity-cache aggregate stock/miss counts invalid" }
           Copy-Item $probe "bootoptim-v0/preflight-probe-selftest.json"
