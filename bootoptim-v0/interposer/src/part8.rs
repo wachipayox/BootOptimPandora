@@ -14,40 +14,21 @@ fn current_identity_launch_authority() -> IdentityLaunchAuthority { IdentityLaun
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CachedIdentityDigest {
-    role: String,
-    path_hex: String,
-    digest: String,
+    role: String, path_hex: String, digest: String,
     size: u64, // diagnostic consistency only; never authorizes reuse
-    journal: JournalSnapshot,
-    file_id: [u8; 16],
-    file_usn: i64,
+    journal: JournalSnapshot, file_id: [u8; 16], file_usn: i64,
 }
 
 #[derive(Clone, Debug)]
 struct IdentityEvidence<'a> {
-    requested: bool,
-    authority: IdentityLaunchAuthority,
-    capability: Result<(), UsnCapabilityFailure>,
-    role: &'a str,
-    path_hex: &'a str,
-    journal: JournalSnapshot,
-    file_id: [u8; 16],
-    file_usn: i64,
-    protected_handle_held: bool,
-    handle_identity_unchanged: bool,
+    requested: bool, authority: IdentityLaunchAuthority,
+    capability: Result<(), UsnCapabilityFailure>, role: &'a str, path_hex: &'a str,
+    journal: JournalSnapshot, file_id: [u8; 16], file_usn: i64,
+    protected_handle_held: bool, handle_identity_unchanged: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IdentityMiss {
-    FeatureOff,
-    SourceUnknown,
-    Capability,
-    RecordMismatch,
-    Journal,
-    FileId,
-    FileUsn,
-    Handle,
-}
+enum IdentityMiss { FeatureOff, SourceUnknown, Capability, RecordMismatch, Journal, FileId, FileUsn, Handle }
 
 fn evaluate_identity_reuse(cached: &CachedIdentityDigest, evidence: &IdentityEvidence<'_>) -> Result<String, IdentityMiss> {
     if !evidence.requested { return Err(IdentityMiss::FeatureOff); }
@@ -74,8 +55,19 @@ fn write_identity_cache_probe(counts: IdentityProbeCounts, blocked_source: bool)
     if let Ok(mut file) = OpenOptions::new().create_new(true).write(true).open(path) { let _ = file.write_all(text.as_bytes()); }
 }
 
-fn identity_cache_requested() -> bool {
-    env::var_os(APPCDS_IDENTITY_CACHE_ENV).is_some_and(|value| value == "1")
+fn identity_cache_requested() -> bool { env::var_os(APPCDS_IDENTITY_CACHE_ENV).is_some_and(|value| value == "1") }
+
+// Piggyback on PR #19's aggregate inventory only when that probe was enabled.
+// No per-file path/hash/timing is added. While source authority is unavailable,
+// all observed candidate inventory is reported as stock/miss and reuse stays 0.
+impl Drop for PreflightProbe {
+    fn drop(&mut self) {
+        if env::var_os(APPCDS_IDENTITY_CACHE_PROBE_ENV).is_none() { return; }
+        let stock_files = (self.inventory.classpath_files + self.inventory.module_path_files + self.inventory.mod_files + self.inventory.pack_input_files + self.inventory.component_files) as u64;
+        let stock_bytes = self.inventory.classpath_bytes + self.inventory.module_path_bytes + self.inventory.mod_bytes + self.inventory.pack_input_bytes + self.inventory.component_bytes;
+        let requested = identity_cache_requested();
+        write_identity_cache_probe(IdentityProbeCounts { reused_files:0, reused_bytes:0, stock_files, stock_bytes, miss_files:if requested { stock_files } else { 0 } }, current_identity_launch_authority() != IdentityLaunchAuthority::NormalGui);
+    }
 }
 
 #[cfg(test)]
@@ -84,7 +76,6 @@ mod appcds_identity_cache_tests {
     const PATH:&str="63003a005c006d006f0064002e006a0061007200";
     fn cached()->CachedIdentityDigest { CachedIdentityDigest{role:"mod".into(),path_hex:PATH.into(),digest:"ab".repeat(32),size:8,journal:JournalSnapshot{volume_serial:7,journal_id:11,first_usn:10,lowest_valid_usn:20,next_usn:100},file_id:[3;16],file_usn:90} }
     fn evidence()->IdentityEvidence<'static>{IdentityEvidence{requested:true,authority:IdentityLaunchAuthority::NormalGui,capability:Ok(()),role:"mod",path_hex:PATH,journal:JournalSnapshot{volume_serial:7,journal_id:11,first_usn:10,lowest_valid_usn:20,next_usn:120},file_id:[3;16],file_usn:90,protected_handle_held:true,handle_identity_unchanged:true}}
-
     #[test] fn exact_evidence_is_only_reuse(){let c=cached();assert_eq!(evaluate_identity_reuse(&c,&evidence()).unwrap(),c.digest);}
     #[test] fn runtime_source_is_hard_closed_until_pandora_propagates_authority(){assert_eq!(current_identity_launch_authority(),IdentityLaunchAuthority::Unknown);let c=cached();let mut e=evidence();e.authority=current_identity_launch_authority();assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::SourceUnknown));}
     #[test] fn same_size_mtime_style_change_is_not_authority(){let c=cached();let mut e=evidence();e.file_usn=91;assert_eq!(evaluate_identity_reuse(&c,&e),Err(IdentityMiss::FileUsn));}
