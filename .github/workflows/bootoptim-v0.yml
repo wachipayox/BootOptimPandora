@@ -34,6 +34,8 @@ jobs:
         run: cargo test -p bridge launch_probe --frozen
       - name: Test asset verification intent propagation
         run: cargo test -p bridge asset_verification_mode --frozen
+      - name: Install backend test dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
       - name: Test asset prefix directory deduplication
         run: cargo test -p backend bootoptim_asset_prefix_directory_tests --frozen
 
