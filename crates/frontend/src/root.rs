@@ -1,11 +1,14 @@
-use std::{path::Path, sync::{Arc, atomic::AtomicBool}};
+use std::{
+    path::Path,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use parking_lot::Mutex;
 
 use bridge::{
     handle::BackendHandle,
     install::ContentInstall,
-    instance::{InstanceID, InstanceContentID},
+    instance::{InstanceContentID, InstanceID},
     message::{MessageToBackend, QuickPlayLaunch},
     modal_action::ModalAction,
 };
@@ -13,7 +16,15 @@ use gpui::{prelude::*, *};
 use gpui_component::{Root, Theme, scroll::ScrollableElement, v_flex};
 use rustc_hash::FxHashSet;
 
-use crate::{Backwards, CloseWindow, Forwards, OpenSettings, entity::DataEntities, game_output::{GameOutput, GameOutputRoot}, interface_config::{InterfaceConfig, LiveGameOutputDisplay}, modals, pages::instance::instance_page::InstanceSubpageType, ui::{LauncherUI, PageType}};
+use crate::{
+    Backwards, CloseWindow, Forwards, OpenSettings,
+    entity::DataEntities,
+    game_output::{GameOutput, GameOutputRoot},
+    interface_config::{InterfaceConfig, LiveGameOutputDisplay},
+    modals,
+    pages::instance::instance_page::InstanceSubpageType,
+    ui::{LauncherUI, PageType},
+};
 
 pub struct LauncherRootGlobal {
     pub root: Entity<LauncherRoot>,
@@ -28,11 +39,7 @@ pub struct LauncherRoot {
 }
 
 impl LauncherRoot {
-    pub fn new(
-        data: &DataEntities,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let launcher_ui = cx.new(|cx| LauncherUI::new(data, window, cx));
 
         let focus_handle = cx.focus_handle();
@@ -52,7 +59,7 @@ pub(crate) fn should_render_custom_titlebar() -> bool {
     RENDER_CUSTOM_TITLEBAR.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-pub(crate)fn set_should_render_custom_titlebar(value: bool) {
+pub(crate) fn set_should_render_custom_titlebar(value: bool) {
     RENDER_CUSTOM_TITLEBAR.store(value, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -65,13 +72,30 @@ impl Render for LauncherRoot {
                 l: 0.25,
                 a: 1.,
             };
-            return v_flex().size_full().text_color(gpui::white()).bg(purple).child(message.clone()).overflow_y_scrollbar().into_any_element();
+            return v_flex()
+                .size_full()
+                .text_color(gpui::white())
+                .bg(purple)
+                .child(message.clone())
+                .overflow_y_scrollbar()
+                .into_any_element();
         }
         if let Some(message) = &*self.data.panic_messages.panic_message.read() {
-            return v_flex().size_full().text_color(gpui::white()).bg(gpui::blue()).child(message.clone()).overflow_y_scrollbar().into_any_element();
+            return v_flex()
+                .size_full()
+                .text_color(gpui::white())
+                .bg(gpui::blue())
+                .child(message.clone())
+                .overflow_y_scrollbar()
+                .into_any_element();
         }
         if self.data.backend_handle.is_closed() {
-            return v_flex().size_full().text_color(gpui::white()).bg(gpui::red()).child(t::system::backend_shutdown()).into_any_element();
+            return v_flex()
+                .size_full()
+                .text_color(gpui::white())
+                .bg(gpui::red())
+                .child(t::system::backend_shutdown())
+                .into_any_element();
         }
 
         Theme::global_mut(cx).sheet.margin_top = Pixels::ZERO;
@@ -132,11 +156,7 @@ impl Render for LauncherRoot {
     }
 }
 
-pub fn start_new_account_login(
-    backend_handle: &BackendHandle,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub fn start_new_account_login(backend_handle: &BackendHandle, window: &mut Window, cx: &mut App) {
     let modal_action = ModalAction::normal_launch();
 
     backend_handle.send(MessageToBackend::AddNewAccount {
@@ -224,13 +244,16 @@ pub fn start_instance(
                     });
 
                     let config = InterfaceConfig::get(cx);
-                    if matches!(config.main_page, PageType::InstancePage { .. }) && config.instance_subpage != InstanceSubpageType::LiveGameOutput {
+                    if matches!(config.main_page, PageType::InstancePage { .. })
+                        && config.instance_subpage != InstanceSubpageType::LiveGameOutput
+                    {
                         InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::LiveGameOutput;
                     }
                 });
             },
         }
-    }).detach();
+    })
+    .detach();
 }
 
 pub fn start_install(
@@ -275,12 +298,7 @@ pub fn change_mod_version(
     modals::generic::show_notification(window, cx, t::instance::content::install::error().into(), modal_action);
 }
 
-pub fn start_update_check(
-    instance: InstanceID,
-    backend_handle: &BackendHandle,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub fn start_update_check(instance: InstanceID, backend_handle: &BackendHandle, window: &mut Window, cx: &mut App) {
     let modal_action = ModalAction::default();
 
     backend_handle.send(MessageToBackend::UpdateCheck {
@@ -317,15 +335,15 @@ pub fn update_single_mod(
         modal_action: modal_action.clone(),
     });
 
-    modals::generic::show_notification(window, cx, t::instance::content::update::download::error().into(), modal_action);
+    modals::generic::show_notification(
+        window,
+        cx,
+        t::instance::content::update::download::error().into(),
+        modal_action,
+    );
 }
 
-pub fn upload_log_file(
-    path: Arc<Path>,
-    backend_handle: &BackendHandle,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub fn upload_log_file(path: Arc<Path>, backend_handle: &BackendHandle, window: &mut Window, cx: &mut App) {
     let modal_action = ModalAction::default();
 
     backend_handle.send(MessageToBackend::UploadLogFile {
@@ -337,12 +355,7 @@ pub fn upload_log_file(
     modals::generic::show_modal(window, cx, title, t::instance::logs::upload::error().into(), modal_action);
 }
 
-pub fn switch_page(
-    page: PageType,
-    breadcrumbs: &[PageType],
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub fn switch_page(page: PageType, breadcrumbs: &[PageType], window: &mut Window, cx: &mut App) {
     cx.update_global::<LauncherRootGlobal, ()>(|global, cx| {
         global.root.update(cx, |launcher_root, cx| {
             launcher_root.ui.update(cx, |ui, cx| {

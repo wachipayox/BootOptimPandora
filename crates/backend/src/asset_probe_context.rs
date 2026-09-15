@@ -22,10 +22,7 @@ pub(crate) fn hash_path_if_active(_path: &Path, _expected: [u8; 20]) -> Option<b
 }
 
 #[cfg(windows)]
-pub(crate) fn hash_open_file_if_active(
-    _file: &mut std::fs::File,
-    _expected: [u8; 20],
-) -> Option<bool> {
+pub(crate) fn hash_open_file_if_active(_file: &mut std::fs::File, _expected: [u8; 20]) -> Option<bool> {
     mark_hash_observed();
     None
 }

@@ -5,17 +5,18 @@ use std::ffi::{OsStr, OsString};
 mod backend;
 pub use backend::*;
 
-mod backend_filesystem;
-mod backend_handler;
 mod account;
 mod arcfactory;
 mod asset_probe_context;
 mod asset_usn_cache;
+mod backend_filesystem;
+mod backend_handler;
 mod curseforge_manual_download;
 mod directories;
 mod duplicate;
 mod export;
 mod fs;
+mod id_slab;
 mod install_content;
 mod instance;
 mod java_manifest;
@@ -25,7 +26,6 @@ mod launcher_import;
 mod log_reader;
 mod metadata;
 mod mod_metadata;
-mod id_slab;
 mod persistent;
 mod server_list_pinger;
 mod shortcut;
@@ -122,7 +122,7 @@ pub fn join_windows_shell_os(args: &[&OsStr]) -> OsString {
             if *byte == b'\\' {
                 backslashes += 1;
             } else if *byte == b'"' {
-                for _ in 0..backslashes*2 {
+                for _ in 0..backslashes * 2 {
                     string.push(b'\\');
                 }
                 string.push(b'\\');
@@ -138,7 +138,7 @@ pub fn join_windows_shell_os(args: &[&OsStr]) -> OsString {
         }
 
         if quoted {
-            for _ in 0..backslashes*2 {
+            for _ in 0..backslashes * 2 {
                 string.push(b'\\');
             }
         } else {
@@ -152,7 +152,5 @@ pub fn join_windows_shell_os(args: &[&OsStr]) -> OsString {
         }
     }
 
-    unsafe {
-        OsString::from_encoded_bytes_unchecked(string)
-    }
+    unsafe { OsString::from_encoded_bytes_unchecked(string) }
 }

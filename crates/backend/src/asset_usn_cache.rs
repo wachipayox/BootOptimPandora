@@ -4,7 +4,11 @@
 //! `VerifiedReuse` decision while holding the protected file handle. Every
 //! unavailable or ambiguous capability falls back to Pandora's stock SHA-1.
 
-use std::{collections::HashSet, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use bridge::modal_action::AssetVerificationMode;
 use serde::{Deserialize, Serialize};
@@ -20,11 +24,7 @@ const MAX_MANIFEST_BYTES: usize = 16 * 1024 * 1024;
 
 fn cache_layout_eligible(path: &Path) -> bool {
     path.file_name().and_then(|name| name.to_str()) == Some("objects")
-        && path
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            == Some("assets")
+        && path.parent().and_then(Path::file_name).and_then(|name| name.to_str()) == Some("assets")
 }
 
 #[derive(Debug, Clone)]
@@ -48,14 +48,8 @@ impl AssetUsnCacheRuntime {
         self.requested
     }
 
-    pub(crate) fn can_skip_sha1(
-        &self,
-        mode: AssetVerificationMode,
-        decision: ReuseDecision,
-    ) -> bool {
-        self.requested
-            && mode == AssetVerificationMode::Normal
-            && decision == ReuseDecision::VerifiedReuse
+    pub(crate) fn can_skip_sha1(&self, mode: AssetVerificationMode, decision: ReuseDecision) -> bool {
+        self.requested && mode == AssetVerificationMode::Normal && decision == ReuseDecision::VerifiedReuse
     }
 }
 
@@ -78,17 +72,10 @@ impl AssetUsnCacheSession {
         let runtime = AssetUsnCacheRuntime::from_environment();
         let canonical_objects_layout = cache_layout_eligible(&assets_objects_dir);
         let manifest_path = assets_objects_dir.join(".bootoptim-usn-assets-v1.json");
-        let probe = activation_probe::ActivationProbe::for_launch(
-            mode,
-            canonical_objects_layout,
-            &manifest_path,
-        );
+        let probe = activation_probe::ActivationProbe::for_launch(mode, canonical_objects_layout, &manifest_path);
 
         #[cfg(windows)]
-        let inner = if runtime.requested()
-            && mode == AssetVerificationMode::Normal
-            && canonical_objects_layout
-        {
+        let inner = if runtime.requested() && mode == AssetVerificationMode::Normal && canonical_objects_layout {
             if let Some(probe) = &probe {
                 probe.session_attempted();
             }
@@ -122,12 +109,7 @@ impl AssetUsnCacheSession {
 
         #[cfg(not(windows))]
         {
-            let _ = (
-                asset_index_sha1,
-                assets_objects_dir,
-                expected_hashes,
-                canonical_objects_layout,
-            );
+            let _ = (asset_index_sha1, assets_objects_dir, expected_hashes, canonical_objects_layout);
             if let Some(probe) = &probe {
                 let reason = if !runtime.requested() {
                     "feature_disabled"
@@ -152,22 +134,11 @@ impl AssetUsnCacheSession {
         }
     }
 
-    pub(crate) fn verify_existing(
-        &self,
-        path: &Path,
-        expected_sha1: &str,
-        expected_hash: [u8; 20],
-    ) -> bool {
+    pub(crate) fn verify_existing(&self, path: &Path, expected_sha1: &str, expected_hash: [u8; 20]) -> bool {
         #[cfg(windows)]
         if let Some(inner) = &self.inner {
             crate::asset_probe_context::reset_hash_observed();
-            let result = inner.verify_existing(
-                &self.runtime,
-                self.mode,
-                path,
-                expected_sha1,
-                expected_hash,
-            );
+            let result = inner.verify_existing(&self.runtime, self.mode, path, expected_sha1, expected_hash);
             let stock_sha1 = crate::asset_probe_context::take_hash_observed();
             if let Some(probe) = &self.probe {
                 if stock_sha1 {
@@ -298,17 +269,11 @@ pub(crate) fn validate_manifest(manifest: &CacheManifest) -> Result<(), Manifest
 }
 
 pub(crate) fn is_lower_hex(value: &str, len: usize) -> bool {
-    value.len() == len
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    value.len() == len && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 pub(crate) fn is_volume_guid(value: &str) -> bool {
-    let Some(inner) = value
-        .strip_prefix(r"\\?\Volume{")
-        .and_then(|value| value.strip_suffix(r"}\"))
-    else {
+    let Some(inner) = value.strip_prefix(r"\\?\Volume{").and_then(|value| value.strip_suffix(r"}\")) else {
         return false;
     };
     Uuid::parse_str(inner).is_ok()
@@ -410,9 +375,7 @@ pub(crate) fn evaluate_hit(
     if evidence.expected_asset_sha1 != cached.expected_sha1 {
         return ReuseDecision::FullSha1(AssetSha1Mismatch);
     }
-    if evidence.volume_guid != manifest.volume_guid
-        || evidence.volume_serial != manifest.volume_serial
-    {
+    if evidence.volume_guid != manifest.volume_guid || evidence.volume_serial != manifest.volume_serial {
         return ReuseDecision::FullSha1(VolumeMismatch);
     }
     if evidence.journal_id != manifest.journal_id {
@@ -430,11 +393,7 @@ pub(crate) fn evaluate_hit(
     if evidence.current_next_usn < manifest.snapshot_next_usn {
         return ReuseDecision::FullSha1(JournalRegression);
     }
-    if evidence
-        .current_first_usn
-        .max(evidence.current_lowest_valid_usn)
-        > manifest.snapshot_next_usn
-    {
+    if evidence.current_first_usn.max(evidence.current_lowest_valid_usn) > manifest.snapshot_next_usn {
         return ReuseDecision::FullSha1(JournalDiscontinuity);
     }
     if evidence.current_file_id != cached.file_id {
@@ -505,10 +464,7 @@ mod tests {
 
     fn miss(evidence: HitEvidence<'static>, reason: MissReason) {
         let manifest = manifest();
-        assert_eq!(
-            evaluate_hit(&manifest, &manifest.assets[0], &evidence),
-            ReuseDecision::FullSha1(reason)
-        );
+        assert_eq!(evaluate_hit(&manifest, &manifest.assets[0], &evidence), ReuseDecision::FullSha1(reason));
     }
 
     #[test]
@@ -522,16 +478,10 @@ mod tests {
     #[test]
     fn normal_complete_identity_is_the_only_pure_hit() {
         let manifest = manifest();
-        assert_eq!(
-            evaluate_hit(&manifest, &manifest.assets[0], &evidence()),
-            ReuseDecision::VerifiedReuse
-        );
+        assert_eq!(evaluate_hit(&manifest, &manifest.assets[0], &evidence()), ReuseDecision::VerifiedReuse);
 
         let runtime = AssetUsnCacheRuntime::requested_for_test(true);
-        assert!(runtime.can_skip_sha1(
-            AssetVerificationMode::Normal,
-            ReuseDecision::VerifiedReuse
-        ));
+        assert!(runtime.can_skip_sha1(AssetVerificationMode::Normal, ReuseDecision::VerifiedReuse));
     }
 
     #[test]
@@ -541,10 +491,7 @@ mod tests {
         miss(evidence, MissReason::FullVerification);
 
         let runtime = AssetUsnCacheRuntime::requested_for_test(true);
-        assert!(!runtime.can_skip_sha1(
-            AssetVerificationMode::FullVerification,
-            ReuseDecision::VerifiedReuse
-        ));
+        assert!(!runtime.can_skip_sha1(AssetVerificationMode::FullVerification, ReuseDecision::VerifiedReuse));
     }
 
     #[test]
@@ -554,10 +501,7 @@ mod tests {
         miss(evidence, MissReason::FeatureDisabled);
 
         let runtime = AssetUsnCacheRuntime::requested_for_test(false);
-        assert!(!runtime.can_skip_sha1(
-            AssetVerificationMode::Normal,
-            ReuseDecision::VerifiedReuse
-        ));
+        assert!(!runtime.can_skip_sha1(AssetVerificationMode::Normal, ReuseDecision::VerifiedReuse));
     }
 
     #[test]
@@ -663,17 +607,11 @@ mod tests {
 
         let mut schema_manifest = manifest();
         schema_manifest.schema = 2;
-        assert_eq!(
-            parse_manifest(&serde_json::to_vec(&schema_manifest).unwrap()),
-            Err(ManifestError::Schema)
-        );
+        assert_eq!(parse_manifest(&serde_json::to_vec(&schema_manifest).unwrap()), Err(ManifestError::Schema));
 
         let mut usn_manifest = manifest();
         usn_manifest.snapshot_first_usn = 1_001;
-        assert_eq!(
-            parse_manifest(&serde_json::to_vec(&usn_manifest).unwrap()),
-            Err(ManifestError::Usn)
-        );
+        assert_eq!(parse_manifest(&serde_json::to_vec(&usn_manifest).unwrap()), Err(ManifestError::Usn));
 
         let mut count_manifest = manifest();
         count_manifest.asset_count = 2;
@@ -700,9 +638,6 @@ mod tests {
         let duplicate_top_level = format!(
             r#"{{"schema":1,"schema":1,"asset_index_sha1":"{INDEX_SHA}","volume_guid":"{VOLUME}","volume_serial":7,"journal_id":11,"snapshot_first_usn":50,"snapshot_lowest_valid_usn":100,"snapshot_next_usn":1000,"asset_count":0,"assets":[]}}"#
         );
-        assert_eq!(
-            parse_manifest(duplicate_top_level.as_bytes()),
-            Err(ManifestError::Json)
-        );
+        assert_eq!(parse_manifest(duplicate_top_level.as_bytes()), Err(ManifestError::Json));
     }
 }

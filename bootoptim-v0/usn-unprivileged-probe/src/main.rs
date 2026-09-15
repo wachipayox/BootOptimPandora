@@ -131,12 +131,7 @@ mod windows_probe {
             sids_to_restrict: *const SidAndAttributes,
             new_token: *mut Handle,
         ) -> i32;
-        fn CreateWellKnownSid(
-            sid_type: i32,
-            domain_sid: *const c_void,
-            sid: *mut c_void,
-            sid_size: *mut u32,
-        ) -> i32;
+        fn CreateWellKnownSid(sid_type: i32, domain_sid: *const c_void, sid: *mut c_void, sid_size: *mut u32) -> i32;
         fn ImpersonateLoggedOnUser(token: Handle) -> i32;
         fn RevertToSelf() -> i32;
         fn CheckTokenMembership(token: Handle, sid: *const c_void, is_member: *mut i32) -> i32;
@@ -149,14 +144,8 @@ mod windows_probe {
     fn administrators_sid() -> Result<[u8; SECURITY_MAX_SID_SIZE], String> {
         let mut sid = [0u8; SECURITY_MAX_SID_SIZE];
         let mut size = sid.len() as u32;
-        if unsafe {
-            CreateWellKnownSid(
-                WIN_BUILTIN_ADMINISTRATORS_SID,
-                null(),
-                sid.as_mut_ptr().cast(),
-                &mut size,
-            )
-        } == 0
+        if unsafe { CreateWellKnownSid(WIN_BUILTIN_ADMINISTRATORS_SID, null(), sid.as_mut_ptr().cast(), &mut size) }
+            == 0
         {
             return Err(format!("CreateWellKnownSid failed: {}", std::io::Error::last_os_error()));
         }
@@ -174,14 +163,7 @@ mod windows_probe {
     fn enter_restricted_token() -> Result<RestrictedImpersonation, String> {
         let admin_sid = administrators_sid()?;
         let mut process_token = null_mut();
-        if unsafe {
-            OpenProcessToken(
-                GetCurrentProcess(),
-                TOKEN_DUPLICATE | TOKEN_QUERY,
-                &mut process_token,
-            )
-        } == 0
-        {
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_QUERY, &mut process_token) } == 0 {
             return Err(format!("OpenProcessToken failed: {}", std::io::Error::last_os_error()));
         }
         let process_token = OwnedHandle::new(process_token).ok_or_else(|| "invalid process token".to_string())?;
@@ -237,9 +219,9 @@ mod windows_probe {
             return Err("fixture is not an eligible regular file".into());
         }
         let mut buffer = [0u16; 32768];
-        let written = unsafe {
-            GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, VOLUME_NAME_GUID)
-        } as usize;
+        let written =
+            unsafe { GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, VOLUME_NAME_GUID) }
+                as usize;
         if written == 0 || written >= buffer.len() {
             return Err("GetFinalPathNameByHandleW failed".into());
         }
@@ -400,7 +382,12 @@ mod windows_probe {
             bytes[24..32].copy_from_slice(&12i64.to_le_bytes());
             assert_eq!(
                 parse_journal(&bytes, 32),
-                Some(JournalState { id: 7, first: 10, next: 20, lowest_valid: 12 })
+                Some(JournalState {
+                    id: 7,
+                    first: 10,
+                    next: 20,
+                    lowest_valid: 12
+                })
             );
             assert_eq!(parse_journal(&bytes, 31), None);
         }

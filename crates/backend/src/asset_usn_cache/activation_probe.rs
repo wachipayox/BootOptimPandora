@@ -4,7 +4,7 @@
 //! one create-new JSON sidecar after the asset phase. Paths, asset hashes, FileIds,
 //! USNs, account data and command lines are deliberately excluded.
 
-use super::{AssetVerificationMode, CapabilityFailure, ASSET_USN_CACHE_ENV};
+use super::{ASSET_USN_CACHE_ENV, AssetVerificationMode, CapabilityFailure};
 use serde::Serialize;
 use std::{
     ffi::OsString,
@@ -12,8 +12,8 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -158,18 +158,10 @@ impl ActivationProbe {
             return;
         };
         bytes.push(b'\n');
-        if let Some(parent) = self
-            .output_path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        {
+        if let Some(parent) = self.output_path.parent().filter(|path| !path.as_os_str().is_empty()) {
             let _ = std::fs::create_dir_all(parent);
         }
-        let Ok(mut output) = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&self.output_path)
-        else {
+        let Ok(mut output) = OpenOptions::new().write(true).create_new(true).open(&self.output_path) else {
             return;
         };
         let _ = output.write_all(&bytes);
@@ -216,22 +208,12 @@ mod tests {
     use super::*;
 
     fn temp_path(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "bootoptim-usn-activation-probe-{label}-{}.json",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("bootoptim-usn-activation-probe-{label}-{}.json", std::process::id()))
     }
 
     #[test]
     fn asset_usn_cache_probe_is_default_off() {
-        assert!(ActivationProbe::from_path(
-            None,
-            true,
-            AssetVerificationMode::Normal,
-            true,
-            false,
-        )
-        .is_none());
+        assert!(ActivationProbe::from_path(None, true, AssetVerificationMode::Normal, true, false,).is_none());
     }
 
     #[test]
@@ -241,21 +223,14 @@ mod tests {
         let _ = std::fs::remove_file(&output);
         let _ = std::fs::remove_file(&manifest);
 
-        let probe = ActivationProbe::from_path(
-            Some(output.clone()),
-            true,
-            AssetVerificationMode::Normal,
-            true,
-            false,
-        )
-        .unwrap();
+        let probe =
+            ActivationProbe::from_path(Some(output.clone()), true, AssetVerificationMode::Normal, true, false).unwrap();
         probe.session_attempted();
         probe.session_failed(CapabilityFailure::Io);
         probe.record_stock_sha1();
         probe.finish(&manifest);
 
-        let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
         assert_eq!(value["schema"], SCHEMA);
         assert_eq!(value["capability_mode"], CAPABILITY_MODE);
         assert_eq!(value["elevation_requested"], false);
@@ -276,14 +251,8 @@ mod tests {
         let _ = std::fs::remove_file(&output);
         let _ = std::fs::remove_file(&manifest);
 
-        let probe = ActivationProbe::from_path(
-            Some(output.clone()),
-            true,
-            AssetVerificationMode::Normal,
-            true,
-            false,
-        )
-        .unwrap();
+        let probe =
+            ActivationProbe::from_path(Some(output.clone()), true, AssetVerificationMode::Normal, true, false).unwrap();
         probe.session_attempted();
         probe.session_ready();
         probe.record_stock_sha1();
@@ -291,8 +260,7 @@ mod tests {
         std::fs::write(&manifest, b"manifest").unwrap();
         probe.finish(&manifest);
 
-        let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
         assert_eq!(value["capability_mode"], CAPABILITY_MODE);
         assert_eq!(value["elevation_requested"], false);
         assert_eq!(value["session_state"], "active");

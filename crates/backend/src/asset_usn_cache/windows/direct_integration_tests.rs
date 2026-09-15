@@ -42,20 +42,10 @@ fn direct_runtime_seed_reuse_and_mutation_fallback_are_real() {
     let runtime = AssetUsnCacheRuntime::requested_for_test(true);
     let index_sha1 = "0123456789abcdef0123456789abcdef01234567";
 
-    let seed = WindowsSession::begin(
-        index_sha1,
-        Arc::<Path>::from(objects.as_path()),
-        vec![expected_sha1.clone()],
-    )
-    .unwrap();
+    let seed =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     asset_probe_context::reset_hash_observed();
-    assert!(seed.verify_existing(
-        &runtime,
-        AssetVerificationMode::Normal,
-        &asset,
-        &expected_sha1,
-        expected_hash,
-    ));
+    assert!(seed.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
     assert!(asset_probe_context::take_hash_observed());
     seed.finish();
     drop(seed);
@@ -63,20 +53,10 @@ fn direct_runtime_seed_reuse_and_mutation_fallback_are_real() {
     let manifest = objects.join(".bootoptim-usn-assets-v1.json");
     assert!(manifest.is_file(), "seed must publish a complete manifest");
 
-    let reuse = WindowsSession::begin(
-        index_sha1,
-        Arc::<Path>::from(objects.as_path()),
-        vec![expected_sha1.clone()],
-    )
-    .unwrap();
+    let reuse =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     asset_probe_context::reset_hash_observed();
-    assert!(reuse.verify_existing(
-        &runtime,
-        AssetVerificationMode::Normal,
-        &asset,
-        &expected_sha1,
-        expected_hash,
-    ));
+    assert!(reuse.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
     assert!(
         !asset_probe_context::take_hash_observed(),
         "unchanged verified reuse must not read asset content for SHA-1"
@@ -88,25 +68,13 @@ fn direct_runtime_seed_reuse_and_mutation_fallback_are_real() {
     writer.seek(SeekFrom::Start(0)).unwrap();
     writer.write_all(mutated).unwrap();
     writer.sync_all().unwrap();
-    writer
-        .set_times(std::fs::FileTimes::new().set_modified(modified))
-        .unwrap();
+    writer.set_times(std::fs::FileTimes::new().set_modified(modified)).unwrap();
     drop(writer);
 
-    let changed = WindowsSession::begin(
-        index_sha1,
-        Arc::<Path>::from(objects.as_path()),
-        vec![expected_sha1.clone()],
-    )
-    .unwrap();
+    let changed =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     asset_probe_context::reset_hash_observed();
-    assert!(!changed.verify_existing(
-        &runtime,
-        AssetVerificationMode::Normal,
-        &asset,
-        &expected_sha1,
-        expected_hash,
-    ));
+    assert!(!changed.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
     assert!(
         asset_probe_context::take_hash_observed(),
         "same-size restored-mtime mutation must fall back to content SHA-1"
@@ -115,20 +83,10 @@ fn direct_runtime_seed_reuse_and_mutation_fallback_are_real() {
 
     std::fs::remove_file(&asset).unwrap();
     std::fs::write(&asset, original).unwrap();
-    let recreated = WindowsSession::begin(
-        index_sha1,
-        Arc::<Path>::from(objects.as_path()),
-        vec![expected_sha1.clone()],
-    )
-    .unwrap();
+    let recreated =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     asset_probe_context::reset_hash_observed();
-    assert!(recreated.verify_existing(
-        &runtime,
-        AssetVerificationMode::Normal,
-        &asset,
-        &expected_sha1,
-        expected_hash,
-    ));
+    assert!(recreated.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
     assert!(
         asset_probe_context::take_hash_observed(),
         "delete/recreate must not consume the cached FileId as verified reuse"

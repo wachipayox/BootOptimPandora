@@ -90,7 +90,9 @@ impl ModalActionInner {
         for effect in self.finish_effects.lock().drain(..) {
             (effect)();
         }
-        let _ = self.finished_at.compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
+        let _ = self
+            .finished_at
+            .compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
         self.notify.notify_one();
     }
 
@@ -189,11 +191,7 @@ pub enum ProgressTrackerFinishType {
 
 impl ProgressTrackerFinishType {
     pub fn from_err(error: bool) -> Self {
-        if error {
-            Self::Error
-        } else {
-            Self::Normal
-        }
+        if error { Self::Error } else { Self::Normal }
     }
 }
 
@@ -236,15 +234,15 @@ impl ProgressTracker {
     }
 
     pub fn get(&self) -> (usize, usize) {
-        (
-            self.0.count.load(Ordering::SeqCst),
-            self.0.total.load(Ordering::SeqCst)
-        )
+        (self.0.count.load(Ordering::SeqCst), self.0.total.load(Ordering::SeqCst))
     }
 
     pub fn set_finished(&self, finish_type: ProgressTrackerFinishType) {
         self.0.finish_type.store(finish_type, Ordering::SeqCst);
-        let _ = self.0.finished_at.compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
+        let _ = self
+            .0
+            .finished_at
+            .compare_exchange(None, Some(Instant::now()), Ordering::SeqCst, Ordering::Relaxed);
         self.0.notify.notify_one();
     }
 
@@ -276,7 +274,6 @@ impl ProgressTracker {
         self.0.notify.notify_one();
     }
 }
-
 
 #[cfg(test)]
 mod asset_verification_mode_tests {
