@@ -2,14 +2,13 @@ name: build
 on:
   pull_request:
   push:
-    branches-ignore:
-      - "agent173/usn-unprivileged-capability-20260915"
+    branches:
+      - "**"
     tags-ignore:
       - "**"
 
 jobs:
   build:
-    if: github.head_ref != 'agent173/usn-unprivileged-capability-20260915'
     strategy:
       fail-fast: true
       matrix:
