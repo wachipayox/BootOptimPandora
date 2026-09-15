@@ -1,0 +1,33 @@
+name: Agent 177 USN fast rebootstrap
+
+on:
+  pull_request:
+    paths:
+      - "crates/backend/src/asset_usn_cache.rs"
+      - "crates/backend/src/asset_usn_cache/**"
+      - "bootoptim-v0/USN_FAST_REBOOTSTRAP_CONTRACT.md"
+      - ".github/workflows/agent177-usn-fast-rebootstrap.yml"
+  push:
+    branches:
+      - "agent177/usn-fast-rebootstrap-20260916"
+
+jobs:
+  backend-usn-fast-policy:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Rust fmt
+        run: cargo fmt --all -- --check
+
+      - name: Backend check
+        run: cargo check -p backend --tests --frozen
+
+      - name: Asset USN cache tests
+        run: cargo test -p backend asset_usn_cache --frozen -- --nocapture
