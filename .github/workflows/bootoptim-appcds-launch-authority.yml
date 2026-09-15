@@ -27,6 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install command crate link dependency
+        run: sudo apt-get update --yes && sudo apt-get install --yes libseccomp-dev pkg-config
       - name: Test bridge authority semantics
         run: cargo test -p bridge appcds_launch_authority --frozen
       - name: Test command authority transport state
