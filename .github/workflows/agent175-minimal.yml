@@ -1,0 +1,43 @@
+name: Agent 175 minimal Rust gate
+
+on:
+  push:
+    branches:
+      - "agent175/prelaunch-mods-attribution-20260915"
+  pull_request:
+    branches:
+      - "agent155/launch-prejava-probe-20260914"
+    paths:
+      - "crates/backend/**"
+      - "bootoptim-v0/PRELAUNCH_MODS_ATTRIBUTION.md"
+      - ".github/workflows/agent175-minimal.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent175-minimal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-minimal:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install backend build dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+
+      - name: Rustfmt Agent 175 probe only
+        run: rustfmt --check crates/backend/src/prelaunch_mods_probe.rs
+
+      - name: Check backend tests
+        run: cargo check -p backend --tests --frozen
+
+      - name: Run Agent 175 probe contract
+        run: cargo test -p backend prelaunch_mods_probe --frozen -- --nocapture --test-threads=1

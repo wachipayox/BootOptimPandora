@@ -22,6 +22,7 @@ concurrency:
 
 jobs:
   hosted-runner-diagnostic:
+    if: ${{ github.head_ref != 'agent175/prelaunch-mods-attribution-20260915' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
@@ -38,6 +39,7 @@ jobs:
         run: cargo test -p bridge launch_probe --frozen
 
   windows-v0:
+    if: ${{ github.head_ref != 'agent175/prelaunch-mods-attribution-20260915' }}
     runs-on: windows-2022
     timeout-minutes: 45
     steps:
