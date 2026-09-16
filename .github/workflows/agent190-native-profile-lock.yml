@@ -1,18 +1,11 @@
 name: Agent 190 native profile lock gate
 
 on:
-  push:
-    branches:
-      - "agent190/profile-lock-native-gate-20260916"
-    paths:
-      - "crates/backend/tests/profile_layout_windows_native.rs"
-      - ".github/workflows/agent190-native-profile-lock.yml"
-      - ".github/workflows/build.yml"
-      - ".github/workflows/bootoptim-v0.yml"
   pull_request:
     branches:
       - "agent189/profile-layout-identity-lock-20260916"
     paths:
+      - "crates/backend/src/profile_layout_identity.rs"
       - "crates/backend/tests/profile_layout_windows_native.rs"
       - ".github/workflows/agent190-native-profile-lock.yml"
       - ".github/workflows/build.yml"
@@ -33,6 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
 
       - name: Check backend tests compile on Windows
         run: cargo check -p backend --tests --frozen
