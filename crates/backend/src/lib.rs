@@ -28,6 +28,9 @@ mod persistent;
 mod prelaunch_attribution;
 #[cfg(test)]
 mod prelaunch_mods_probe;
+pub mod profile_layout_flow;
+mod profile_layout_ownership;
+mod profile_layout_service;
 mod server_list_pinger;
 mod shortcut;
 mod skin_manager;
@@ -81,77 +84,117 @@ pub fn join_windows_shell(args: &[&str]) -> String {
             for _ in 0..backslashes {
                 string.push_str("\\\\");
             }
+            string.push('"');
         } else {
             for _ in 0..backslashes {
                 string.push('\\');
             }
-        }
-
-        if quoted {
-            string.push('"');
         }
     }
 
     string
 }
 
-pub fn join_windows_shell_os(args: &[&OsStr]) -> OsString {
-    let mut string = Vec::new();
+pub fn join_linux_shell(args: &[&str]) -> String {
+    let mut string = String::new();
 
     let mut first = true;
     for arg in args {
-        let mut backslashes = 0;
-
         if first {
             first = false;
         } else {
-            string.push(b' ');
+            string.push(' ');
         }
 
         if arg.is_empty() {
-            string.extend(b"\"\"");
+            string.push_str("''");
             continue;
         }
 
-        let arg_raw = arg.as_encoded_bytes();
-        let quoted = arg_raw.contains(&b' ') || arg_raw.contains(&b'\t');
+        let quoted = arg.contains(&[' ', '\t']);
         if quoted {
-            string.push(b'"');
+            string.push('\'');
         }
 
-        for byte in arg_raw {
-            if *byte == b'\\' {
-                backslashes += 1;
-            } else if *byte == b'"' {
-                for _ in 0..backslashes * 2 {
-                    string.push(b'\\');
-                }
-                string.push(b'\\');
-                string.push(b'"');
-                backslashes = 0;
+        for char in arg.chars() {
+            if char == '\'' {
+                string.push_str("'\\''");
             } else {
-                for _ in 0..backslashes {
-                    string.push(b'\\');
-                }
-                backslashes = 0;
-                string.push(*byte);
+                string.push(char);
             }
         }
 
         if quoted {
-            for _ in 0..backslashes * 2 {
-                string.push(b'\\');
-            }
-        } else {
-            for _ in 0..backslashes {
-                string.push(b'\\');
-            }
-        }
-
-        if quoted {
-            string.push(b'"');
+            string.push('\'');
         }
     }
 
-    unsafe { OsString::from_encoded_bytes_unchecked(string) }
+    string
+}
+
+pub fn split_shell(string: &str, mut handle: impl FnMut(&str)) {
+    let mut word_start = 0;
+    let mut in_quotes = false;
+    let mut escape = false;
+
+    for (index, char) in string.char_indices() {
+        if escape {
+            escape = false;
+            continue;
+        }
+
+        if char == '\\' {
+            escape = true;
+            continue;
+        }
+
+        if char == '"' {
+            in_quotes = !in_quotes;
+            continue;
+        }
+
+        if char == ' ' && !in_quotes {
+            if word_start < index {
+                handle(&string[word_start..index]);
+            }
+            word_start = index + 1;
+        }
+    }
+
+    if word_start < string.len() {
+        handle(&string[word_start..]);
+    }
+}
+
+pub fn osstr_starts_with(whole: &OsStr, prefix: &OsStr) -> bool {
+    whole.as_encoded_bytes().starts_with(prefix.as_encoded_bytes())
+}
+
+pub fn osstr_split_once<'a>(whole: &'a OsStr, delimiter: &OsStr) -> Option<(&'a OsStr, &'a OsStr)> {
+    let delimiter = delimiter.as_encoded_bytes();
+    let whole = whole.as_encoded_bytes();
+
+    let index = whole.windows(delimiter.len()).position(|window| window == delimiter)?;
+    let (left, right) = whole.split_at(index);
+    let right = &right[delimiter.len()..];
+
+    unsafe { Some((OsStr::from_encoded_bytes_unchecked(left), OsStr::from_encoded_bytes_unchecked(right))) }
+}
+
+pub fn osstring_join<I>(strings: I, join: &OsStr) -> OsString
+where
+    I: IntoIterator,
+    I::Item: AsRef<OsStr>,
+{
+    let mut output = OsString::new();
+    let mut first = true;
+    for string in strings {
+        if first {
+            first = false;
+        } else {
+            output.push(join);
+        }
+        output.push(string);
+    }
+    output
 }
