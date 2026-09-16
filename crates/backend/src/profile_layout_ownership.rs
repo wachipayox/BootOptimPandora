@@ -81,11 +81,7 @@ impl ReconcileDecision {
         }
     }
 
-    fn conflict(
-        state: DestinationState,
-        reason: ConflictReason,
-        stock_fallback: bool,
-    ) -> Self {
+    fn conflict(state: DestinationState, reason: ConflictReason, stock_fallback: bool) -> Self {
         Self {
             state,
             action: ReconcileAction::PreserveLocal,
@@ -111,37 +107,20 @@ pub fn classify_destination(
     }
 }
 
-fn classify_without_previous(
-    live: &LiveEntry,
-    desired: Option<&ManagedEntry>,
-) -> ReconcileDecision {
+fn classify_without_previous(live: &LiveEntry, desired: Option<&ManagedEntry>) -> ReconcileDecision {
     match desired {
         None => match live {
-            LiveEntry::Missing => {
-                ReconcileDecision::clean(DestinationState::Vacant, ReconcileAction::NoOp)
-            }
-            _ => ReconcileDecision::clean(
-                DestinationState::Local,
-                ReconcileAction::PreserveLocal,
-            ),
+            LiveEntry::Missing => ReconcileDecision::clean(DestinationState::Vacant, ReconcileAction::NoOp),
+            _ => ReconcileDecision::clean(DestinationState::Local, ReconcileAction::PreserveLocal),
         },
         Some(_) => match live {
-            LiveEntry::Missing => ReconcileDecision::clean(
-                DestinationState::Vacant,
-                ReconcileAction::InstallManaged,
-            ),
-            LiveEntry::File { .. } => ReconcileDecision::conflict(
-                DestinationState::Local,
-                ConflictReason::LocalCollision,
-                false,
-            ),
+            LiveEntry::Missing => ReconcileDecision::clean(DestinationState::Vacant, ReconcileAction::InstallManaged),
+            LiveEntry::File { .. } => {
+                ReconcileDecision::conflict(DestinationState::Local, ConflictReason::LocalCollision, false)
+            },
             LiveEntry::Directory | LiveEntry::ReparsePoint | LiveEntry::OtherType => {
-                ReconcileDecision::conflict(
-                    DestinationState::UnexpectedType,
-                    ConflictReason::UnexpectedType,
-                    true,
-                )
-            }
+                ReconcileDecision::conflict(DestinationState::UnexpectedType, ConflictReason::UnexpectedType, true)
+            },
         },
     }
 }
@@ -153,51 +132,27 @@ fn classify_with_previous(
 ) -> ReconcileDecision {
     match live {
         LiveEntry::Missing => match desired {
-            Some(_) => ReconcileDecision::conflict(
-                DestinationState::Tombstone,
-                ConflictReason::Tombstone,
-                false,
-            ),
-            None => ReconcileDecision::clean(
-                DestinationState::Tombstone,
-                ReconcileAction::PreserveLocal,
-            ),
+            Some(_) => ReconcileDecision::conflict(DestinationState::Tombstone, ConflictReason::Tombstone, false),
+            None => ReconcileDecision::clean(DestinationState::Tombstone, ReconcileAction::PreserveLocal),
         },
         LiveEntry::File { hash } if hash == &previous.applied_hash => match desired {
-            None => ReconcileDecision::clean(
-                DestinationState::ManagedProven,
-                ReconcileAction::RemoveManaged,
-            ),
-            Some(desired) if desired == previous => ReconcileDecision::clean(
-                DestinationState::ManagedProven,
-                ReconcileAction::NoOp,
-            ),
-            Some(_) => ReconcileDecision::clean(
-                DestinationState::ManagedProven,
-                ReconcileAction::ReplaceManaged,
-            ),
+            None => ReconcileDecision::clean(DestinationState::ManagedProven, ReconcileAction::RemoveManaged),
+            Some(desired) if desired == previous => {
+                ReconcileDecision::clean(DestinationState::ManagedProven, ReconcileAction::NoOp)
+            },
+            Some(_) => ReconcileDecision::clean(DestinationState::ManagedProven, ReconcileAction::ReplaceManaged),
         },
         LiveEntry::File { .. } => match desired {
-            Some(_) => ReconcileDecision::conflict(
-                DestinationState::LocalOverride,
-                ConflictReason::LocalOverride,
-                false,
-            ),
-            None => ReconcileDecision::clean(
-                DestinationState::LocalOverride,
-                ReconcileAction::PreserveLocal,
-            ),
+            Some(_) => {
+                ReconcileDecision::conflict(DestinationState::LocalOverride, ConflictReason::LocalOverride, false)
+            },
+            None => ReconcileDecision::clean(DestinationState::LocalOverride, ReconcileAction::PreserveLocal),
         },
         LiveEntry::Directory | LiveEntry::ReparsePoint | LiveEntry::OtherType => match desired {
-            Some(_) => ReconcileDecision::conflict(
-                DestinationState::UnexpectedType,
-                ConflictReason::UnexpectedType,
-                true,
-            ),
-            None => ReconcileDecision::clean(
-                DestinationState::LocalOverride,
-                ReconcileAction::PreserveLocal,
-            ),
+            Some(_) => {
+                ReconcileDecision::conflict(DestinationState::UnexpectedType, ConflictReason::UnexpectedType, true)
+            },
+            None => ReconcileDecision::clean(DestinationState::LocalOverride, ReconcileAction::PreserveLocal),
         },
     }
 }
@@ -235,11 +190,7 @@ pub fn plan_profile(
     let mut paths = Vec::new();
 
     for input in inputs {
-        let decision = classify_destination(
-            input.previous.as_ref(),
-            &input.live,
-            input.desired.as_ref(),
-        );
+        let decision = classify_destination(input.previous.as_ref(), &input.live, input.desired.as_ref());
         requires_stock_fallback |= decision.stock_fallback;
         paths.push(PlannedPath {
             path: input.path,
@@ -273,16 +224,11 @@ pub enum MigrationGate {
 ///
 /// If `original_mods` exists, the only eligible state is proof that the existing stopped-instance
 /// restore completed. Failed/ambiguous/pending legacy recovery stays on the stock path.
-pub fn legacy_migration_gate(
-    original_mods_exists: bool,
-    restore_status: LegacyRestoreStatus,
-) -> MigrationGate {
+pub fn legacy_migration_gate(original_mods_exists: bool, restore_status: LegacyRestoreStatus) -> MigrationGate {
     match (original_mods_exists, restore_status) {
         (true, LegacyRestoreStatus::Restored) => MigrationGate::Eligible,
         (true, _) => MigrationGate::StockFallback,
-        (false, LegacyRestoreStatus::NotNeeded | LegacyRestoreStatus::Restored) => {
-            MigrationGate::Eligible
-        }
+        (false, LegacyRestoreStatus::NotNeeded | LegacyRestoreStatus::Restored) => MigrationGate::Eligible,
         (false, _) => MigrationGate::StockFallback,
     }
 }
@@ -331,10 +277,7 @@ mod tests {
         );
 
         assert_eq!(a.profile_id, "profile-a");
-        assert_eq!(
-            a.paths[0].decision.action,
-            ReconcileAction::ReplaceManaged
-        );
+        assert_eq!(a.paths[0].decision.action, ReconcileAction::ReplaceManaged);
         assert_eq!(b.profile_id, "profile-b");
         assert_eq!(b.paths[0].decision.action, ReconcileAction::NoOp);
         assert!(!b.requires_stock_fallback);
@@ -342,11 +285,7 @@ mod tests {
 
     #[test]
     fn local_mod_is_preserved_and_never_claimed() {
-        let decision = classify_destination(
-            None,
-            &LiveEntry::file("user-mod-hash"),
-            None,
-        );
+        let decision = classify_destination(None, &LiveEntry::file("user-mod-hash"), None);
 
         assert_eq!(decision.state, DestinationState::Local);
         assert_eq!(decision.action, ReconcileAction::PreserveLocal);
@@ -369,11 +308,7 @@ mod tests {
     fn local_modification_is_not_overwritten_during_update() {
         let old = managed("example-v1", "hash-v1");
         let desired = managed("example-v2", "hash-v2");
-        let decision = classify_destination(
-            Some(&old),
-            &LiveEntry::file("locally-modified"),
-            Some(&desired),
-        );
+        let decision = classify_destination(Some(&old), &LiveEntry::file("locally-modified"), Some(&desired));
 
         assert_eq!(decision.state, DestinationState::LocalOverride);
         assert_eq!(decision.action, ReconcileAction::PreserveLocal);
@@ -383,11 +318,7 @@ mod tests {
     #[test]
     fn new_managed_destination_collision_preserves_local_bytes() {
         let desired = managed("new-pack-mod", "managed-hash");
-        let decision = classify_destination(
-            None,
-            &LiveEntry::file("preexisting-local"),
-            Some(&desired),
-        );
+        let decision = classify_destination(None, &LiveEntry::file("preexisting-local"), Some(&desired));
 
         assert_eq!(decision.state, DestinationState::Local);
         assert_eq!(decision.action, ReconcileAction::PreserveLocal);
@@ -397,11 +328,7 @@ mod tests {
     #[test]
     fn managed_removal_after_local_modification_reclassifies_local() {
         let old = managed("removed-mod", "managed-hash");
-        let decision = classify_destination(
-            Some(&old),
-            &LiveEntry::file("locally-modified"),
-            None,
-        );
+        let decision = classify_destination(Some(&old), &LiveEntry::file("locally-modified"), None);
 
         assert_eq!(decision.state, DestinationState::LocalOverride);
         assert_eq!(decision.action, ReconcileAction::PreserveLocal);
@@ -411,11 +338,7 @@ mod tests {
     #[test]
     fn proved_managed_file_can_be_removed() {
         let old = managed("removed-mod", "managed-hash");
-        let decision = classify_destination(
-            Some(&old),
-            &LiveEntry::file("managed-hash"),
-            None,
-        );
+        let decision = classify_destination(Some(&old), &LiveEntry::file("managed-hash"), None);
 
         assert_eq!(decision.state, DestinationState::ManagedProven);
         assert_eq!(decision.action, ReconcileAction::RemoveManaged);
@@ -427,11 +350,7 @@ mod tests {
         let old = managed("example-v1", "hash-v1");
         let desired = managed("example-v2", "hash-v2");
 
-        for live in [
-            LiveEntry::Directory,
-            LiveEntry::ReparsePoint,
-            LiveEntry::OtherType,
-        ] {
+        for live in [LiveEntry::Directory, LiveEntry::ReparsePoint, LiveEntry::OtherType] {
             let decision = classify_destination(Some(&old), &live, Some(&desired));
             assert_eq!(decision.state, DestinationState::UnexpectedType);
             assert_eq!(decision.action, ReconcileAction::PreserveLocal);
@@ -442,21 +361,9 @@ mod tests {
 
     #[test]
     fn ambiguous_legacy_restore_blocks_migration() {
-        assert_eq!(
-            legacy_migration_gate(true, LegacyRestoreStatus::Ambiguous),
-            MigrationGate::StockFallback
-        );
-        assert_eq!(
-            legacy_migration_gate(true, LegacyRestoreStatus::Failed),
-            MigrationGate::StockFallback
-        );
-        assert_eq!(
-            legacy_migration_gate(true, LegacyRestoreStatus::Pending),
-            MigrationGate::StockFallback
-        );
-        assert_eq!(
-            legacy_migration_gate(true, LegacyRestoreStatus::Restored),
-            MigrationGate::Eligible
-        );
+        assert_eq!(legacy_migration_gate(true, LegacyRestoreStatus::Ambiguous), MigrationGate::StockFallback);
+        assert_eq!(legacy_migration_gate(true, LegacyRestoreStatus::Failed), MigrationGate::StockFallback);
+        assert_eq!(legacy_migration_gate(true, LegacyRestoreStatus::Pending), MigrationGate::StockFallback);
+        assert_eq!(legacy_migration_gate(true, LegacyRestoreStatus::Restored), MigrationGate::Eligible);
     }
 }
