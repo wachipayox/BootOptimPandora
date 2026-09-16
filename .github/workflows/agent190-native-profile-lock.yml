@@ -43,6 +43,9 @@ jobs:
       - name: Corrupt journal preserves live tree
         run: cargo test -p backend --frozen corrupt_journal_never_changes_live_layout -- --nocapture --test-threads=1
 
+      - name: Journal junction is rejected before live mutation
+        run: cargo test -p backend --frozen journal_junction_is_rejected_before_live_mutation -- --nocapture --test-threads=1
+
       - name: Reparse and unexpected control state fail before live mutation
         shell: pwsh
         run: |
