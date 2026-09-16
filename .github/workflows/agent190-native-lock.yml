@@ -1,0 +1,36 @@
+name: Agent 190 native profile-lock gate
+
+on:
+  push:
+    branches: ["agent190/profile-layout-native-gates-20260916"]
+  pull_request:
+    branches: ["agent189/profile-layout-identity-lock-20260916"]
+    paths:
+      - "crates/backend/src/profile_layout_identity.rs"
+      - ".github/workflows/agent190-native-lock.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent190-native-profile-lock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-profile-lock:
+    name: native-profile-lock (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check focused Rust formatting
+        run: rustfmt --edition 2024 --config skip_children=true --check crates/backend/src/profile_layout_identity.rs
+      - name: Run native profile-lock tests
+        run: cargo test -p backend profile_layout_identity::tests::profile_layout_lock --frozen -- --test-threads=1

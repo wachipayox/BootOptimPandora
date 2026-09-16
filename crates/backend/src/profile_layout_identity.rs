@@ -416,26 +416,39 @@ fn open_os_exclusive_lock(path: &Path, profile_uuid: Uuid) -> Result<fs::File, P
     const ERROR_SHARING_VIOLATION: i32 = 32;
     const ERROR_LOCK_VIOLATION: i32 = 33;
 
-    let file = match fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .share_mode(0)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path)
-    {
+    // Windows does not reliably allow CREATE_ALWAYS-style opening with a
+    // zero share mask on an existing file. Create atomically on the first
+    // owner, then reopen existing lock files without requesting creation.
+    // Both paths retain share_mode(0), so a concurrent second process sees
+    // Busy rather than a window where it can inspect or publish state.
+    let open_existing = || {
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    };
+    let file = match fs::OpenOptions::new().read(true).write(true).create_new(true).share_mode(0).open(path) {
         Ok(file) => file,
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => match open_existing() {
+            Ok(file) => file,
+            Err(err) if matches!(err.raw_os_error(), Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)) => {
+                return Err(ProfileIdentityError::Busy(profile_uuid));
+            },
+            Err(err) => return Err(err.into()),
+        },
         Err(err) if matches!(err.raw_os_error(), Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)) => {
             return Err(ProfileIdentityError::Busy(profile_uuid));
         },
         Err(err) => return Err(err.into()),
     };
 
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-    {
+    // share_mode(0) prevents a replacement/delete while this handle lives.
+    // Inspect through that handle: reopening `path` for symlink_metadata would
+    // itself violate the exclusive share policy on Windows.
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(ProfileIdentityError::UnsafeFilesystem(path.to_path_buf()));
     }
     Ok(file)
@@ -525,11 +538,21 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), ProfileIdentityErro
     sync_parent(path)
 }
 
+#[cfg(unix)]
 fn sync_parent(path: &Path) -> Result<(), ProfileIdentityError> {
     if let Some(parent) = path.parent() {
         let dir = fs::File::open(parent)?;
         dir.sync_all()?;
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn sync_parent(_path: &Path) -> Result<(), ProfileIdentityError> {
+    // `File::open(directory)` is not a durable-directory handle on Windows and
+    // fails with ERROR_ACCESS_DENIED. The file payload is still flushed with
+    // `sync_all` before this point; the layout journal/manifest protocol is
+    // deliberately recoverable if a power loss delays directory metadata.
     Ok(())
 }
 
@@ -655,6 +678,29 @@ mod tests {
         fs::write(&outside, b"outside").unwrap();
         symlink(&outside, &lock_path).unwrap();
         assert!(acquire_existing_profile_lock(&root.0).is_err());
+        assert_eq!(fs::read(outside).unwrap(), b"outside");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn profile_layout_lock_rejects_reparse_lock_path() {
+        use std::os::windows::fs::symlink_file;
+
+        let root = TestRoot::new("reparse-lock");
+        let initial = acquire_or_initialize_profile_lock(&root.0).unwrap();
+        let uuid = initial.profile_uuid();
+        drop(initial);
+        let lock_path = control_root(&root.0).join(LOCKS_DIR).join(format!("{uuid}.lock"));
+        fs::remove_file(&lock_path).unwrap();
+        let outside = root.0.join("outside-lock");
+        fs::write(&outside, b"outside").unwrap();
+        // This is a Windows reparse point. OPEN_REPARSE_POINT must expose it
+        // as unsafe instead of allowing a lock outside the profile namespace.
+        symlink_file(&outside, &lock_path).unwrap();
+        assert!(matches!(
+            acquire_existing_profile_lock(&root.0),
+            Err(ProfileIdentityError::UnsafeFilesystem(path)) if path == lock_path
+        ));
         assert_eq!(fs::read(outside).unwrap(), b"outside");
     }
 
