@@ -416,15 +416,35 @@ fn open_os_exclusive_lock(path: &Path, profile_uuid: Uuid) -> Result<fs::File, P
     const ERROR_SHARING_VIOLATION: i32 = 32;
     const ERROR_LOCK_VIOLATION: i32 = 33;
 
+    // Windows does not reliably allow CREATE_ALWAYS-style opening with a
+    // zero share mask on an existing file. Create atomically on the first
+    // owner, then reopen existing lock files without requesting creation.
+    // Both paths retain share_mode(0), so a concurrent second process sees
+    // Busy rather than a window where it can inspect or publish state.
+    let open_existing = || {
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    };
     let file = match fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .create(true)
+        .create_new(true)
         .share_mode(0)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
     {
         Ok(file) => file,
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => match open_existing() {
+            Ok(file) => file,
+            Err(err) if matches!(err.raw_os_error(), Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)) => {
+                return Err(ProfileIdentityError::Busy(profile_uuid));
+            },
+            Err(err) => return Err(err.into()),
+        },
         Err(err) if matches!(err.raw_os_error(), Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)) => {
             return Err(ProfileIdentityError::Busy(profile_uuid));
         },
