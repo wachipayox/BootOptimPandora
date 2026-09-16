@@ -434,7 +434,6 @@ fn open_os_exclusive_lock(path: &Path, profile_uuid: Uuid) -> Result<fs::File, P
         .write(true)
         .create_new(true)
         .share_mode(0)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
     {
         Ok(file) => file,
