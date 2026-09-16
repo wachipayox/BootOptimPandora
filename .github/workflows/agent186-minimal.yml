@@ -1,0 +1,40 @@
+name: Agent 186 focused ownership Rust gate
+
+on:
+  push:
+    branches:
+      - "agent186/profile-layout-ownership-20260916"
+    paths:
+      - "crates/backend/src/lib.rs"
+      - "crates/backend/src/profile_layout_ownership.rs"
+      - ".github/workflows/agent186-minimal.yml"
+  pull_request:
+    paths:
+      - "crates/backend/src/lib.rs"
+      - "crates/backend/src/profile_layout_ownership.rs"
+      - ".github/workflows/agent186-minimal.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent186-focused-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-focused:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install backend build dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+      - name: Check formatting of affected Rust paths only
+        run: rustfmt --edition 2024 --config skip_children=true --check crates/backend/src/lib.rs crates/backend/src/profile_layout_ownership.rs
+      - name: Check backend tests
+        run: cargo check -p backend --tests --frozen
+      - name: Test profile ownership reconciliation candidate
+        run: cargo test -p backend profile_layout_ownership --frozen -- --test-threads=1
