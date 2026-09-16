@@ -429,13 +429,7 @@ fn open_os_exclusive_lock(path: &Path, profile_uuid: Uuid) -> Result<fs::File, P
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)
     };
-    let file = match fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .share_mode(0)
-        .open(path)
-    {
+    let file = match fs::OpenOptions::new().read(true).write(true).create_new(true).share_mode(0).open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == ErrorKind::AlreadyExists => match open_existing() {
             Ok(file) => file,
