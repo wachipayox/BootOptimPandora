@@ -889,6 +889,13 @@ fn verify_transaction_inputs(
         return Err(ProfileLayoutFlowError::AmbiguousTransaction);
     }
     for operation in &journal.operations {
+        if matches!(operation.kind, JournalOpKind::Install | JournalOpKind::Replace) {
+            let staged = layout.staging_live_path(journal.transaction_id, &operation.path)?;
+            verify_hash(
+                &staged,
+                operation.new_hash.as_deref().ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?,
+            )?;
+        }
         let live = layout.live_path(&operation.path)?;
         match operation.kind {
             JournalOpKind::Install => {
@@ -1274,7 +1281,7 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_journal_or_staging_never_changes_live_layout() {
+    fn corrupt_journal_never_changes_live_layout() {
         let root = TestRoot::new("corrupt");
         fs::write(root.0.join(".minecraft/mods/local.jar"), b"local").unwrap();
         let layout = PersistentProfileLayout::open(&root.0).unwrap();
@@ -1282,6 +1289,29 @@ mod tests {
         let before = fs::read(root.0.join(".minecraft/mods/local.jar")).unwrap();
         assert!(PersistentProfileLayout::open(&root.0).is_err());
         assert_eq!(fs::read(root.0.join(".minecraft/mods/local.jar")).unwrap(), before);
+    }
+
+    #[test]
+    fn corrupt_staging_is_rejected_before_live_mutation() {
+        let root = TestRoot::new("corrupt-staging");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let v1 = root.source("managed.jar", b"v1");
+        layout.reconcile(&[v1]).unwrap();
+        let v2 = root.source("managed.jar", b"v2");
+        let tx = layout.prepare_only_for_test(&[v2]).unwrap();
+        let staged = layout.staging_live_path(tx, "mods/managed.jar").unwrap();
+        fs::write(&staged, b"corrupt").unwrap();
+        let before = fs::read(root.0.join(".minecraft/mods/managed.jar")).unwrap();
+
+        assert!(layout.publish_transaction(tx).is_err());
+        assert_eq!(fs::read(root.0.join(".minecraft/mods/managed.jar")).unwrap(), before);
+        assert!(layout.journal_path().exists());
+        drop(layout);
+
+        let recovered = PersistentProfileLayout::open(&root.0).unwrap();
+        assert_eq!(recovered.status().generation, Some(1));
+        assert_eq!(fs::read(root.0.join(".minecraft/mods/managed.jar")).unwrap(), b"v1");
+        assert!(!recovered.journal_path().exists());
     }
 
     #[cfg(unix)]
