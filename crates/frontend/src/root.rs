@@ -137,7 +137,7 @@ pub fn start_new_account_login(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let modal_action = ModalAction::default();
+    let modal_action = ModalAction::normal_launch();
 
     backend_handle.send(MessageToBackend::AddNewAccount {
         modal_action: modal_action.clone(),

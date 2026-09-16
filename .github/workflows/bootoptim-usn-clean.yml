@@ -1,0 +1,101 @@
+name: BootOptim USN clean candidate
+
+on:
+  push:
+    branches:
+      - agent179/usn-clean-promotion-20260916
+  pull_request:
+    paths:
+      - 'crates/backend/**'
+      - 'crates/bridge/**'
+      - 'crates/frontend/**'
+      - 'bootoptim-v0/USN_CLEAN_PROMOTION.md'
+      - 'bootoptim-v0/usn-unprivileged-probe/**'
+      - '.github/workflows/bootoptim-usn-clean.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  rust-focused:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install backend system dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+      - name: Format-check new scoped Rust files
+        run: |
+          rustfmt --edition 2021 --check \
+            crates/backend/src/asset_probe_context.rs \
+            crates/backend/src/asset_usn_cache.rs \
+            crates/backend/src/asset_usn_cache/activation_probe.rs \
+            crates/backend/src/asset_usn_cache/windows.rs \
+            crates/backend/src/asset_usn_cache/windows/direct_integration_tests.rs \
+            crates/backend/src/asset_usn_cache/windows_direct.rs
+          cargo fmt --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml -- --check
+      - name: Check backend
+        run: cargo check -p backend --frozen
+      - name: Test asset verification authority
+        run: cargo test -p bridge asset_verification_mode --frozen
+      - name: Test USN cache state machine
+        run: cargo test -p backend asset_usn_cache --frozen
+      - name: Test activation probe semantics
+        run: cargo test -p backend activation_probe --frozen
+      - name: Assert direct consumer has no helper or protocol dependency
+        shell: bash
+        run: |
+          if git grep -n -E 'BOOTOPTIM_ASSET_USN_HELPER|usn_protocol|bootoptim-usn-helper' -- crates/backend/src/asset_usn_cache.rs crates/backend/src/asset_usn_cache; then
+            echo 'unexpected elevated-helper/protocol dependency in direct asset consumer' >&2
+            exit 1
+          fi
+
+  windows-direct-capability:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check backend on Windows
+        run: cargo check -p backend --frozen
+      - name: Test USN cache and direct NTFS integration
+        run: cargo test -p backend asset_usn_cache --frozen
+      - name: Test activation probe semantics
+        run: cargo test -p backend activation_probe --frozen
+      - name: Run restricted-token direct capability probe
+        shell: pwsh
+        run: |
+          # This standalone probe has no dependencies. Generate its package-only lock
+          # without network access, then require that exact lock for the run.
+          cargo generate-lockfile --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml --offline
+          cargo run --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml --locked --offline
+
+  windows-release:
+    needs: [rust-focused, windows-direct-capability]
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Build release launcher
+        run: cargo build --release --frozen --target x86_64-pc-windows-msvc
+      - name: Assemble checksummed artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifact | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe artifact/BootOptimPandora-clean.exe
+          "${{ github.sha }}" | Set-Content -NoNewline artifact/COMMIT.txt
+          $hash = (Get-FileHash artifact/BootOptimPandora-clean.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  BootOptimPandora-clean.exe" | Set-Content -NoNewline artifact/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bootoptim-pandora-agent179-${{ github.sha }}-windows-x86_64
+          path: artifact/*
+          if-no-files-found: error

@@ -11,10 +11,32 @@ use atomic_time::AtomicOptionInstant;
 use parking_lot::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssetVerificationMode {
+    Normal,
+    FullVerification,
+}
+
+impl Default for AssetVerificationMode {
+    fn default() -> Self {
+        Self::FullVerification
+    }
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct ModalAction(Arc<ModalActionInner>);
 
 impl ModalAction {
+    pub fn normal_launch() -> Self {
+        let mut inner = ModalActionInner::default();
+        inner.asset_verification_mode = AssetVerificationMode::Normal;
+        Self(Arc::new(inner))
+    }
+
+    pub fn asset_verification_mode(&self) -> AssetVerificationMode {
+        self.0.asset_verification_mode
+    }
+
     pub fn refcnt(&self) -> usize {
         Arc::strong_count(&self.0)
     }
@@ -43,6 +65,7 @@ pub struct ModalActionInner {
     error: RwLock<Option<Arc<str>>>,
     visit_url: RwLock<Option<ModalActionVisitUrl>>,
     trackers: Arc<RwLock<Vec<ProgressTracker>>>,
+    asset_verification_mode: AssetVerificationMode,
     pub request_cancel: CancellationToken,
 }
 
@@ -110,6 +133,7 @@ impl ModalActionInner {
             finished_at: AtomicOptionInstant::none(),
             finish_type: AtomicProgressTrackerFinishType::new(ProgressTrackerFinishType::Normal),
             title: RwLock::new(title),
+            asset_verification_mode: self.asset_verification_mode,
         }));
 
         self.trackers.write().push(tracker.clone());
@@ -136,6 +160,7 @@ impl std::fmt::Debug for ModalActionInner {
             .field("error", &self.error)
             .field("visit_url", &self.visit_url)
             .field("trackers", &self.trackers)
+            .field("asset_verification_mode", &self.asset_verification_mode)
             .field("request_cancel", &self.request_cancel)
             .finish()
     }
@@ -151,6 +176,7 @@ struct ProgressTrackerInner {
     finished_at: AtomicOptionInstant,
     finish_type: AtomicProgressTrackerFinishType,
     title: RwLock<Arc<str>>,
+    asset_verification_mode: AssetVerificationMode,
 }
 
 #[atomic_enum::atomic_enum]
@@ -177,11 +203,16 @@ impl std::fmt::Debug for ProgressTrackerInner {
             .field("count", &self.count)
             .field("total", &self.total)
             .field("finished_at", &self.finished_at.load(Ordering::Relaxed))
+            .field("asset_verification_mode", &self.asset_verification_mode)
             .finish()
     }
 }
 
 impl ProgressTracker {
+    pub fn asset_verification_mode(&self) -> AssetVerificationMode {
+        self.0.asset_verification_mode
+    }
+
     // pub fn id(&self) -> usize {
     //     Arc::as_ptr(&self.0).addr()
     // }
@@ -243,5 +274,32 @@ impl ProgressTracker {
     pub fn set_total(&self, total: usize) {
         self.0.total.store(total, Ordering::SeqCst);
         self.0.notify.notify_one();
+    }
+}
+
+
+#[cfg(test)]
+mod asset_verification_mode_tests {
+    use super::{AssetVerificationMode, ModalAction};
+
+    #[test]
+    fn default_actions_fail_closed_to_full_verification() {
+        let action = ModalAction::default();
+        assert_eq!(action.asset_verification_mode(), AssetVerificationMode::FullVerification);
+        assert_eq!(
+            action.push_tracker("assets".into()).asset_verification_mode(),
+            AssetVerificationMode::FullVerification
+        );
+    }
+
+    #[test]
+    fn normal_gui_authority_survives_clone_and_tracker_creation() {
+        let action = ModalAction::normal_launch();
+        let cloned = action.clone();
+        assert_eq!(cloned.asset_verification_mode(), AssetVerificationMode::Normal);
+        assert_eq!(
+            cloned.push_tracker("assets".into()).asset_verification_mode(),
+            AssetVerificationMode::Normal
+        );
     }
 }
