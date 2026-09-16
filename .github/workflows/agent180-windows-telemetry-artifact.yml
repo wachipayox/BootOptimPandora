@@ -78,7 +78,7 @@ jobs:
 
           $rustc = (rustc -Vv) -join "`n"
           $cargo = cargo -V
-          $cl = (& cmd /c "cl 2>&1") -join "`n"
+          $msvc = "MSVC linker/toolset resolved by rustc for target x86_64-pc-windows-msvc; cl.exe version intentionally unobserved because cl.exe is not on PATH in the non-developer PowerShell session."
           @"
           source_sha=$env:SOURCE_SHA
           source_pr=30
@@ -99,7 +99,7 @@ jobs:
           $cargo
 
           msvc:
-          $cl
+          $msvc
           "@ | Set-Content -Encoding utf8 (Join-Path $dist "BUILD_INFO.txt")
 
           @"
