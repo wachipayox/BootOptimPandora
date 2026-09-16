@@ -28,6 +28,8 @@ mod persistent;
 mod prelaunch_attribution;
 #[cfg(test)]
 mod prelaunch_mods_probe;
+#[allow(dead_code)]
+mod profile_layout_ownership;
 mod server_list_pinger;
 mod shortcut;
 mod skin_manager;
