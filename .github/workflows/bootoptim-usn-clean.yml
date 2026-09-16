@@ -68,7 +68,12 @@ jobs:
       - name: Test activation probe semantics
         run: cargo test -p backend activation_probe --frozen
       - name: Run restricted-token direct capability probe
-        run: cargo run --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml --locked
+        shell: pwsh
+        run: |
+          # This standalone probe has no dependencies. Generate its package-only lock
+          # without network access, then require that exact lock for the run.
+          cargo generate-lockfile --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml --offline
+          cargo run --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml --locked --offline
 
   windows-release:
     needs: [rust-focused, windows-direct-capability]

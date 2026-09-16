@@ -4,7 +4,7 @@
 //! one create-new JSON sidecar after the asset phase. Paths, asset hashes, FileIds,
 //! USNs, account data and command lines are deliberately excluded.
 
-use super::{ASSET_USN_CACHE_ENV, AssetVerificationMode, CapabilityFailure};
+use super::{AssetVerificationMode, CapabilityFailure, ASSET_USN_CACHE_ENV};
 use serde::Serialize;
 use std::{
     ffi::OsString,
@@ -12,8 +12,8 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
     },
 };
 

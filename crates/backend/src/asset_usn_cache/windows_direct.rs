@@ -218,56 +218,64 @@ impl WindowsSession {
             return hash_file(&mut file, expected_hash).unwrap_or(false);
         }
 
-        if let Some(manifest) = &self.cached
-            && let Some(cached) = manifest
+        if let Some(manifest) = &self.cached {
+            if let Some(cached) = manifest
                 .assets
                 .iter()
                 .find(|asset| asset.expected_sha1 == expected_sha1)
-            && let Ok(current) = self.query_file(&file, before.file_id)
-            && current.file_id == before.file_id
-            && current.volume_serial == self.volume_serial
-            && current.journal_id == self.initial_journal_id
-        {
-            let after = identity_from_handle(file.as_raw_handle().cast()).filter(|value| *value == before);
-            let current_id = hex::encode(current.file_id);
-            let evidence = HitEvidence {
-                feature_requested: runtime.requested(),
-                verification_mode: mode,
-                capability: Ok(()),
-                ntfs: true,
-                reparse_point: false,
-                regular_file: true,
-                freeze_handle_held: true,
-                asset_index_sha1: &self.asset_index_sha1,
-                expected_asset_sha1: expected_sha1,
-                volume_guid: &before.volume_guid,
-                volume_serial: current.volume_serial,
-                journal_id: current.journal_id,
-                current_first_usn: current.first_usn,
-                current_lowest_valid_usn: current.lowest_valid_usn,
-                current_next_usn: current.next_usn,
-                current_file_id: &current_id,
-                current_file_usn: current.file_usn,
-                handle_identity_unchanged: after.is_some(),
-            };
-            let decision = evaluate_hit(manifest, cached, &evidence);
-            if runtime.can_skip_sha1(mode, decision) {
-                self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
-                return true;
+            {
+                if let Ok(current) = self.query_file(&file, before.file_id) {
+                    if current.file_id == before.file_id
+                        && current.volume_serial == self.volume_serial
+                        && current.journal_id == self.initial_journal_id
+                    {
+                        let after = identity_from_handle(file.as_raw_handle().cast())
+                            .filter(|value| *value == before);
+                        let current_id = hex::encode(current.file_id);
+                        let evidence = HitEvidence {
+                            feature_requested: runtime.requested(),
+                            verification_mode: mode,
+                            capability: Ok(()),
+                            ntfs: true,
+                            reparse_point: false,
+                            regular_file: true,
+                            freeze_handle_held: true,
+                            asset_index_sha1: &self.asset_index_sha1,
+                            expected_asset_sha1: expected_sha1,
+                            volume_guid: &before.volume_guid,
+                            volume_serial: current.volume_serial,
+                            journal_id: current.journal_id,
+                            current_first_usn: current.first_usn,
+                            current_lowest_valid_usn: current.lowest_valid_usn,
+                            current_next_usn: current.next_usn,
+                            current_file_id: &current_id,
+                            current_file_usn: current.file_usn,
+                            handle_identity_unchanged: after.is_some(),
+                        };
+                        let decision = evaluate_hit(manifest, cached, &evidence);
+                        if runtime.can_skip_sha1(mode, decision) {
+                            self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
+                            return true;
+                        }
+                    }
+                }
             }
         }
 
         let valid = hash_file(&mut file, expected_hash).unwrap_or(false);
-        if valid
-            && let Ok(current) = self.query_file(&file, before.file_id)
-            && current.file_id == before.file_id
-            && current.volume_serial == self.volume_serial
-            && current.journal_id == self.initial_journal_id
-            && valid_journal_reply(&current)
-            && current.file_usn >= 0
-            && identity_from_handle(file.as_raw_handle().cast()).is_some_and(|value| value == before)
-        {
-            self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
+        if valid {
+            if let Ok(current) = self.query_file(&file, before.file_id) {
+                if current.file_id == before.file_id
+                    && current.volume_serial == self.volume_serial
+                    && current.journal_id == self.initial_journal_id
+                    && valid_journal_reply(&current)
+                    && current.file_usn >= 0
+                    && identity_from_handle(file.as_raw_handle().cast())
+                        .is_some_and(|value| value == before)
+                {
+                    self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
+                }
+            }
         }
         valid
     }
