@@ -1,0 +1,148 @@
+name: Agent 180 exact-SHA Windows telemetry artifact
+
+on:
+  push:
+    branches:
+      - "agent180/prelaunch-real-attribution-20260916"
+    paths:
+      - ".github/workflows/agent180-windows-telemetry-artifact.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent180-windows-telemetry-artifact
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: e2ba8a48b56e6d6cd36bad27e8b2c405776b7cc6
+  RUST_TOOLCHAIN: 1.98.1
+  TARGET: x86_64-pc-windows-msvc
+  ARTIFACT_NAME: agent180-prelaunch-telemetry-windows-e2ba8a48
+
+jobs:
+  build-windows-telemetry-artifact:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact telemetry source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+
+      - name: Assert exact source SHA
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $env:SOURCE_SHA) {
+            throw "source SHA mismatch: expected $env:SOURCE_SHA, got $actual"
+          }
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ env.TARGET }}
+
+      - name: Build release launcher only
+        run: cargo build --release --frozen --target ${{ env.TARGET }}
+
+      - name: Verify telemetry linkage and assemble artifact
+        shell: pwsh
+        run: |
+          $exe = "target/$env:TARGET/release/pandora_launcher.exe"
+          if (-not (Test-Path $exe)) { throw "missing launcher: $exe" }
+
+          $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
+          foreach ($marker in @(
+            "bootoptim.prelaunch_attribution.v1",
+            "BOOTOPTIM_PRELAUNCH_ATTRIBUTION",
+            "bootoptim.launch_probe.v1",
+            "launcher_pre_java",
+            "java_spawn"
+          )) {
+            if (-not $ascii.Contains($marker)) {
+              throw "release launcher missing telemetry marker: $marker"
+            }
+          }
+
+          $dist = "agent180-windows-telemetry"
+          New-Item -ItemType Directory -Force $dist | Out-Null
+          $outExe = Join-Path $dist "BootOptimPandora-agent180-e2ba8a48-windows-x86_64.exe"
+          Copy-Item $exe $outExe
+
+          $exeHash = (Get-FileHash -Algorithm SHA256 $outExe).Hash.ToLowerInvariant()
+          "$exeHash  $(Split-Path $outExe -Leaf)" | Set-Content -Encoding ascii (Join-Path $dist "SHA256SUMS.txt")
+
+          $rustc = (rustc -Vv) -join "`n"
+          $cargo = cargo -V
+          $cl = (& cmd /c "cl 2>&1") -join "`n"
+          @"
+          source_sha=$env:SOURCE_SHA
+          source_pr=30
+          source_branch=agent180/prelaunch-real-attribution-20260916
+          profile=release
+          target=$env:TARGET
+          cargo_command=cargo build --release --frozen --target $env:TARGET
+          rust_toolchain=$env:RUST_TOOLCHAIN
+          runner_os=$env:RUNNER_OS
+          runner_arch=$env:RUNNER_ARCH
+          runner_image=$env:ImageOS
+          runner_image_version=$env:ImageVersion
+
+          rustc:
+          $rustc
+
+          cargo:
+          $cargo
+
+          msvc:
+          $cl
+          "@ | Set-Content -Encoding utf8 (Join-Path $dist "BUILD_INFO.txt")
+
+          @"
+          Agent 180 physical telemetry deployment protocol
+
+          Source authority:
+            PR #30 telemetry source SHA: $env:SOURCE_SHA
+            Build profile: release
+            Target: $env:TARGET
+
+          Before deployment:
+            1. Verify this EXE against SHA256SUMS.txt.
+            2. Keep the existing physical instance/pack/config/sync targets/disabled children/sandbox/account/Java selection unchanged.
+            3. Use fresh output paths for both environment variables below.
+
+          PowerShell example:
+            `$launch = Join-Path `$PWD 'bootoptim-launch-run01.jsonl'
+            `$prelaunch = Join-Path `$PWD 'bootoptim-prelaunch-run01.json'
+            Remove-Item `$launch,`$prelaunch -ErrorAction SilentlyContinue
+            `$env:BOOTOPTIM_LAUNCH_PROBE = `$launch
+            `$env:BOOTOPTIM_PRELAUNCH_ATTRIBUTION = `$prelaunch
+            .\BootOptimPandora-agent180-e2ba8a48-windows-x86_64.exe
+
+          Measurement:
+            - Press the normal audited GUI Start exactly once.
+            - Do not run repair/update, launch a second instance, alter instance state, or parse Minecraft logs during the capture.
+            - Accept correlation only when the sidecar launcher_pre_java_begin_mono_ns equals the PR7 launcher_pre_java.begin mono_ns.
+            - Treat nested/inclusive scopes as contained; do not sum them into their parent.
+            - Keep restore_prior, modpack_config_yosbr, modpack_extra_file, failed CPU clocks, and unknown bytes as unobserved.
+            - Record PR7 Start-to-Java separately. This artifact is for prelaunch attribution; it does not establish Java-to-menu or TTMM performance.
+
+          After capture:
+            Clear both BOOTOPTIM_* environment variables and archive/hash the sidecar and launch JSONL together.
+          "@ | Set-Content -Encoding utf8 (Join-Path $dist "PHYSICAL_MEASUREMENT_PROTOCOL.txt")
+
+          Write-Host "launcher_sha256=$exeHash"
+          Get-Content (Join-Path $dist "SHA256SUMS.txt")
+          Get-Content (Join-Path $dist "BUILD_INFO.txt")
+
+      - name: Upload single Windows telemetry artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: agent180-windows-telemetry/*
+          if-no-files-found: error
+          retention-days: 14
