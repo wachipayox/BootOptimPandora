@@ -254,10 +254,7 @@ impl PersistentProfileLayout {
         self.instance_root.join(".minecraft")
     }
 
-    pub fn reconcile(
-        &mut self,
-        desired: &[DesiredManagedFile],
-    ) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
+    pub fn reconcile(&mut self, desired: &[DesiredManagedFile]) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
         self.recover_if_needed()?;
         self.status.state = ProfileLayoutState::Planning;
 
@@ -268,10 +265,7 @@ impl PersistentProfileLayout {
 
         let desired_map = canonical_desired(desired)?;
         let fingerprint = managed_fingerprint(&desired_map);
-        let previous_entries = current
-            .as_ref()
-            .map(|manifest| manifest.managed_entries.clone())
-            .unwrap_or_default();
+        let previous_entries = current.as_ref().map(|manifest| manifest.managed_entries.clone()).unwrap_or_default();
 
         let mut paths = BTreeSet::new();
         paths.extend(previous_entries.keys().cloned());
@@ -368,9 +362,7 @@ impl PersistentProfileLayout {
 
         for operation in operations {
             if matches!(operation.kind, JournalOpKind::Install | JournalOpKind::Replace) {
-                let desired_entry = desired
-                    .get(&operation.path)
-                    .ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?;
+                let desired_entry = desired.get(&operation.path).ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?;
                 stage_source(
                     &desired_entry.source,
                     &self.staging_live_path(tx, &operation.path)?,
@@ -430,7 +422,10 @@ impl PersistentProfileLayout {
                     return Err(ProfileLayoutFlowError::OwnershipChanged(operation.path.clone()));
                 }
                 let staged = self.staging_live_path(tx, &operation.path)?;
-                verify_hash(&staged, operation.new_hash.as_deref().ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?)?;
+                verify_hash(
+                    &staged,
+                    operation.new_hash.as_deref().ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?,
+                )?;
                 fs::rename(&staged, &live)?;
                 sync_parent(&live)?;
             },
@@ -444,7 +439,10 @@ impl PersistentProfileLayout {
                 fs::rename(&live, &backup)?;
                 sync_parent(&live)?;
                 let staged = self.staging_live_path(tx, &operation.path)?;
-                verify_hash(&staged, operation.new_hash.as_deref().ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?)?;
+                verify_hash(
+                    &staged,
+                    operation.new_hash.as_deref().ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?,
+                )?;
                 fs::rename(&staged, &live)?;
                 sync_parent(&live)?;
             },
@@ -506,10 +504,8 @@ impl PersistentProfileLayout {
 
         if let Some(previous) = &journal.previous_manifest_sha256 {
             let manifest_matches_previous = file_hash_matches(&self.manifest_path(), previous)?;
-            let backup_matches_previous = file_hash_matches(
-                &self.backup_dir(journal.transaction_id).join(MANIFEST_FILE),
-                previous,
-            )?;
+            let backup_matches_previous =
+                file_hash_matches(&self.backup_dir(journal.transaction_id).join(MANIFEST_FILE), previous)?;
             if !manifest_matches_previous && !backup_matches_previous {
                 return Err(ProfileLayoutFlowError::AmbiguousTransaction);
             }
@@ -696,10 +692,7 @@ impl PersistentProfileLayout {
             conflicts: conflicts.to_vec(),
             requires_stock_fallback: stock_fallback,
         };
-        write_new_synced(
-            &root.join(format!("{}.json", new_uuid())),
-            &serde_json::to_vec_pretty(&record)?,
-        )
+        write_new_synced(&root.join(format!("{}.json", new_uuid())), &serde_json::to_vec_pretty(&record)?)
     }
 
     fn clear_conflicts(&self) -> Result<(), ProfileLayoutFlowError> {
@@ -725,10 +718,7 @@ impl PersistentProfileLayout {
     }
 
     #[cfg(test)]
-    fn prepare_only_for_test(
-        &mut self,
-        desired: &[DesiredManagedFile],
-    ) -> Result<Uuid, ProfileLayoutFlowError> {
+    fn prepare_only_for_test(&mut self, desired: &[DesiredManagedFile]) -> Result<Uuid, ProfileLayoutFlowError> {
         self.recover_if_needed()?;
         let current = self.read_manifest_optional()?;
         let desired_map = canonical_desired(desired)?;
@@ -907,10 +897,7 @@ fn verify_transaction_inputs(
                 }
             },
             JournalOpKind::Replace | JournalOpKind::Remove => {
-                verify_hash(
-                    &live,
-                    operation.old_hash.as_deref().ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?,
-                )?;
+                verify_hash(&live, operation.old_hash.as_deref().ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?)?;
             },
         }
     }
@@ -924,10 +911,9 @@ fn verify_target_live(
     for operation in &journal.operations {
         let live = layout.live_path(&operation.path)?;
         match operation.kind {
-            JournalOpKind::Install | JournalOpKind::Replace => verify_hash(
-                &live,
-                operation.new_hash.as_deref().ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?,
-            )?,
+            JournalOpKind::Install | JournalOpKind::Replace => {
+                verify_hash(&live, operation.new_hash.as_deref().ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?)?
+            },
             JournalOpKind::Remove => {
                 if live.exists() {
                     return Err(ProfileLayoutFlowError::AmbiguousTransaction);
@@ -1178,12 +1164,7 @@ mod tests {
         fn source(&self, name: &str, bytes: &[u8]) -> DesiredManagedFile {
             let source = self.0.join(format!("source-{name}"));
             fs::write(&source, bytes).unwrap();
-            DesiredManagedFile::new(
-                format!("mods/{name}"),
-                source,
-                format!("identity-{name}"),
-                sha256_bytes(bytes),
-            )
+            DesiredManagedFile::new(format!("mods/{name}"), source, format!("identity-{name}"), sha256_bytes(bytes))
         }
     }
 
@@ -1313,14 +1294,15 @@ mod tests {
         symlink(outside.0.join(".minecraft/mods"), root.0.join(".minecraft/mods/link")).unwrap();
         let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
         let source = root.source("candidate.jar", b"managed");
-        let desired = DesiredManagedFile::new(
-            "mods/link",
-            source.source,
-            "identity-link",
-            source.source_sha256,
-        );
+        let desired = DesiredManagedFile::new("mods/link", source.source, "identity-link", source.source_sha256);
         let outcome = layout.reconcile(&[desired]).unwrap();
-        assert!(matches!(outcome, ReconcileOutcome::NeedsReconcile { stock_fallback: true, .. }));
+        assert!(matches!(
+            outcome,
+            ReconcileOutcome::NeedsReconcile {
+                stock_fallback: true,
+                ..
+            }
+        ));
 
         let control_root = TestRoot::new("reparse-control");
         let outside_control = TestRoot::new("outside-control");
