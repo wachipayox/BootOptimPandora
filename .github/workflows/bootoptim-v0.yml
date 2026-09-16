@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   hosted-runner-diagnostic:
-    if: ${{ github.head_ref != 'agent175/prelaunch-mods-attribution-20260915' && github.head_ref != 'agent180/prelaunch-real-attribution-20260916' && github.head_ref != 'agent188/profile-layout-client-flow-20260916' }}
+    if: ${{ github.head_ref != 'agent175/prelaunch-mods-attribution-20260915' && github.head_ref != 'agent180/prelaunch-real-attribution-20260916' && github.head_ref != 'agent188/profile-layout-client-flow-20260916' && github.head_ref != 'agent189/profile-layout-identity-lock-20260916' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
@@ -39,7 +39,7 @@ jobs:
         run: cargo test -p bridge launch_probe --frozen
 
   windows-v0:
-    if: ${{ github.head_ref != 'agent175/prelaunch-mods-attribution-20260915' && github.head_ref != 'agent180/prelaunch-real-attribution-20260916' && github.head_ref != 'agent188/profile-layout-client-flow-20260916' }}
+    if: ${{ github.head_ref != 'agent175/prelaunch-mods-attribution-20260915' && github.head_ref != 'agent180/prelaunch-real-attribution-20260916' && github.head_ref != 'agent188/profile-layout-client-flow-20260916' && github.head_ref != 'agent189/profile-layout-identity-lock-20260916' }}
     runs-on: windows-2022
     timeout-minutes: 45
     steps:

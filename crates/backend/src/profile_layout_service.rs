@@ -7,10 +7,12 @@ use std::{io::ErrorKind, path::Path};
 
 use bridge::instance::InstanceID;
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::{
     BackendState,
     profile_layout_flow::{DesiredManagedFile, PersistentProfileLayout, ProfileLayoutFlowError, ReconcileOutcome},
+    profile_layout_identity::{ProfileIdentityError, acquire_or_initialize_profile_lock},
 };
 
 const CONTROL_DIR: &str = ".pandora-layout-v1";
@@ -25,6 +27,10 @@ pub enum ProfileLayoutServiceError {
     LegacyRestoreIncomplete,
     #[error("sandbox profiles remain on the stock layout path in this slice")]
     SandboxStockOnly,
+    #[error("persistent profile {0} is busy in another launcher process")]
+    ProfileBusy(Uuid),
+    #[error("persistent profile identity/lock could not be established safely: {0}")]
+    ProfileLock(String),
     #[error(transparent)]
     Layout(#[from] ProfileLayoutFlowError),
 }
@@ -67,8 +73,20 @@ impl BackendState {
             verify_legacy_restore(&instance.root_path, had_original_mods)?;
         }
 
+        // Acquire before PersistentProfileLayout::open: open may perform durable recovery. The
+        // guard then remains live through planning, staging, publication, manifest commit and
+        // cleanup. A second process therefore sees Busy instead of inspecting/recovering a
+        // transaction that belongs to the live owner.
+        let _profile_lock = acquire_or_initialize_profile_lock(&instance.root_path).map_err(map_lock_error)?;
         let mut layout = PersistentProfileLayout::open(&instance.root_path)?;
         Ok(layout.reconcile(desired)?)
+    }
+}
+
+fn map_lock_error(error: ProfileIdentityError) -> ProfileLayoutServiceError {
+    match error {
+        ProfileIdentityError::Busy(profile_uuid) => ProfileLayoutServiceError::ProfileBusy(profile_uuid),
+        other => ProfileLayoutServiceError::ProfileLock(other.to_string()),
     }
 }
 
