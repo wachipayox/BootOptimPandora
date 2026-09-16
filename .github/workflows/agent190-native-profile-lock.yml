@@ -97,12 +97,15 @@ jobs:
           Wait-Ready $ownerReady $owner 'owner helper'
 
           $contenderReady = Join-Path $root 'contender-ready'
+          $contenderStdout = Join-Path $env:RUNNER_TEMP ("agent190-contender-stdout-" + [guid]::NewGuid().ToString() + '.txt')
+          $contenderStderr = Join-Path $env:RUNNER_TEMP ("agent190-contender-stderr-" + [guid]::NewGuid().ToString() + '.txt')
           $env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT = $root
           $env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY = $contenderReady
-          $contenderOutput = (& $env:BACKEND_TEST_BIN --exact profile_layout_identity::tests::profile_layout_lock_child_helper --nocapture 2>&1 | Out-String)
-          $contenderCode = $LASTEXITCODE
+          $contender = Start-Process -FilePath $env:BACKEND_TEST_BIN -ArgumentList @('--exact', 'profile_layout_identity::tests::profile_layout_lock_child_helper', '--nocapture') -Wait -PassThru -NoNewWindow -RedirectStandardOutput $contenderStdout -RedirectStandardError $contenderStderr
           Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT -ErrorAction SilentlyContinue
           Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY -ErrorAction SilentlyContinue
+          $contenderOutput = ((Get-Content -Raw -ErrorAction SilentlyContinue $contenderStdout) + "`n" + (Get-Content -Raw -ErrorAction SilentlyContinue $contenderStderr))
+          $contenderCode = $contender.ExitCode
           if ($contenderCode -eq 0) { throw 'second process unexpectedly acquired the same UUID lock' }
           if ($contenderOutput -notmatch 'Busy') { throw "same-UUID rejection did not report Busy: $contenderOutput" }
           if (Test-Path $contenderReady) { throw 'contender reached held-lock state' }
@@ -116,7 +119,7 @@ jobs:
           Stop-Process -Id $reacquired.Id -Force
           $reacquired.WaitForExit()
 
-      - name: Fresh Windows initialization exposes the directory-durability blocker
+      - name: Fresh Windows initialization is durable and releases after owner death
         id: windows_init
         continue-on-error: true
         shell: pwsh
@@ -145,13 +148,16 @@ jobs:
 
           function Assert-HelperRejected([string]$Root, [string]$Label) {
             $ready = Join-Path $Root ("ready-" + $Label)
+            $stdout = Join-Path $env:RUNNER_TEMP ("agent190-" + $Label + '-stdout-' + [guid]::NewGuid().ToString() + '.txt')
+            $stderr = Join-Path $env:RUNNER_TEMP ("agent190-" + $Label + '-stderr-' + [guid]::NewGuid().ToString() + '.txt')
             $env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT = $Root
             $env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY = $ready
-            $output = (& $env:BACKEND_TEST_BIN --exact profile_layout_identity::tests::profile_layout_lock_child_helper --nocapture 2>&1 | Out-String)
-            $code = $LASTEXITCODE
+            $process = Start-Process -FilePath $env:BACKEND_TEST_BIN -ArgumentList @('--exact', 'profile_layout_identity::tests::profile_layout_lock_child_helper', '--nocapture') -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
             Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT -ErrorAction SilentlyContinue
             Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY -ErrorAction SilentlyContinue
-            if ($code -eq 0) { throw "unsafe $Label control object was accepted" }
+            $output = ((Get-Content -Raw -ErrorAction SilentlyContinue $stdout) + "`n" + (Get-Content -Raw -ErrorAction SilentlyContinue $stderr))
+            $code = $process.ExitCode
+            if ($code -eq 0) { throw "unsafe $Label control object was accepted: $output" }
             if (Test-Path $ready) { throw "unsafe $Label path reached held-lock state" }
             $sentinel = [IO.File]::ReadAllText((Join-Path $Root '.minecraft\mods\live-sentinel.txt'))
             if ($sentinel -ne 'live-safe') { throw "live tree changed while rejecting $Label" }
