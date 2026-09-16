@@ -525,9 +525,35 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), ProfileIdentityErro
     sync_parent(path)
 }
 
+#[cfg(not(windows))]
 fn sync_parent(path: &Path) -> Result<(), ProfileIdentityError> {
     if let Some(parent) = path.parent() {
         let dir = fs::File::open(parent)?;
+        dir.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn sync_parent(path: &Path) -> Result<(), ProfileIdentityError> {
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+    if let Some(parent) = path.parent() {
+        let dir = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            )
+            .open(parent)?;
+        let metadata = dir.metadata()?;
+        if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(ProfileIdentityError::UnsafeFilesystem(parent.to_path_buf()));
+        }
         dir.sync_all()?;
     }
     Ok(())

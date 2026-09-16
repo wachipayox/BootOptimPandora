@@ -1,0 +1,297 @@
+name: Agent 190 native profile lock gate
+
+on:
+  pull_request:
+    branches:
+      - "agent189/profile-layout-identity-lock-20260916"
+    paths:
+      - "crates/backend/src/profile_layout_identity.rs"
+      - "crates/backend/tests/profile_layout_windows_native.rs"
+      - ".github/workflows/agent190-native-profile-lock.yml"
+      - ".github/workflows/build.yml"
+      - ".github/workflows/bootoptim-v0.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent190-profile-lock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-native-lock:
+    name: Windows native lock / fail-closed gate
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Record inherited workspace rustfmt baseline
+        continue-on-error: true
+        run: cargo fmt --all -- --check
+
+      - name: Check Agent 190 diff hygiene
+        shell: pwsh
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.ref }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check "${{ github.event.pull_request.base.sha }}...HEAD" -- crates/backend/src/profile_layout_identity.rs crates/backend/tests/profile_layout_windows_native.rs
+          exit $LASTEXITCODE
+
+      - name: Check backend tests compile on Windows
+        run: cargo check -p backend --tests --frozen
+
+      - name: Build backend test binaries once
+        shell: pwsh
+        run: |
+          $buildJson = Join-Path $env:RUNNER_TEMP 'agent190-backend-test-build.json'
+          cargo test -p backend --frozen --no-run --message-format=json | Set-Content -Encoding utf8 $buildJson
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $candidates = Get-Content $buildJson | ForEach-Object {
+            try { $item = $_ | ConvertFrom-Json } catch { return }
+            if ($item.reason -eq 'compiler-artifact' -and
+                $item.target.name -eq 'backend' -and
+                $item.target.kind -contains 'lib' -and
+                $item.profile.test -and
+                $item.executable) {
+              $item.executable
+            }
+          }
+          if (-not $candidates) { throw 'backend unit-test executable not found' }
+          $candidate = $candidates | Select-Object -Last 1
+          "BACKEND_TEST_BIN=$candidate" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Same UUID is Busy across real processes and releases after owner death
+        id: windows_lock
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP ("agent190-lock-existing-" + [guid]::NewGuid().ToString())
+          $control = Join-Path $root '.pandora-layout-v1'
+          $locks = Join-Path $control 'locks'
+          New-Item -ItemType Directory -Path (Join-Path $root '.minecraft\mods') -Force | Out-Null
+          New-Item -ItemType Directory -Path $locks -Force | Out-Null
+          $uuid = [guid]::NewGuid().ToString()
+          [IO.File]::WriteAllText((Join-Path $control 'identity.json'), (@{ schema = 1; profile_uuid = $uuid } | ConvertTo-Json -Compress))
+
+          function Start-Helper([string]$Ready) {
+            $env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT = $root
+            $env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY = $Ready
+            $process = Start-Process -FilePath $env:BACKEND_TEST_BIN -ArgumentList @('--exact', 'profile_layout_identity::tests::profile_layout_lock_child_helper', '--nocapture') -PassThru -NoNewWindow
+            Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT -ErrorAction SilentlyContinue
+            Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY -ErrorAction SilentlyContinue
+            return $process
+          }
+
+          function Wait-Ready([string]$Ready, $Process, [string]$Label) {
+            for ($i = 0; $i -lt 100; $i++) {
+              if (Test-Path $Ready) {
+                if ($Process.HasExited) { throw "$Label exited after signalling ready" }
+                return
+              }
+              if ($Process.HasExited) { throw "$Label exited before acquiring its lock" }
+              Start-Sleep -Milliseconds 50
+            }
+            throw "$Label did not acquire its lock within 5 seconds"
+          }
+
+          $ownerReady = Join-Path $root 'owner-ready'
+          $owner = Start-Helper $ownerReady
+          Wait-Ready $ownerReady $owner 'owner helper'
+
+          $contenderReady = Join-Path $root 'contender-ready'
+          $contenderStdout = Join-Path $env:RUNNER_TEMP ("agent190-contender-stdout-" + [guid]::NewGuid().ToString() + '.txt')
+          $contenderStderr = Join-Path $env:RUNNER_TEMP ("agent190-contender-stderr-" + [guid]::NewGuid().ToString() + '.txt')
+          $env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT = $root
+          $env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY = $contenderReady
+          $contender = Start-Process -FilePath $env:BACKEND_TEST_BIN -ArgumentList @('--exact', 'profile_layout_identity::tests::profile_layout_lock_child_helper', '--nocapture') -Wait -PassThru -NoNewWindow -RedirectStandardOutput $contenderStdout -RedirectStandardError $contenderStderr
+          Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT -ErrorAction SilentlyContinue
+          Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY -ErrorAction SilentlyContinue
+          $contenderOutput = ((Get-Content -Raw -ErrorAction SilentlyContinue $contenderStdout) + "`n" + (Get-Content -Raw -ErrorAction SilentlyContinue $contenderStderr))
+          $contenderCode = $contender.ExitCode
+          if ($contenderCode -eq 0) { throw 'second process unexpectedly acquired the same UUID lock' }
+          if ($contenderOutput -notmatch 'Busy') { throw "same-UUID rejection did not report Busy: $contenderOutput" }
+          if (Test-Path $contenderReady) { throw 'contender reached held-lock state' }
+
+          Stop-Process -Id $owner.Id -Force
+          $owner.WaitForExit()
+
+          $reacquireReady = Join-Path $root 'reacquire-ready'
+          $reacquired = Start-Helper $reacquireReady
+          Wait-Ready $reacquireReady $reacquired 'reacquire helper'
+          Stop-Process -Id $reacquired.Id -Force
+          $reacquired.WaitForExit()
+
+      - name: Fresh Windows initialization is durable and releases after owner death
+        id: windows_init
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & $env:BACKEND_TEST_BIN --exact profile_layout_identity::tests::profile_layout_lock_is_released_when_other_process_dies --nocapture
+          exit $LASTEXITCODE
+
+      - name: Journal reparse/corruption preserve the live tree on existing identity
+        id: journal_guard
+        continue-on-error: true
+        run: cargo test -p backend --frozen --test profile_layout_windows_native -- --nocapture --test-threads=1
+
+      - name: Lock/state/control reparse or unexpected type fail before live mutation
+        id: reparse_guard
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function New-ProfileRoot([string]$Label) {
+            $root = Join-Path $env:RUNNER_TEMP ("agent190-" + $Label + "-" + [guid]::NewGuid().ToString())
+            New-Item -ItemType Directory -Path (Join-Path $root '.minecraft\mods') -Force | Out-Null
+            [IO.File]::WriteAllText((Join-Path $root '.minecraft\mods\live-sentinel.txt'), 'live-safe')
+            return $root
+          }
+
+          function Assert-HelperRejected([string]$Root, [string]$Label) {
+            $ready = Join-Path $Root ("ready-" + $Label)
+            $stdout = Join-Path $env:RUNNER_TEMP ("agent190-" + $Label + '-stdout-' + [guid]::NewGuid().ToString() + '.txt')
+            $stderr = Join-Path $env:RUNNER_TEMP ("agent190-" + $Label + '-stderr-' + [guid]::NewGuid().ToString() + '.txt')
+            $env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT = $Root
+            $env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY = $ready
+            $process = Start-Process -FilePath $env:BACKEND_TEST_BIN -ArgumentList @('--exact', 'profile_layout_identity::tests::profile_layout_lock_child_helper', '--nocapture') -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT -ErrorAction SilentlyContinue
+            Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY -ErrorAction SilentlyContinue
+            $output = ((Get-Content -Raw -ErrorAction SilentlyContinue $stdout) + "`n" + (Get-Content -Raw -ErrorAction SilentlyContinue $stderr))
+            $code = $process.ExitCode
+            if ($code -eq 0) { throw "unsafe $Label control object was accepted: $output" }
+            if (Test-Path $ready) { throw "unsafe $Label path reached held-lock state" }
+            $sentinel = [IO.File]::ReadAllText((Join-Path $Root '.minecraft\mods\live-sentinel.txt'))
+            if ($sentinel -ne 'live-safe') { throw "live tree changed while rejecting $Label" }
+          }
+
+          $lockRoot = New-ProfileRoot 'lock-junction'
+          $control = Join-Path $lockRoot '.pandora-layout-v1'
+          New-Item -ItemType Directory -Path $control | Out-Null
+          $uuid = [guid]::NewGuid().ToString()
+          [IO.File]::WriteAllText((Join-Path $control 'identity.json'), (@{ schema = 1; profile_uuid = $uuid } | ConvertTo-Json -Compress))
+          $outsideLocks = Join-Path $env:RUNNER_TEMP ("agent190-outside-locks-" + [guid]::NewGuid().ToString())
+          New-Item -ItemType Directory -Path $outsideLocks | Out-Null
+          New-Item -ItemType Junction -Path (Join-Path $control 'locks') -Target $outsideLocks | Out-Null
+          Assert-HelperRejected $lockRoot 'lock-junction'
+          if ((Get-ChildItem -Force $outsideLocks | Measure-Object).Count -ne 0) { throw 'lock junction target was mutated' }
+
+          $stateRoot = New-ProfileRoot 'identity-type'
+          $stateControl = Join-Path $stateRoot '.pandora-layout-v1'
+          New-Item -ItemType Directory -Path $stateControl | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $stateControl 'identity.json') | Out-Null
+          Assert-HelperRejected $stateRoot 'identity-unexpected-type'
+
+          $controlRoot = New-ProfileRoot 'control-junction'
+          $outsideControl = Join-Path $env:RUNNER_TEMP ("agent190-outside-control-" + [guid]::NewGuid().ToString())
+          New-Item -ItemType Directory -Path $outsideControl | Out-Null
+          New-Item -ItemType Junction -Path (Join-Path $controlRoot '.pandora-layout-v1') -Target $outsideControl | Out-Null
+          Assert-HelperRejected $controlRoot 'control-junction'
+          if ((Get-ChildItem -Force $outsideControl | Measure-Object).Count -ne 0) { throw 'control junction target was mutated' }
+
+      - name: Aggregate Windows gate result
+        if: always()
+        shell: pwsh
+        run: |
+          $failures = @()
+          if ('${{ steps.windows_lock.outcome }}' -ne 'success') { $failures += 'same-UUID Busy/reacquisition probe failed' }
+          if ('${{ steps.windows_init.outcome }}' -ne 'success') { $failures += 'fresh Windows initialization/durability probe failed' }
+          if ('${{ steps.journal_guard.outcome }}' -ne 'success') { $failures += 'journal corruption/reparse probe failed' }
+          if ('${{ steps.reparse_guard.outcome }}' -ne 'success') { $failures += 'lock/state/control reparse probe failed' }
+          if ($failures.Count -gt 0) { throw ($failures -join '; ') }
+
+  macos-native-lock:
+    name: macOS flock cross-process gate
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check backend tests compile on macOS
+        run: cargo check -p backend --tests --frozen
+
+      - name: Same UUID is Busy cross-process and owner termination releases flock
+        run: cargo test -p backend --frozen profile_layout_lock_is_released_when_other_process_dies -- --nocapture --test-threads=1
+
+      - name: Symlink lock substitution is rejected by native flock path
+        run: cargo test -p backend --frozen profile_layout_lock_rejects_symlink_lock_path -- --nocapture --test-threads=1
+
+      - name: Distinct UUIDs are independent across two real processes
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_json="$RUNNER_TEMP/agent190-backend-test-build.json"
+          cargo test -p backend --frozen --no-run --message-format=json > "$build_json"
+          test_bin="$(python3 - "$build_json" <<'PY'
+          import json, sys
+          path = sys.argv[1]
+          candidates = []
+          with open(path, encoding='utf-8') as fh:
+              for line in fh:
+                  try:
+                      item = json.loads(line)
+                  except json.JSONDecodeError:
+                      continue
+                  target = item.get('target') or {}
+                  executable = item.get('executable')
+                  profile = item.get('profile') or {}
+                  if item.get('reason') == 'compiler-artifact' and target.get('name') == 'backend' and 'lib' in (target.get('kind') or []) and profile.get('test') and executable:
+                      candidates.append(executable)
+          if not candidates:
+              raise SystemExit('backend unit-test executable not found')
+          print(candidates[-1])
+          PY
+          )"
+
+          make_root() {
+            local root="$1" uuid="$2"
+            mkdir -p "$root/.minecraft/mods" "$root/.pandora-layout-v1"
+            printf '{"schema":1,"profile_uuid":"%s"}\n' "$uuid" > "$root/.pandora-layout-v1/identity.json"
+          }
+          wait_ready() {
+            local ready="$1" pid="$2" label="$3"
+            for _ in $(seq 1 100); do
+              if [[ -f "$ready" ]]; then
+                kill -0 "$pid"
+                return 0
+              fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                echo "$label exited before acquiring its lock" >&2
+                return 1
+              fi
+              sleep 0.05
+            done
+            echo "$label did not acquire its lock within 5 seconds" >&2
+            return 1
+          }
+
+          root_a="$RUNNER_TEMP/agent190-macos-a-$RANDOM"
+          root_b="$RUNNER_TEMP/agent190-macos-b-$RANDOM"
+          ready_a="$root_a/ready"
+          ready_b="$root_b/ready"
+          uuid_a="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          uuid_b="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          make_root "$root_a" "$uuid_a"
+          make_root "$root_b" "$uuid_b"
+
+          BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT="$root_a" BOOTOPTIM_PROFILE_LOCK_CHILD_READY="$ready_a" \
+            "$test_bin" --exact profile_layout_identity::tests::profile_layout_lock_child_helper --nocapture &
+          pid_a=$!
+          wait_ready "$ready_a" "$pid_a" 'profile A helper'
+
+          BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT="$root_b" BOOTOPTIM_PROFILE_LOCK_CHILD_READY="$ready_b" \
+            "$test_bin" --exact profile_layout_identity::tests::profile_layout_lock_child_helper --nocapture &
+          pid_b=$!
+          wait_ready "$ready_b" "$pid_b" 'profile B helper'
+
+          kill -0 "$pid_a"
+          kill -0 "$pid_b"
+          kill "$pid_a" "$pid_b" || true
+          wait "$pid_a" || true
+          wait "$pid_b" || true
