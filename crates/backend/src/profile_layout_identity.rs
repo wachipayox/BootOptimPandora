@@ -444,10 +444,11 @@ fn open_os_exclusive_lock(path: &Path, profile_uuid: Uuid) -> Result<fs::File, P
         Err(err) => return Err(err.into()),
     };
 
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    // share_mode(0) prevents a replacement/delete while this handle lives.
+    // Inspect through that handle: reopening `path` for symlink_metadata would
+    // itself violate the exclusive share policy on Windows.
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
     {
         return Err(ProfileIdentityError::UnsafeFilesystem(path.to_path_buf()));
     }
