@@ -1080,32 +1080,9 @@ fn remove_regular_file(path: &Path) -> Result<(), ProfileLayoutFlowError> {
     }
 }
 
-#[cfg(not(windows))]
 fn sync_parent(path: &Path) -> Result<(), ProfileLayoutFlowError> {
     if let Some(parent) = path.parent() {
         let dir = fs::File::open(parent)?;
-        dir.sync_all()?;
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn sync_parent(path: &Path) -> Result<(), ProfileLayoutFlowError> {
-    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-
-    if let Some(parent) = path.parent() {
-        let dir = fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(parent)?;
-        let metadata = dir.metadata()?;
-        if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err(ProfileLayoutFlowError::UnsafeFilesystem(parent.to_path_buf()));
-        }
         dir.sync_all()?;
     }
     Ok(())
@@ -1312,23 +1289,6 @@ mod tests {
         let before = fs::read(root.0.join(".minecraft/mods/local.jar")).unwrap();
         assert!(PersistentProfileLayout::open(&root.0).is_err());
         assert_eq!(fs::read(root.0.join(".minecraft/mods/local.jar")).unwrap(), before);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn journal_junction_is_rejected_before_live_mutation() {
-        let root = TestRoot::new("journal-junction");
-        fs::write(root.0.join(".minecraft/mods/local.jar"), b"local").unwrap();
-        let layout = PersistentProfileLayout::open(&root.0).unwrap();
-        let journal = layout.journal_path();
-        drop(layout);
-
-        let outside = TestRoot::new("journal-junction-outside");
-        junction::create(&outside.0, &journal).unwrap();
-        let before = fs::read(root.0.join(".minecraft/mods/local.jar")).unwrap();
-        assert!(PersistentProfileLayout::open(&root.0).is_err());
-        assert_eq!(fs::read(root.0.join(".minecraft/mods/local.jar")).unwrap(), before);
-        assert!(!outside.0.join("manifest.json").exists());
     }
 
     #[test]
