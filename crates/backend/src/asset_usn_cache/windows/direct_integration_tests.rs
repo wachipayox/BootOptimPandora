@@ -4,7 +4,7 @@ use sha1::{Digest, Sha1};
 use std::{
     fs::OpenOptions,
     io::{Seek, SeekFrom, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -28,12 +28,64 @@ fn sha1(bytes: &[u8]) -> (String, [u8; 20]) {
     (hex::encode(raw), raw)
 }
 
+fn cleanup(objects: &Path) {
+    let _ = std::fs::remove_dir_all(objects.parent().unwrap().parent().unwrap());
+}
+
 #[test]
-fn direct_runtime_seed_reuse_and_mutation_fallback_are_real() {
-    let objects = temp_objects_dir("seed-reuse");
+fn corrupt_manifest_fast_rebootstrap_reads_no_asset_content_then_reuses() {
+    let objects = temp_objects_dir("corrupt-rebootstrap");
+    let original = b"abcdefgh";
+    let (expected_sha1, _) = sha1(original);
+    let asset_dir = objects.join(&expected_sha1[..2]);
+    let asset = asset_dir.join(&expected_sha1);
+    std::fs::create_dir_all(&asset_dir).unwrap();
+    std::fs::write(&asset, original).unwrap();
+    std::fs::write(objects.join(".bootoptim-usn-assets-v1.json"), b"{").unwrap();
+
+    let runtime = AssetUsnCacheRuntime::requested_for_test(true);
+    let index_sha1 = "0123456789abcdef0123456789abcdef01234567";
+    let session =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
+
+    asset_probe_context::reset_hash_observed();
+    assert_eq!(
+        session.verify_existing_fast(&runtime, &asset, &expected_sha1),
+        FastVerifyResult::FastRebootstrap
+    );
+    assert!(
+        !asset_probe_context::take_hash_observed(),
+        "fast rebootstrap must not execute the content SHA-1 reader"
+    );
+    session.finish_fast();
+    drop(session);
+
+    let manifest = objects.join(".bootoptim-usn-assets-v1.json");
+    let parsed = parse_manifest(&std::fs::read(&manifest).unwrap()).unwrap();
+    assert_eq!(parsed.asset_count, 1);
+    assert_eq!(parsed.assets[0].expected_sha1, expected_sha1);
+
+    let unchanged =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
+    asset_probe_context::reset_hash_observed();
+    assert_eq!(
+        unchanged.verify_existing_fast(&runtime, &asset, &expected_sha1),
+        FastVerifyResult::VerifiedReuse
+    );
+    assert!(
+        !asset_probe_context::take_hash_observed(),
+        "the first intact run after rebootstrap must reuse without content SHA-1"
+    );
+    drop(unchanged);
+    cleanup(&objects);
+}
+
+#[test]
+fn mutation_after_fast_rebootstrap_is_detected_by_usn_next_run() {
+    let objects = temp_objects_dir("post-rebootstrap-mutation");
     let original = b"abcdefgh";
     let mutated = b"ABCDEFGH";
-    let (expected_sha1, expected_hash) = sha1(original);
+    let (expected_sha1, _) = sha1(original);
     let asset_dir = objects.join(&expected_sha1[..2]);
     let asset = asset_dir.join(&expected_sha1);
     std::fs::create_dir_all(&asset_dir).unwrap();
@@ -42,26 +94,26 @@ fn direct_runtime_seed_reuse_and_mutation_fallback_are_real() {
     let runtime = AssetUsnCacheRuntime::requested_for_test(true);
     let index_sha1 = "0123456789abcdef0123456789abcdef01234567";
 
-    let seed =
+    let bootstrap =
         WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     asset_probe_context::reset_hash_observed();
-    assert!(seed.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
-    assert!(asset_probe_context::take_hash_observed());
-    seed.finish();
-    drop(seed);
-
-    let manifest = objects.join(".bootoptim-usn-assets-v1.json");
-    assert!(manifest.is_file(), "seed must publish a complete manifest");
-
-    let reuse =
-        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
-    asset_probe_context::reset_hash_observed();
-    assert!(reuse.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
-    assert!(
-        !asset_probe_context::take_hash_observed(),
-        "unchanged verified reuse must not read asset content for SHA-1"
+    assert_eq!(
+        bootstrap.verify_existing_fast(&runtime, &asset, &expected_sha1),
+        FastVerifyResult::FastRebootstrap
     );
-    drop(reuse);
+    assert!(!asset_probe_context::take_hash_observed());
+    bootstrap.finish_fast();
+    drop(bootstrap);
+
+    let unchanged =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
+    asset_probe_context::reset_hash_observed();
+    assert_eq!(
+        unchanged.verify_existing_fast(&runtime, &asset, &expected_sha1),
+        FastVerifyResult::VerifiedReuse
+    );
+    assert!(!asset_probe_context::take_hash_observed());
+    drop(unchanged);
 
     let modified = std::fs::metadata(&asset).unwrap().modified().unwrap();
     let mut writer = OpenOptions::new().write(true).open(&asset).unwrap();
@@ -74,24 +126,106 @@ fn direct_runtime_seed_reuse_and_mutation_fallback_are_real() {
     let changed =
         WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     asset_probe_context::reset_hash_observed();
-    assert!(!changed.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
+    assert_eq!(
+        changed.verify_existing_fast(&runtime, &asset, &expected_sha1),
+        FastVerifyResult::IndividualRepairVerification
+    );
     assert!(
-        asset_probe_context::take_hash_observed(),
-        "same-size restored-mtime mutation must fall back to content SHA-1"
+        !asset_probe_context::take_hash_observed(),
+        "USN invalidation must request only the individual repair; it must not hash the existing object"
     );
     drop(changed);
 
+    cleanup(&objects);
+}
+
+#[test]
+fn disabled_runtime_does_not_publish_baseline() {
+    let objects = temp_objects_dir("disabled-no-publish");
+    let original = b"disabled";
+    let (expected_sha1, _) = sha1(original);
+    let asset_dir = objects.join(&expected_sha1[..2]);
+    let asset = asset_dir.join(&expected_sha1);
+    std::fs::create_dir_all(&asset_dir).unwrap();
+    std::fs::write(&asset, original).unwrap();
+
+    let runtime = AssetUsnCacheRuntime::requested_for_test(false);
+    let index_sha1 = "0123456789abcdef0123456789abcdef01234567";
+    let session =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
+    asset_probe_context::reset_hash_observed();
+    assert_eq!(
+        session.verify_existing_fast(&runtime, &asset, &expected_sha1),
+        FastVerifyResult::FastRebootstrap
+    );
+    assert!(!asset_probe_context::take_hash_observed());
+    session.finish_fast();
+    assert!(!objects.join(".bootoptim-usn-assets-v1.json").exists());
+    drop(session);
+    cleanup(&objects);
+}
+
+#[test]
+fn latched_capability_failure_does_not_publish_baseline() {
+    let objects = temp_objects_dir("capability-no-publish");
+    let original = b"capability";
+    let (expected_sha1, _) = sha1(original);
+    let asset_dir = objects.join(&expected_sha1[..2]);
+    let asset = asset_dir.join(&expected_sha1);
+    std::fs::create_dir_all(&asset_dir).unwrap();
+    std::fs::write(&asset, original).unwrap();
+    let runtime = AssetUsnCacheRuntime::requested_for_test(true);
+    let index_sha1 = "0123456789abcdef0123456789abcdef01234567";
+    let session =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
+    session.capability_failed.store(true, AtomicOrdering::Release);
+    asset_probe_context::reset_hash_observed();
+    assert_eq!(
+        session.verify_existing_fast(&runtime, &asset, &expected_sha1),
+        FastVerifyResult::FastRebootstrap
+    );
+    assert!(!asset_probe_context::take_hash_observed());
+    session.finish_fast();
+    assert!(!objects.join(".bootoptim-usn-assets-v1.json").exists());
+    drop(session);
+    cleanup(&objects);
+}
+
+#[test]
+fn delete_recreate_after_rebootstrap_requests_individual_repair() {
+    let objects = temp_objects_dir("post-rebootstrap-recreate");
+    let original = b"same bytes";
+    let (expected_sha1, _) = sha1(original);
+    let asset_dir = objects.join(&expected_sha1[..2]);
+    let asset = asset_dir.join(&expected_sha1);
+    std::fs::create_dir_all(&asset_dir).unwrap();
+    std::fs::write(&asset, original).unwrap();
+
+    let runtime = AssetUsnCacheRuntime::requested_for_test(true);
+    let index_sha1 = "0123456789abcdef0123456789abcdef01234567";
+    let bootstrap =
+        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
+    assert_eq!(
+        bootstrap.verify_existing_fast(&runtime, &asset, &expected_sha1),
+        FastVerifyResult::FastRebootstrap
+    );
+    bootstrap.finish_fast();
+    drop(bootstrap);
+
     std::fs::remove_file(&asset).unwrap();
     std::fs::write(&asset, original).unwrap();
+
     let recreated =
         WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
     asset_probe_context::reset_hash_observed();
-    assert!(recreated.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
+    assert_eq!(
+        recreated.verify_existing_fast(&runtime, &asset, &expected_sha1),
+        FastVerifyResult::IndividualRepairVerification
+    );
     assert!(
-        asset_probe_context::take_hash_observed(),
-        "delete/recreate must not consume the cached FileId as verified reuse"
+        !asset_probe_context::take_hash_observed(),
+        "delete/recreate must request individual repair without hashing the replacement pathname"
     );
     drop(recreated);
-
-    let _ = std::fs::remove_dir_all(objects.parent().unwrap().parent().unwrap());
+    cleanup(&objects);
 }

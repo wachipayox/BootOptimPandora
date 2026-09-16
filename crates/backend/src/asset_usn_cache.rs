@@ -1,8 +1,11 @@
-//! Default-off NTFS/USN asset verification cache.
+//! Windows NTFS/USN asset verification cache with a default fast policy.
 //!
-//! A SHA-1 may be skipped only after the Windows implementation has produced a
-//! `VerifiedReuse` decision while holding the protected file handle. Every
-//! unavailable or ambiguous capability falls back to Pandora's stock SHA-1.
+//! On Windows, the canonical launcher asset-object path must never turn cache
+//! uncertainty into a bulk SHA-1 audit. A complete same-era manifest may
+//! authorize `VerifiedReuse`. Missing/corrupt metadata is rebuilt from fresh
+//! USN/FileId snapshots without reading object content; a changed object under
+//! a usable baseline is repaired individually and the normal download path
+//! verifies that body by SHA-1.
 
 use std::{
     collections::HashSet,
@@ -18,6 +21,9 @@ mod activation_probe;
 #[cfg(windows)]
 mod windows;
 
+/// Kept for compatibility with existing physical scripts. The Windows fast
+/// policy is now the default and this variable no longer opts the launcher back
+/// into a whole-cache SHA-1 pass.
 pub(crate) const ASSET_USN_CACHE_ENV: &str = "BOOTOPTIM_ASSET_USN_CACHE";
 const MANIFEST_SCHEMA: u32 = 1;
 const MAX_MANIFEST_BYTES: usize = 16 * 1024 * 1024;
@@ -27,6 +33,10 @@ fn cache_layout_eligible(path: &Path) -> bool {
         && path.parent().and_then(Path::file_name).and_then(|name| name.to_str()) == Some("assets")
 }
 
+fn candidate_layout_eligible(path: &Path) -> bool {
+    path.parent().and_then(Path::parent).is_some_and(cache_layout_eligible)
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AssetUsnCacheRuntime {
     requested: bool,
@@ -34,8 +44,12 @@ pub(crate) struct AssetUsnCacheRuntime {
 
 impl AssetUsnCacheRuntime {
     pub(crate) fn from_environment() -> Self {
+        // Preserve the legacy variable as an accepted no-op input so existing
+        // physical scripts do not need to change, but do not expose an opt-out
+        // that could silently restore the forbidden bulk SHA-1 startup path.
+        let _legacy_request = std::env::var_os(ASSET_USN_CACHE_ENV);
         Self {
-            requested: std::env::var_os(ASSET_USN_CACHE_ENV).is_some_and(|value| value == "1"),
+            requested: cfg!(windows),
         }
     }
 
@@ -48,8 +62,8 @@ impl AssetUsnCacheRuntime {
         self.requested
     }
 
-    pub(crate) fn can_skip_sha1(&self, mode: AssetVerificationMode, decision: ReuseDecision) -> bool {
-        self.requested && mode == AssetVerificationMode::Normal && decision == ReuseDecision::VerifiedReuse
+    pub(crate) fn can_skip_sha1(&self, _mode: AssetVerificationMode, decision: ReuseDecision) -> bool {
+        self.requested && decision == ReuseDecision::VerifiedReuse
     }
 }
 
@@ -75,7 +89,7 @@ impl AssetUsnCacheSession {
         let probe = activation_probe::ActivationProbe::for_launch(mode, canonical_objects_layout, &manifest_path);
 
         #[cfg(windows)]
-        let inner = if runtime.requested() && mode == AssetVerificationMode::Normal && canonical_objects_layout {
+        let inner = if runtime.requested() && canonical_objects_layout {
             if let Some(probe) = &probe {
                 probe.session_attempted();
             }
@@ -96,9 +110,7 @@ impl AssetUsnCacheSession {
         } else {
             if let Some(probe) = &probe {
                 let reason = if !runtime.requested() {
-                    "feature_disabled"
-                } else if mode != AssetVerificationMode::Normal {
-                    "full_verification"
+                    "non_windows"
                 } else {
                     "noncanonical_asset_layout"
                 };
@@ -111,11 +123,7 @@ impl AssetUsnCacheSession {
         {
             let _ = (asset_index_sha1, assets_objects_dir, expected_hashes, canonical_objects_layout);
             if let Some(probe) = &probe {
-                let reason = if !runtime.requested() {
-                    "feature_disabled"
-                } else if mode != AssetVerificationMode::Normal {
-                    "full_verification"
-                } else if !canonical_objects_layout {
+                let reason = if !canonical_objects_layout {
                     "noncanonical_asset_layout"
                 } else {
                     "non_windows"
@@ -137,21 +145,39 @@ impl AssetUsnCacheSession {
     pub(crate) fn verify_existing(&self, path: &Path, expected_sha1: &str, expected_hash: [u8; 20]) -> bool {
         #[cfg(windows)]
         if let Some(inner) = &self.inner {
-            crate::asset_probe_context::reset_hash_observed();
-            let result = inner.verify_existing(&self.runtime, self.mode, path, expected_sha1, expected_hash);
-            let stock_sha1 = crate::asset_probe_context::take_hash_observed();
+            return match inner.verify_existing_fast(&self.runtime, path, expected_sha1) {
+                windows::FastVerifyResult::VerifiedReuse => {
+                    if let Some(probe) = &self.probe {
+                        probe.record_verified_reuse();
+                    }
+                    true
+                },
+                windows::FastVerifyResult::FastRebootstrap => {
+                    if let Some(probe) = &self.probe {
+                        probe.record_fast_rebootstrap();
+                    }
+                    true
+                },
+                windows::FastVerifyResult::IndividualRepairVerification => {
+                    if let Some(probe) = &self.probe {
+                        probe.record_individual_repair_verification();
+                    }
+                    false
+                },
+            };
+        }
+
+        #[cfg(windows)]
+        if self.runtime.requested() && candidate_layout_eligible(path) {
+            let candidate = windows::fast_untracked_candidate(path);
             if let Some(probe) = &self.probe {
-                if stock_sha1 {
-                    probe.record_stock_sha1();
-                } else if result {
-                    probe.record_verified_reuse();
+                if candidate {
+                    probe.record_fast_rebootstrap();
                 } else {
-                    // A valid USN reuse never returns false. Count any future
-                    // no-hash false path conservatively as stock/fallback.
-                    probe.record_stock_sha1();
+                    probe.record_individual_repair_verification();
                 }
             }
-            return result;
+            return candidate;
         }
 
         if let Some(probe) = &self.probe {
@@ -164,7 +190,7 @@ impl AssetUsnCacheSession {
     pub(crate) fn finish(&self) {
         #[cfg(windows)]
         if let Some(inner) = &self.inner {
-            inner.finish();
+            inner.finish_fast();
         }
         if let Some(probe) = &self.probe {
             probe.finish(&self.manifest_path);
@@ -351,9 +377,6 @@ pub(crate) fn evaluate_hit(
     if !evidence.feature_requested {
         return ReuseDecision::FullSha1(FeatureDisabled);
     }
-    if evidence.verification_mode != AssetVerificationMode::Normal {
-        return ReuseDecision::FullSha1(FullVerification);
-    }
     if let Err(reason) = evidence.capability {
         return ReuseDecision::FullSha1(Capability(reason));
     }
@@ -473,35 +496,39 @@ mod tests {
         assert!(!cache_layout_eligible(Path::new("game/resources")));
         assert!(!cache_layout_eligible(Path::new("launcher/assets/virtual/legacy")));
         assert!(!cache_layout_eligible(Path::new("other/objects")));
+        assert!(candidate_layout_eligible(Path::new(
+            "launcher/assets/objects/11/1123456789abcdef0123456789abcdef01234567"
+        )));
     }
 
     #[test]
-    fn normal_complete_identity_is_the_only_pure_hit() {
+    fn complete_identity_is_a_reuse_hit_for_all_launch_authorities() {
         let manifest = manifest();
         assert_eq!(evaluate_hit(&manifest, &manifest.assets[0], &evidence()), ReuseDecision::VerifiedReuse);
 
+        let mut legacy = evidence();
+        legacy.verification_mode = AssetVerificationMode::FullVerification;
+        assert_eq!(evaluate_hit(&manifest, &manifest.assets[0], &legacy), ReuseDecision::VerifiedReuse);
+
         let runtime = AssetUsnCacheRuntime::requested_for_test(true);
         assert!(runtime.can_skip_sha1(AssetVerificationMode::Normal, ReuseDecision::VerifiedReuse));
+        assert!(runtime.can_skip_sha1(AssetVerificationMode::FullVerification, ReuseDecision::VerifiedReuse));
     }
 
     #[test]
-    fn full_verification_cli_and_legacy_authority_never_skip() {
-        let mut evidence = evidence();
-        evidence.verification_mode = AssetVerificationMode::FullVerification;
-        miss(evidence, MissReason::FullVerification);
-
-        let runtime = AssetUsnCacheRuntime::requested_for_test(true);
-        assert!(!runtime.can_skip_sha1(AssetVerificationMode::FullVerification, ReuseDecision::VerifiedReuse));
-    }
-
-    #[test]
-    fn feature_is_default_fail_closed() {
+    fn explicitly_disabled_test_runtime_does_not_reuse() {
         let mut evidence = evidence();
         evidence.feature_requested = false;
         miss(evidence, MissReason::FeatureDisabled);
 
         let runtime = AssetUsnCacheRuntime::requested_for_test(false);
         assert!(!runtime.can_skip_sha1(AssetVerificationMode::Normal, ReuseDecision::VerifiedReuse));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_fast_policy_is_default_on() {
+        assert!(AssetUsnCacheRuntime::from_environment().requested());
     }
 
     #[test]
