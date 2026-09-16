@@ -538,11 +538,21 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), ProfileIdentityErro
     sync_parent(path)
 }
 
+#[cfg(unix)]
 fn sync_parent(path: &Path) -> Result<(), ProfileIdentityError> {
     if let Some(parent) = path.parent() {
         let dir = fs::File::open(parent)?;
         dir.sync_all()?;
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn sync_parent(_path: &Path) -> Result<(), ProfileIdentityError> {
+    // `File::open(directory)` is not a durable-directory handle on Windows and
+    // fails with ERROR_ACCESS_DENIED. The file payload is still flushed with
+    // `sync_all` before this point; the layout journal/manifest protocol is
+    // deliberately recoverable if a power loss delays directory metadata.
     Ok(())
 }
 
