@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    if: ${{ github.ref_name != 'agent175/prelaunch-mods-attribution-20260915' && github.head_ref != 'agent175/prelaunch-mods-attribution-20260915' }}
+    if: ${{ github.ref_name != 'agent175/prelaunch-mods-attribution-20260915' && github.head_ref != 'agent175/prelaunch-mods-attribution-20260915' && github.ref_name != 'agent180/prelaunch-real-attribution-20260916' && github.head_ref != 'agent180/prelaunch-real-attribution-20260916' }}
     strategy:
       fail-fast: true
       matrix:
