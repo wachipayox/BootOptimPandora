@@ -5,18 +5,18 @@ on:
     branches:
       - "agent190/profile-lock-native-gate-20260916"
     paths:
-      - "crates/backend/src/profile_layout_identity.rs"
-      - "crates/backend/src/profile_layout_flow.rs"
+      - "crates/backend/tests/profile_layout_windows_native.rs"
       - ".github/workflows/agent190-native-profile-lock.yml"
       - ".github/workflows/build.yml"
+      - ".github/workflows/bootoptim-v0.yml"
   pull_request:
     branches:
       - "agent189/profile-layout-identity-lock-20260916"
     paths:
-      - "crates/backend/src/profile_layout_identity.rs"
-      - "crates/backend/src/profile_layout_flow.rs"
+      - "crates/backend/tests/profile_layout_windows_native.rs"
       - ".github/workflows/agent190-native-profile-lock.yml"
       - ".github/workflows/build.yml"
+      - ".github/workflows/bootoptim-v0.yml"
 
 permissions:
   contents: read
@@ -37,16 +37,94 @@ jobs:
       - name: Check backend tests compile on Windows
         run: cargo check -p backend --tests --frozen
 
-      - name: Same UUID is Busy cross-process and crash releases handle
-        run: cargo test -p backend --frozen profile_layout_lock_is_released_when_other_process_dies -- --nocapture --test-threads=1
+      - name: Build backend test binaries once
+        shell: pwsh
+        run: |
+          $buildJson = Join-Path $env:RUNNER_TEMP 'agent190-backend-test-build.json'
+          cargo test -p backend --frozen --no-run --message-format=json | Set-Content -Encoding utf8 $buildJson
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $candidates = Get-Content $buildJson | ForEach-Object {
+            try { $item = $_ | ConvertFrom-Json } catch { return }
+            if ($item.reason -eq 'compiler-artifact' -and
+                $item.target.name -eq 'backend' -and
+                $item.target.kind -contains 'lib' -and
+                $item.profile.test -and
+                $item.executable) {
+              $item.executable
+            }
+          }
+          if (-not $candidates) { throw 'backend unit-test executable not found' }
+          "BACKEND_TEST_BIN=$($candidates[-1])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Corrupt journal preserves live tree
-        run: cargo test -p backend --frozen corrupt_journal_never_changes_live_layout -- --nocapture --test-threads=1
+      - name: Same UUID is Busy across real processes and releases after owner death
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP ("agent190-lock-existing-" + [guid]::NewGuid().ToString())
+          $control = Join-Path $root '.pandora-layout-v1'
+          $locks = Join-Path $control 'locks'
+          New-Item -ItemType Directory -Path (Join-Path $root '.minecraft\mods') -Force | Out-Null
+          New-Item -ItemType Directory -Path $locks -Force | Out-Null
+          $uuid = [guid]::NewGuid().ToString()
+          [IO.File]::WriteAllText((Join-Path $control 'identity.json'), (@{ schema = 1; profile_uuid = $uuid } | ConvertTo-Json -Compress))
 
-      - name: Journal junction is rejected before live mutation
-        run: cargo test -p backend --frozen journal_junction_is_rejected_before_live_mutation -- --nocapture --test-threads=1
+          function Start-Helper([string]$Ready) {
+            $env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT = $root
+            $env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY = $Ready
+            $process = Start-Process -FilePath $env:BACKEND_TEST_BIN -ArgumentList @('--exact', 'profile_layout_identity::tests::profile_layout_lock_child_helper', '--nocapture') -PassThru -NoNewWindow
+            Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT -ErrorAction SilentlyContinue
+            Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY -ErrorAction SilentlyContinue
+            return $process
+          }
 
-      - name: Reparse and unexpected control state fail before live mutation
+          function Wait-Ready([string]$Ready, $Process, [string]$Label) {
+            1..100 | ForEach-Object {
+              if (Test-Path $Ready) {
+                if ($Process.HasExited) { throw "$Label exited after signalling ready" }
+                return
+              }
+              if ($Process.HasExited) { throw "$Label exited before acquiring its lock" }
+              Start-Sleep -Milliseconds 50
+            }
+            throw "$Label did not acquire its lock within 5 seconds"
+          }
+
+          $ownerReady = Join-Path $root 'owner-ready'
+          $owner = Start-Helper $ownerReady
+          Wait-Ready $ownerReady $owner 'owner helper'
+
+          $contenderReady = Join-Path $root 'contender-ready'
+          $env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT = $root
+          $env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY = $contenderReady
+          $contenderOutput = (& $env:BACKEND_TEST_BIN --exact profile_layout_identity::tests::profile_layout_lock_child_helper --nocapture 2>&1 | Out-String)
+          $contenderCode = $LASTEXITCODE
+          Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT -ErrorAction SilentlyContinue
+          Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY -ErrorAction SilentlyContinue
+          if ($contenderCode -eq 0) { throw 'second process unexpectedly acquired the same UUID lock' }
+          if ($contenderOutput -notmatch 'Busy') { throw "same-UUID rejection did not report Busy: $contenderOutput" }
+          if (Test-Path $contenderReady) { throw 'contender reached held-lock state' }
+
+          Stop-Process -Id $owner.Id -Force
+          $owner.WaitForExit()
+
+          $reacquireReady = Join-Path $root 'reacquire-ready'
+          $reacquired = Start-Helper $reacquireReady
+          Wait-Ready $reacquireReady $reacquired 'reacquire helper'
+          Stop-Process -Id $reacquired.Id -Force
+          $reacquired.WaitForExit()
+
+      - name: Fresh Windows initialization exposes the directory-durability blocker
+        id: windows_init
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & $env:BACKEND_TEST_BIN --exact profile_layout_identity::tests::profile_layout_lock_is_released_when_other_process_dies --nocapture
+          exit $LASTEXITCODE
+
+      - name: Journal reparse/corruption preserve the live tree on existing identity
+        run: cargo test -p backend --frozen --test profile_layout_windows_native -- --nocapture --test-threads=1
+
+      - name: Lock/state/control reparse or unexpected type fail before live mutation
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -62,7 +140,7 @@ jobs:
             $ready = Join-Path $Root ("ready-" + $Label)
             $env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT = $Root
             $env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY = $ready
-            & cargo test -p backend --frozen profile_layout_identity::tests::profile_layout_lock_child_helper -- --exact --nocapture
+            $output = (& $env:BACKEND_TEST_BIN --exact profile_layout_identity::tests::profile_layout_lock_child_helper --nocapture 2>&1 | Out-String)
             $code = $LASTEXITCODE
             Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_ROOT -ErrorAction SilentlyContinue
             Remove-Item Env:BOOTOPTIM_PROFILE_LOCK_CHILD_READY -ErrorAction SilentlyContinue
@@ -72,7 +150,6 @@ jobs:
             if ($sentinel -ne 'live-safe') { throw "live tree changed while rejecting $Label" }
           }
 
-          # A junction in the lock namespace must be rejected before a UUID lock file is created.
           $lockRoot = New-ProfileRoot 'lock-junction'
           $control = Join-Path $lockRoot '.pandora-layout-v1'
           New-Item -ItemType Directory -Path $control | Out-Null
@@ -84,20 +161,23 @@ jobs:
           Assert-HelperRejected $lockRoot 'lock-junction'
           if ((Get-ChildItem -Force $outsideLocks | Measure-Object).Count -ne 0) { throw 'lock junction target was mutated' }
 
-          # The durable identity/state file must be a regular non-reparse file.
           $stateRoot = New-ProfileRoot 'identity-type'
           $stateControl = Join-Path $stateRoot '.pandora-layout-v1'
           New-Item -ItemType Directory -Path $stateControl | Out-Null
           New-Item -ItemType Directory -Path (Join-Path $stateControl 'identity.json') | Out-Null
           Assert-HelperRejected $stateRoot 'identity-unexpected-type'
 
-          # The entire control root must not be a junction/reparse directory.
           $controlRoot = New-ProfileRoot 'control-junction'
           $outsideControl = Join-Path $env:RUNNER_TEMP ("agent190-outside-control-" + [guid]::NewGuid().ToString())
           New-Item -ItemType Directory -Path $outsideControl | Out-Null
           New-Item -ItemType Junction -Path (Join-Path $controlRoot '.pandora-layout-v1') -Target $outsideControl | Out-Null
           Assert-HelperRejected $controlRoot 'control-junction'
           if ((Get-ChildItem -Force $outsideControl | Measure-Object).Count -ne 0) { throw 'control junction target was mutated' }
+
+      - name: Block promotion while fresh Windows initialization is not durable
+        if: steps.windows_init.outcome != 'success'
+        shell: pwsh
+        run: throw 'Fresh profile initialization still fails on Windows because the inherited directory sync uses unsupported File::open(directory)/sync_all semantics.'
 
   macos-native-lock:
     name: macOS flock cross-process gate
