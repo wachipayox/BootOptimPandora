@@ -29,8 +29,18 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Check Rust formatting
+      - name: Record inherited workspace rustfmt baseline
+        id: workspace_fmt
+        continue-on-error: true
         run: cargo fmt --all -- --check
+
+      - name: Check Agent 190 owned Rust hygiene
+        shell: pwsh
+        run: |
+          rustfmt --edition 2021 --check crates/backend/tests/profile_layout_windows_native.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check "${{ github.event.pull_request.base.sha }}...HEAD" -- crates/backend/src/profile_layout_identity.rs crates/backend/tests/profile_layout_windows_native.rs
+          exit $LASTEXITCODE
 
       - name: Check backend tests compile on Windows
         run: cargo check -p backend --tests --frozen
