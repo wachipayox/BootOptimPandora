@@ -2,18 +2,13 @@ use std::fs;
 
 use uuid::Uuid;
 
-use crate::profile_layout::{
-    ProfileLayout, ProfileLayoutError, ProfileLayoutManifest, ProfileLayoutState,
-};
+use crate::profile_layout::{ProfileLayout, ProfileLayoutError, ProfileLayoutManifest, ProfileLayoutState};
 
 impl ProfileLayout {
     /// Idempotent publication entry point. The first call executes the prepared
     /// journal transaction. A retry after the manifest commit/cleanup succeeds
     /// only when the committed manifest proves the same transaction identity.
-    pub fn publish_prepared_idempotent(
-        &mut self,
-        transaction_id: Uuid,
-    ) -> Result<(), ProfileLayoutError> {
+    pub fn publish_prepared_idempotent(&mut self, transaction_id: Uuid) -> Result<(), ProfileLayoutError> {
         if self.journal_path().exists() {
             return self.publish_prepared(transaction_id);
         }
@@ -50,10 +45,8 @@ mod tests {
 
     impl TestRoot {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "pandora-profile-layout-idempotent-{}",
-                Uuid::from_bytes(rand::random())
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("pandora-profile-layout-idempotent-{}", Uuid::from_bytes(rand::random())));
             fs::create_dir(&path).unwrap();
             Self(path)
         }
@@ -76,13 +69,9 @@ mod tests {
             .prepare_manifest(ProfileLayoutManifest::new_ready(layout.profile_uuid(), 2))
             .unwrap();
 
-        layout
-            .publish_prepared_idempotent(transaction_id)
-            .unwrap();
+        layout.publish_prepared_idempotent(transaction_id).unwrap();
         assert!(!layout.journal_path().exists());
-        layout
-            .publish_prepared_idempotent(transaction_id)
-            .unwrap();
+        layout.publish_prepared_idempotent(transaction_id).unwrap();
         assert_eq!(layout.status.state, ProfileLayoutState::Ready);
         assert_eq!(layout.status.generation, Some(2));
     }
