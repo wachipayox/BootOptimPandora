@@ -207,15 +207,13 @@ impl ProfileLayout {
     /// Atomic single-file bootstrap commit used by the future stopped-profile
     /// reconciler. It does not touch `.minecraft` and cannot replace an existing
     /// generation.
-    pub fn commit_initial_manifest(
-        &mut self,
-        mut manifest: ProfileLayoutManifest,
-    ) -> Result<(), ProfileLayoutError> {
+    pub fn commit_initial_manifest(&mut self, mut manifest: ProfileLayoutManifest) -> Result<(), ProfileLayoutError> {
         ensure_control_paths(&self.control_root)?;
         if self.manifest_path().exists() || self.journal_path().exists() {
             return Err(ProfileLayoutError::GenerationMismatch);
         }
-        if manifest.profile_uuid != self.profile_uuid() || manifest.schema != SCHEMA_VERSION || manifest.generation != 1 {
+        if manifest.profile_uuid != self.profile_uuid() || manifest.schema != SCHEMA_VERSION || manifest.generation != 1
+        {
             return Err(ProfileLayoutError::GenerationMismatch);
         }
         manifest.transaction_id = None;
@@ -226,18 +224,13 @@ impl ProfileLayout {
 
     /// Prepare the next metadata generation. Staging and backup live below the
     /// Instance root, so later publication uses only same-profile renames.
-    pub fn prepare_manifest(
-        &mut self,
-        mut target: ProfileLayoutManifest,
-    ) -> Result<Uuid, ProfileLayoutError> {
+    pub fn prepare_manifest(&mut self, mut target: ProfileLayoutManifest) -> Result<Uuid, ProfileLayoutError> {
         ensure_control_paths(&self.control_root)?;
         if self.journal_path().exists() {
             return Err(ProfileLayoutError::AmbiguousTransaction);
         }
 
-        let (current, current_bytes) = self
-            .read_manifest_bytes()?
-            .ok_or(ProfileLayoutError::MissingManifest)?;
+        let (current, current_bytes) = self.read_manifest_bytes()?.ok_or(ProfileLayoutError::MissingManifest)?;
         self.validate_manifest(&current)?;
         if target.profile_uuid != self.profile_uuid()
             || target.schema != SCHEMA_VERSION
@@ -337,11 +330,7 @@ impl ProfileLayout {
         }
     }
 
-    fn publish_inner(
-        &mut self,
-        transaction_id: Uuid,
-        fault: PublishFault,
-    ) -> Result<(), ProfileLayoutError> {
+    fn publish_inner(&mut self, transaction_id: Uuid, fault: PublishFault) -> Result<(), ProfileLayoutError> {
         ensure_control_paths(&self.control_root)?;
         let mut journal = self.read_journal()?;
         self.validate_journal(&journal)?;
@@ -527,11 +516,7 @@ impl ProfileLayout {
     }
 
     #[cfg(test)]
-    fn publish_with_fault(
-        &mut self,
-        transaction_id: Uuid,
-        fault: PublishFault,
-    ) -> Result<(), ProfileLayoutError> {
+    fn publish_with_fault(&mut self, transaction_id: Uuid, fault: PublishFault) -> Result<(), ProfileLayoutError> {
         self.publish_inner(transaction_id, fault)
     }
 }
@@ -753,9 +738,7 @@ mod tests {
         let tx = layout
             .prepare_manifest(ProfileLayoutManifest::new_ready(layout.profile_uuid(), 2))
             .unwrap();
-        assert!(layout
-            .publish_with_fault(tx, PublishFault::AfterBackupBeforeManifestCommit)
-            .is_err());
+        assert!(layout.publish_with_fault(tx, PublishFault::AfterBackupBeforeManifestCommit).is_err());
         assert!(!layout.manifest_path().exists());
         assert!(layout.backup_manifest_path(tx).exists());
 
@@ -798,9 +781,7 @@ mod tests {
         let tx = layout
             .prepare_manifest(ProfileLayoutManifest::new_ready(layout.profile_uuid(), 2))
             .unwrap();
-        assert!(layout
-            .publish_with_fault(tx, PublishFault::AfterBackupBeforeManifestCommit)
-            .is_err());
+        assert!(layout.publish_with_fault(tx, PublishFault::AfterBackupBeforeManifestCommit).is_err());
 
         layout.rollback(tx).unwrap();
         assert_eq!(layout.status.state, ProfileLayoutState::Ready);
