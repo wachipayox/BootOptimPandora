@@ -448,8 +448,7 @@ fn open_os_exclusive_lock(path: &Path, profile_uuid: Uuid) -> Result<fs::File, P
     // Inspect through that handle: reopening `path` for symlink_metadata would
     // itself violate the exclusive share policy on Windows.
     let metadata = file.metadata()?;
-    if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-    {
+    if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(ProfileIdentityError::UnsafeFilesystem(path.to_path_buf()));
     }
     Ok(file)
