@@ -1696,7 +1696,6 @@ async fn do_asset_objects_load(
         let task = async move {
             let valid_hash_on_disk = {
                 let verify_path = path.clone();
-                let stock_path = path.clone();
                 let permit = disk_semaphore.acquire().await.unwrap();
                 let result = match tokio::task::spawn_blocking(move || {
                     cache_session.verify_existing(&verify_path, &expected_sha1, expected_hash)
@@ -1704,11 +1703,10 @@ async fn do_asset_objects_load(
                 .await
                 {
                     Ok(result) => result,
-                    Err(_) => tokio::task::spawn_blocking(move || {
-                        crate::fs::check_sha1_hash(&stock_path, expected_hash).unwrap_or(false)
-                    })
-                    .await
-                    .unwrap_or(false),
+                    // A verifier worker failure is an individual miss. Never compensate by
+                    // hashing the existing asset object; the normal download path below
+                    // size-checks and SHA-1 verifies only the repaired body.
+                    Err(_) => false,
                 };
                 drop(permit);
                 result

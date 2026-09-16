@@ -1,10 +1,11 @@
 //! Compact opt-in diagnostic for the USN asset-cache activation boundary.
 //!
-//! This probe never authorizes reuse. It records only aggregate state and writes
-//! one create-new JSON sidecar after the asset phase. Paths, asset hashes, FileIds,
-//! USNs, account data and command lines are deliberately excluded.
+//! The Windows asset policy itself is default-on; only this diagnostic sidecar
+//! remains opt-in. The probe never authorizes reuse. It records aggregate state
+//! and writes one create-new JSON sidecar after the asset phase. Paths, asset
+//! hashes, FileIds, USNs, account data and command lines are deliberately excluded.
 
-use super::{AssetVerificationMode, CapabilityFailure, ASSET_USN_CACHE_ENV};
+use super::{AssetVerificationMode, CapabilityFailure};
 use serde::Serialize;
 use std::{
     ffi::OsString,
@@ -12,14 +13,15 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
 pub(crate) const ENV_NAME: &str = "BOOTOPTIM_ASSET_USN_PROBE";
-const SCHEMA: &str = "bootoptim.asset_usn_cache_probe.v2";
+const SCHEMA: &str = "bootoptim.asset_usn_cache_probe.v3";
 const CAPABILITY_MODE: &str = "direct_unprivileged_ntfs";
+const POLICY: &str = "fast_rebootstrap";
 
 pub(crate) struct ActivationProbe {
     output_path: PathBuf,
@@ -31,6 +33,8 @@ pub(crate) struct ActivationProbe {
     session_state: Mutex<&'static str>,
     decision_reason: Mutex<&'static str>,
     verified_reuse_files: AtomicU64,
+    fast_rebootstrap_files: AtomicU64,
+    individual_repair_verification_files: AtomicU64,
     stock_sha1_files: AtomicU64,
     finished: AtomicBool,
 }
@@ -43,6 +47,7 @@ struct Snapshot {
     canonical_objects_layout: bool,
     capability_mode: &'static str,
     elevation_requested: bool,
+    policy: &'static str,
     session_attempted: bool,
     session_state: &'static str,
     decision_reason: &'static str,
@@ -51,6 +56,8 @@ struct Snapshot {
     manifest_present_after: bool,
     publication_state: &'static str,
     verified_reuse_files: u64,
+    fast_rebootstrap_files: u64,
+    individual_repair_verification_files: u64,
     stock_sha1_files: u64,
 }
 
@@ -62,7 +69,7 @@ impl ActivationProbe {
     ) -> Option<Arc<Self>> {
         Self::from_path(
             configured_path(std::env::var_os(ENV_NAME)),
-            std::env::var_os(ASSET_USN_CACHE_ENV).is_some_and(|value| value == "1"),
+            cfg!(windows),
             mode,
             canonical_objects_layout,
             manifest_path.is_file(),
@@ -86,6 +93,8 @@ impl ActivationProbe {
             session_state: Mutex::new("not_attempted"),
             decision_reason: Mutex::new("not_evaluated"),
             verified_reuse_files: AtomicU64::new(0),
+            fast_rebootstrap_files: AtomicU64::new(0),
+            individual_repair_verification_files: AtomicU64::new(0),
             stock_sha1_files: AtomicU64::new(0),
             finished: AtomicBool::new(false),
         }))
@@ -106,12 +115,20 @@ impl ActivationProbe {
     }
 
     pub(crate) fn session_failed(&self, failure: CapabilityFailure) {
-        set_mutex(&self.session_state, "fallback");
+        set_mutex(&self.session_state, "degraded_fast");
         set_mutex(&self.decision_reason, capability_reason(failure));
     }
 
     pub(crate) fn record_verified_reuse(&self) {
         self.verified_reuse_files.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_fast_rebootstrap(&self) {
+        self.fast_rebootstrap_files.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_individual_repair_verification(&self) {
+        self.individual_repair_verification_files.fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn record_stock_sha1(&self) {
@@ -143,6 +160,7 @@ impl ActivationProbe {
             canonical_objects_layout: self.canonical_objects_layout,
             capability_mode: CAPABILITY_MODE,
             elevation_requested: false,
+            policy: POLICY,
             session_attempted: self.session_attempted.load(Ordering::Relaxed),
             session_state,
             decision_reason,
@@ -151,6 +169,8 @@ impl ActivationProbe {
             manifest_present_after,
             publication_state,
             verified_reuse_files: self.verified_reuse_files.load(Ordering::Relaxed),
+            fast_rebootstrap_files: self.fast_rebootstrap_files.load(Ordering::Relaxed),
+            individual_repair_verification_files: self.individual_repair_verification_files.load(Ordering::Relaxed),
             stock_sha1_files: self.stock_sha1_files.load(Ordering::Relaxed),
         };
 
@@ -181,15 +201,15 @@ fn mode_name(mode: AssetVerificationMode) -> &'static str {
 
 fn capability_reason(failure: CapabilityFailure) -> &'static str {
     match failure {
-        CapabilityFailure::HelperMissing => "legacy_helper_missing",
-        CapabilityFailure::HelperIdentityMismatch => "legacy_helper_identity_mismatch",
-        CapabilityFailure::UacDenied => "legacy_uac_denied",
-        CapabilityFailure::HelperCrash => "legacy_helper_crash",
-        CapabilityFailure::Timeout => "legacy_helper_timeout",
-        CapabilityFailure::MalformedProtocol => "legacy_helper_protocol",
-        CapabilityFailure::InvalidPipeAcl => "legacy_invalid_pipe_acl",
-        CapabilityFailure::InvalidPeerPid => "legacy_invalid_peer_pid",
-        CapabilityFailure::Io => "direct_capability_io",
+        CapabilityFailure::HelperMissing => "fast_rebootstrap_legacy_helper_missing",
+        CapabilityFailure::HelperIdentityMismatch => "fast_rebootstrap_legacy_helper_identity_mismatch",
+        CapabilityFailure::UacDenied => "fast_rebootstrap_legacy_uac_denied",
+        CapabilityFailure::HelperCrash => "fast_rebootstrap_legacy_helper_crash",
+        CapabilityFailure::Timeout => "fast_rebootstrap_legacy_helper_timeout",
+        CapabilityFailure::MalformedProtocol => "fast_rebootstrap_legacy_helper_protocol",
+        CapabilityFailure::InvalidPipeAcl => "fast_rebootstrap_legacy_invalid_pipe_acl",
+        CapabilityFailure::InvalidPeerPid => "fast_rebootstrap_legacy_invalid_peer_pid",
+        CapabilityFailure::Io => "fast_rebootstrap_direct_capability_io",
     }
 }
 
@@ -212,40 +232,47 @@ mod tests {
     }
 
     #[test]
-    fn asset_usn_cache_probe_is_default_off() {
+    fn asset_usn_cache_probe_sidecar_is_default_off() {
         assert!(ActivationProbe::from_path(None, true, AssetVerificationMode::Normal, true, false,).is_none());
     }
 
     #[test]
-    fn asset_usn_cache_probe_reports_direct_capability_fallback() {
+    fn asset_usn_cache_probe_reports_fast_degraded_capability() {
         let output = temp_path("capability");
         let manifest = temp_path("manifest");
         let _ = std::fs::remove_file(&output);
         let _ = std::fs::remove_file(&manifest);
 
-        let probe =
-            ActivationProbe::from_path(Some(output.clone()), true, AssetVerificationMode::Normal, true, false).unwrap();
+        let probe = ActivationProbe::from_path(
+            Some(output.clone()),
+            true,
+            AssetVerificationMode::FullVerification,
+            true,
+            false,
+        )
+        .unwrap();
         probe.session_attempted();
         probe.session_failed(CapabilityFailure::Io);
-        probe.record_stock_sha1();
+        probe.record_fast_rebootstrap();
         probe.finish(&manifest);
 
         let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
         assert_eq!(value["schema"], SCHEMA);
+        assert_eq!(value["policy"], POLICY);
         assert_eq!(value["capability_mode"], CAPABILITY_MODE);
         assert_eq!(value["elevation_requested"], false);
-        assert_eq!(value["session_attempted"], true);
-        assert_eq!(value["session_state"], "fallback");
-        assert_eq!(value["decision_reason"], "direct_capability_io");
+        assert_eq!(value["verification_mode"], "full_verification");
+        assert_eq!(value["session_state"], "degraded_fast");
+        assert_eq!(value["decision_reason"], "fast_rebootstrap_direct_capability_io");
         assert_eq!(value["publication_state"], "not_attempted");
-        assert_eq!(value["verified_reuse_files"], 0);
-        assert_eq!(value["stock_sha1_files"], 1);
+        assert_eq!(value["fast_rebootstrap_files"], 1);
+        assert_eq!(value["stock_sha1_files"], 0);
 
         let _ = std::fs::remove_file(output);
     }
 
     #[test]
-    fn asset_usn_cache_probe_reports_seed_publication_and_reuse_counts() {
+    fn asset_usn_cache_probe_distinguishes_reuse_rebootstrap_and_repair() {
         let output = temp_path("publication");
         let manifest = temp_path("published-manifest");
         let _ = std::fs::remove_file(&output);
@@ -255,19 +282,19 @@ mod tests {
             ActivationProbe::from_path(Some(output.clone()), true, AssetVerificationMode::Normal, true, false).unwrap();
         probe.session_attempted();
         probe.session_ready();
-        probe.record_stock_sha1();
         probe.record_verified_reuse();
+        probe.record_fast_rebootstrap();
+        probe.record_individual_repair_verification();
         std::fs::write(&manifest, b"manifest").unwrap();
         probe.finish(&manifest);
 
         let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
-        assert_eq!(value["capability_mode"], CAPABILITY_MODE);
-        assert_eq!(value["elevation_requested"], false);
-        assert_eq!(value["session_state"], "active");
-        assert_eq!(value["decision_reason"], "direct_capability_ready");
+        assert_eq!(value["policy"], "fast_rebootstrap");
         assert_eq!(value["publication_state"], "created");
         assert_eq!(value["verified_reuse_files"], 1);
-        assert_eq!(value["stock_sha1_files"], 1);
+        assert_eq!(value["fast_rebootstrap_files"], 1);
+        assert_eq!(value["individual_repair_verification_files"], 1);
+        assert_eq!(value["stock_sha1_files"], 0);
 
         let _ = std::fs::remove_file(output);
         let _ = std::fs::remove_file(manifest);
