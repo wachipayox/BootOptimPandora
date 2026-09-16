@@ -118,10 +118,7 @@ impl ProfileCloneDestination {
     pub(crate) fn finish(self) -> Result<Uuid, ProfileIdentityError> {
         if let Some(manifest) = &self.ready_manifest {
             verify_ready_live_snapshot(&self.root, manifest)?;
-            write_new_synced(
-                &control_root(&self.root).join(MANIFEST_FILE),
-                &serde_json::to_vec_pretty(manifest)?,
-            )?;
+            write_new_synced(&control_root(&self.root).join(MANIFEST_FILE), &serde_json::to_vec_pretty(manifest)?)?;
         }
         Ok(self.profile_uuid)
     }
@@ -141,9 +138,7 @@ pub(crate) fn acquire_or_initialize_profile_lock(
     acquire_lock_for_identity(&control, identity.profile_uuid)
 }
 
-fn acquire_existing_profile_lock(
-    instance_root: &Path,
-) -> Result<ProfileLayoutLockGuard, ProfileIdentityError> {
+fn acquire_existing_profile_lock(instance_root: &Path) -> Result<ProfileLayoutLockGuard, ProfileIdentityError> {
     ensure_plain_existing_directory(instance_root)?;
     let control = control_root(instance_root);
     ensure_plain_existing_directory(&control)?;
@@ -153,9 +148,7 @@ fn acquire_existing_profile_lock(
 
 /// Classifies a clone source without mutating/recovering it. A persistent source must be Ready,
 /// transaction-free and hash-proven. The source lock remains held for the entire filesystem copy.
-pub(crate) fn prepare_profile_clone_source(
-    instance_root: &Path,
-) -> Result<ProfileCloneSource, ProfileIdentityError> {
+pub(crate) fn prepare_profile_clone_source(instance_root: &Path) -> Result<ProfileCloneSource, ProfileIdentityError> {
     ensure_plain_existing_directory(instance_root)?;
     let control = control_root(instance_root);
     match fs::symlink_metadata(&control) {
@@ -177,10 +170,7 @@ pub(crate) fn prepare_profile_clone_source(
     }
     verify_ready_live_snapshot(instance_root, &manifest)?;
 
-    Ok(ProfileCloneSource::Ready {
-        manifest,
-        _lock: lock,
-    })
+    Ok(ProfileCloneSource::Ready { manifest, _lock: lock })
 }
 
 /// Creates a fresh UUID namespace in an already-created empty destination before file copying.
@@ -203,10 +193,7 @@ pub(crate) fn begin_profile_clone_destination(
         schema: SCHEMA_VERSION,
         profile_uuid,
     };
-    write_new_synced(
-        &control.join(IDENTITY_FILE),
-        &serde_json::to_vec_pretty(&identity)?,
-    )?;
+    write_new_synced(&control.join(IDENTITY_FILE), &serde_json::to_vec_pretty(&identity)?)?;
     let lock = acquire_lock_for_identity(&control, profile_uuid)?;
 
     let ready_manifest = match source {
@@ -234,9 +221,7 @@ pub(crate) fn begin_profile_clone_destination(
 
 fn reject_transaction_evidence(control: &Path) -> Result<(), ProfileIdentityError> {
     if path_exists_no_follow(&control.join(JOURNAL_FILE))? {
-        return Err(ProfileIdentityError::CloneSourceNotReady(
-            "journal is present".to_string(),
-        ));
+        return Err(ProfileIdentityError::CloneSourceNotReady("journal is present".to_string()));
     }
     for name in ["staging", "backup", "conflicts"] {
         let path = control.join(name);
@@ -307,13 +292,9 @@ fn validate_managed_relative(relative: &str) -> Result<(), ProfileIdentityError>
         || relative.ends_with('/')
         || relative.contains('\\')
         || relative.contains(':')
-        || relative
-            .split('/')
-            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        || relative.split('/').any(|segment| segment.is_empty() || segment == "." || segment == "..")
     {
-        return Err(ProfileIdentityError::CloneSourceNotReady(format!(
-            "unsafe managed path: {relative}"
-        )));
+        return Err(ProfileIdentityError::CloneSourceNotReady(format!("unsafe managed path: {relative}")));
     }
     Ok(())
 }
@@ -364,9 +345,7 @@ fn load_or_create_identity(control: &Path) -> Result<ProfileIdentity, ProfileIde
     let bytes = serde_json::to_vec_pretty(&identity)?;
     match write_new_synced(&path, &bytes) {
         Ok(()) => Ok(identity),
-        Err(ProfileIdentityError::Io(err)) if err.kind() == ErrorKind::AlreadyExists => {
-            load_existing_identity(control)
-        },
+        Err(ProfileIdentityError::Io(err)) if err.kind() == ErrorKind::AlreadyExists => load_existing_identity(control),
         Err(err) => Err(err),
     }
 }
@@ -395,7 +374,10 @@ fn acquire_lock_for_identity(
 
 #[cfg(unix)]
 fn open_os_exclusive_lock(path: &Path, profile_uuid: Uuid) -> Result<fs::File, ProfileIdentityError> {
-    use std::os::{fd::AsRawFd, unix::fs::{MetadataExt, OpenOptionsExt}};
+    use std::os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt},
+    };
 
     let file = fs::OpenOptions::new()
         .read(true)
@@ -443,12 +425,7 @@ fn open_os_exclusive_lock(path: &Path, profile_uuid: Uuid) -> Result<fs::File, P
         .open(path)
     {
         Ok(file) => file,
-        Err(err)
-            if matches!(
-                err.raw_os_error(),
-                Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)
-            ) =>
-        {
+        Err(err) if matches!(err.raw_os_error(), Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)) => {
             return Err(ProfileIdentityError::Busy(profile_uuid));
         },
         Err(err) => return Err(err.into()),
@@ -470,10 +447,7 @@ fn open_os_exclusive_lock(_path: &Path, _profile_uuid: Uuid) -> Result<fs::File,
 }
 
 fn write_lock_owner(file: &mut fs::File, profile_uuid: Uuid) -> Result<(), ProfileIdentityError> {
-    let acquired_unix_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
+    let acquired_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
     let owner = LockOwner {
         schema: SCHEMA_VERSION,
         profile_uuid,
