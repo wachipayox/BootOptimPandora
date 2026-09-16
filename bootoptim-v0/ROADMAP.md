@@ -26,6 +26,20 @@ of the v0 AppCDS measurement prototype and must not silently expand its scope.
   profile's archive. Shared/global inputs must be represented explicitly rather
   than guessed.
 
+## Persistent per-profile game layout
+
+- Every profile owns a persistent prepared `.minecraft` layout and its own
+  managed-layout manifest/state; installing, updating or switching profile
+  identity publishes changes for that profile rather than rebuilding at Start.
+- Managed pack files and user-local files are separate ownership layers. Normal
+  managed updates must preserve local additions/edits and must never silently
+  overwrite or delete them.
+- Managed/local destination conflicts require explicit resolution state (for
+  example preserve local plus quarantine, user resolution, or stock fallback),
+  with recoverable staging/promotion and rollback after interruption or crash.
+- Profile A updates must not mutate Profile B's layout, manifest, recovery state
+  or caches, even when immutable content-library sources are shared globally.
+
 ## Deferred training
 
 - When a profile has no valid archive, the launcher must let the user choose
