@@ -154,10 +154,7 @@ impl WindowsSession {
             return Err(CapabilityFailure::Io);
         }
         let expected_hashes: HashSet<String> = expected_hashes.into_iter().collect();
-        if expected_hashes
-            .iter()
-            .any(|hash| !super::is_lower_hex(hash, 40))
-        {
+        if expected_hashes.iter().any(|hash| !super::is_lower_hex(hash, 40)) {
             return Err(CapabilityFailure::Io);
         }
 
@@ -172,19 +169,17 @@ impl WindowsSession {
         }
 
         let manifest_path = assets_root.join(".bootoptim-usn-assets-v1.json");
-        let cached = std::fs::read(&manifest_path)
-            .ok()
-            .and_then(|bytes| parse_manifest(&bytes).ok())
-            .filter(|manifest| {
-                manifest.asset_index_sha1 == asset_index_sha1
-                    && manifest.volume_guid == root_identity.volume_guid
-                    && manifest.volume_serial == root_identity.volume_serial
-                    && manifest.assets.len() == expected_hashes.len()
-                    && manifest
-                        .assets
-                        .iter()
-                        .all(|asset| expected_hashes.contains(&asset.expected_sha1))
-            });
+        let cached =
+            std::fs::read(&manifest_path)
+                .ok()
+                .and_then(|bytes| parse_manifest(&bytes).ok())
+                .filter(|manifest| {
+                    manifest.asset_index_sha1 == asset_index_sha1
+                        && manifest.volume_guid == root_identity.volume_guid
+                        && manifest.volume_serial == root_identity.volume_serial
+                        && manifest.assets.len() == expected_hashes.len()
+                        && manifest.assets.iter().all(|asset| expected_hashes.contains(&asset.expected_sha1))
+                });
 
         Ok(Self {
             asset_index_sha1: asset_index_sha1.to_owned(),
@@ -219,18 +214,13 @@ impl WindowsSession {
         }
 
         if let Some(manifest) = &self.cached {
-            if let Some(cached) = manifest
-                .assets
-                .iter()
-                .find(|asset| asset.expected_sha1 == expected_sha1)
-            {
+            if let Some(cached) = manifest.assets.iter().find(|asset| asset.expected_sha1 == expected_sha1) {
                 if let Ok(current) = self.query_file(&file, before.file_id) {
                     if current.file_id == before.file_id
                         && current.volume_serial == self.volume_serial
                         && current.journal_id == self.initial_journal_id
                     {
-                        let after = identity_from_handle(file.as_raw_handle().cast())
-                            .filter(|value| *value == before);
+                        let after = identity_from_handle(file.as_raw_handle().cast()).filter(|value| *value == before);
                         let current_id = hex::encode(current.file_id);
                         let evidence = HitEvidence {
                             feature_requested: runtime.requested(),
@@ -270,8 +260,7 @@ impl WindowsSession {
                     && current.journal_id == self.initial_journal_id
                     && valid_journal_reply(&current)
                     && current.file_usn >= 0
-                    && identity_from_handle(file.as_raw_handle().cast())
-                        .is_some_and(|value| value == before)
+                    && identity_from_handle(file.as_raw_handle().cast()).is_some_and(|value| value == before)
                 {
                     self.record_snapshot(expected_sha1, current.file_id, current.file_usn);
                 }
@@ -286,12 +275,7 @@ impl WindowsSession {
         }
 
         for expected in &self.expected_hashes {
-            if self
-                .snapshots
-                .lock()
-                .ok()
-                .is_some_and(|map| map.contains_key(expected))
-            {
+            if self.snapshots.lock().ok().is_some_and(|map| map.contains_key(expected)) {
                 continue;
             }
             let mut hash = [0u8; 20];
@@ -318,10 +302,7 @@ impl WindowsSession {
             return;
         };
         if snapshots.len() != self.expected_hashes.len()
-            || self
-                .expected_hashes
-                .iter()
-                .any(|hash| !snapshots.contains_key(hash))
+            || self.expected_hashes.iter().any(|hash| !snapshots.contains_key(hash))
         {
             return;
         }
@@ -427,11 +408,7 @@ impl WindowsSession {
         if self.capability_failed.load(AtomicOrdering::Acquire) {
             return Err(CapabilityFailure::Io);
         }
-        let result = self
-            .volume
-            .lock()
-            .map_err(|_| CapabilityFailure::Io)
-            .and_then(|volume| query(volume.0));
+        let result = self.volume.lock().map_err(|_| CapabilityFailure::Io).and_then(|volume| query(volume.0));
         if result.is_err() {
             self.capability_failed.store(true, AtomicOrdering::Release);
         }
@@ -475,9 +452,7 @@ fn directory_identity(path: &Path) -> Option<FileIdentity> {
         )
     })?;
     let identity = identity_from_handle(handle.0)?;
-    if identity.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
-        || identity.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
-    {
+    if identity.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 || identity.attributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
         return None;
     }
     Some(identity)
@@ -525,12 +500,7 @@ fn identity_from_handle(handle: Handle) -> Option<FileIdentity> {
 
     let mut final_path = [0u16; 32768];
     let written = unsafe {
-        GetFinalPathNameByHandleW(
-            handle,
-            final_path.as_mut_ptr(),
-            final_path.len() as u32,
-            VOLUME_NAME_GUID,
-        )
+        GetFinalPathNameByHandleW(handle, final_path.as_mut_ptr(), final_path.len() as u32, VOLUME_NAME_GUID)
     } as usize;
     if written == 0 || written >= final_path.len() {
         return None;
@@ -554,9 +524,7 @@ fn identity_from_handle(handle: Handle) -> Option<FileIdentity> {
 }
 
 fn open_volume(volume_guid: &str) -> Result<OwnedHandle, CapabilityFailure> {
-    let path = volume_guid
-        .strip_suffix('\\')
-        .ok_or(CapabilityFailure::Io)?;
+    let path = volume_guid.strip_suffix('\\').ok_or(CapabilityFailure::Io)?;
     let wide = wide(OsStr::new(path));
     OwnedHandle::new(unsafe {
         CreateFileW(
@@ -667,13 +635,8 @@ fn atomic_publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
     let source = wide(temp.as_os_str());
     let destination = wide(path.as_os_str());
-    if unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    } == 0
+    if unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) }
+        == 0
     {
         let error = std::io::Error::last_os_error();
         let _ = std::fs::remove_file(&temp);
@@ -760,8 +723,7 @@ mod windows_tests {
         file.seek(SeekFrom::Start(0)).unwrap();
         file.write_all(b"ABCDEFGH").unwrap();
         file.sync_all().unwrap();
-        file.set_times(std::fs::FileTimes::new().set_modified(modified))
-            .unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(modified)).unwrap();
         drop(file);
 
         let Some((file, _)) = protected_file(&path) else {
