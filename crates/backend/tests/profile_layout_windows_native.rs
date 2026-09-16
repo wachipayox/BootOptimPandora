@@ -28,7 +28,11 @@ fn seed_existing_identity(root: &Path) {
     fs::create_dir(&control).unwrap();
     fs::write(
         control.join("identity.json"),
-        br#"{"schema":1,"profile_uuid":"11111111-1111-4111-8111-111111111111"}"#,
+        br#"{"schema":1,"profile_uuid":"11111111-1111-4111-8111-111111111111"}"#
+            .iter()
+            .copied()
+            .filter(|byte| *byte != b'\\')
+            .collect::<Vec<_>>(),
     )
     .unwrap();
 }
