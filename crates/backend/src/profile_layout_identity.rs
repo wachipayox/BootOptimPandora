@@ -658,6 +658,29 @@ mod tests {
         assert_eq!(fs::read(outside).unwrap(), b"outside");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn profile_layout_lock_rejects_reparse_lock_path() {
+        use std::os::windows::fs::symlink_file;
+
+        let root = TestRoot::new("reparse-lock");
+        let initial = acquire_or_initialize_profile_lock(&root.0).unwrap();
+        let uuid = initial.profile_uuid();
+        drop(initial);
+        let lock_path = control_root(&root.0).join(LOCKS_DIR).join(format!("{uuid}.lock"));
+        fs::remove_file(&lock_path).unwrap();
+        let outside = root.0.join("outside-lock");
+        fs::write(&outside, b"outside").unwrap();
+        // This is a Windows reparse point. OPEN_REPARSE_POINT must expose it
+        // as unsafe instead of allowing a lock outside the profile namespace.
+        symlink_file(&outside, &lock_path).unwrap();
+        assert!(matches!(
+            acquire_existing_profile_lock(&root.0),
+            Err(ProfileIdentityError::UnsafeFilesystem(path)) if path == lock_path
+        ));
+        assert_eq!(fs::read(outside).unwrap(), b"outside");
+    }
+
     #[test]
     fn profile_layout_legacy_clone_mints_identity_without_guessing_ready_state() {
         let source = TestRoot::new("legacy-source");
