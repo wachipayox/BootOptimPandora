@@ -28,6 +28,9 @@ mod persistent;
 mod prelaunch_attribution;
 #[cfg(test)]
 mod prelaunch_mods_probe;
+pub mod profile_layout;
+mod profile_layout_instance;
+mod profile_layout_publish;
 mod server_list_pinger;
 mod shortcut;
 mod skin_manager;

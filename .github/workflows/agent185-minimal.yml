@@ -1,0 +1,46 @@
+name: Agent 185 focused profile-layout gate
+
+on:
+  push:
+    branches:
+      - "agent185/profile-layout-backend-20260916"
+    paths:
+      - "crates/backend/src/profile_layout.rs"
+      - "crates/backend/src/profile_layout_instance.rs"
+      - "crates/backend/src/profile_layout_publish.rs"
+      - "crates/backend/src/lib.rs"
+      - ".github/workflows/agent185-minimal.yml"
+  pull_request:
+    branches:
+      - "agent184/profile-persistent-layout-20260916"
+    paths:
+      - "crates/backend/src/profile_layout.rs"
+      - "crates/backend/src/profile_layout_instance.rs"
+      - "crates/backend/src/profile_layout_publish.rs"
+      - "crates/backend/src/lib.rs"
+      - ".github/workflows/agent185-minimal.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent185-focused-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-focused:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install backend build dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+      - name: Check formatting of affected Rust paths only
+        run: rustfmt --edition 2024 --config skip_children=true --check crates/backend/src/profile_layout.rs crates/backend/src/profile_layout_instance.rs crates/backend/src/profile_layout_publish.rs crates/backend/src/lib.rs
+      - name: Check backend tests
+        run: cargo check -p backend --tests --frozen
+      - name: Test profile layout state, corruption and recovery
+        run: cargo test -p backend profile_layout --frozen -- --test-threads=1
