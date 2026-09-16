@@ -36,6 +36,8 @@ jobs:
       - name: Check Agent 190 diff hygiene
         shell: pwsh
         run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.ref }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git diff --check "${{ github.event.pull_request.base.sha }}...HEAD" -- crates/backend/src/profile_layout_identity.rs crates/backend/tests/profile_layout_windows_native.rs
           exit $LASTEXITCODE
 
