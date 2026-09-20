@@ -1,106 +1,72 @@
-use std::{path::{Component, Path, PathBuf}, rc::Rc};
+use std::rc::Rc;
 
 use gpui::{prelude::*, *};
 use gpui_component::v_flex;
 
 use super::{SettingGroup, SettingItem, SettingItemWidget};
 
-const OWNERSHIP_BLOCKER: &str =
-    "Automatic add/remove is unavailable: Microsoft Defender path exclusions are string values without a per-entry owner/id, so Pandora cannot prove a later identical exclusion still belongs to Pandora before removing it.";
+const UTILITY_BLOCKER: &str = "No Defender exclusion is recommended: excluding only Pandora.exe would stop Defender scanning that executable itself, but it would not reduce scans of the modpack JARs/files that motivated this investigation.";
+const SCOPE_BLOCKER: &str = "A Defender process exclusion is also rejected because Microsoft documents it as excluding files opened by that process. Excluding .minecraft, mods, downloads, a parent directory, user files, or a drive is outside BootOptim's security contract.";
+const OWNERSHIP_BLOCKER: &str = "Automatic add/remove is additionally blocked because Defender exclusion entries do not provide a per-entry Pandora owner/id. Pandora therefore cannot prove that a later identical exclusion is still its own before removing it.";
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CandidateBlocker {
-    NotAbsolute,
-    NotExecutable,
-    PortableBuild,
-    GameOrModsTree,
+enum CandidateScope {
+    LauncherFile,
+    LauncherProcess,
+    GameOrUserTree,
+    LauncherOwnedCache,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RecommendationModel {
-    exact_executable: Option<PathBuf>,
-    candidate_blocker: Option<CandidateBlocker>,
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopeDisposition {
+    NotUsefulForObservedJarScanning,
+    RejectedTooBroad,
+    RejectedForbidden,
+    UnavailableWithoutFixedIdentity,
 }
 
-fn exact_launcher_candidate(path: &Path) -> Result<PathBuf, CandidateBlocker> {
-    if !path.is_absolute() {
-        return Err(CandidateBlocker::NotAbsolute);
-    }
-
-    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-        return Err(CandidateBlocker::NotExecutable);
-    };
-    let file_name_lower = file_name.to_ascii_lowercase();
-    if !file_name_lower.ends_with(".exe") {
-        return Err(CandidateBlocker::NotExecutable);
-    }
-    if file_name_lower.contains("portable") {
-        return Err(CandidateBlocker::PortableBuild);
-    }
-
-    if path.components().any(|component| {
-        let Component::Normal(name) = component else {
-            return false;
-        };
-        let name = name.to_string_lossy();
-        name.eq_ignore_ascii_case(".minecraft") || name.eq_ignore_ascii_case("mods")
-    }) {
-        return Err(CandidateBlocker::GameOrModsTree);
-    }
-
-    Ok(path.to_path_buf())
-}
-
-fn recommendation_model() -> RecommendationModel {
-    let Some(path) = std::env::current_exe().ok() else {
-        return RecommendationModel {
-            exact_executable: None,
-            candidate_blocker: Some(CandidateBlocker::NotExecutable),
-        };
-    };
-    let path = path.canonicalize().unwrap_or(path);
-
-    match exact_launcher_candidate(&path) {
-        Ok(path) => RecommendationModel {
-            exact_executable: Some(path),
-            candidate_blocker: None,
-        },
-        Err(blocker) => RecommendationModel {
-            exact_executable: None,
-            candidate_blocker: Some(blocker),
-        },
+#[cfg(test)]
+fn scope_disposition(scope: CandidateScope) -> ScopeDisposition {
+    match scope {
+        CandidateScope::LauncherFile => ScopeDisposition::NotUsefulForObservedJarScanning,
+        CandidateScope::LauncherProcess => ScopeDisposition::RejectedTooBroad,
+        CandidateScope::GameOrUserTree => ScopeDisposition::RejectedForbidden,
+        CandidateScope::LauncherOwnedCache => ScopeDisposition::UnavailableWithoutFixedIdentity,
     }
 }
 
 pub(super) fn create_group() -> SettingGroup {
-    let model = recommendation_model();
-
     SettingGroup {
         title: Some(|| "Windows security"),
         items: vec![SettingItem {
-            title: || "Microsoft Defender exclusion",
-            description: || "Optional manual recommendation only. Pandora does not change Defender automatically in this candidate.",
-            widget: SettingItemWidget::Any(Rc::new(move |_, _| {
-                let candidate = if let Some(path) = &model.exact_executable {
-                    format!(
-                        "Narrow candidate only: Microsoft Defender Antivirus path exclusion for this exact launcher file:\n{}",
-                        path.display()
-                    )
-                } else {
-                    format!(
-                        "No exclusion is recommended from this launch location ({:?}).",
-                        model.candidate_blocker
-                    )
-                };
-
+            title: || "Microsoft Defender performance",
+            description: || {
+                "Diagnostic recommendation only. This candidate does not create or remove Defender exclusions."
+            },
+            widget: SettingItemWidget::Any(Rc::new(|_, _| {
                 v_flex()
                     .gap_1()
                     .max_w(px(520.0))
-                    .child(div().text_sm().child(SharedString::new(candidate)))
+                    .child(div().text_sm().child(UTILITY_BLOCKER))
+                    .child(div().text_sm().child(SCOPE_BLOCKER))
                     .child(div().text_sm().child(OWNERSHIP_BLOCKER))
                     .child(div().text_sm().child(
-                        "Risk: even a single-file exclusion reduces antivirus inspection for that file. Never exclude .minecraft, mods, downloads, a parent directory, or a drive.",
+                        "Safer next step: use Microsoft Defender's performance analyzer to identify the actual scan hot spots before considering any future narrowly owned cache integration.",
                     ))
+                    .child(
+                        div()
+                            .id("bootoptim-open-defender-performance-docs")
+                            .text_sm()
+                            .underline()
+                            .child("Open Defender performance analyzer documentation")
+                            .on_click(|_, _, _| {
+                                _ = open::that_detached(
+                                    "https://learn.microsoft.com/defender-endpoint/performance-analyzer-reference",
+                                );
+                            }),
+                    )
                     .child(
                         div()
                             .id("bootoptim-open-windows-security")
@@ -125,42 +91,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn candidate_is_exact_executable_not_parent() {
-        let path = Path::new(r"C:\Program Files\BootOptim\PandoraLauncher.exe");
-        assert_eq!(exact_launcher_candidate(path).unwrap(), path);
+    fn launcher_file_exclusion_is_not_presented_as_jar_scan_remedy() {
+        assert_eq!(
+            scope_disposition(CandidateScope::LauncherFile),
+            ScopeDisposition::NotUsefulForObservedJarScanning
+        );
+        assert!(UTILITY_BLOCKER.contains("would not reduce scans of the modpack JARs"));
     }
 
     #[test]
-    fn portable_and_game_content_locations_are_rejected() {
+    fn process_exclusion_is_rejected_as_too_broad() {
         assert_eq!(
-            exact_launcher_candidate(Path::new(r"C:\Tools\PandoraLauncher-portable.exe")),
-            Err(CandidateBlocker::PortableBuild)
+            scope_disposition(CandidateScope::LauncherProcess),
+            ScopeDisposition::RejectedTooBroad
         );
+        assert!(SCOPE_BLOCKER.contains("files opened by that process"));
+    }
+
+    #[test]
+    fn game_and_user_content_exclusions_are_forbidden() {
         assert_eq!(
-            exact_launcher_candidate(Path::new(r"C:\Games\Pack\.minecraft\PandoraLauncher.exe")),
-            Err(CandidateBlocker::GameOrModsTree)
+            scope_disposition(CandidateScope::GameOrUserTree),
+            ScopeDisposition::RejectedForbidden
         );
+        for forbidden in [".minecraft", "mods", "downloads", "user files", "drive"] {
+            assert!(SCOPE_BLOCKER.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn launcher_cache_requires_fixed_identity_before_reconsideration() {
         assert_eq!(
-            exact_launcher_candidate(Path::new(r"C:\Games\Pack\mods\PandoraLauncher.exe")),
-            Err(CandidateBlocker::GameOrModsTree)
+            scope_disposition(CandidateScope::LauncherOwnedCache),
+            ScopeDisposition::UnavailableWithoutFixedIdentity
         );
     }
 
     #[test]
-    fn non_executable_or_relative_paths_are_rejected() {
-        assert_eq!(
-            exact_launcher_candidate(Path::new(r"PandoraLauncher.exe")),
-            Err(CandidateBlocker::NotAbsolute)
-        );
-        assert_eq!(
-            exact_launcher_candidate(Path::new(r"C:\Program Files\BootOptim\PandoraLauncher")),
-            Err(CandidateBlocker::NotExecutable)
-        );
-    }
-
-    #[test]
-    fn automatic_action_remains_blocked_by_ownership_contract() {
-        assert!(OWNERSHIP_BLOCKER.contains("without a per-entry owner/id"));
+    fn automatic_mutation_remains_blocked_by_ownership_contract() {
+        assert!(OWNERSHIP_BLOCKER.contains("per-entry Pandora owner/id"));
         assert!(OWNERSHIP_BLOCKER.contains("cannot prove"));
     }
 }

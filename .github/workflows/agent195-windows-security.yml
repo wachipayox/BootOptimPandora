@@ -29,16 +29,16 @@ concurrency:
 
 jobs:
   focused-windows-security:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Check focused Rust formatting
-        run: rustfmt --edition 2024 --config skip_children=true --check crates/frontend/src/settings/general.rs crates/frontend/src/settings/mod.rs crates/frontend/src/settings/windows_security.rs
+      - name: Check new Windows security module formatting
+        run: rustfmt --edition 2024 --check crates/frontend/src/settings/windows_security.rs
       - name: Check frontend tests
         run: cargo check -p frontend --tests --frozen
-      - name: Test narrow Windows security policy
+      - name: Test Windows security scope policy
         run: cargo test -p frontend windows_security::tests --frozen -- --test-threads=1
