@@ -10,6 +10,8 @@ use crate::{component::{generic_title_bar::TitleBar, resize_panel::{ResizePanel,
 mod general;
 mod appearance;
 mod network;
+#[cfg(windows)]
+mod windows_security;
 
 struct SettingsRoot {
     settings: Settings,

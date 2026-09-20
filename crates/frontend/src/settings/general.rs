@@ -6,9 +6,7 @@ use gpui_component::select::{Select, SelectEvent};
 use crate::{component::named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem, SearchableNamedDropdown}, interface_config::{InterfaceConfig, LiveGameOutputDisplay}, settings::{SettingGroup, SettingItem, SettingItemWidget, SettingPage}};
 
 pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
-    SettingPage {
-        title: t::settings::general,
-        groups: vec![
+    let mut groups = vec![
             SettingGroup {
                 title: None,
                 items: vec![
@@ -64,11 +62,18 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                 ].into(),
                 searched_items: None
             }
-        ].into(),
-        searched_groups: None
+
+    ];
+
+    #[cfg(windows)]
+    groups.push(super::windows_security::create_group());
+
+    SettingPage {
+        title: t::settings::general,
+        groups: groups.into(),
+        searched_groups: None,
     }
 }
-
 fn create_language_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget {
     let languages = std::iter::once(NamedDropdownItem {
             name: DropdownName::Translated(t::settings::general::general::language::system),
