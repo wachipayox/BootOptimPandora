@@ -1,8 +1,6 @@
 name: Agent 196 Windows IPC gate
 
 on:
-  push:
-    branches: ["agent196/windows-ipc-bounded-20260920"]
   pull_request:
     branches: ["agent/integration-current"]
     paths:
