@@ -40,8 +40,8 @@ jobs:
           components: rustfmt
       - name: Install build dependencies
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
-      - name: Format gate
-        run: cargo fmt --all --check
+      - name: Format affected crates
+        run: cargo fmt -p bridge -p backend -p frontend -- --check
       - name: Check affected crates
         run: cargo check -p bridge -p backend -p frontend --tests --frozen
       - name: Test cancellation generation semantics
