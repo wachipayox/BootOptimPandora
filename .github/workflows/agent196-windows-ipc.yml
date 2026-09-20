@@ -1,0 +1,49 @@
+name: Agent 196 Windows IPC gate
+
+on:
+  push:
+    branches: ["agent196/windows-ipc-bounded-20260920"]
+  pull_request:
+    branches: ["agent/integration-current"]
+    paths:
+      - "crates/pandora_launcher/src/main.rs"
+      - "crates/backend/src/backend_handler.rs"
+      - ".github/workflows/agent196-windows-ipc.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent196-windows-ipc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check focused formatting
+        run: rustfmt --edition 2024 --config skip_children=true --check crates/pandora_launcher/src/main.rs crates/backend/src/backend_handler.rs
+      - name: Check affected crates
+        run: cargo check -p pandora_launcher -p backend --tests --frozen
+      - name: Test backend launch guard
+        run: cargo test -p backend launch_gate_tests --frozen -- --test-threads=1
+
+  windows-ipc:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check affected crates on Windows
+        run: cargo check -p pandora_launcher -p backend --tests --frozen
+      - name: Exercise native named-pipe IPC
+        run: cargo test -p pandora_launcher windows_ipc_tests --frozen -- --nocapture --test-threads=1
+      - name: Test duplicate launch guard
+        run: cargo test -p backend launch_gate_tests --frozen -- --nocapture --test-threads=1
