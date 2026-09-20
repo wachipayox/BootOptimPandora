@@ -334,6 +334,13 @@ impl Instance {
                 let mut guard = backend.instance_state.write();
                 let this = guard.instances.get_mut(id)?;
 
+                // This task may have been spawned before Start but scheduled
+                // afterwards. Exit before consuming dirty paths or starting
+                // any filesystem work while launch cancellation is active.
+                if this.worlds_state.is_cancelled_by_launch() {
+                    return this.worlds.clone();
+                }
+
                 if let Some(pending) = &this.pending_worlds_load && !pending.is_notified() {
                     await_pending = Some(pending.clone());
                     continue;
@@ -594,6 +601,12 @@ impl Instance {
 
                 let mut guard = backend.instance_state.write();
                 let this = guard.instances.get_mut(id)?;
+
+                // Match the worlds path: a task queued before Start must not
+                // clear dirty intent or start servers.dat I/O after cancel.
+                if this.servers_state.is_cancelled_by_launch() {
+                    return this.servers.clone();
+                }
 
                 if let Some(pending) = &this.pending_servers_load && !pending.is_notified() {
                     await_pending = Some(pending.clone());
