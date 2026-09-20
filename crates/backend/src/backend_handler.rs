@@ -397,11 +397,7 @@ impl BackendState {
                 }
 
                 if let Some(id) = id {
-                    let modal_action = ModalAction::default();
-                    self.start_instance(id, quick_play, None, modal_action.clone()).await;
-                    if let Some(error) = modal_action.get_error_message() {
-                        self.send.send_error(error);
-                    }
+                    self.spawn_start_instance(id, quick_play, None, ModalAction::default(), true);
                 }
             },
             MessageToBackend::StartInstance {
@@ -409,7 +405,7 @@ impl BackendState {
                 quick_play,
                 live_game_output,
                 modal_action,
-            } => self.start_instance(id, quick_play, live_game_output, modal_action).await,
+            } => self.spawn_start_instance(id, quick_play, live_game_output, modal_action, false),
             MessageToBackend::SetContentEnabled {
                 id,
                 content_ids: mod_ids,
@@ -2084,18 +2080,22 @@ impl BackendState {
         }
     }
 
-    async fn start_instance(
+    fn spawn_start_instance(
         self: &Arc<Self>,
         id: InstanceID,
         quick_play: Option<QuickPlayLaunch>,
         live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
         modal_action: ModalAction,
+        report_error_to_frontend: bool,
     ) {
         let keepalive = KeepAlive::new();
 
         let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
             if let Err(error) = try_claim_launch(&mut instance.launch_keepalive, &keepalive) {
                 modal_action.set_finished_with_error(error.into());
+                if report_error_to_frontend {
+                    self.send.send_error(error);
+                }
                 return;
             }
 
@@ -2104,11 +2104,43 @@ impl BackendState {
 
             (instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
         } else {
-            self.send.send_error("Can't launch instance, unknown id");
-            modal_action.set_finished_with_error("Can't launch instance, unknown id".into());
+            let error = "Can't launch instance, unknown id";
+            self.send.send_error(error);
+            modal_action.set_finished_with_error(error.into());
             return;
         };
 
+        let this = self.clone();
+        tokio::task::spawn(async move {
+            this.start_instance_claimed(
+                id,
+                quick_play,
+                live_game_output,
+                modal_action.clone(),
+                keepalive,
+                dot_minecraft,
+                configuration,
+            )
+            .await;
+
+            if report_error_to_frontend
+                && let Some(error) = modal_action.get_error_message()
+            {
+                this.send.send_error(error);
+            }
+        });
+    }
+
+    async fn start_instance_claimed(
+        self: &Arc<Self>,
+        id: InstanceID,
+        quick_play: Option<QuickPlayLaunch>,
+        live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
+        modal_action: ModalAction,
+        keepalive: KeepAlive,
+        dot_minecraft: Arc<std::path::Path>,
+        configuration: schema::instance::InstanceConfiguration,
+    ) {
         scopeguard::defer! {
             modal_action.set_finished();
             drop(keepalive);
