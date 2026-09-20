@@ -6,6 +6,7 @@ on:
     paths:
       - "crates/pandora_launcher/src/main.rs"
       - "crates/backend/src/backend_handler.rs"
+      - "crates/backend/src/backend.rs"
       - ".github/workflows/agent196-windows-ipc.yml"
 
 permissions:
@@ -27,10 +28,10 @@ jobs:
         with:
           components: rustfmt
       - name: Check candidate whitespace
-        run: git diff --check 2e2bc373341f4e7f0676f56756a4a22796a77357 HEAD -- crates/pandora_launcher/src/main.rs crates/backend/src/backend_handler.rs
+        run: git diff --check 2e2bc373341f4e7f0676f56756a4a22796a77357 HEAD -- crates/pandora_launcher/src/main.rs crates/backend/src/backend_handler.rs crates/backend/src/backend.rs
       - name: Focused rustfmt baseline diagnostic
         continue-on-error: true
-        run: rustfmt --edition 2024 --config skip_children=true --check crates/pandora_launcher/src/main.rs crates/backend/src/backend_handler.rs
+        run: rustfmt --edition 2024 --config skip_children=true --check crates/pandora_launcher/src/main.rs crates/backend/src/backend_handler.rs crates/backend/src/backend.rs
       - name: Check affected crates
         run: cargo check -p pandora_launcher -p backend --tests --frozen
       - name: Test backend launch guard
