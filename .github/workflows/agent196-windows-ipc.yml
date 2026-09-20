@@ -27,6 +27,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - name: Install backend build dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
       - name: Check candidate whitespace
         run: git diff --check 2e2bc373341f4e7f0676f56756a4a22796a77357 HEAD -- crates/pandora_launcher/src/main.rs crates/backend/src/backend_handler.rs crates/backend/src/backend.rs
       - name: Focused rustfmt baseline diagnostic
