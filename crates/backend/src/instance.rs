@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use ustr::Ustr;
 
-use crate::{BackendState, BackendStateFileWatching, WatchTarget, fs::{FolderChanges, IoOrSerializationError}, id_slab::{GetId, Id}, launcher_import, mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager}, persistent::Persistent, server_list_pinger::{PingResult, ServerListPinger}};
+use crate::{BackendState, BackendStateFileWatching, WatchTarget, fs::{FolderChanges, IoOrSerializationError}, id_slab::{GetId, Id}, launcher_import, mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager}, persistent::Persistent};
 
 #[derive(Debug)]
 pub struct Instance {
@@ -118,6 +118,69 @@ impl From<IoOrSerializationError> for InstanceLoadError {
     }
 }
 
+struct QuickplayBackgroundMode {
+    #[cfg(target_os = "windows")]
+    active: bool,
+}
+
+impl QuickplayBackgroundMode {
+    fn enter() -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::System::Threading::{
+                GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN,
+            };
+
+            let active = unsafe {
+                SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN).is_ok()
+            };
+            if !active {
+                log::warn!("Unable to enter Windows background mode for Quickplay worker");
+            }
+            return Self { active };
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            Self {}
+        }
+    }
+}
+
+impl Drop for QuickplayBackgroundMode {
+    fn drop(&mut self) {
+        #[cfg(target_os = "windows")]
+        if self.active {
+            use windows::Win32::System::Threading::{
+                GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_END,
+            };
+
+            if unsafe { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END) }.is_err() {
+                log::warn!("Unable to leave Windows background mode for Quickplay worker");
+            }
+        }
+    }
+}
+
+fn quickplay_work_cancelled(state: &BridgeDataLoadState, generation: u64) -> bool {
+    state.is_cancelled_by_launch() || !state.is_generation_current(generation)
+}
+
+fn publish_quickplay_result<T>(
+    state: &BridgeDataLoadState,
+    generation: u64,
+    current: &mut Option<Arc<[T]>>,
+    result: Arc<[T]>,
+) -> bool {
+    if quickplay_work_cancelled(state, generation) {
+        return false;
+    }
+
+    *current = Some(result);
+    state.load_finished();
+    true
+}
+
 impl Instance {
     pub fn on_root_renamed(&mut self, backend: &Arc<BackendState>, path: &Path) {
         log::info!("Instance {:?} has been moved to {:?}", self.root_path, path);
@@ -176,6 +239,16 @@ impl Instance {
         self.mark_world_dirty(backend, FolderChanges::all_dirty(), reload);
     }
 
+    pub fn cancel_quickplay_for_launch(&mut self) {
+        self.worlds_state.cancel_for_launch();
+        self.servers_state.cancel_for_launch();
+    }
+
+    pub fn resume_quickplay_after_launch(&mut self) {
+        self.worlds_state.resume_after_launch();
+        self.servers_state.resume_after_launch();
+    }
+
     pub fn try_get_content(&self, id: InstanceContentID) -> Option<(&InstanceContentSummary, ContentFolder)> {
         for (folder, state) in &self.content_state {
             if state.generation == id.generation {
@@ -201,7 +274,7 @@ impl Instance {
         async move {
             let mut await_pending: Option<KeepAliveNotifySignalHandle> = None;
 
-            let (future, keep_alive) = loop {
+            let (future, keep_alive, generation) = loop {
                 if let Some(pending) = await_pending {
                     pending.await_notification().await;
                 }
@@ -223,36 +296,49 @@ impl Instance {
                 });
 
                 let (all_dirty, dirty_paths) = this.dirty_worlds.take();
+                if let Some(last) = &this.worlds && !all_dirty && dirty_paths.is_empty() {
+                    return Some(last.clone());
+                }
+
+                let generation = this.worlds_state.load_started();
+                let load_state = this.worlds_state.clone();
                 let future = if let Some(last) = &this.worlds && !all_dirty {
-                    if !dirty_paths.is_empty() {
-                        let last = last.clone();
-                        tokio::task::spawn_blocking(move || {
-                            Self::load_worlds_dirty(dirty_paths, last)
-                        })
-                    } else {
-                        return Some(last.clone());
-                    }
+                    let last = last.clone();
+                    tokio::task::spawn_blocking(move || {
+                        Self::load_worlds_dirty(dirty_paths, last, &load_state, generation)
+                    })
                 } else {
                     let saves_path = this.saves_path.clone();
                     tokio::task::spawn_blocking(move || {
-                        Self::load_worlds_all(&saves_path)
+                        Self::load_worlds_all(&saves_path, &load_state, generation)
                     })
                 };
 
                 let keep_alive = KeepAliveNotifySignal::new();
                 this.pending_worlds_load = Some(keep_alive.create_handle());
-                this.worlds_state.load_started();
 
-                break (future, keep_alive);
+                break (future, keep_alive, generation);
             };
 
-            let worlds = future.await.unwrap();
+            let worlds = match future.await {
+                Ok(worlds) => worlds,
+                Err(error) => {
+                    log::error!("Quickplay world loader panicked or was cancelled: {error:?}");
+                    Arc::from([])
+                },
+            };
 
             let mut guard = backend.instance_state.write();
             let this = guard.instances.get_mut(id)?;
+            let state = this.worlds_state.clone();
 
-            this.worlds = Some(worlds.clone());
-            this.worlds_state.load_finished();
+            if !publish_quickplay_result(&state, generation, &mut this.worlds, worlds.clone()) {
+                let current = this.worlds.clone();
+                drop(guard);
+                keep_alive.notify();
+                return current;
+            }
+            this.pending_worlds_load = None;
             let should_load = this.worlds_state.should_load();
             drop(guard);
 
@@ -277,8 +363,13 @@ impl Instance {
         }.boxed()
     }
 
-    fn load_worlds_all(saves_path: &Path) -> Arc<[InstanceWorldSummary]> {
+    fn load_worlds_all(saves_path: &Path, state: &BridgeDataLoadState, generation: u64) -> Arc<[InstanceWorldSummary]> {
+        let _background_mode = QuickplayBackgroundMode::enter();
         log::info!("Loading all worlds in {:?}", saves_path);
+
+        if quickplay_work_cancelled(state, generation) {
+            return Arc::from([]);
+        }
 
         let Ok(directory) = std::fs::read_dir(&saves_path) else {
             return [].into();
@@ -288,7 +379,7 @@ impl Instance {
         let mut summaries = Vec::with_capacity(64);
 
         for entry in directory {
-            if count >= 64 {
+            if count >= 64 || quickplay_work_cancelled(state, generation) {
                 break;
             }
 
@@ -303,14 +394,16 @@ impl Instance {
 
             count += 1;
 
-            match load_world_summary(&path) {
-                Ok(summary) => {
+            match load_world_summary(&path, state, generation) {
+                Ok(Some(summary)) => {
                     summaries.push(summary);
                 },
+                Ok(None) => break,
                 Err(err) => {
                     log::error!("Error loading world summary: {:?}", err);
                 },
             }
+            std::thread::yield_now();
         }
 
         summaries.sort_by_key(|s| -s.last_played);
@@ -318,7 +411,8 @@ impl Instance {
         summaries.into()
     }
 
-    fn load_worlds_dirty(dirty: FxHashSet<Arc<Path>>, last: Arc<[InstanceWorldSummary]>) -> Arc<[InstanceWorldSummary]> {
+    fn load_worlds_dirty(dirty: FxHashSet<Arc<Path>>, last: Arc<[InstanceWorldSummary]>, state: &BridgeDataLoadState, generation: u64) -> Arc<[InstanceWorldSummary]> {
+        let _background_mode = QuickplayBackgroundMode::enter();
         log::debug!("Loading changed worlds");
         log::trace!("Changed worlds: {:?}", dirty);
 
@@ -327,7 +421,7 @@ impl Instance {
         let mut count = 0;
 
         for path in dirty.iter() {
-            if count >= 64 {
+            if count >= 64 || quickplay_work_cancelled(state, generation) {
                 break;
             }
 
@@ -337,14 +431,16 @@ impl Instance {
 
             count += 1;
 
-            match load_world_summary(path) {
-                Ok(summary) => {
+            match load_world_summary(path, state, generation) {
+                Ok(Some(summary)) => {
                     summaries.push(summary);
                 },
+                Ok(None) => break,
                 Err(err) => {
                     log::error!("Error loading world summary: {:?}", err);
                 },
             }
+            std::thread::yield_now();
         }
 
         for old_summary in &*last {
@@ -432,7 +528,7 @@ impl Instance {
         async move {
             let mut await_pending: Option<KeepAliveNotifySignalHandle> = None;
 
-            let (future, keep_alive) = loop {
+            let (future, keep_alive, generation) = loop {
                 if let Some(pending) = await_pending {
                     pending.await_notification().await;
                 }
@@ -450,34 +546,43 @@ impl Instance {
                     id: this.id,
                 });
 
-                let future = if let Some(last) = &this.servers && !this.dirty_servers {
+                if let Some(last) = &this.servers && !this.dirty_servers {
                     return Some(last.clone());
-                } else {
-                    let server_dat_path = this.server_dat_path.clone();
-                    let backend = backend.clone();
-                    let instance_id = this.id;
-                    let version = this.configuration.get().minecraft_version;
-                    tokio::task::spawn_blocking(move || {
-                        Self::load_servers_all(&server_dat_path, &backend, version, instance_id)
-                    })
-                };
+                }
+
+                let generation = this.servers_state.load_started();
+                let load_state = this.servers_state.clone();
+                let server_dat_path = this.server_dat_path.clone();
+                let future = tokio::task::spawn_blocking(move || {
+                    Self::load_servers_all(&server_dat_path, &load_state, generation)
+                });
 
                 let keep_alive = KeepAliveNotifySignal::new();
                 this.pending_servers_load = Some(keep_alive.create_handle());
-                this.servers_state.load_started();
-
                 this.dirty_servers = false;
 
-                break (future, keep_alive);
+                break (future, keep_alive, generation);
             };
 
-            let servers = future.await.unwrap();
+            let servers = match future.await {
+                Ok(servers) => servers,
+                Err(error) => {
+                    log::error!("Quickplay server loader panicked or was cancelled: {error:?}");
+                    Arc::from([])
+                },
+            };
 
             let mut guard = backend.instance_state.write();
             let this = guard.instances.get_mut(id)?;
+            let state = this.servers_state.clone();
 
-            this.servers = Some(servers.clone());
-            this.servers_state.load_finished();
+            if !publish_quickplay_result(&state, generation, &mut this.servers, servers.clone()) {
+                let current = this.servers.clone();
+                drop(guard);
+                keep_alive.notify();
+                return current;
+            }
+            this.pending_servers_load = None;
             let should_load = this.servers_state.should_load();
             drop(guard);
 
@@ -494,14 +599,15 @@ impl Instance {
         }.boxed()
     }
 
-    fn load_servers_all(server_dat_path: &Path, backend: &Arc<BackendState>, version: Ustr, instance: InstanceID) -> Arc<[InstanceServerSummary]> {
+    fn load_servers_all(server_dat_path: &Path, state: &BridgeDataLoadState, generation: u64) -> Arc<[InstanceServerSummary]> {
+        let _background_mode = QuickplayBackgroundMode::enter();
         log::info!("Loading servers from {:?}", server_dat_path);
 
-        if !server_dat_path.is_file() {
+        if quickplay_work_cancelled(state, generation) || !server_dat_path.is_file() {
             return Arc::from([]);
         }
 
-        let result = match load_servers_summary(&server_dat_path, backend, version, instance) {
+        let result = match load_servers_summary(&server_dat_path, state, generation) {
             Ok(summaries) => summaries.into(),
             Err(err) => {
                 log::error!("Error loading servers: {:?}", err);
@@ -1115,13 +1221,20 @@ fn read_disabled_children_for(
     Some(aux.disabled_children)
 }
 
-fn load_world_summary(path: &Path) -> anyhow::Result<InstanceWorldSummary> {
+fn load_world_summary(path: &Path, state: &BridgeDataLoadState, generation: u64) -> anyhow::Result<Option<InstanceWorldSummary>> {
+    if quickplay_work_cancelled(state, generation) {
+        return Ok(None);
+    }
+
     let level_dat_path = path.join("level.dat");
     if !level_dat_path.is_file() {
         anyhow::bail!("level.dat doesn't exist");
     }
 
     let compressed = std::fs::read(&level_dat_path)?;
+    if quickplay_work_cancelled(state, generation) {
+        return Ok(None);
+    }
 
     let mut decoder = flate2::bufread::GzDecoder::new(compressed.as_slice());
 
@@ -1151,6 +1264,10 @@ fn load_world_summary(path: &Path) -> anyhow::Result<InstanceWorldSummary> {
         level_name.into()
     };
 
+    if quickplay_work_cancelled(state, generation) {
+        return Ok(None);
+    }
+
     let icon_path = path.join("icon.png");
     let icon = if icon_path.is_file() {
         std::fs::read(icon_path).map(UniqueBytes::from).ok()
@@ -1158,17 +1275,28 @@ fn load_world_summary(path: &Path) -> anyhow::Result<InstanceWorldSummary> {
         None
     };
 
-    Ok(InstanceWorldSummary {
+    Ok(Some(InstanceWorldSummary {
         title,
         subtitle,
         level_path: path.into(),
         last_played,
         png_icon: icon,
-    })
+    }))
 }
 
-fn load_servers_summary(server_dat_path: &Path, backend: &Arc<BackendState>, version: Ustr, instance: InstanceID) -> anyhow::Result<Vec<InstanceServerSummary>> {
+fn load_servers_summary(
+    server_dat_path: &Path,
+    state: &BridgeDataLoadState,
+    generation: u64,
+) -> anyhow::Result<Vec<InstanceServerSummary>> {
+    if quickplay_work_cancelled(state, generation) {
+        return Ok(Vec::new());
+    }
+
     let raw = std::fs::read(server_dat_path)?;
+    if quickplay_work_cancelled(state, generation) {
+        return Ok(Vec::new());
+    }
 
     let mut nbt_data = raw.as_slice();
     let result = nbt::decode::read_named(&mut nbt_data)?;
@@ -1179,6 +1307,10 @@ fn load_servers_summary(server_dat_path: &Path, backend: &Arc<BackendState>, ver
     let mut summaries = Vec::with_capacity(servers.len());
 
     for server in servers.iter() {
+        if quickplay_work_cancelled(state, generation) {
+            break;
+        }
+
         let server = server.as_compound().unwrap();
 
         if let Some(hidden) = server.find_byte("hidden")
@@ -1192,42 +1324,64 @@ fn load_servers_summary(server_dat_path: &Path, backend: &Arc<BackendState>, ver
         };
 
         let ip: Arc<str> = ip.as_str().into();
-        let result = ServerListPinger::load_status(backend, ip.clone(), version, instance);
-        let (pinging, status, ping) = match result {
-            PingResult::Pinging => (true, None, None),
-            PingResult::Loaded { status, ping } => (false, Some(status), ping),
-            PingResult::Error => (false, None, None),
-        };
-
         let name: Arc<str> = server
             .find_string("name")
             .map(|v| Arc::from(v.as_str()))
             .unwrap_or_else(|| Arc::from("<unnamed>"));
 
-        let mut icon: Option<UniqueBytes> = if let Some(status) = &status
-            && let Some(icon) = &status.favicon
-            && let Some(base64) = icon.strip_prefix("data:image/png;base64,")
-        {
-            base64::engine::general_purpose::STANDARD.decode(base64.replace('\n', "")).map(UniqueBytes::from).ok()
-        } else {
-            None
-        };
-
-        if icon.is_none() {
-            icon = server
-                .find_string("icon")
-                .and_then(|v| base64::engine::general_purpose::STANDARD.decode(v).map(UniqueBytes::from).ok());
-        }
+        let icon = server
+            .find_string("icon")
+            .and_then(|v| base64::engine::general_purpose::STANDARD.decode(v).map(UniqueBytes::from).ok());
 
         summaries.push(InstanceServerSummary {
             name,
             ip,
             png_icon: icon,
-            pinging,
-            status,
-            ping,
+            pinging: false,
+            status: None,
+            ping: None,
         });
+        std::thread::yield_now();
     }
 
     Ok(summaries)
+}
+
+
+#[cfg(test)]
+mod quickplay_tests {
+    use super::*;
+
+    #[test]
+    fn cancelled_generation_cannot_publish_over_completed_results() {
+        let state = BridgeDataLoadState::default();
+        let generation = state.load_started();
+        let completed: Arc<[u8]> = Arc::from(vec![1_u8, 2, 3].into_boxed_slice());
+        let mut current = Some(completed.clone());
+
+        state.cancel_for_launch();
+        let stale: Arc<[u8]> = Arc::from(vec![9_u8].into_boxed_slice());
+
+        assert!(!publish_quickplay_result(&state, generation, &mut current, stale));
+        assert!(Arc::ptr_eq(current.as_ref().unwrap(), &completed));
+    }
+
+    #[test]
+    fn current_generation_publishes_normally() {
+        let state = BridgeDataLoadState::default();
+        let generation = state.load_started();
+        let mut current: Option<Arc<[u8]>> = None;
+        let result: Arc<[u8]> = Arc::from(vec![4_u8, 5].into_boxed_slice());
+
+        assert!(publish_quickplay_result(&state, generation, &mut current, result.clone()));
+        assert!(Arc::ptr_eq(current.as_ref().unwrap(), &result));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn quickplay_background_mode_round_trips_on_current_thread() {
+        let guard = QuickplayBackgroundMode::enter();
+        assert!(guard.active);
+        drop(guard);
+    }
 }
