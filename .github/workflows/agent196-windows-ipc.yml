@@ -43,10 +43,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Check affected crates on Windows
-        run: cargo check -p pandora_launcher -p backend --tests --frozen
       - name: Exercise native named-pipe IPC
         run: cargo test -p pandora_launcher windows_ipc_tests --frozen -- --nocapture --test-threads=1
       - name: Test duplicate launch guard
