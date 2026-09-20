@@ -14,6 +14,24 @@ of the v0 AppCDS measurement prototype and must not silently expand its scope.
   and independently updatable; the launcher itself must not depend on a random
   system-wide DLL already happening to be present.
 
+## Optional Windows security integration
+
+- On first launch, the installed launcher may explain that real-time scanning
+  can make a large modpack materially slower on older storage. It must offer a
+  **clearly optional**, administrator-approved and reversible action; never
+  disable Defender or alter protection globally.
+- Any exclusion must be as narrow as technically possible: the installed,
+  versioned launcher executable and launcher-owned generated cache only. Do
+  not broadly exclude the game directory, arbitrary user files, downloaded
+  mods or an entire drive.
+- The UI must state exactly which Windows setting/path will change, record the
+  installed rule/exclusion, provide a one-click removal path, and treat denied
+  elevation/tamper protection as a normal non-fatal outcome.
+- Do not add a firewall exception by default. First establish that a concrete
+  launcher feature requires inbound traffic; normal outbound update/login
+  traffic should use Windows' default outbound policy. Any later firewall rule
+  follows the same explicit-consent, narrow-path and reversible contract.
+
 ## Profiles and AppCDS
 
 - The launcher will offer named configuration profiles for the modpack.
