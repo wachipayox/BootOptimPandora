@@ -101,19 +101,13 @@ mod tests {
 
     #[test]
     fn process_exclusion_is_rejected_as_too_broad() {
-        assert_eq!(
-            scope_disposition(CandidateScope::LauncherProcess),
-            ScopeDisposition::RejectedTooBroad
-        );
+        assert_eq!(scope_disposition(CandidateScope::LauncherProcess), ScopeDisposition::RejectedTooBroad);
         assert!(SCOPE_BLOCKER.contains("files opened by that process"));
     }
 
     #[test]
     fn game_and_user_content_exclusions_are_forbidden() {
-        assert_eq!(
-            scope_disposition(CandidateScope::GameOrUserTree),
-            ScopeDisposition::RejectedForbidden
-        );
+        assert_eq!(scope_disposition(CandidateScope::GameOrUserTree), ScopeDisposition::RejectedForbidden);
         for forbidden in [".minecraft", "mods", "downloads", "user files", "drive"] {
             assert!(SCOPE_BLOCKER.contains(forbidden));
         }
