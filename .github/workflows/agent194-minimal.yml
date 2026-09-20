@@ -1,0 +1,61 @@
+name: Agent 194 focused Quickplay launch-yield gate
+
+on:
+  push:
+    branches:
+      - "agent194/quickplay-launch-yield-20260920"
+    paths:
+      - "crates/backend/src/backend_handler.rs"
+      - "crates/backend/src/instance.rs"
+      - "crates/bridge/src/message.rs"
+      - "crates/frontend/src/pages/instance/quickplay_subpage.rs"
+      - ".github/workflows/agent194-minimal.yml"
+      - ".github/workflows/build.yml"
+  pull_request:
+    branches:
+      - "agent/integration-current"
+    paths:
+      - "crates/backend/src/backend_handler.rs"
+      - "crates/backend/src/instance.rs"
+      - "crates/bridge/src/message.rs"
+      - "crates/frontend/src/pages/instance/quickplay_subpage.rs"
+      - ".github/workflows/agent194-minimal.yml"
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent194-quickplay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-focused:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install build dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+      - name: Format gate
+        run: cargo fmt --all --check
+      - name: Check affected crates
+        run: cargo check -p bridge -p backend -p frontend --tests --frozen
+      - name: Test cancellation generation semantics
+        run: cargo test -p bridge bridge_data_load_state_tests --frozen
+      - name: Test stale-publication and completed-result preservation
+        run: cargo test -p backend quickplay_tests --frozen -- --test-threads=1
+
+  windows-quickplay-background:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check backend on native Windows
+        run: cargo check -p backend --tests --frozen
+      - name: Exercise Windows thread background mode
+        run: cargo test -p backend quickplay_background_mode_round_trips_on_current_thread --frozen -- --test-threads=1
