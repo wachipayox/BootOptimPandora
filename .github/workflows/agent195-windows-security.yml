@@ -30,12 +30,15 @@ concurrency:
 jobs:
   focused-windows-security:
     runs-on: windows-2022
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: agent195-windows-security
       - name: Check new Windows security module formatting
         run: rustfmt --edition 2024 --check crates/frontend/src/settings/windows_security.rs
       - name: Check frontend tests
