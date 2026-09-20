@@ -166,6 +166,39 @@ fn quickplay_work_cancelled(state: &BridgeDataLoadState, generation: u64) -> boo
     state.is_cancelled_by_launch() || !state.is_generation_current(generation)
 }
 
+fn read_quickplay_file(
+    path: &Path,
+    state: &BridgeDataLoadState,
+    generation: u64,
+) -> std::io::Result<Option<Vec<u8>>> {
+    if quickplay_work_cancelled(state, generation) {
+        return Ok(None);
+    }
+
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 64 * 1024];
+
+    loop {
+        if quickplay_work_cancelled(state, generation) {
+            return Ok(None);
+        }
+
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+
+        if quickplay_work_cancelled(state, generation) {
+            return Ok(None);
+        }
+        std::thread::yield_now();
+    }
+
+    Ok(Some(bytes))
+}
+
 fn publish_quickplay_result<T>(
     state: &BridgeDataLoadState,
     generation: u64,
@@ -1257,10 +1290,9 @@ fn load_world_summary(path: &Path, state: &BridgeDataLoadState, generation: u64)
         anyhow::bail!("level.dat doesn't exist");
     }
 
-    let compressed = std::fs::read(&level_dat_path)?;
-    if quickplay_work_cancelled(state, generation) {
+    let Some(compressed) = read_quickplay_file(&level_dat_path, state, generation)? else {
         return Ok(None);
-    }
+    };
 
     let mut decoder = flate2::bufread::GzDecoder::new(compressed.as_slice());
 
@@ -1302,7 +1334,11 @@ fn load_world_summary(path: &Path, state: &BridgeDataLoadState, generation: u64)
 
     let icon_path = path.join("icon.png");
     let icon = if icon_path.is_file() {
-        std::fs::read(icon_path).map(UniqueBytes::from).ok()
+        match read_quickplay_file(&icon_path, state, generation) {
+            Ok(Some(bytes)) => Some(UniqueBytes::from(bytes)),
+            Ok(None) => return Ok(None),
+            Err(_) => None,
+        }
     } else {
         None
     };
@@ -1325,10 +1361,9 @@ fn load_servers_summary(
         return Ok(Vec::new());
     }
 
-    let raw = std::fs::read(server_dat_path)?;
-    if quickplay_work_cancelled(state, generation) {
+    let Some(raw) = read_quickplay_file(server_dat_path, state, generation)? else {
         return Ok(Vec::new());
-    }
+    };
 
     let mut nbt_data = raw.as_slice();
     let result = nbt::decode::read_named(&mut nbt_data)?;
@@ -1386,6 +1421,17 @@ fn load_servers_summary(
 #[cfg(test)]
 mod quickplay_tests {
     use super::*;
+
+    #[test]
+    fn cancelled_file_read_stops_before_opening_more_io() {
+        let state = BridgeDataLoadState::default();
+        state.cancel_for_launch();
+
+        let missing = Path::new("quickplay-cancelled-read-must-not-open");
+        assert!(read_quickplay_file(missing, &state, state.generation())
+            .expect("cancelled read should not touch the filesystem")
+            .is_none());
+    }
 
     #[test]
     fn launch_cancel_restores_full_reload_inputs() {
