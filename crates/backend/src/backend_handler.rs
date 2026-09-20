@@ -2090,6 +2090,8 @@ impl BackendState {
         let keepalive = KeepAlive::new();
 
         let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            instance.cancel_quickplay_for_launch();
+
             if let Some(launch_keepalive) = &instance.launch_keepalive
                 && launch_keepalive.is_alive()
             {
@@ -2117,6 +2119,7 @@ impl BackendState {
                     instance.launch_keepalive = None;
                 }
                 self.restore_mods_folder_if_stopped(instance);
+                instance.resume_quickplay_after_launch();
                 self.send.send(instance.create_modify_message());
             }
         }
