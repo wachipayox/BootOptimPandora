@@ -181,6 +181,21 @@ fn publish_quickplay_result<T>(
     true
 }
 
+fn cancel_quickplay_loads_for_launch(
+    worlds_state: &BridgeDataLoadState,
+    servers_state: &BridgeDataLoadState,
+    dirty_worlds: &mut FolderChanges,
+    dirty_servers: &mut bool,
+) {
+    worlds_state.cancel_for_launch();
+    servers_state.cancel_for_launch();
+
+    // A cancelled worker may already have consumed its dirty set. Force the
+    // first post-launch observation to reconcile the current filesystem.
+    dirty_worlds.dirty_all();
+    *dirty_servers = true;
+}
+
 impl Instance {
     pub fn on_root_renamed(&mut self, backend: &Arc<BackendState>, path: &Path) {
         log::info!("Instance {:?} has been moved to {:?}", self.root_path, path);
@@ -240,8 +255,12 @@ impl Instance {
     }
 
     pub fn cancel_quickplay_for_launch(&mut self) {
-        self.worlds_state.cancel_for_launch();
-        self.servers_state.cancel_for_launch();
+        cancel_quickplay_loads_for_launch(
+            &self.worlds_state,
+            &self.servers_state,
+            &mut self.dirty_worlds,
+            &mut self.dirty_servers,
+        );
     }
 
     pub fn resume_quickplay_after_launch(&mut self) {
@@ -443,7 +462,14 @@ impl Instance {
             std::thread::yield_now();
         }
 
+        if quickplay_work_cancelled(state, generation) {
+            return Arc::from([]);
+        }
+
         for old_summary in &*last {
+            if quickplay_work_cancelled(state, generation) {
+                return Arc::from([]);
+            }
             if !dirty.contains(&old_summary.level_path) && old_summary.level_path.exists() {
                 summaries.push(old_summary.clone());
             }
@@ -1240,9 +1266,15 @@ fn load_world_summary(path: &Path, state: &BridgeDataLoadState, generation: u64)
 
     let mut decompressed = Vec::new();
     decoder.read_to_end(&mut decompressed)?;
+    if quickplay_work_cancelled(state, generation) {
+        return Ok(None);
+    }
 
     let mut nbt_data = decompressed.as_slice();
     let result = nbt::decode::read_named(&mut nbt_data)?;
+    if quickplay_work_cancelled(state, generation) {
+        return Ok(None);
+    }
 
     let root = result.as_compound().context("Unable to get root compound")?;
     let data = root.find_compound("Data").context("Unable to get Data")?;
@@ -1300,6 +1332,9 @@ fn load_servers_summary(
 
     let mut nbt_data = raw.as_slice();
     let result = nbt::decode::read_named(&mut nbt_data)?;
+    if quickplay_work_cancelled(state, generation) {
+        return Ok(Vec::new());
+    }
 
     let root = result.as_compound().context("Unable to get root compound")?;
     let servers = root.find_list("servers", nbt::TAG_COMPOUND_ID).context("Unable to get servers")?;
@@ -1351,6 +1386,28 @@ fn load_servers_summary(
 #[cfg(test)]
 mod quickplay_tests {
     use super::*;
+
+    #[test]
+    fn launch_cancel_restores_full_reload_inputs() {
+        let worlds_state = BridgeDataLoadState::default();
+        let servers_state = BridgeDataLoadState::default();
+        let mut dirty_worlds = FolderChanges::no_changes();
+        let mut dirty_servers = false;
+
+        cancel_quickplay_loads_for_launch(
+            &worlds_state,
+            &servers_state,
+            &mut dirty_worlds,
+            &mut dirty_servers,
+        );
+
+        let (all_dirty, paths) = dirty_worlds.take();
+        assert!(all_dirty);
+        assert!(paths.is_empty());
+        assert!(dirty_servers);
+        assert!(worlds_state.is_cancelled_by_launch());
+        assert!(servers_state.is_cancelled_by_launch());
+    }
 
     #[test]
     fn cancelled_generation_cannot_publish_over_completed_results() {
