@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap, ffi::OsString, path::{Path, PathBuf}, sync::{Arc, atomic::AtomicU8}
+    collections::BTreeMap, ffi::OsString, path::{Path, PathBuf}, sync::{Arc, atomic::AtomicU64}
 };
 
 use schema::{
@@ -427,28 +427,35 @@ pub enum BridgeNotificationType {
 }
 
 #[derive(Clone, Debug)]
-pub struct BridgeDataLoadState(Arc<AtomicU8>);
+pub struct BridgeDataLoadState(Arc<AtomicU64>);
 
 impl Default for BridgeDataLoadState {
     fn default() -> Self {
-        Self(Arc::new(AtomicU8::new(BridgeDataLoadState::UNLOADED)))
+        Self(Arc::new(AtomicU64::new(BridgeDataLoadState::UNLOADED)))
     }
 }
 
 impl BridgeDataLoadState {
-    const LOADING: u8 = 1;
-    const OBSERVED: u8 = 2;
-    const DIRTY: u8 = 4;
-    const UNLOADED: u8 = !Self::LOADING;
+    const LOADING: u64 = 1;
+    const OBSERVED: u64 = 2;
+    const DIRTY: u64 = 4;
+    const CANCELLED_BY_LAUNCH: u64 = 8;
+    const STATE_MASK: u64 = 0xff;
+    const GENERATION_ONE: u64 = 1 << 8;
+    const UNLOADED: u64 = 0xfe;
+
+    fn state(value: u64) -> u64 {
+        value & Self::STATE_MASK
+    }
 
     pub fn should_load(&self) -> bool {
-        // Must be observed and dirty, but not loading
-        let value = self.0.load(std::sync::atomic::Ordering::Acquire);
+        // Must be observed and dirty, but not loading/cancelled.
+        let value = Self::state(self.0.load(std::sync::atomic::Ordering::Acquire));
         (value == Self::OBSERVED | Self::DIRTY) || (value == Self::UNLOADED)
     }
 
     pub fn is_not_unloaded(&self) -> bool {
-        self.0.load(std::sync::atomic::Ordering::Acquire) != Self::UNLOADED
+        Self::state(self.0.load(std::sync::atomic::Ordering::Acquire)) != Self::UNLOADED
     }
 
     pub fn set_observed(&self) {
@@ -459,12 +466,91 @@ impl BridgeDataLoadState {
         self.0.fetch_or(Self::DIRTY, std::sync::atomic::Ordering::AcqRel);
     }
 
-    pub fn load_started(&self) {
-        self.0.store(Self::LOADING, std::sync::atomic::Ordering::Release);
+    pub fn load_started(&self) -> u64 {
+        let mut current = self.0.load(std::sync::atomic::Ordering::Acquire);
+        loop {
+            let next = (current & !Self::STATE_MASK) | Self::LOADING;
+            match self.0.compare_exchange_weak(
+                current,
+                next,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => return next / Self::GENERATION_ONE,
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     pub fn load_finished(&self) {
         self.0.fetch_and(!Self::LOADING, std::sync::atomic::Ordering::AcqRel);
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.0.load(std::sync::atomic::Ordering::Acquire) / Self::GENERATION_ONE
+    }
+
+    pub fn is_generation_current(&self, generation: u64) -> bool {
+        self.generation() == generation
+    }
+
+    pub fn cancel_for_launch(&self) {
+        let mut current = self.0.load(std::sync::atomic::Ordering::Acquire);
+        loop {
+            let generation = (current & !Self::STATE_MASK).wrapping_add(Self::GENERATION_ONE);
+            let next = generation | Self::CANCELLED_BY_LAUNCH;
+            match self.0.compare_exchange_weak(
+                current,
+                next,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    pub fn is_cancelled_by_launch(&self) -> bool {
+        Self::state(self.0.load(std::sync::atomic::Ordering::Acquire)) & Self::CANCELLED_BY_LAUNCH != 0
+    }
+
+    pub fn resume_after_launch(&self) {
+        let mut current = self.0.load(std::sync::atomic::Ordering::Acquire);
+        loop {
+            let next = (current & !Self::STATE_MASK) | Self::DIRTY;
+            match self.0.compare_exchange_weak(
+                current,
+                next,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod bridge_data_load_state_tests {
+    use super::BridgeDataLoadState;
+
+    #[test]
+    fn launch_cancel_invalidates_inflight_generation_until_resumed() {
+        let state = BridgeDataLoadState::default();
+        let generation = state.load_started();
+        assert!(state.is_generation_current(generation));
+
+        state.cancel_for_launch();
+        assert!(state.is_cancelled_by_launch());
+        assert!(!state.is_generation_current(generation));
+        assert!(!state.should_load());
+
+        state.resume_after_launch();
+        state.set_observed();
+        assert!(!state.is_cancelled_by_launch());
+        assert!(state.should_load());
     }
 }
 
