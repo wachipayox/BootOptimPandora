@@ -9,7 +9,7 @@ use auth::{credentials::AccountCredentials, models::MinecraftAccessToken, secret
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget},
     instance::{ContentFolder, ContentSummary, ContentType, InstanceID},
-    keep_alive::KeepAlive,
+    keep_alive::{KeepAlive, KeepAliveHandle},
     message::{
         AccountCapesResult, AccountSkinResult, EmbeddedOrRaw, GameOutputMsg, LogFiles, MessageToBackend,
         MessageToFrontend, QuickPlayLaunch,
@@ -397,7 +397,11 @@ impl BackendState {
                 }
 
                 if let Some(id) = id {
-                    self.start_instance(id, quick_play, None, Default::default()).await
+                    let modal_action = ModalAction::default();
+                    self.start_instance(id, quick_play, None, modal_action.clone()).await;
+                    if let Some(error) = modal_action.get_error_message() {
+                        self.send.send_error(error);
+                    }
                 }
             },
             MessageToBackend::StartInstance {
@@ -2090,14 +2094,10 @@ impl BackendState {
         let keepalive = KeepAlive::new();
 
         let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            if let Some(launch_keepalive) = &instance.launch_keepalive
-                && launch_keepalive.is_alive()
-            {
-                modal_action.set_finished_with_error("Can't launch instance, already launching".into());
+            if let Err(error) = try_claim_launch(&mut instance.launch_keepalive, &keepalive) {
+                modal_action.set_finished_with_error(error.into());
                 return;
             }
-
-            instance.launch_keepalive = Some(keepalive.create_handle());
 
             self.send.send(MessageToFrontend::MoveInstanceToTop { id });
             self.send.send(instance.create_modify_message());
@@ -2539,6 +2539,47 @@ fn check_argument_expansions(argument: &str) {
         } else {
             dollar_last = false;
         }
+    }
+}
+
+const ALREADY_LAUNCHING_ERROR: &str = "Can't launch instance, already launching";
+
+fn try_claim_launch(
+    launch_keepalive: &mut Option<KeepAliveHandle>,
+    keepalive: &KeepAlive,
+) -> Result<(), &'static str> {
+    if launch_keepalive.as_ref().is_some_and(KeepAliveHandle::is_alive) {
+        return Err(ALREADY_LAUNCHING_ERROR);
+    }
+
+    *launch_keepalive = Some(keepalive.create_handle());
+    Ok(())
+}
+
+#[cfg(test)]
+mod launch_gate_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_launch_claim_is_rejected_until_first_launch_finishes() {
+        let mut slot = None;
+        let mut launch_entries = 0;
+
+        let first = KeepAlive::new();
+        if try_claim_launch(&mut slot, &first).is_ok() {
+            launch_entries += 1;
+        }
+
+        let second = KeepAlive::new();
+        let duplicate = try_claim_launch(&mut slot, &second);
+        assert_eq!(duplicate, Err(ALREADY_LAUNCHING_ERROR));
+        if duplicate.is_ok() {
+            launch_entries += 1;
+        }
+        assert_eq!(launch_entries, 1, "duplicate request entered launch work");
+
+        drop(first);
+        assert!(try_claim_launch(&mut slot, &second).is_ok());
     }
 }
 
