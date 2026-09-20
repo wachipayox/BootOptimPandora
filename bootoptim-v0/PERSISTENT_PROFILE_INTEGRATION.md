@@ -33,6 +33,22 @@ must never be treated as the integration or deploy branch.
 - a production promotion to `master`;
 - a release artifact or performance claim.
 
+## Laptop smoke boundary (2026-09-20)
+
+The portable executable used for the first visual laptop smoke test was built
+from this layout-only integration branch. It deliberately contained neither
+the USN asset-verification cache candidates nor the AppCDS launch-authority
+candidate: their branches have an older, divergent base and were not composed
+into this branch. The run therefore validates only that the persistent-layout
+path can launch the existing instance; it is **not** an AppCDS/cache benchmark
+and must not be compared with prior cache-enabled timings.
+
+Its launcher log nevertheless recorded an actionable baseline for the next
+composed build: 98 s to scan/display mod content, 58 s before launch setup,
+then 229 s in Java/assets/libraries/log-configuration preparation before the
+game process. A later composition must add phase-attribution probes and an
+explicit cache decision record before claiming a pre-Java improvement.
+
 The distribution-service repository owns the remote revision/CAS work. Any
 future Pandora integration must reference a reviewed service protocol revision,
 preserve local overlays and avoid a full `.minecraft` scan in the Start path.
