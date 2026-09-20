@@ -88,7 +88,9 @@ pub(super) fn create_group() -> SettingGroup {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        CandidateScope, OWNERSHIP_BLOCKER, SCOPE_BLOCKER, ScopeDisposition, UTILITY_BLOCKER, scope_disposition,
+    };
 
     #[test]
     fn launcher_file_exclusion_is_not_presented_as_jar_scan_remedy() {
