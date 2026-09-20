@@ -432,9 +432,10 @@ async fn serve_listener<F>(
                 };
                 let handler = handler.clone();
                 clients.spawn(async move {
-                    match read_cli_from_connection(conn).await {
-                        Ok(cli) => handler(cli),
-                        Err(err) => log::error!("{err}"),
+                    match tokio::time::timeout(Duration::from_secs(2), read_cli_from_connection(conn)).await {
+                        Ok(Ok(cli)) => handler(cli),
+                        Ok(Err(err)) => log::error!("{err}"),
+                        Err(_) => log::error!("Timed out reading a request from the local IPC connection"),
                     }
                 });
             },
