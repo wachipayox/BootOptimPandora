@@ -474,7 +474,11 @@ impl BridgeDataLoadState {
     pub fn load_started(&self) -> u64 {
         let mut current = self.0.load(std::sync::atomic::Ordering::Acquire);
         loop {
-            let next = (current & !Self::STATE_MASK) | Self::LOADING;
+            // A load task may have been queued before Start and reach this
+            // state only after launch cancellation. Never let load_started
+            // erase that cancellation bit.
+            let cancelled = Self::state(current) & Self::CANCELLED_BY_LAUNCH;
+            let next = (current & !Self::STATE_MASK) | Self::LOADING | cancelled;
             match self.0.compare_exchange_weak(
                 current,
                 next,
@@ -548,6 +552,19 @@ mod bridge_data_load_state_tests {
         assert!(state.should_load());
         assert!(!state.is_not_unloaded());
         assert!(!state.is_cancelled_by_launch());
+    }
+
+    #[test]
+    fn queued_load_start_cannot_clear_launch_cancellation() {
+        let state = BridgeDataLoadState::default();
+        state.cancel_for_launch();
+        let cancelled_generation = state.generation();
+
+        let started_generation = state.load_started();
+
+        assert_eq!(started_generation, cancelled_generation);
+        assert!(state.is_cancelled_by_launch());
+        assert!(!state.should_load());
     }
 
     #[test]
