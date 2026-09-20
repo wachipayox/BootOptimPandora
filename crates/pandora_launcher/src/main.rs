@@ -701,9 +701,10 @@ mod windows_ipc_tests {
             server.connect().await.unwrap();
 
             let started = Instant::now();
-            let err = PlatformClientStream::connect_with_timeout(&name, Duration::from_millis(180))
-                .await
-                .expect_err("a busy single pipe instance should time out");
+            let err = match PlatformClientStream::connect_with_timeout(&name, Duration::from_millis(180)).await {
+                Ok(_) => panic!("a busy single pipe instance should time out"),
+                Err(err) => err,
+            };
             assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
             assert!(started.elapsed() < Duration::from_secs(1));
             let message = err.to_string();
