@@ -559,6 +559,16 @@ impl BackendState {
                     self.handle_message(message).await;
                 }
                 self.handle_tick();
+
+                let launch_active = self.instance_state.read().instances.iter().any(|instance| {
+                    instance
+                        .launch_keepalive
+                        .as_ref()
+                        .is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive)
+                });
+                if launch_active {
+                    continue;
+                }
                 break;
             }
         }
