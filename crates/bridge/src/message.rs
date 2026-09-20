@@ -440,22 +440,27 @@ impl BridgeDataLoadState {
     const OBSERVED: u64 = 2;
     const DIRTY: u64 = 4;
     const CANCELLED_BY_LAUNCH: u64 = 8;
+    const UNLOADED: u64 = 16;
     const STATE_MASK: u64 = 0xff;
     const GENERATION_ONE: u64 = 1 << 8;
-    const UNLOADED: u64 = 0xfe;
 
     fn state(value: u64) -> u64 {
         value & Self::STATE_MASK
     }
 
     pub fn should_load(&self) -> bool {
-        // Must be observed and dirty, but not loading/cancelled.
+        // Initial state is loadable. Afterwards it must be observed and dirty,
+        // and launch cancellation/loading always suppresses a new request.
         let value = Self::state(self.0.load(std::sync::atomic::Ordering::Acquire));
-        (value == Self::OBSERVED | Self::DIRTY) || (value == Self::UNLOADED)
+        if value & (Self::LOADING | Self::CANCELLED_BY_LAUNCH) != 0 {
+            return false;
+        }
+        value & Self::UNLOADED != 0
+            || value & (Self::OBSERVED | Self::DIRTY) == (Self::OBSERVED | Self::DIRTY)
     }
 
     pub fn is_not_unloaded(&self) -> bool {
-        Self::state(self.0.load(std::sync::atomic::Ordering::Acquire)) != Self::UNLOADED
+        Self::state(self.0.load(std::sync::atomic::Ordering::Acquire)) & Self::UNLOADED == 0
     }
 
     pub fn set_observed(&self) {
@@ -535,6 +540,15 @@ impl BridgeDataLoadState {
 #[cfg(test)]
 mod bridge_data_load_state_tests {
     use super::BridgeDataLoadState;
+
+    #[test]
+    fn default_state_is_loadable_without_looking_launch_cancelled() {
+        let state = BridgeDataLoadState::default();
+
+        assert!(state.should_load());
+        assert!(!state.is_not_unloaded());
+        assert!(!state.is_cancelled_by_launch());
+    }
 
     #[test]
     fn launch_cancel_invalidates_inflight_generation_until_resumed() {
