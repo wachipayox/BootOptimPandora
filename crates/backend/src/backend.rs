@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     ffi::OsStr,
     path::{Path, PathBuf},
     sync::{
@@ -23,7 +23,7 @@ use bridge::{
         ContentFolder, ContentType, InstanceContentSummary, InstanceID, ModpackFile, ModpackFilePath, ModpackFileSource,
     },
     manual_download::ManualCurseforgeDownload,
-    message::{EmbeddedOrRaw, MessageToFrontend},
+    message::{EmbeddedOrRaw, MessageToBackend, MessageToFrontend},
     modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType},
     quit::QuitCoordinator,
     safe_path::SafePath,
@@ -511,6 +511,42 @@ impl BackendState {
         true
     }
 
+    fn has_active_launch(&self) -> bool {
+        self.instance_state.read().instances.iter().any(|instance| {
+            instance
+                .launch_keepalive
+                .as_ref()
+                .is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive)
+        })
+    }
+
+    fn start_message_targets_active_launch(&self, message: &MessageToBackend) -> bool {
+        let instances = self.instance_state.read();
+
+        let id = match message {
+            MessageToBackend::StartInstance { id, .. } => Some(*id),
+            MessageToBackend::StartInstanceByName { name, .. } => {
+                let mut case_insensitive = None;
+                let mut exact = None;
+                for instance in instances.instances.iter() {
+                    if instance.name == name.as_str() {
+                        exact = Some(instance.id);
+                        break;
+                    }
+                    if instance.name.eq_ignore_ascii_case(name) {
+                        case_insensitive = Some(instance.id);
+                    }
+                }
+                exact.or(case_insensitive)
+            },
+            _ => None,
+        };
+
+        id.and_then(|id| instances.instances.get(id))
+            .and_then(|instance| instance.launch_keepalive.as_ref())
+            .is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive)
+    }
+
     async fn handle(
         self: Arc<Self>,
         mut backend_recv: BackendReceiver,
@@ -523,7 +559,54 @@ impl BackendState {
         #[cfg(unix)]
         let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child()).unwrap();
 
+        let mut deferred_messages = VecDeque::new();
+        let mut backend_closed = false;
+
         loop {
+            let launch_active = self.has_active_launch();
+
+            if launch_active {
+                if let Some(index) = deferred_messages
+                    .iter()
+                    .position(|message| self.start_message_targets_active_launch(message))
+                {
+                    let message = deferred_messages.remove(index).expect("deferred message index exists");
+                    self.handle_message(message).await;
+                    continue;
+                }
+
+                tokio::select! {
+                    message = backend_recv.recv(), if !backend_closed => {
+                        if let Some(message) = message {
+                            if self.start_message_targets_active_launch(&message) {
+                                self.handle_message(message).await;
+                            } else {
+                                deferred_messages.push_back(message);
+                            }
+                        } else {
+                            log::info!("Backend receiver has shut down");
+                            backend_closed = true;
+                        }
+                    },
+                    _ = interval.tick() => {
+                        // Preserve the old launch serialization: this tick only wakes
+                        // the loop so it can observe launch completion. Normal tick,
+                        // filesystem and signal handling resume afterwards.
+                    }
+                }
+
+                continue;
+            }
+
+            if self.should_quit.load(Ordering::Relaxed) || backend_closed {
+                break;
+            }
+
+            if let Some(message) = deferred_messages.pop_front() {
+                self.handle_message(message).await;
+                continue;
+            }
+
             #[cfg(unix)]
             let signal_recv = signal.recv();
             #[cfg(not(unix))]
@@ -535,7 +618,7 @@ impl BackendState {
                         self.handle_message(message).await;
                     } else {
                         log::info!("Backend receiver has shut down");
-                        break;
+                        backend_closed = true;
                     }
                 },
                 event = watcher_rx.recv() => {
@@ -552,24 +635,6 @@ impl BackendState {
                 _ = interval.tick() => {
                     self.handle_tick();
                 }
-            }
-
-            if self.should_quit.load(Ordering::Relaxed) {
-                while let Some(message) = backend_recv.try_recv() {
-                    self.handle_message(message).await;
-                }
-                self.handle_tick();
-
-                let launch_active = self.instance_state.read().instances.iter().any(|instance| {
-                    instance
-                        .launch_keepalive
-                        .as_ref()
-                        .is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive)
-                });
-                if launch_active {
-                    continue;
-                }
-                break;
             }
         }
 
