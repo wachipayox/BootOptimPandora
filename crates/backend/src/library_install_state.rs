@@ -49,8 +49,8 @@ pub fn mark_incomplete(instance_root: &Path, reason: &str) -> io::Result<()> {
     write_state(instance_root, StateKind::Incomplete, reason)
 }
 
-pub fn mark_published(instance_root: &Path) -> io::Result<()> {
-    write_state(instance_root, StateKind::Published, "repair-complete")
+pub fn mark_published(instance_root: &Path, reason: &str) -> io::Result<()> {
+    write_state(instance_root, StateKind::Published, reason)
 }
 
 pub fn start_status(instance_root: &Path) -> io::Result<StartStatus> {
@@ -94,7 +94,7 @@ mod tests {
         let root = root("interrupted");
         mark_incomplete(&root, "update-in-progress").unwrap();
         assert_eq!(start_status(&root).unwrap(), StartStatus::Incomplete("update-in-progress".to_owned()));
-        mark_published(&root).unwrap();
+        mark_published(&root, "test-publish").unwrap();
         assert_eq!(start_status(&root).unwrap(), StartStatus::Published);
         let _ = std::fs::remove_dir_all(root);
     }
