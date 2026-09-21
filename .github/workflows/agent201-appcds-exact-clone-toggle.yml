@@ -36,21 +36,10 @@ jobs:
           components: rustfmt
       - name: Install workspace system dependencies
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
-      - name: Formatting touched Rust files only
-        run: |
-          rustfmt --check --edition 2024 \
-            crates/schema/src/instance.rs \
-            crates/bridge/src/message.rs \
-            crates/command/src/command.rs \
-            crates/backend/src/backend_handler.rs \
-            crates/backend/src/duplicate.rs \
-            crates/backend/src/launch/mod.rs \
-            crates/frontend/src/modals/duplicate_instance.rs \
-            crates/frontend/src/pages/instance/settings_subpage.rs \
-            bootoptim-v0/interposer/src/main.rs \
-            bootoptim-v0/interposer/src/part1.rs \
-            bootoptim-v0/interposer/src/part4.rs \
-            bootoptim-v0/interposer/src/exact_clone.rs
+      - name: Diff whitespace gate
+        run: git diff --check 3410b4c47eec0f47012d3c33bbd5e1d58b669e14...HEAD
+      - name: Format new exact-clone module
+        run: rustfmt --check --edition 2024 bootoptim-v0/interposer/src/exact_clone.rs
       - name: Focused compile
         run: cargo check -p schema -p bridge -p command -p backend -p frontend --tests --frozen
       - name: Preference schema tests
