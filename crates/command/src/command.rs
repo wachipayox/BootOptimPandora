@@ -467,3 +467,17 @@ mod bootoptim_windows_preflight_tests {
         assert!(String::from_utf8_lossy(&output.stderr).contains("helper-diagnostic"));
     }
 }
+
+
+#[cfg(test)]
+mod appcds_identity_authority_tests {
+    use super::*;
+
+    #[test]
+    fn command_defaults_to_unknown_and_requires_explicit_normal_gui_authority() {
+        let mut command = PandoraCommand::new("java");
+        assert!(!command.appcds_identity_normal_gui);
+        command.bootoptim_appcds_identity_normal_gui(true);
+        assert!(command.appcds_identity_normal_gui);
+    }
+}
