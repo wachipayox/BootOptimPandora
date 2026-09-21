@@ -1332,6 +1332,30 @@ impl Launcher {
         Some(expand_logging_argument(client.argument.as_str(), &path))
     }
 
+    fn can_skip_forge_processor_without_hash(
+        &self,
+        jar: &MavenCoordinate<'_>,
+        processor: &schema::forge::ForgeInstallProcessor,
+        data: &FxHashMap<String, OsString>,
+    ) -> bool {
+        if let Some(outputs) = &processor.outputs {
+            if outputs.is_empty() {
+                return false;
+            }
+            for (key, _) in outputs {
+                let key = expand_forge_argument(key, data);
+                if !Path::new(&key).exists() {
+                    return false;
+                }
+            }
+            true
+        } else {
+            // The stock fallback for known processors uses only output
+            // existence checks when explicit output hashes are unavailable.
+            self.can_skip_forge_processor(jar, processor, data)
+        }
+    }
+
     fn can_skip_forge_processor(&self, jar: &MavenCoordinate<'_>, processor: &schema::forge::ForgeInstallProcessor, data: &FxHashMap<String, OsString>) -> bool {
         if let Some(outputs) = &processor.outputs {
             if outputs.is_empty() {
@@ -1918,6 +1942,97 @@ pub enum LoadLibrariesError {
     WrongHash,
     #[error("Illegal library path {0}, directory traversal?")]
     IllegalLibraryPath(Ustr),
+}
+
+async fn do_libraries_install_missing(
+    http_client: &reqwest::Client,
+    artifacts: &[GameLibraryArtifact],
+    libraries_dir: Arc<Path>,
+    libraries_tracker: &ProgressTracker,
+) -> Result<Vec<(Ustr, PathBuf)>, LoadLibrariesError> {
+    let download_semaphore = tokio::sync::Semaphore::new(8);
+    let started_downloading = AtomicBool::new(false);
+    let mut total_size = 0;
+    let mut tasks = Vec::new();
+
+    let _ = std::fs::create_dir_all(&libraries_dir);
+
+    for artifact in artifacts {
+        let expected_hash = if let Some(sha1) = &artifact.sha1 {
+            let mut expected_hash = [0u8; 20];
+            let Ok(_) = hex::decode_to_slice(sha1.as_str(), &mut expected_hash) else {
+                return Err(LoadLibrariesError::InvalidHash(*sha1));
+            };
+            Some(expected_hash)
+        } else {
+            None
+        };
+
+        if !path_is_normal(artifact.path.as_str()) {
+            return Err(LoadLibrariesError::IllegalLibraryPath(artifact.path));
+        }
+
+        let artifact_path = libraries_dir.join(artifact.path.as_str());
+        let Some(artifact_path_parent) = artifact_path.parent() else {
+            return Err(LoadLibrariesError::IllegalLibraryPath(artifact.path));
+        };
+        let _ = std::fs::create_dir_all(artifact_path_parent);
+
+        let tracker_size = artifact.size.unwrap_or(1000000);
+        total_size += tracker_size;
+
+        let started_downloading = &started_downloading;
+        let download_semaphore = &download_semaphore;
+
+        let task = async move {
+            // First-install/update provisioning trusts already-present files.
+            // Only missing artifacts are downloaded; existing library bytes are
+            // never opened or hashed here.
+            if artifact_path.exists() {
+                libraries_tracker.add_count(tracker_size as usize);
+                return Ok((artifact.path, artifact_path));
+            }
+
+            if !started_downloading.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                libraries_tracker.set_title(Arc::from("Downloading missing game libraries"));
+            }
+
+            let permit = download_semaphore.acquire().await.unwrap();
+            let response = http_client.get(artifact.url.as_str()).send().await?;
+            let bytes = Arc::new(response.bytes().await?);
+            drop(permit);
+
+            if let Some(artifact_size) = artifact.size
+                && bytes.len() != artifact_size as usize
+            {
+                return Err(LoadLibrariesError::WrongResponseSize(artifact_size as usize, bytes.len()));
+            }
+
+            if let Some(expected_hash) = expected_hash {
+                let bytes = Arc::clone(&bytes);
+                let correct_hash = tokio::task::spawn_blocking(move || {
+                    let mut hasher = Sha1::new();
+                    hasher.update(&*bytes);
+                    let actual_hash = hasher.finalize();
+                    expected_hash == *actual_hash
+                })
+                .await
+                .unwrap();
+
+                if !correct_hash {
+                    return Err(LoadLibrariesError::WrongHash);
+                }
+            }
+
+            tokio::fs::write(artifact_path.clone(), &*bytes).await?;
+            libraries_tracker.add_count(tracker_size as usize);
+            Ok((artifact.path, artifact_path))
+        };
+        tasks.push(task);
+    }
+
+    libraries_tracker.set_total(total_size as usize);
+    futures::future::try_join_all(tasks).await
 }
 
 async fn do_libraries_load(
