@@ -104,7 +104,7 @@ fn bind_appcds_cache_namespace(cache_dir: &Path, namespace: &AppCdsProfileNamesp
     let parent = cache_dir
         .parent()
         .ok_or_else(|| invalid_profile_namespace("cache parent"))?;
-    fs::create_dir_all(parent)?;
+    ensure_plain_profile_directory_path(parent)?;
 
     match fs::symlink_metadata(cache_dir) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -136,6 +136,18 @@ fn bind_appcds_cache_namespace(cache_dir: &Path, namespace: &AppCdsProfileNamesp
         &cache_dir.join("profile.namespace"),
         format!("schema=1\nprofile_uuid={profile_uuid}\n").as_bytes(),
     )
+}
+
+fn ensure_plain_profile_directory_path(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir(path)?;
+            let meta = fs::symlink_metadata(path)?;
+            ensure_plain_profile_directory(path, &meta)
+        }
+        Err(error) => Err(error),
+        Ok(meta) => ensure_plain_profile_directory(path, &meta),
+    }
 }
 
 fn ensure_plain_profile_directory(path: &Path, meta: &fs::Metadata) -> io::Result<()> {
@@ -226,7 +238,9 @@ fn acquire_existing_profile_lock_lease(control: &Path, profile_uuid: &str) -> io
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
-    let lock_path = control.join("locks").join(format!("{profile_uuid}.lock"));
+    let locks_dir = control.join("locks");
+    ensure_plain_profile_directory_path(&locks_dir)?;
+    let lock_path = locks_dir.join(format!("{profile_uuid}.lock"));
     let file = OpenOptions::new()
         .read(true)
         .write(true)
