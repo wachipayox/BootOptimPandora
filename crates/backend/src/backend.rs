@@ -1837,6 +1837,13 @@ impl BackendState {
                             "Instance created, but game-files state could not be published ({err}); use Repair game files"
                         ));
                     }
+                } else if let Err(err) = crate::library_install_state::mark_incomplete(
+                    &instance_dir,
+                    "content-install-in-progress",
+                ) {
+                    self.send.send_warning(format!(
+                        "Game files were provisioned, but content-install state could not be recorded ({err}); use Repair game files"
+                    ));
                 }
             },
             Err(err) => {
