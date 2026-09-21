@@ -222,9 +222,25 @@ impl Processor {
                     }
                 }
 
+                #[cfg(windows)]
+                let show_windows_security_prompt = !InterfaceConfig::get(cx).windows_defender_process_prompted
+                    && command::defender_process_local_state()
+                        == command::DefenderProcessLocalState::NotManaged;
+
                 self.main_window_handle = Some(crate::open_main_window(&self.data, cx));
                 self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
                 self.process_messages_waiting_for_window(cx);
+
+                #[cfg(windows)]
+                if show_windows_security_prompt {
+                    InterfaceConfig::get_mut(cx).windows_defender_process_prompted = true;
+                    InterfaceConfig::force_save(cx);
+                    if let Some(handle) = self.main_window_handle {
+                        _ = handle.update(cx, |_, window, cx| {
+                            crate::modals::windows_security::open(window, cx);
+                        });
+                    }
+                }
             }
         }
     }

@@ -35,6 +35,8 @@ pub mod settings;
 pub mod skin_renderer;
 pub mod skin_thumbnail_cache;
 pub mod ui;
+#[cfg(windows)]
+pub mod windows_security_ui;
 
 #[derive(rust_embed::RustEmbed)]
 #[folder = "../../assets"]

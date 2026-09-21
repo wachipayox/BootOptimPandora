@@ -85,6 +85,10 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub use_os_titlebar: bool,
 
+    #[cfg(windows)]
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub windows_defender_process_prompted: bool,
+
     // Privacy options
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub hide_usernames: bool,
@@ -273,6 +277,8 @@ impl Default for InterfaceConfig {
             live_game_output_display: LiveGameOutputDisplay::default(),
             quit_on_main_closed: false,
             use_os_titlebar: false,
+            #[cfg(windows)]
+            windows_defender_process_prompted: false,
             hide_server_addresses: false,
             hide_usernames: false,
             hide_skins: false,

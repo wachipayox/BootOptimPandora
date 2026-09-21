@@ -1,0 +1,56 @@
+name: Agent 195 Defender process exclusion
+
+on:
+  pull_request:
+    paths:
+      - "crates/command/src/windows/defender.rs"
+      - "crates/command/src/windows/mod.rs"
+      - "crates/command/src/lib.rs"
+      - "crates/pandora_launcher/src/main.rs"
+      - "crates/frontend/src/interface_config.rs"
+      - "crates/frontend/src/processor.rs"
+      - "crates/frontend/src/lib.rs"
+      - "crates/frontend/src/modals/**"
+      - "crates/frontend/src/settings/**"
+      - "bootoptim-v0/WINDOWS_SECURITY_INTEGRATION.md"
+      - ".github/workflows/agent195-defender-process.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent195-defender-process-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-windows:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: agent195-defender-process
+
+      - name: Check focused formatting
+        shell: pwsh
+        run: |
+          rustfmt --edition 2024 --check crates/command/src/windows/defender.rs
+          rustfmt --edition 2024 --check crates/frontend/src/settings/windows_security.rs
+          rustfmt --edition 2024 --check crates/frontend/src/modals/windows_security.rs
+          rustfmt --edition 2024 --check crates/frontend/src/windows_security_ui.rs
+
+      - name: Check affected crates and tests
+        run: cargo check -p command -p frontend -p pandora_launcher --tests --frozen
+
+      - name: Test Defender authorization and ownership policy
+        run: cargo test -p command windows::defender::tests --frozen -- --test-threads=1
+
+      - name: Build Windows launcher entrypoint
+        run: cargo build -p pandora_launcher --frozen --target x86_64-pc-windows-msvc

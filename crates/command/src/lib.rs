@@ -26,6 +26,9 @@ pub fn get_command_path(command: &'static str) -> Option<Arc<Path>> {
 }
 
 #[cfg(windows)]
+pub use crate::windows::defender::{DefenderProcessAction, DefenderProcessLocalState, DefenderProcessResult, local_state as defender_process_local_state, request as request_defender_process_action, run_elevated as run_defender_process_action_elevated};
+
+#[cfg(windows)]
 pub fn set_traverse_acls(args: Vec<std::ffi::OsString>) -> std::io::Result<()> {
     crate::windows::appcontainer::set_traverse_acls(args)
 }

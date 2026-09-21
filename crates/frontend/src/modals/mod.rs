@@ -11,3 +11,6 @@ pub mod modrinth_install;
 pub mod select_icon;
 pub mod unzip_modpack;
 pub mod update_prompt;
+
+#[cfg(windows)]
+pub mod windows_security;

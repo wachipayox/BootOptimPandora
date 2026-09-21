@@ -10,6 +10,8 @@ use crate::{component::{generic_title_bar::TitleBar, resize_panel::{ResizePanel,
 mod general;
 mod appearance;
 mod network;
+#[cfg(windows)]
+mod windows_security;
 
 struct SettingsRoot {
     settings: Settings,
@@ -710,12 +712,16 @@ pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut 
 }
 
 fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Settings {
+    let mut pages = vec![
+        general::create_page(window, cx),
+        appearance::create_page(data, window, cx),
+        network::create_page(),
+    ];
+    #[cfg(windows)]
+    pages.push(windows_security::create_page());
+
     Settings {
-        pages: vec![
-            general::create_page(window, cx),
-            appearance::create_page(data, window, cx),
-            network::create_page(),
-        ].into_boxed_slice(),
+        pages: pages.into_boxed_slice(),
         selected_page: Some(0),
         selected_group: None,
         deferred_scroll_to_group: false,
