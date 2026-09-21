@@ -32,11 +32,18 @@ through the final content copy and publishes only after the entire install path 
 Imports from ATLauncher, CurseForge, Modrinth and MultiMC write `import-in-progress` before
 copying/publishing the imported instance, so an interrupted import cannot silently become a
 launchable legacy install. Minecraft/loader/loader-version changes persist `incomplete` **before**
-mutating dependency identity; if that state write fails, the change is rejected. Repair writes
-`repair-in-progress` before touching libraries and publishes `published` only after the strong
-route returns success and no cancellation is pending. Cancellation, network failure, hash mismatch
-after download, crash, or launcher termination therefore leaves the installation incomplete.
-Content-only mod/resource updates do not change library identity and do not alter this marker.
+mutating dependency identity; if that state write fails, the change is rejected. After a successful
+identity mutation Pandora schedules the same provision-missing transaction against the new identity.
+It publishes only if the instance still has exactly that Minecraft/loader/loader-version identity
+and the marker still carries that update reason; a newer change, Repair, deletion or other marker
+transition therefore cannot be overwritten by a stale provisioning completion. Provisioning
+failure leaves the update incomplete and Start directs the user to Repair.
+
+Repair writes `repair-in-progress` before touching libraries and publishes `published` only after
+the strong route returns success and no cancellation is pending. Cancellation, network failure,
+hash mismatch after download, crash, or launcher termination therefore leaves the installation
+incomplete. Content-only mod/resource updates do not change library identity and do not alter this
+marker.
 
 Start itself never becomes an installer: first-install provisioning belongs to instance/content
 creation, and later integrity recovery belongs to the explicit **Repair game files** action.
@@ -90,6 +97,8 @@ completed; it is not a cryptographic statement about current library contents.
   missing library, validating only the downloaded bytes;
 - strong repair detects a corrupt SHA-1 and replaces it from a test HTTP origin;
 - interrupted/update-in-progress state blocks Start without auto-repair;
+- identity updates provision missing dependencies asynchronously and publish only for the still-current
+  identity/marker generation;
 - cancelled Repair leaves `repair-in-progress` and never publishes;
 - corrupt marker fails closed;
 - diff excludes assets/AppCDS sources.
