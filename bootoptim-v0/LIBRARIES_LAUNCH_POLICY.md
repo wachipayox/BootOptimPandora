@@ -22,7 +22,9 @@ Each instance owns `.bootoptim/game-files-state-v1.json`.
   library scan**. This is a compatibility rule, not an integrity assertion.
 - unreadable/corrupt/unknown marker: Start fails closed to the same Repair instruction.
 
-New instances start as `incomplete`. Minecraft/loader/loader-version changes persist
+New instances start as `incomplete`. Imports from ATLauncher, CurseForge, Modrinth and MultiMC write
+`import-in-progress` before copying/publishing the imported instance, so an interrupted import cannot
+silently become a launchable legacy install. Minecraft/loader/loader-version changes persist
 `incomplete` **before** mutating dependency identity; if that state write fails, the change is
 rejected. Repair writes `repair-in-progress` before touching libraries and publishes `published`
 only after the strong route returns success and no cancellation is pending. Cancellation, network
