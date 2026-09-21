@@ -438,6 +438,14 @@ fn import_instances_from_atlauncher(backend: &BackendState, import_job: &ImportF
         };
 
         _ = std::fs::create_dir_all(&to_import.pandora_path);
+        if let Err(err) = crate::library_install_state::mark_incomplete(
+            &to_import.pandora_path,
+            "import-in-progress",
+        ) {
+            log::error!("Unable to mark imported game files incomplete: {err}");
+            tracker.set_finished(bridge::modal_action::ProgressTrackerFinishType::Error);
+            continue;
+        }
         let target_dot_minecraft = to_import.pandora_path.join(".minecraft");
 
         _ = std::fs::create_dir_all(&target_dot_minecraft);
