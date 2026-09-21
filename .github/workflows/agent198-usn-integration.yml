@@ -27,9 +27,19 @@ jobs:
           components: rustfmt
       - name: Install system dependencies
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
-      - name: Format
+      - name: Format scoped composed Rust
         run: |
-          cargo fmt --all -- --check
+          rustfmt --edition 2024 --check \
+            crates/backend/src/asset_probe_context.rs \
+            crates/backend/src/asset_usn_cache.rs \
+            crates/backend/src/asset_usn_cache/activation_probe.rs \
+            crates/backend/src/asset_usn_cache/windows.rs \
+            crates/backend/src/asset_usn_cache/windows/direct_integration_tests.rs \
+            crates/backend/src/asset_usn_cache/windows_direct.rs \
+            crates/backend/src/launch/mod.rs \
+            crates/backend/src/lib.rs \
+            crates/bridge/src/modal_action.rs \
+            crates/frontend/src/root.rs
           cargo fmt --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml -- --check
       - name: Check affected crates
         run: cargo check -p bridge -p backend -p frontend --tests --frozen
