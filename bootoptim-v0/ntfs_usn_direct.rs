@@ -106,7 +106,9 @@ impl OwnedHandle {
 
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
-        unsafe { CloseHandle(self.0); }
+        unsafe {
+            CloseHandle(self.0);
+        }
     }
 }
 
@@ -161,11 +163,9 @@ impl ProtectedFile {
     }
 
     pub(crate) fn identity_unchanged(&self) -> bool {
-        identity_from_handle(self.file.as_raw_handle().cast())
-            .is_ok_and(|(identity, attributes)| {
-                attributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY) == 0
-                    && identity == self.identity
-            })
+        identity_from_handle(self.file.as_raw_handle().cast()).is_ok_and(|(identity, attributes)| {
+            attributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY) == 0 && identity == self.identity
+        })
     }
 }
 
@@ -223,11 +223,7 @@ impl Volume {
         query_journal_handle(self.handle.0, self.serial)
     }
 
-    pub(crate) fn query_file(
-        &self,
-        file: &ProtectedFile,
-        expected_file_id: [u8; 16],
-    ) -> io::Result<FileEvidence> {
+    pub(crate) fn query_file(&self, file: &ProtectedFile, expected_file_id: [u8; 16]) -> io::Result<FileEvidence> {
         let before = self.query_journal()?;
         let (file_id, file_usn) = file_usn_from_handle(file.file.as_raw_handle().cast())?;
         let after = self.query_journal()?;
@@ -238,7 +234,11 @@ impl Volume {
         {
             return Err(io::Error::new(io::ErrorKind::Other, "unstable NTFS/USN evidence"));
         }
-        Ok(FileEvidence { journal: after, file_id, file_usn })
+        Ok(FileEvidence {
+            journal: after,
+            file_id,
+            file_usn,
+        })
     }
 }
 
@@ -318,7 +318,11 @@ fn identity_from_handle(handle: Handle) -> io::Result<(FileIdentity, u32)> {
     let mut file_id = [0u8; 16];
     file_id[..8].copy_from_slice(&raw_id.to_le_bytes());
     Ok((
-        FileIdentity { volume_guid, volume_serial: serial, file_id },
+        FileIdentity {
+            volume_guid,
+            volume_serial: serial,
+            file_id,
+        },
         info.file_attributes,
     ))
 }
@@ -389,10 +393,7 @@ fn wide(value: &OsStr) -> Vec<u16> {
 }
 
 pub(crate) fn atomic_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
     let count = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let temp = path.with_extension(format!("bootoptim-{}-{}-{}.tmp", std::process::id(), stamp, count));
     {
@@ -404,13 +405,8 @@ pub(crate) fn atomic_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
     let source = wide(temp.as_os_str());
     let destination = wide(path.as_os_str());
-    if unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    } == 0
+    if unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) }
+        == 0
     {
         let error = io::Error::last_os_error();
         let _ = std::fs::remove_file(&temp);

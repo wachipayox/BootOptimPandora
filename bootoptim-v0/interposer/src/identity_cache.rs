@@ -123,7 +123,7 @@ impl IdentityDigestCache {
                     self.complete = false;
                     self.stock_files += 1;
                     return stock_raw_digest(path);
-                }
+                },
             };
             let identity = protected.identity().clone();
             let evidence = self.query_file_evidence(&protected).ok();
@@ -135,14 +135,8 @@ impl IdentityDigestCache {
                     && cached.file_id == identity.file_id
                     && evidence_allows_reuse(cached, current)
                 {
-                    let record = record_from_current(
-                        role,
-                        path_hex,
-                        cached.size,
-                        cached.sha256.clone(),
-                        &identity,
-                        current,
-                    );
+                    let record =
+                        record_from_current(role, path_hex, cached.size, cached.sha256.clone(), &identity, current);
                     self.records.insert(key, record);
                     self.reused_files += 1;
                     return Ok((cached.size, cached.sha256.clone()));
@@ -154,10 +148,8 @@ impl IdentityDigestCache {
             let after = self.query_file_evidence(&protected).ok();
             if let Some(current) = after.as_ref() {
                 if current.file_id == identity.file_id && current.handle_identity_unchanged {
-                    self.records.insert(
-                        key,
-                        record_from_current(role, path_hex, size, digest.clone(), &identity, current),
-                    );
+                    self.records
+                        .insert(key, record_from_current(role, path_hex, size, digest.clone(), &identity, current));
                 } else {
                     self.complete = false;
                 }
@@ -176,10 +168,7 @@ impl IdentityDigestCache {
     }
 
     #[cfg(windows)]
-    fn query_file_evidence(
-        &mut self,
-        file: &ntfs_usn_direct::ProtectedFile,
-    ) -> io::Result<CurrentIdentityEvidence> {
+    fn query_file_evidence(&mut self, file: &ntfs_usn_direct::ProtectedFile) -> io::Result<CurrentIdentityEvidence> {
         let identity = file.identity();
         let index = if let Some(index) = self
             .volumes
@@ -391,10 +380,7 @@ fn read_identity_manifest(path: &Path) -> Option<BTreeMap<String, CachedIdentity
 }
 
 fn is_lower_hex_text(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn decode_hex_utf8(value: &str) -> Option<String> {
@@ -521,13 +507,7 @@ mod appcds_identity_cache_tests {
 
     #[test]
     fn role_and_encoded_path_are_part_of_the_key() {
-        assert_ne!(
-            identity_record_key("classpath", "00aa"),
-            identity_record_key("module-path", "00aa")
-        );
-        assert_ne!(
-            identity_record_key("classpath", "00aa"),
-            identity_record_key("classpath", "00bb")
-        );
+        assert_ne!(identity_record_key("classpath", "00aa"), identity_record_key("module-path", "00aa"));
+        assert_ne!(identity_record_key("classpath", "00aa"), identity_record_key("classpath", "00bb"));
     }
 }

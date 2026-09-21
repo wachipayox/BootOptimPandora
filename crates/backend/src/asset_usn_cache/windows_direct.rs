@@ -56,19 +56,17 @@ impl WindowsSession {
         }
 
         let manifest_path = assets_root.join(".bootoptim-usn-assets-v1.json");
-        let cached = std::fs::read(&manifest_path)
-            .ok()
-            .and_then(|bytes| parse_manifest(&bytes).ok())
-            .filter(|manifest| {
-                manifest.asset_index_sha1 == asset_index_sha1
-                    && manifest.volume_guid == root_identity.volume_guid
-                    && manifest.volume_serial == root_identity.volume_serial
-                    && manifest.assets.len() == expected_hashes.len()
-                    && manifest
-                        .assets
-                        .iter()
-                        .all(|asset| expected_hashes.contains(&asset.expected_sha1))
-            });
+        let cached =
+            std::fs::read(&manifest_path)
+                .ok()
+                .and_then(|bytes| parse_manifest(&bytes).ok())
+                .filter(|manifest| {
+                    manifest.asset_index_sha1 == asset_index_sha1
+                        && manifest.volume_guid == root_identity.volume_guid
+                        && manifest.volume_serial == root_identity.volume_serial
+                        && manifest.assets.len() == expected_hashes.len()
+                        && manifest.assets.iter().all(|asset| expected_hashes.contains(&asset.expected_sha1))
+                });
 
         Ok(Self {
             asset_index_sha1: asset_index_sha1.to_owned(),
@@ -104,10 +102,7 @@ impl WindowsSession {
         }
 
         if let Some(manifest) = &self.cached
-            && let Some(cached) = manifest
-                .assets
-                .iter()
-                .find(|asset| asset.expected_sha1 == expected_sha1)
+            && let Some(cached) = manifest.assets.iter().find(|asset| asset.expected_sha1 == expected_sha1)
             && let Ok(current) = self.query_file(&file)
             && current.file_id == before.file_id
             && current.journal.volume_serial == self.volume_serial
@@ -162,12 +157,7 @@ impl WindowsSession {
         }
 
         for expected in &self.expected_hashes {
-            if self
-                .snapshots
-                .lock()
-                .ok()
-                .is_some_and(|map| map.contains_key(expected))
-            {
+            if self.snapshots.lock().ok().is_some_and(|map| map.contains_key(expected)) {
                 continue;
             }
             let mut hash = [0u8; 20];
@@ -194,10 +184,7 @@ impl WindowsSession {
             return;
         };
         if snapshots.len() != self.expected_hashes.len()
-            || self
-                .expected_hashes
-                .iter()
-                .any(|hash| !snapshots.contains_key(hash))
+            || self.expected_hashes.iter().any(|hash| !snapshots.contains_key(hash))
         {
             return;
         }
@@ -273,9 +260,7 @@ impl WindowsSession {
 
     fn query_file(&self, file: &ProtectedFile) -> Result<FileEvidence, CapabilityFailure> {
         self.with_capability(|volume| {
-            let evidence = volume
-                .query_file(file, file.identity().file_id)
-                .map_err(|_| CapabilityFailure::Io)?;
+            let evidence = volume.query_file(file, file.identity().file_id).map_err(|_| CapabilityFailure::Io)?;
             if evidence.journal.journal_id != self.initial_journal_id {
                 return Err(CapabilityFailure::Io);
             }
@@ -294,11 +279,7 @@ impl WindowsSession {
         if self.capability_failed.load(AtomicOrdering::Acquire) {
             return Err(CapabilityFailure::Io);
         }
-        let result = self
-            .volume
-            .lock()
-            .map_err(|_| CapabilityFailure::Io)
-            .and_then(|volume| query(&volume));
+        let result = self.volume.lock().map_err(|_| CapabilityFailure::Io).and_then(|volume| query(&volume));
         if result.is_err() {
             self.capability_failed.store(true, AtomicOrdering::Release);
         }
