@@ -239,7 +239,8 @@ fn acquire_existing_profile_lock_lease(control: &Path, profile_uuid: &str) -> io
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
     let locks_dir = control.join("locks");
-    ensure_plain_profile_directory_path(&locks_dir)?;
+    let locks_meta = fs::symlink_metadata(&locks_dir)?;
+    ensure_plain_profile_directory(&locks_dir, &locks_meta)?;
     let lock_path = locks_dir.join(format!("{profile_uuid}.lock"));
     let file = OpenOptions::new()
         .read(true)
