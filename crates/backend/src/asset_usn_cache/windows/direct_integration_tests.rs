@@ -1,5 +1,6 @@
 use super::*;
 use crate::{asset_probe_context, asset_usn_cache::AssetUsnCacheRuntime};
+use rand::{RngCore, rngs::OsRng};
 use sha1::{Digest, Sha1};
 use std::{
     fs::OpenOptions,
@@ -29,69 +30,117 @@ fn sha1(bytes: &[u8]) -> (String, [u8; 20]) {
 }
 
 #[test]
-fn direct_runtime_seed_reuse_and_mutation_fallback_are_real() {
-    let objects = temp_objects_dir("seed-reuse");
-    let original = b"abcdefgh";
-    let mutated = b"ABCDEFGH";
-    let (expected_sha1, expected_hash) = sha1(original);
-    let asset_dir = objects.join(&expected_sha1[..2]);
-    let asset = asset_dir.join(&expected_sha1);
-    std::fs::create_dir_all(&asset_dir).unwrap();
-    std::fs::write(&asset, original).unwrap();
+fn direct_cache_reuses_unchanged_asset_without_sha1() {
+    let objects_dir = temp_objects_dir("reuse");
+    std::fs::create_dir_all(&objects_dir).unwrap();
+    let bytes = b"bootoptim-direct-usn-reuse";
+    let (hash, expected) = sha1(bytes);
+    let object_path = objects_dir.join(&hash[..2]).join(&hash);
+    std::fs::create_dir_all(object_path.parent().unwrap()).unwrap();
+    std::fs::write(&object_path, bytes).unwrap();
 
-    let runtime = AssetUsnCacheRuntime::requested_for_test(true);
-    let index_sha1 = "0123456789abcdef0123456789abcdef01234567";
+    let context = asset_probe_context("direct-usn-reuse");
+    let cache = AssetUsnCacheRuntime::new(&objects_dir, "index", &context, vec![hash.clone()]);
+    let seed = cache.begin_session().expect("seed session");
+    assert!(seed.lookup(&hash).is_none());
+    seed.record_verified(&hash, &object_path, expected)
+        .expect("record seed");
+    seed.finish().expect("publish seed manifest");
 
-    let seed =
-        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
-    asset_probe_context::reset_hash_observed();
-    assert!(seed.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
-    assert!(asset_probe_context::take_hash_observed());
-    seed.finish();
-    drop(seed);
+    let reuse = cache.begin_session().expect("reuse session");
+    let evidence = reuse.lookup(&hash).expect("unchanged asset should hit");
+    assert_eq!(evidence.expected_sha1, expected);
+    reuse.finish().expect("finish reuse session");
+    assert_eq!(cache.take_stats().reused_assets, 1);
 
-    let manifest = objects.join(".bootoptim-usn-assets-v1.json");
-    assert!(manifest.is_file(), "seed must publish a complete manifest");
+    let _ = std::fs::remove_dir_all(objects_dir.parent().unwrap().parent().unwrap());
+}
 
-    let reuse =
-        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
-    asset_probe_context::reset_hash_observed();
-    assert!(reuse.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
-    assert!(
-        !asset_probe_context::take_hash_observed(),
-        "unchanged verified reuse must not read asset content for SHA-1"
-    );
-    drop(reuse);
+#[test]
+fn direct_cache_rejects_same_size_same_mtime_mutation() {
+    let objects_dir = temp_objects_dir("same-size-mtime");
+    std::fs::create_dir_all(&objects_dir).unwrap();
+    let original = b"abcdefghij";
+    let replacement = b"0123456789";
+    let (hash, expected) = sha1(original);
+    let object_path = objects_dir.join(&hash[..2]).join(&hash);
+    std::fs::create_dir_all(object_path.parent().unwrap()).unwrap();
+    std::fs::write(&object_path, original).unwrap();
 
-    let modified = std::fs::metadata(&asset).unwrap().modified().unwrap();
-    let mut writer = OpenOptions::new().write(true).open(&asset).unwrap();
-    writer.seek(SeekFrom::Start(0)).unwrap();
-    writer.write_all(mutated).unwrap();
-    writer.sync_all().unwrap();
-    writer.set_times(std::fs::FileTimes::new().set_modified(modified)).unwrap();
-    drop(writer);
+    let context = asset_probe_context("direct-usn-mutation");
+    let cache = AssetUsnCacheRuntime::new(&objects_dir, "index", &context, vec![hash.clone()]);
+    let seed = cache.begin_session().expect("seed session");
+    seed.record_verified(&hash, &object_path, expected)
+        .expect("record seed");
+    seed.finish().expect("publish seed manifest");
 
-    let changed =
-        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
-    asset_probe_context::reset_hash_observed();
-    assert!(!changed.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
-    assert!(
-        asset_probe_context::take_hash_observed(),
-        "same-size restored-mtime mutation must fall back to content SHA-1"
-    );
-    drop(changed);
+    let original_mtime = std::fs::metadata(&object_path).unwrap().modified().unwrap();
+    {
+        let mut file = OpenOptions::new().write(true).open(&object_path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(replacement).unwrap();
+        file.flush().unwrap();
+    }
+    filetime::set_file_mtime(&object_path, filetime::FileTime::from_system_time(original_mtime)).unwrap();
 
-    std::fs::remove_file(&asset).unwrap();
-    std::fs::write(&asset, original).unwrap();
-    let recreated =
-        WindowsSession::begin(index_sha1, Arc::<Path>::from(objects.as_path()), vec![expected_sha1.clone()]).unwrap();
-    asset_probe_context::reset_hash_observed();
-    assert!(recreated.verify_existing(&runtime, AssetVerificationMode::Normal, &asset, &expected_sha1, expected_hash,));
-    assert!(
-        asset_probe_context::take_hash_observed(),
-        "delete/recreate must not consume the cached FileId as verified reuse"
-    );
-    drop(recreated);
+    let mutated = cache.begin_session().expect("mutation session");
+    assert!(mutated.lookup(&hash).is_none());
+    mutated.finish().expect("finish mutation session");
 
-    let _ = std::fs::remove_dir_all(objects.parent().unwrap().parent().unwrap());
+    let _ = std::fs::remove_dir_all(objects_dir.parent().unwrap().parent().unwrap());
+}
+
+#[test]
+fn direct_cache_rejects_delete_recreate() {
+    let objects_dir = temp_objects_dir("recreate");
+    std::fs::create_dir_all(&objects_dir).unwrap();
+    let bytes = b"delete-recreate-same-bytes";
+    let (hash, expected) = sha1(bytes);
+    let object_path = objects_dir.join(&hash[..2]).join(&hash);
+    std::fs::create_dir_all(object_path.parent().unwrap()).unwrap();
+    std::fs::write(&object_path, bytes).unwrap();
+
+    let context = asset_probe_context("direct-usn-recreate");
+    let cache = AssetUsnCacheRuntime::new(&objects_dir, "index", &context, vec![hash.clone()]);
+    let seed = cache.begin_session().expect("seed session");
+    seed.record_verified(&hash, &object_path, expected)
+        .expect("record seed");
+    seed.finish().expect("publish seed manifest");
+
+    std::fs::remove_file(&object_path).unwrap();
+    std::fs::write(&object_path, bytes).unwrap();
+
+    let recreated = cache.begin_session().expect("recreate session");
+    assert!(recreated.lookup(&hash).is_none());
+    recreated.finish().expect("finish recreate session");
+
+    let _ = std::fs::remove_dir_all(objects_dir.parent().unwrap().parent().unwrap());
+}
+
+#[test]
+fn direct_cache_rejects_rename_replacement() {
+    let objects_dir = temp_objects_dir("rename");
+    std::fs::create_dir_all(&objects_dir).unwrap();
+    let bytes = b"rename-replacement-same-bytes";
+    let (hash, expected) = sha1(bytes);
+    let object_path = objects_dir.join(&hash[..2]).join(&hash);
+    std::fs::create_dir_all(object_path.parent().unwrap()).unwrap();
+    std::fs::write(&object_path, bytes).unwrap();
+
+    let context = asset_probe_context("direct-usn-rename");
+    let cache = AssetUsnCacheRuntime::new(&objects_dir, "index", &context, vec![hash.clone()]);
+    let seed = cache.begin_session().expect("seed session");
+    seed.record_verified(&hash, &object_path, expected)
+        .expect("record seed");
+    seed.finish().expect("publish seed manifest");
+
+    let moved = object_path.with_extension("old");
+    std::fs::rename(&object_path, &moved).unwrap();
+    std::fs::write(&object_path, bytes).unwrap();
+
+    let replaced = cache.begin_session().expect("rename session");
+    assert!(replaced.lookup(&hash).is_none());
+    replaced.finish().expect("finish rename session");
+
+    let _ = std::fs::remove_dir_all(objects_dir.parent().unwrap().parent().unwrap());
 }
