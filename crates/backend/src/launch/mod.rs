@@ -3034,6 +3034,50 @@ mod agent202_library_policy_tests {
     }
 
     #[tokio::test]
+    async fn first_install_rejects_a_bad_new_download_hash() {
+        let root = temp_dir("install-bad-download");
+        let body = b"unexpected-library".to_vec();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let response_body = body.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 2048];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response_body.len()
+            )
+            .unwrap();
+            stream.write_all(&response_body).unwrap();
+        });
+
+        let artifact = GameLibraryArtifact {
+            path: "missing/bad.jar".into(),
+            sha1: Some("0000000000000000000000000000000000000000".into()),
+            size: Some(body.len() as u32),
+            url: format!("http://{addr}/bad.jar").into(),
+        };
+
+        let modal = ModalAction::default();
+        let tracker = modal.push_tracker("install-bad-download-test".into());
+        let result = do_libraries_install_missing(
+            &reqwest::Client::new(),
+            &[artifact],
+            root.clone().into(),
+            &tracker,
+        )
+        .await;
+
+        server.join().unwrap();
+        assert!(matches!(result, Err(LoadLibrariesError::WrongHash)));
+        assert!(!root.join("missing/bad.jar").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn repair_detects_corruption_and_replaces_from_network() {
         let root = temp_dir("repair");
         let path = root.join("x/y.jar");
