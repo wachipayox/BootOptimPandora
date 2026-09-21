@@ -51,15 +51,21 @@ fn absolute_path(base: &Path, path: &Path) -> PathBuf {
 }
 
 fn artifact_from_path(role: &'static str, path: &Path) -> io::Result<Artifact> {
-    let meta = fs::metadata(path)?;
-    if !meta.is_file() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "artifact not file"));
-    }
+    let mut identity_cache = IdentityDigestCache::stock();
+    artifact_from_path_with_cache(role, path, &mut identity_cache)
+}
+
+fn artifact_from_path_with_cache(
+    role: &'static str,
+    path: &Path,
+    identity_cache: &mut IdentityDigestCache,
+) -> io::Result<Artifact> {
+    let (size, sha256) = identity_cache.resolve_raw(role, path)?;
     Ok(Artifact {
         role,
         path: encode_os(path.as_os_str()),
-        size: meta.len(),
-        sha256: hash_file(path)?,
+        size,
+        sha256,
     })
 }
 
