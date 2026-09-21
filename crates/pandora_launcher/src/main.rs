@@ -12,12 +12,31 @@ use bridge::handle::{BackendHandle, FrontendHandle};
 use bridge::message::{MessageToBackend, MessageToFrontend};
 use bridge::quit::QuitCoordinator;
 use clap::Parser;
+#[cfg(windows)]
+use clap::ValueEnum;
 use fern::colors::ColoredLevelConfig;
 use native_dialog::DialogBuilder;
 use parking_lot::RwLock;
 
 #[derive(Parser, Debug)]
 #[command()]
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum InternalDefenderProcessAction {
+    Enable,
+    Remove,
+}
+
+#[cfg(windows)]
+impl From<InternalDefenderProcessAction> for command::DefenderProcessAction {
+    fn from(value: InternalDefenderProcessAction) -> Self {
+        match value {
+            InternalDefenderProcessAction::Enable => Self::Enable,
+            InternalDefenderProcessAction::Remove => Self::Remove,
+        }
+    }
+}
+
 struct Cli {
     /// Instance to launch, instead of opening the launcher
     #[arg(long)]
@@ -26,6 +45,10 @@ struct Cli {
     #[cfg(windows)]
     #[arg(long, hide = false, num_args = 2..)]
     internal_set_traverse_acls: Option<Vec<std::ffi::OsString>>,
+    /// Internal fixed operation for the UAC-scoped Defender process helper.
+    #[cfg(windows)]
+    #[arg(long, hide = true, value_enum)]
+    internal_defender_process_exclusion: Option<InternalDefenderProcessAction>,
 }
 
 pub mod panic;
@@ -41,6 +64,12 @@ fn main() {
         } else {
             std::process::exit(0);
         }
+    }
+
+    #[cfg(windows)]
+    if let Some(action) = cli.internal_defender_process_exclusion {
+        let code = command::run_defender_process_action_elevated(action.into());
+        std::process::exit(code as i32);
     }
 
     let data_dir = if let Some(portable_dir) = get_portable_dir() {
