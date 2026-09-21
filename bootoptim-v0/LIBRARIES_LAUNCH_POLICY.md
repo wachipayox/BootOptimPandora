@@ -22,19 +22,24 @@ Each instance owns `.bootoptim/game-files-state-v1.json`.
   library scan**. This is a compatibility rule, not an integrity assertion.
 - unreadable/corrupt/unknown marker: Start fails closed to the same Repair instruction.
 
-New instances start as `incomplete`. Imports from ATLauncher, CurseForge, Modrinth and MultiMC write
-`import-in-progress` before copying/publishing the imported instance, so an interrupted import cannot
-silently become a launchable legacy install. Minecraft/loader/loader-version changes persist
-`incomplete` **before** mutating dependency identity; if that state write fails, the change is
-rejected. Repair writes `repair-in-progress` before touching libraries and publishes `published`
-only after the strong route returns success and no cancellation is pending. Cancellation, network
-failure, hash mismatch after download, crash, or launcher termination therefore leaves the
-installation incomplete. Content-only mod/resource updates do not change library identity and do
-not alter this marker.
+New instances start as `incomplete`. Their creation path performs a dedicated **provision-missing**
+transaction before publishing: existing library files are trusted by existence only, missing
+libraries are downloaded, and only newly downloaded bytes are checked against advertised size/SHA-1.
+There is no cryptographic pass over already-present libraries. A standalone instance publishes only
+after that provisioning succeeds. A new content/modpack install keeps the same marker incomplete
+through the final content copy and publishes only after the entire install path completes.
 
-The current Pandora architecture has no separate game-dependency install transaction. For a new
-instance, the first explicit **Repair game files** operation is therefore also the provisioning
-operation. Start itself never becomes that installer.
+Imports from ATLauncher, CurseForge, Modrinth and MultiMC write `import-in-progress` before
+copying/publishing the imported instance, so an interrupted import cannot silently become a
+launchable legacy install. Minecraft/loader/loader-version changes persist `incomplete` **before**
+mutating dependency identity; if that state write fails, the change is rejected. Repair writes
+`repair-in-progress` before touching libraries and publishes `published` only after the strong
+route returns success and no cancellation is pending. Cancellation, network failure, hash mismatch
+after download, crash, or launcher termination therefore leaves the installation incomplete.
+Content-only mod/resource updates do not change library identity and do not alter this marker.
+
+Start itself never becomes an installer: first-install provisioning belongs to instance/content
+creation, and later integrity recovery belongs to the explicit **Repair game files** action.
 
 ## Launch-fast boundary
 
@@ -44,7 +49,7 @@ creation, or library-network request**. The O(n) in-memory pass is still require
 classpath; the removed O(n) work is filesystem integrity probing.
 
 Forge/NeoForge launch-fast also skips installer `.sha1` fetches, library mirror lookup, embedded
-Maven-library extraction/SHA-1 rewrite, and the strong library download path. Two existing launch
+Maven-library extraction/SHA-1 rewrite, and both provisioning/strong library download paths. Two existing launch
 consumers remain intentionally outside that statement: Forge/NeoForge must open their already-local
 installer archive to derive launch metadata/processors, and Pandora still opens selected native
 archives when extracting natives. Neither path SHA-1 verifies or repairs the game-library set.
@@ -81,6 +86,8 @@ completed; it is not a cryptographic statement about current library contents.
 
 - published/legacy state permits launch without a library scan;
 - missing and corrupt libraries map to classpath paths with no file or network access in LaunchFast;
+- first-install provisioning leaves an existing corrupt library untouched and downloads only a
+  missing library, validating only the downloaded bytes;
 - strong repair detects a corrupt SHA-1 and replaces it from a test HTTP origin;
 - interrupted/update-in-progress state blocks Start without auto-repair;
 - cancelled Repair leaves `repair-in-progress` and never publishes;
