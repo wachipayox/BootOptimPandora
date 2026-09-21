@@ -199,6 +199,7 @@ impl BackendState {
 
         let mut dot_minecraft_dir = None;
         let mut new_instance_root = None;
+        let mut identity_provision = None;
         let mut instance_running = false;
         let mut content_copy_failed = false;
 
@@ -242,6 +243,11 @@ impl BackendState {
                     instance.configuration.modify(|config| {
                         config.loader = loader;
                     });
+                    identity_provision = Some((
+                        instance_id,
+                        instance.root_path.clone(),
+                        instance.configuration.get().clone(),
+                    ));
                 }
 
                 dot_minecraft_dir = Some(instance.dot_minecraft_path.clone());
@@ -299,6 +305,19 @@ impl BackendState {
         }
 
         drop(instance_lock_guard);
+
+        if !content_copy_failed
+            && !modal_action.has_requested_cancel()
+            && modal_action.get_finished_at().is_none()
+            && let Some((instance_id, root_path, configuration)) = identity_provision
+        {
+            self.provision_game_files_after_identity_change(
+                instance_id,
+                root_path,
+                configuration,
+                "content-install-loader-changed",
+            );
+        }
 
         if let Some(root) = new_instance_root
             && !content_copy_failed
