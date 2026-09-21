@@ -175,15 +175,38 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         return Ok(PrepareDecision::Stock);
     }
 
-    if !stable {
-        write_state(&cache_dir, CacheState::Absent, "plan-not-yet-proven")?;
-        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=plan-not-yet-proven");
-        return Ok(PrepareDecision::Stock);
-    }
-
     if !plan.eligible {
         write_state(&cache_dir, CacheState::Failed, "identity-ineligible")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=identity-ineligible");
+        return Ok(PrepareDecision::Stock);
+    }
+
+    // An explicitly requested local exact clone carries only an untrusted candidate,
+    // never READY state. The destination must independently rebuild its complete
+    // effective launch plan while holding the reminted profile lease and AppCDS
+    // cache lock. Only an exact match may promote the inherited archive.
+    match try_adopt_exact_clone_candidate(
+        &parsed.instance_dir,
+        &cache_dir,
+        profile_scope.namespace(),
+        &plan,
+    )? {
+        ExactCloneAdoption::None => {}
+        ExactCloneAdoption::Adopted => {
+            write_state(&cache_dir, CacheState::Ready, "exact-clone-plan-confirmed")?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=ready activation=exact-clone");
+            return Ok(PrepareDecision::Ready);
+        }
+        ExactCloneAdoption::Rejected => {
+            write_state(&cache_dir, CacheState::Stale, "exact-clone-candidate-rejected")?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=exact-clone-candidate-rejected");
+            return Ok(PrepareDecision::Stock);
+        }
+    }
+
+    if !stable {
+        write_state(&cache_dir, CacheState::Absent, "plan-not-yet-proven")?;
+        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=plan-not-yet-proven");
         return Ok(PrepareDecision::Stock);
     }
 
