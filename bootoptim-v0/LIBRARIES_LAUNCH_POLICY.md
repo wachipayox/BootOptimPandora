@@ -34,9 +34,10 @@ copying/publishing the imported instance, so an interrupted import cannot silent
 launchable legacy install. Minecraft/loader/loader-version changes persist `incomplete` **before**
 mutating dependency identity; if that state write fails, the change is rejected. After a successful
 identity mutation Pandora schedules the same provision-missing transaction against the new identity.
-It publishes only if the instance still has exactly that Minecraft/loader/loader-version identity
-and the marker still carries that update reason; a newer change, Repair, deletion or other marker
-transition therefore cannot be overwritten by a stale provisioning completion. Provisioning
+It publishes only if the instance still has exactly that Minecraft/loader/loader-version identity.
+Publication itself is a process-local compare-and-set on the marker's expected incomplete reason,
+serialized with all Agent 202 marker writes, so a newer change, Repair or other marker transition
+cannot be overwritten between the stale-state check and the final write. Provisioning
 failure leaves the update incomplete and Start directs the user to Repair.
 
 Repair writes `repair-in-progress` before touching libraries and publishes `published` only after
@@ -56,7 +57,8 @@ creation, or library-network request**. The O(n) in-memory pass is still require
 classpath; the removed O(n) work is filesystem integrity probing.
 
 Forge/NeoForge launch-fast also skips installer `.sha1` fetches, library mirror lookup, embedded
-Maven-library extraction/SHA-1 rewrite, and both provisioning/strong library download paths. Two existing launch
+Maven-library extraction/SHA-1 rewrite, processor-input extraction to the Forge temp directory, and
+both provisioning/strong library download paths. Two existing launch
 consumers remain intentionally outside that statement: Forge/NeoForge must open their already-local
 installer archive to derive launch metadata/processors, and Pandora still opens selected native
 archives when extracting natives. Neither path SHA-1 verifies or repairs the game-library set.
@@ -99,7 +101,8 @@ completed; it is not a cryptographic statement about current library contents.
 - interrupted/update-in-progress state blocks Start without auto-repair;
 - identity updates provision missing dependencies asynchronously and publish only for the still-current
   identity/marker generation;
-- cancelled Repair leaves `repair-in-progress` and never publishes;
+- compare-and-set publication refuses to overwrite a newer marker transition;
+- cancelled Repair leaves an incomplete marker even when cancellation races with final publication;
 - corrupt marker fails closed;
 - diff excludes assets/AppCDS sources.
 
