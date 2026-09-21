@@ -1,0 +1,65 @@
+name: Agent 201 exact clone and instance toggle
+
+on:
+  push:
+    branches:
+      - "agent201/appcds-exact-clone-toggle-20260921"
+  pull_request:
+    paths:
+      - "bootoptim-v0/interposer/**"
+      - "bootoptim-v0/APPCDS_EXACT_CLONE_AND_INSTANCE_TOGGLE.md"
+      - "crates/schema/src/instance.rs"
+      - "crates/bridge/src/message.rs"
+      - "crates/command/src/command.rs"
+      - "crates/backend/src/duplicate.rs"
+      - "crates/backend/src/backend_handler.rs"
+      - "crates/backend/src/launch/mod.rs"
+      - "crates/frontend/src/modals/duplicate_instance.rs"
+      - "crates/frontend/src/pages/instance/settings_subpage.rs"
+      - ".github/workflows/agent201-appcds-exact-clone-toggle.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent201-appcds-exact-clone-toggle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focal-linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install workspace system dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Focused compile
+        run: cargo check -p schema -p bridge -p command -p backend -p frontend --tests --frozen
+      - name: Preference schema tests
+        run: cargo test -p schema bootoptim_appcds_instance_preference_tests --frozen
+      - name: Launch toggle tests
+        run: cargo test -p command bootoptim_appcds_instance_toggle_tests --frozen
+      - name: Clone isolation and exact-candidate tests
+        run: |
+          cargo test -p backend duplicate_skips_appcds_cache_but_preserves_other_bootoptim_state --frozen -- --test-threads=1
+          cargo test -p backend exact_clone --frozen -- --test-threads=1
+      - name: Interposer exact-clone and profile tests
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
+
+  focal-windows:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Interposer native lock and exact-clone tests
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc
+      - name: Backend exact-clone tests
+        run: cargo test -p backend exact_clone --frozen --target x86_64-pc-windows-msvc -- --test-threads=1
