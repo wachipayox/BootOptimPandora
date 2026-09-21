@@ -1,13 +1,13 @@
 use super::{
-    evaluate_hit, parse_manifest, validate_manifest, AssetUsnCacheRuntime, CacheManifest, CachedAsset,
-    CapabilityFailure, HitEvidence,
+    AssetUsnCacheRuntime, CacheManifest, CachedAsset, CapabilityFailure, HitEvidence, evaluate_hit, parse_manifest,
+    validate_manifest,
 };
 use bridge::modal_action::AssetVerificationMode;
-use rand::{rngs::OsRng, RngCore};
+use rand::{RngCore, rngs::OsRng};
 use sha1::{Digest, Sha1};
 use std::{
     collections::{HashMap, HashSet},
-    ffi::{c_void, OsStr},
+    ffi::{OsStr, c_void},
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     mem::zeroed,
@@ -15,8 +15,8 @@ use std::{
     path::{Path, PathBuf},
     ptr::{null, null_mut},
     sync::{
-        atomic::{AtomicBool, Ordering as AtomicOrdering},
         Mutex,
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
     },
 };
 
