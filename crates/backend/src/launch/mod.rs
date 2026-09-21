@@ -2133,6 +2133,7 @@ impl LaunchContext {
 
         let mut iter = wrapping_command.iter();
         let mut command = PandoraCommand::new(iter.next().unwrap().to_os_string());
+        command.bootoptim_appcds_enabled(self.configuration.appcds_enabled);
         for arg in iter {
             command.arg(arg.to_os_string());
         }
