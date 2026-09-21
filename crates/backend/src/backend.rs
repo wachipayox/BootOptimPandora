@@ -702,67 +702,6 @@ impl BackendState {
     }
 
 
-#[cfg(test)]
-mod launch_admission_tests {
-    use super::*;
-    use bridge::keep_alive::KeepAlive;
-
-    fn direct_start() -> MessageToBackend {
-        MessageToBackend::StartInstance {
-            id: InstanceID { index: 7, generation: 11 },
-            quick_play: None,
-            live_game_output: None,
-            modal_action: ModalAction::default(),
-        }
-    }
-
-    #[test]
-    fn duplicate_admission_stays_rejected_after_first_claim_finishes() {
-        let mut slot = None;
-        let first = KeepAlive::new();
-        crate::backend_handler::try_claim_launch(&mut slot, &first).unwrap();
-
-        let admitted = AdmittedBackendMessage::freeze_duplicate(
-            direct_start(),
-            slot.as_ref().is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive),
-        );
-        drop(first);
-
-        let mut spawn_start_instance_calls = 0;
-        if let AdmittedBackendMessage::Message(_) = admitted {
-            let second = KeepAlive::new();
-            if crate::backend_handler::try_claim_launch(&mut slot, &second).is_ok() {
-                spawn_start_instance_calls += 1;
-            }
-        }
-
-        assert_eq!(spawn_start_instance_calls, 0, "admitted duplicate became a later launch");
-        assert!(slot.as_ref().is_some_and(|handle| !handle.is_alive()));
-    }
-
-    #[test]
-    fn multiple_duplicates_and_by_name_freeze_without_instance_identity() {
-        let messages = [
-            direct_start(),
-            direct_start(),
-            MessageToBackend::StartInstanceByName {
-                name: "BootOptimLaptop".to_string(),
-                quick_play: None,
-            },
-        ];
-
-        let admitted = messages
-            .into_iter()
-            .map(|message| AdmittedBackendMessage::freeze_duplicate(message, true))
-            .collect::<Vec<_>>();
-
-        assert!(admitted.into_iter().all(|message| matches!(
-            message,
-            AdmittedBackendMessage::RejectedStart(RejectedStart { .. })
-        )));
-    }
-}
-
     fn handle_tick(&self) {
         self.meta.expire();
         self.mod_metadata_manager.write_changes();
@@ -2248,3 +2187,65 @@ enum PrelaunchModCopySource {
     FromContentLibrary { hash: [u8; 20] },
     FromBytes { bytes: Arc<[u8]> },
 }
+
+#[cfg(test)]
+mod launch_admission_tests {
+    use super::*;
+    use bridge::keep_alive::KeepAlive;
+
+    fn direct_start() -> MessageToBackend {
+        MessageToBackend::StartInstance {
+            id: InstanceID { index: 7, generation: 11 },
+            quick_play: None,
+            live_game_output: None,
+            modal_action: ModalAction::default(),
+        }
+    }
+
+    #[test]
+    fn duplicate_admission_stays_rejected_after_first_claim_finishes() {
+        let mut slot = None;
+        let first = KeepAlive::new();
+        crate::backend_handler::try_claim_launch(&mut slot, &first).unwrap();
+
+        let admitted = AdmittedBackendMessage::freeze_duplicate(
+            direct_start(),
+            slot.as_ref().is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive),
+        );
+        drop(first);
+
+        let mut spawn_start_instance_calls = 0;
+        if let AdmittedBackendMessage::Message(_) = admitted {
+            let second = KeepAlive::new();
+            if crate::backend_handler::try_claim_launch(&mut slot, &second).is_ok() {
+                spawn_start_instance_calls += 1;
+            }
+        }
+
+        assert_eq!(spawn_start_instance_calls, 0, "admitted duplicate became a later launch");
+        assert!(slot.as_ref().is_some_and(|handle| !handle.is_alive()));
+    }
+
+    #[test]
+    fn multiple_duplicates_and_by_name_freeze_without_instance_identity() {
+        let messages = [
+            direct_start(),
+            direct_start(),
+            MessageToBackend::StartInstanceByName {
+                name: "BootOptimLaptop".to_string(),
+                quick_play: None,
+            },
+        ];
+
+        let admitted = messages
+            .into_iter()
+            .map(|message| AdmittedBackendMessage::freeze_duplicate(message, true))
+            .collect::<Vec<_>>();
+
+        assert!(admitted.into_iter().all(|message| matches!(
+            message,
+            AdmittedBackendMessage::RejectedStart(RejectedStart { .. })
+        )));
+    }
+}
+
