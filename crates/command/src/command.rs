@@ -32,6 +32,7 @@ pub struct PandoraCommand {
     pub(crate) inherit_env: Option<fn(&OsStr) -> bool>,
     pub(crate) env: BTreeMap<PandoraArg, PandoraArg>,
     pub(crate) current_dir: Option<PathBuf>,
+    appcds_identity_normal_gui: bool,
     pub(crate) stdin: PandoraStdioWriteMode,
     pub(crate) stdout: PandoraStdioReadMode,
     pub(crate) stderr: PandoraStdioReadMode,
@@ -55,6 +56,7 @@ impl PandoraCommand {
             inherit_env: None,
             env: BTreeMap::default(),
             current_dir: None,
+            appcds_identity_normal_gui: false,
             stdin: Default::default(),
             stdout: Default::default(),
             stderr: Default::default(),
@@ -79,6 +81,10 @@ impl PandoraCommand {
 
     pub fn current_dir(&mut self, current_dir: &Path) {
         self.current_dir = Some(current_dir.to_path_buf());
+    }
+
+    pub fn bootoptim_appcds_identity_normal_gui(&mut self, value: bool) {
+        self.appcds_identity_normal_gui = value;
     }
 
     pub fn stdin(&mut self, stdin: PandoraStdioWriteMode) {
@@ -167,6 +173,8 @@ impl PandoraCommand {
             .arg(&launcher_exe)
             .arg("--upstream-commit")
             .arg(BOOTOPTIM_PANDORA_UPSTREAM)
+            .arg("--appcds-identity-authority")
+            .arg(if self.appcds_identity_normal_gui { "normal-gui" } else { "unknown" })
             .arg("--")
             .arg(&self.executable.0);
         for arg in &self.args {
@@ -197,8 +205,14 @@ impl PandoraCommand {
         }
         // This is launcher control state, not a JVM identity input. Ensure the
         // helper sees it even if a caller uses a restrictive Java env filter.
-        if let Some(mode) = std::env::var_os("BOOTOPTIM_APPCDS_MODE") {
-            preflight.env("BOOTOPTIM_APPCDS_MODE", mode);
+        for key in [
+            "BOOTOPTIM_APPCDS_MODE",
+            "BOOTOPTIM_APPCDS_IDENTITY_CACHE",
+            "BOOTOPTIM_APPCDS_IDENTITY_FORCE_STOCK",
+        ] {
+            if let Some(value) = std::env::var_os(key) {
+                preflight.env(key, value);
+            }
         }
 
         let probe_preflight = crate::spawner::is_probe_minecraft_launch(self);
