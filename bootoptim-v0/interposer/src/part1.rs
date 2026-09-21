@@ -57,6 +57,13 @@ impl PrepareDecision {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TrainingReconcile {
+    Clean,
+    Matching,
+    Discarded(&'static str),
+}
+
 #[derive(Debug)]
 struct ParsedArgs {
     instance_dir: PathBuf,
@@ -154,8 +161,17 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
     };
     let stable = persist_plan_and_compare(&cache_dir, &plan.bytes, &plan.sha256)?;
 
+    // A pending training result is trusted only while every later rebuilt
+    // identity remains exact. This reconciliation also runs in plan mode: plan
+    // mode never trains or consumes, but an observed mismatch must still revoke
+    // the untrusted training result so it cannot be resurrected later.
+    let training_reconcile = reconcile_training(&cache_dir, &plan.sha256)?;
+
     if mode == Mode::Plan {
-        eprintln!("BOOTOPTIM_INTERPOSER status=plan-only deterministic={}", if stable { "true" } else { "false" });
+        eprintln!(
+            "BOOTOPTIM_INTERPOSER status=plan-only deterministic={}",
+            if stable { "true" } else { "false" }
+        );
         return Ok(PrepareDecision::Stock);
     }
 
@@ -164,34 +180,57 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         return Ok(PrepareDecision::Stock);
     }
 
-    if !stable {
-        write_state(&cache_dir, CacheState::Absent, "plan-not-yet-proven")?;
-        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=plan-not-yet-proven");
+    if let TrainingReconcile::Discarded(reason) = training_reconcile {
+        let state = if reason == "training-plan-mismatch" {
+            CacheState::Stale
+        } else {
+            CacheState::Failed
+        };
+        write_state(&cache_dir, state, reason)?;
+        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason={reason}");
         return Ok(PrepareDecision::Stock);
     }
 
     if !plan.eligible {
+        if training_state_present(&cache_dir) {
+            invalidate_training(&cache_dir)?;
+        }
         write_state(&cache_dir, CacheState::Failed, "identity-ineligible")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=identity-ineligible");
         return Ok(PrepareDecision::Stock);
     }
 
-    let (state, _) = classify_cache(&cache_dir, &plan.sha256)?;
+    prepare_eligible_cache(&cache_dir, &plan.sha256)
+}
+
+fn prepare_eligible_cache(cache_dir: &Path, plan_sha256: &str) -> io::Result<PrepareDecision> {
+    let (state, _) = classify_cache(cache_dir, plan_sha256)?;
     match state {
         CacheState::Ready => {
-            cleanup_training_files(&cache_dir);
-            write_state(&cache_dir, CacheState::Ready, "identity-match")?;
+            if training_state_present(cache_dir) {
+                invalidate_training(cache_dir)?;
+                write_state(cache_dir, CacheState::Failed, "ambiguous-ready-and-training")?;
+                eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=ambiguous-ready-and-training");
+                return Ok(PrepareDecision::Stock);
+            }
+            write_state(cache_dir, CacheState::Ready, "identity-match")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=ready activation=enabled");
             return Ok(PrepareDecision::Ready);
         }
         CacheState::Stale => {
-            write_state(&cache_dir, CacheState::Stale, "identity-mismatch")?;
+            if training_state_present(cache_dir) {
+                invalidate_training(cache_dir)?;
+            }
+            write_state(cache_dir, CacheState::Stale, "identity-mismatch")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=stale");
             return Ok(PrepareDecision::Stock);
         }
         CacheState::Failed | CacheState::Generating => {
-            cleanup_orphan_staging(&cache_dir)?;
-            write_state(&cache_dir, CacheState::Failed, "incomplete-or-failed")?;
+            cleanup_orphan_staging(cache_dir)?;
+            if training_state_present(cache_dir) {
+                invalidate_training(cache_dir)?;
+            }
+            write_state(cache_dir, CacheState::Failed, "incomplete-or-failed")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=failed-state");
             return Ok(PrepareDecision::Stock);
         }
@@ -201,73 +240,203 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
     let training_meta = cache_dir.join("training.meta");
     let training_archive = cache_dir.join("training.jsa");
     let training_complete = cache_dir.join("training.complete");
-    if training_meta.is_file() {
-        let pending_plan = read_training_plan(&training_meta)?;
-        if pending_plan != plan.sha256 {
-            write_state(&cache_dir, CacheState::Stale, "training-plan-mismatch")?;
+
+    if training_meta.exists() {
+        if !training_meta.is_file() {
+            invalidate_training(cache_dir)?;
+            write_state(cache_dir, CacheState::Failed, "training-metadata-corrupt")?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-metadata-corrupt");
+            return Ok(PrepareDecision::Stock);
+        }
+
+        let pending_plan = match read_training_plan(&training_meta) {
+            Ok(plan) => plan,
+            Err(_) => {
+                invalidate_training(cache_dir)?;
+                write_state(cache_dir, CacheState::Failed, "training-metadata-corrupt")?;
+                eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-metadata-corrupt");
+                return Ok(PrepareDecision::Stock);
+            }
+        };
+        if pending_plan != plan_sha256 {
+            invalidate_training(cache_dir)?;
+            write_state(cache_dir, CacheState::Stale, "training-plan-mismatch")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-plan-mismatch");
             return Ok(PrepareDecision::Stock);
         }
 
-        if !training_complete.is_file() {
-            write_state(&cache_dir, CacheState::Generating, "training-pending")?;
+        if !training_complete.exists() {
+            write_state(cache_dir, CacheState::Generating, "training-pending")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-pending");
             return Ok(PrepareDecision::Stock);
         }
 
+        if !training_complete.is_file() || fs::read(&training_complete)? != b"complete\n" {
+            invalidate_training(cache_dir)?;
+            write_state(cache_dir, CacheState::Failed, "training-completion-corrupt")?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-completion-corrupt");
+            return Ok(PrepareDecision::Stock);
+        }
+
         if !training_archive.is_file() {
-            write_state(&cache_dir, CacheState::Failed, "training-complete-without-archive")?;
+            invalidate_training(cache_dir)?;
+            write_state(cache_dir, CacheState::Failed, "training-complete-without-archive")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-complete-without-archive");
             return Ok(PrepareDecision::Stock);
         }
 
         if fs::metadata(&training_archive)?.len() == 0 {
-            write_state(&cache_dir, CacheState::Failed, "training-empty")?;
+            invalidate_training(cache_dir)?;
+            write_state(cache_dir, CacheState::Failed, "training-empty")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-empty");
             return Ok(PrepareDecision::Stock);
         }
 
-        promote_archive(&cache_dir, &training_archive, &plan.sha256)?;
-        let _ = fs::remove_file(&training_meta);
-        let _ = fs::remove_file(&training_complete);
-        write_state(&cache_dir, CacheState::Ready, "promotion-complete")?;
+        promote_archive(cache_dir, &training_archive, plan_sha256)?;
+        cleanup_training_files(cache_dir);
+        write_state(cache_dir, CacheState::Ready, "promotion-complete")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=ready promotion=complete");
         return Ok(PrepareDecision::Ready);
     }
 
-    if training_archive.exists() || training_complete.exists() {
-        write_state(&cache_dir, CacheState::Failed, "orphan-training-state")?;
+    if training_archive.exists() || training_complete.exists() || cache_dir.join("training.invalid").exists() {
+        invalidate_training(cache_dir)?;
+        write_state(cache_dir, CacheState::Failed, "orphan-training-state")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=orphan-training-state");
         return Ok(PrepareDecision::Stock);
     }
 
-    write_atomic_replace(&training_meta, format!("schema={}\nplan_sha256={}\n", SCHEMA_VERSION, plan.sha256).as_bytes())?;
-    write_state(&cache_dir, CacheState::Generating, "training")?;
+    // The first eligible identity trains immediately. training.meta is the
+    // persisted training identity; no archive can be consumed in this launch
+    // because HotSpot has not produced training.jsa or a clean-exit marker yet.
+    write_atomic_replace(
+        &training_meta,
+        format!("schema={}\nplan_sha256={}\n", SCHEMA_VERSION, plan_sha256).as_bytes(),
+    )?;
+    write_state(cache_dir, CacheState::Generating, "training")?;
     eprintln!("BOOTOPTIM_INTERPOSER status=generating activation=training");
     Ok(PrepareDecision::Train)
 }
 
-fn read_training_plan(path: &Path) -> io::Result<String> {
-    let text = fs::read_to_string(path)?;
-    let mut schema_ok = false;
-    let mut plan = None;
-    for line in text.lines() {
-        if line == format!("schema={}", SCHEMA_VERSION) {
-            schema_ok = true;
-        } else if let Some(value) = line.strip_prefix("plan_sha256=") {
-            plan = Some(value.to_string());
+fn reconcile_training(cache_dir: &Path, plan_sha256: &str) -> io::Result<TrainingReconcile> {
+    let training_meta = cache_dir.join("training.meta");
+    let training_archive = cache_dir.join("training.jsa");
+    let training_complete = cache_dir.join("training.complete");
+    let invalid = cache_dir.join("training.invalid");
+
+    if invalid.exists() {
+        invalidate_training(cache_dir)?;
+        return Ok(TrainingReconcile::Discarded("training-invalidated"));
+    }
+
+    if !training_meta.exists() {
+        if training_archive.exists() || training_complete.exists() {
+            invalidate_training(cache_dir)?;
+            return Ok(TrainingReconcile::Discarded("orphan-training-state"));
+        }
+        return Ok(TrainingReconcile::Clean);
+    }
+
+    if !training_meta.is_file() {
+        invalidate_training(cache_dir)?;
+        return Ok(TrainingReconcile::Discarded("training-metadata-corrupt"));
+    }
+
+    let pending_plan = match read_training_plan(&training_meta) {
+        Ok(plan) => plan,
+        Err(_) => {
+            invalidate_training(cache_dir)?;
+            return Ok(TrainingReconcile::Discarded("training-metadata-corrupt"));
+        }
+    };
+    if pending_plan != plan_sha256 {
+        invalidate_training(cache_dir)?;
+        return Ok(TrainingReconcile::Discarded("training-plan-mismatch"));
+    }
+
+    if training_complete.exists() {
+        if !training_complete.is_file() || fs::read(&training_complete)? != b"complete\n" {
+            invalidate_training(cache_dir)?;
+            return Ok(TrainingReconcile::Discarded("training-completion-corrupt"));
+        }
+        if !training_archive.is_file() || fs::metadata(&training_archive)?.len() == 0 {
+            invalidate_training(cache_dir)?;
+            return Ok(TrainingReconcile::Discarded("training-complete-without-archive"));
         }
     }
-    if !schema_ok {
+
+    Ok(TrainingReconcile::Matching)
+}
+
+fn read_training_plan(path: &Path) -> io::Result<String> {
+    let text = fs::read_to_string(path)?;
+    let mut lines = text.lines();
+    let expected_schema = format!("schema={}", SCHEMA_VERSION);
+    if lines.next() != Some(expected_schema.as_str()) {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "training schema"));
     }
-    plan.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "training plan"))
+    let plan_line = lines
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "training plan"))?;
+    if lines.next().is_some() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "training metadata trailing data"));
+    }
+    let plan = plan_line
+        .strip_prefix("plan_sha256=")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "training plan"))?;
+    if plan.len() != 64 || !plan.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "training plan digest"));
+    }
+    Ok(plan.to_string())
+}
+
+fn training_state_present(cache_dir: &Path) -> bool {
+    ["training.meta", "training.jsa", "training.complete", "training.invalid"]
+        .into_iter()
+        .any(|name| cache_dir.join(name).exists())
+}
+
+fn invalidate_training(cache_dir: &Path) -> io::Result<()> {
+    let invalid = cache_dir.join("training.invalid");
+    write_atomic_replace(&invalid, b"invalid\n")?;
+
+    let mut first_error = None;
+    for name in ["training.meta", "training.jsa", "training.complete"] {
+        match fs::remove_file(cache_dir.join(name)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+    }
+
+    if first_error.is_none()
+        && !["training.meta", "training.jsa", "training.complete"]
+            .into_iter()
+            .any(|name| cache_dir.join(name).exists())
+    {
+        match fs::remove_file(&invalid) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => first_error = Some(error),
+        }
+    }
+
+    if let Some(error) = first_error {
+        Err(error)
+    } else {
+        Ok(())
+    }
 }
 
 fn cleanup_training_files(cache_dir: &Path) {
     let _ = fs::remove_file(cache_dir.join("training.meta"));
     let _ = fs::remove_file(cache_dir.join("training.jsa"));
     let _ = fs::remove_file(cache_dir.join("training.complete"));
+    let _ = fs::remove_file(cache_dir.join("training.invalid"));
 }
 
 fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
