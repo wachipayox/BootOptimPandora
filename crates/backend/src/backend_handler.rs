@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     io::{BufRead, Read},
+    path::Path,
     sync::{Arc, atomic::Ordering},
     time::{Duration, Instant, SystemTime},
 };
@@ -63,6 +64,69 @@ use crate::{
 };
 
 impl BackendState {
+    fn provision_game_files_after_identity_change(
+        self: &Arc<Self>,
+        id: InstanceID,
+        root_path: Arc<Path>,
+        configuration: schema::instance::InstanceConfiguration,
+        marker_reason: &'static str,
+    ) {
+        let expected_minecraft_version = configuration.minecraft_version;
+        let expected_loader = configuration.loader;
+        let expected_loader_version = configuration.preferred_loader_version;
+        let this = self.clone();
+
+        tokio::task::spawn(async move {
+            let modal_action = ModalAction::default();
+            let http_client = this.http_client_provider.redirecting();
+            let result = this
+                .launcher
+                .provision_game_files(&http_client, configuration, &modal_action)
+                .await;
+            modal_action.set_finished();
+
+            let identity_is_current = this
+                .instance_state
+                .read()
+                .instances
+                .get(id)
+                .is_some_and(|instance| {
+                    let current = instance.configuration.get();
+                    current.minecraft_version == expected_minecraft_version
+                        && current.loader == expected_loader
+                        && current.preferred_loader_version == expected_loader_version
+                });
+            let marker_is_current = matches!(
+                library_install_state::start_status(&root_path),
+                Ok(library_install_state::StartStatus::Incomplete(reason))
+                    if reason == marker_reason
+            );
+
+            if !identity_is_current || !marker_is_current {
+                return;
+            }
+
+            match result {
+                Ok(()) => {
+                    if let Err(err) = library_install_state::mark_published(
+                        &root_path,
+                        "identity-update-complete",
+                    ) {
+                        this.send.send_warning(format!(
+                            "Game files were updated, but installation state could not be published ({err}); use Repair game files"
+                        ));
+                    }
+                },
+                Err(err) => {
+                    log::warn!("Game-file provisioning after identity change failed: {err:?}");
+                    this.send.send_warning(format!(
+                        "Game files are incomplete after the version/loader change ({err}); use Repair game files"
+                    ));
+                },
+            }
+        });
+    }
+
     pub async fn handle_message(self: &Arc<Self>, message: MessageToBackend) {
         match message {
             MessageToBackend::RequestMetadata { request, force_reload } => {
@@ -193,26 +257,64 @@ impl BackendState {
                 self.rename_instance(id, &name).await;
             },
             MessageToBackend::SetInstanceMinecraftVersion { id, version } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "minecraft-version-changed") {
-                        self.send.send_error(format!("Unable to change Minecraft version: game-files state could not be marked incomplete: {err}"));
-                        return;
+                let provision = {
+                    let mut state = self.instance_state.write();
+                    let Some(instance) = state.instances.get_mut(id) else {
+                        continue;
+                    };
+                    if instance.configuration.get().minecraft_version == version {
+                        continue;
+                    }
+                    if let Err(err) =
+                        library_install_state::mark_incomplete(&instance.root_path, "minecraft-version-changed")
+                    {
+                        self.send.send_error(format!(
+                            "Unable to change Minecraft version: game-files state could not be marked incomplete: {err}"
+                        ));
+                        continue;
                     }
                     instance.configuration.modify(|configuration| {
                         configuration.minecraft_version = version;
                     });
+                    Some((instance.root_path.clone(), instance.configuration.get().clone()))
+                };
+                if let Some((root_path, configuration)) = provision {
+                    self.provision_game_files_after_identity_change(
+                        id,
+                        root_path,
+                        configuration,
+                        "minecraft-version-changed",
+                    );
                 }
             },
             MessageToBackend::SetInstanceLoader { id, loader } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                let provision = {
+                    let mut state = self.instance_state.write();
+                    let Some(instance) = state.instances.get_mut(id) else {
+                        continue;
+                    };
+                    if instance.configuration.get().loader == loader {
+                        continue;
+                    }
                     if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "loader-changed") {
-                        self.send.send_error(format!("Unable to change loader: game-files state could not be marked incomplete: {err}"));
-                        return;
+                        self.send.send_error(format!(
+                            "Unable to change loader: game-files state could not be marked incomplete: {err}"
+                        ));
+                        continue;
                     }
                     instance.configuration.modify(|configuration| {
                         configuration.loader = loader;
                         configuration.preferred_loader_version = None;
                     });
+                    Some((instance.root_path.clone(), instance.configuration.get().clone()))
+                };
+                if let Some((root_path, configuration)) = provision {
+                    self.provision_game_files_after_identity_change(
+                        id,
+                        root_path,
+                        configuration,
+                        "loader-changed",
+                    );
                 }
             },
             MessageToBackend::SetInstancePreferredAccount { id, account } => {
@@ -223,14 +325,35 @@ impl BackendState {
                 }
             },
             MessageToBackend::SetInstancePreferredLoaderVersion { id, loader_version } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "loader-version-changed") {
-                        self.send.send_error(format!("Unable to change loader version: game-files state could not be marked incomplete: {err}"));
-                        return;
+                let loader_version = loader_version.map(Ustr::from);
+                let provision = {
+                    let mut state = self.instance_state.write();
+                    let Some(instance) = state.instances.get_mut(id) else {
+                        continue;
+                    };
+                    if instance.configuration.get().preferred_loader_version == loader_version {
+                        continue;
+                    }
+                    if let Err(err) =
+                        library_install_state::mark_incomplete(&instance.root_path, "loader-version-changed")
+                    {
+                        self.send.send_error(format!(
+                            "Unable to change loader version: game-files state could not be marked incomplete: {err}"
+                        ));
+                        continue;
                     }
                     instance.configuration.modify(|configuration| {
-                        configuration.preferred_loader_version = loader_version.map(Ustr::from);
+                        configuration.preferred_loader_version = loader_version;
                     });
+                    Some((instance.root_path.clone(), instance.configuration.get().clone()))
+                };
+                if let Some((root_path, configuration)) = provision {
+                    self.provision_game_files_after_identity_change(
+                        id,
+                        root_path,
+                        configuration,
+                        "loader-version-changed",
+                    );
                 }
             },
             MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
