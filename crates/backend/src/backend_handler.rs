@@ -2574,9 +2574,9 @@ fn check_argument_expansions(argument: &str) {
     }
 }
 
-const ALREADY_LAUNCHING_ERROR: &str = "Can't launch instance, already launching";
+pub(crate) const ALREADY_LAUNCHING_ERROR: &str = "Can't launch instance, already launching";
 
-fn try_claim_launch(
+pub(crate) fn try_claim_launch(
     launch_keepalive: &mut Option<KeepAliveHandle>,
     keepalive: &KeepAlive,
 ) -> Result<(), &'static str> {
