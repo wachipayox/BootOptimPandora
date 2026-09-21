@@ -16,7 +16,7 @@ The normal Pandora process remains unelevated. The action launches the same ship
 
 The internal CLI accepts only --internal-defender-process-exclusion enable or remove. It accepts no path argument.
 
-For enable, the helper derives and canonicalizes its own executable path and rejects UNC/network targets, wildcards, non-absolute paths, non-.exe targets, and non-files. PowerShell receives the target only through the helper-created PANDORA_DEFENDER_TARGET environment variable; path text is never interpolated into PowerShell source.
+For enable, the helper derives and canonicalizes its own executable path and rejects UNC/network targets, wildcards, non-absolute paths, non-.exe targets, and non-files. PowerShell receives the target only through the helper-created PANDORA_DEFENDER_TARGET environment variable; path text is never interpolated into PowerShell source. The elevated helper resolves the Windows system directory with GetSystemDirectoryW and invokes its fixed WindowsPowerShell\\v1.0\\powershell.exe path, so an inherited user PATH cannot substitute another executable.
 
 The only Defender writes are:
 
