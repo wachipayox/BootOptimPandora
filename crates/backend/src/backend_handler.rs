@@ -96,6 +96,9 @@ impl BackendState {
         if !identity_is_current {
             return Ok(false);
         }
+        if modal_action.has_requested_cancel() {
+            return Err("Game-file provisioning was cancelled".to_string());
+        }
 
         library_install_state::publish_if_incomplete_reason(
             &root_path,
@@ -598,7 +601,19 @@ impl BackendState {
                             "repair-in-progress",
                             "repair-complete",
                         ) {
-                            Ok(true) => {},
+                            Ok(true) => {
+                                // Close the cancellation surface immediately after the
+                                // guarded publication, then repair a cancellation that
+                                // raced the final compare-and-set back to incomplete.
+                                modal_action.set_finished();
+                                if modal_action.has_requested_cancel() {
+                                    let _ = library_install_state::mark_incomplete(
+                                        &root_path,
+                                        "repair-cancelled",
+                                    );
+                                }
+                                return;
+                            },
                             Ok(false) => {
                                 modal_action.set_finished_with_error(
                                     "Repair completed, but installation state changed before publication; use Repair game files"
@@ -612,14 +627,6 @@ impl BackendState {
                                 );
                                 return;
                             },
-                        }
-                        if modal_action.has_requested_cancel() {
-                            let _ = library_install_state::mark_incomplete(
-                                &root_path,
-                                "repair-cancelled",
-                            );
-                            modal_action.set_finished();
-                            return;
                         }
                     },
                     Err(LaunchError::CancelledByUser) => {
