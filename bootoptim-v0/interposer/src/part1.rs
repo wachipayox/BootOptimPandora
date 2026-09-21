@@ -62,6 +62,7 @@ struct ParsedArgs {
     instance_dir: PathBuf,
     launcher_exe: Option<PathBuf>,
     upstream_commit: String,
+    appcds_identity_normal_gui: bool,
     java_exe: OsString,
     java_args: Vec<OsString>,
 }
@@ -144,11 +145,32 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
     let cache_dir = parsed.instance_dir.join(".bootoptim").join("appcds");
     fs::create_dir_all(&cache_dir)?;
 
-    // Hashing is read-only and can happen outside the cache lock. Publication of
-    // the plan and every state transition is serialized so launch-plan.match can
-    // never describe a different concurrent preflight.
-    let plan = build_launch_plan(parsed)?;
-    let Some(_lock) = try_lock(&cache_dir.join("cache.lock"))? else {
+    let identity_requested = IdentityDigestCache::requested(parsed.appcds_identity_normal_gui);
+    let mut held_lock = None;
+    let plan = if identity_requested {
+        // Digest reuse and manifest publication are serialized by the existing
+        // AppCDS lock. A busy lock never falls through to metadata-only reuse:
+        // rebuild the strong stock plan, then launch stock.
+        let Some(lock) = try_lock(&cache_dir.join("cache.lock"))? else {
+            let _ = build_launch_plan(parsed)?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=identity-lock-busy");
+            return Ok(PrepareDecision::Stock);
+        };
+        held_lock = Some(lock);
+        let mut identity_cache = IdentityDigestCache::begin(&cache_dir, true);
+        let plan = build_launch_plan_with_cache(parsed, &mut identity_cache)?;
+        if identity_cache.finish().is_err() {
+            eprintln!("BOOTOPTIM_INTERPOSER identity_cache=publish-failed fallback=future-stock");
+        }
+        plan
+    } else {
+        build_launch_plan(parsed)?
+    };
+
+    if held_lock.is_none() {
+        held_lock = try_lock(&cache_dir.join("cache.lock"))?;
+    }
+    let Some(_lock) = held_lock else {
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=lock-busy");
         return Ok(PrepareDecision::Stock);
     };
@@ -274,6 +296,8 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
     let mut instance_dir = None;
     let mut launcher_exe = None;
     let mut upstream_commit = UPSTREAM_DEFAULT.to_string();
+    let mut appcds_identity_normal_gui = false;
+    let mut identity_authority_seen = false;
     let mut i = 0usize;
     while i < args.len() {
         if args[i] == OsStr::new("--") {
@@ -289,6 +313,17 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
         } else if args[i] == OsStr::new("--upstream-commit") {
             i += 1;
             upstream_commit = args.get(i).map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        } else if args[i] == OsStr::new("--appcds-identity-authority") {
+            if identity_authority_seen {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "duplicate identity authority"));
+            }
+            identity_authority_seen = true;
+            i += 1;
+            appcds_identity_normal_gui = match args.get(i).and_then(|s| s.to_str()) {
+                Some("normal-gui") => true,
+                Some("unknown") => false,
+                _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid identity authority")),
+            };
         } else {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "unknown control argument"));
         }
@@ -297,5 +332,5 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
     let java_exe = args.get(i).cloned().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing java"))?;
     let java_args = args.get(i + 1..).unwrap_or_default().to_vec();
     let instance_dir = instance_dir.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing instance"))?;
-    Ok(ParsedArgs { instance_dir, launcher_exe, upstream_commit, java_exe, java_args })
+    Ok(ParsedArgs { instance_dir, launcher_exe, upstream_commit, appcds_identity_normal_gui, java_exe, java_args })
 }
