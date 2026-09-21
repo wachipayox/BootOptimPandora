@@ -1829,13 +1829,19 @@ impl BackendState {
         {
             Ok(()) => {
                 if publish_after_provision {
-                    if let Err(err) = crate::library_install_state::mark_published(
+                    match crate::library_install_state::publish_if_incomplete_reason(
                         &instance_dir,
+                        "new-install",
                         "initial-install-complete",
                     ) {
-                        self.send.send_warning(format!(
+                        Ok(true) => {},
+                        Ok(false) => self.send.send_warning(
+                            "Instance created, but game-files state changed before publication; use Repair game files"
+                                .to_string(),
+                        ),
+                        Err(err) => self.send.send_warning(format!(
                             "Instance created, but game-files state could not be published ({err}); use Repair game files"
-                        ));
+                        )),
                     }
                 } else if let Err(err) = crate::library_install_state::mark_incomplete(
                     &instance_dir,
