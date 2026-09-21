@@ -1,7 +1,6 @@
 use std::{
     ffi::{OsStr, OsString},
-    fs,
-    io,
+    fs, io,
     os::windows::{
         ffi::{OsStrExt, OsStringExt},
         process::CommandExt,
@@ -92,7 +91,7 @@ pub fn local_state() -> DefenderProcessLocalState {
         Ok(owner) => owner,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return DefenderProcessLocalState::NotManaged;
-        }
+        },
         Err(_) => return DefenderProcessLocalState::InvalidOwnershipRecord,
     };
 
@@ -197,7 +196,7 @@ fn elevated_enable() -> u32 {
             if existing_owner.as_ref() == Some(&target) {
                 let _ = fs::remove_file(&marker);
             }
-        }
+        },
         Err(_) => return EXIT_BLOCKED,
     }
 
@@ -238,8 +237,8 @@ fn elevated_remove() -> u32 {
         Ok(false) => {
             let _ = fs::remove_file(&marker);
             return EXIT_ABSENT_CLEARED;
-        }
-        Ok(true) => {}
+        },
+        Ok(true) => {},
         Err(_) => return EXIT_BLOCKED,
     }
 
@@ -325,7 +324,6 @@ fn canonical_launcher_path() -> io::Result<PathBuf> {
     Ok(normalized)
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RemovalPlan {
     NothingOwned,
@@ -344,25 +342,17 @@ fn removal_plan(current: &Path, owned: Option<&Path>) -> RemovalPlan {
 fn validate_owned_target(current: &Path, owned: &Path) -> bool {
     owned.is_absolute()
         && !has_wildcard(owned)
-        && owned
-            .extension()
-            .and_then(|v| v.to_str())
-            .is_some_and(|v| v.eq_ignore_ascii_case("exe"))
+        && owned.extension().and_then(|v| v.to_str()).is_some_and(|v| v.eq_ignore_ascii_case("exe"))
         && current.parent().is_some()
         && current.parent() == owned.parent()
 }
 
 fn has_wildcard(path: &Path) -> bool {
-    path.as_os_str()
-        .encode_wide()
-        .any(|c| c == b'*' as u16 || c == b'?' as u16)
+    path.as_os_str().encode_wide().any(|c| c == b'*' as u16 || c == b'?' as u16)
 }
 
 fn owner_file(current: &Path) -> PathBuf {
-    current
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(OWNER_FILE)
+    current.parent().unwrap_or_else(|| Path::new(".")).join(OWNER_FILE)
 }
 
 fn write_owner(path: &Path, target: &Path) -> io::Result<()> {
@@ -424,14 +414,8 @@ mod tests {
             Path::new(r"C:\Program Files\Pandora\PandoraLauncher-old.exe")
         ));
         assert!(!validate_owned_target(current, Path::new(r"C:\Games\Minecraft.exe")));
-        assert!(!validate_owned_target(
-            current,
-            Path::new(r"C:\Program Files\Pandora\*.exe")
-        ));
-        assert!(!validate_owned_target(
-            current,
-            Path::new(r"C:\Program Files\Pandora\mods")
-        ));
+        assert!(!validate_owned_target(current, Path::new(r"C:\Program Files\Pandora\*.exe")));
+        assert!(!validate_owned_target(current, Path::new(r"C:\Program Files\Pandora\mods")));
     }
 
     #[test]
