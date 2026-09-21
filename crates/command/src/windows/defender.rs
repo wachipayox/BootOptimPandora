@@ -11,7 +11,11 @@ use std::{
 };
 
 use windows::Win32::{
-    System::Threading::{GetExitCodeProcess, INFINITE, WaitForSingleObject},
+    Foundation::CloseHandle,
+    System::{
+        SystemInformation::GetSystemDirectoryW,
+        Threading::{GetExitCodeProcess, INFINITE, WaitForSingleObject},
+    },
     UI::{
         Shell::{SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW},
         WindowsAndMessaging::SW_HIDE,
@@ -136,7 +140,9 @@ pub fn request(action: DefenderProcessAction) -> DefenderProcessResult {
     }
 
     let mut exit_code = EXIT_FAILED;
-    if unsafe { GetExitCodeProcess(sei.hProcess, &mut exit_code) }.is_err() {
+    let exit_result = unsafe { GetExitCodeProcess(sei.hProcess, &mut exit_code) };
+    _ = unsafe { CloseHandle(sei.hProcess) };
+    if exit_result.is_err() {
         return DefenderProcessResult::Failed;
     }
 
@@ -255,13 +261,29 @@ fn query_present(target: &Path) -> io::Result<bool> {
 }
 
 fn powershell(script: &str, target: &Path) -> io::Result<u32> {
-    let status = Command::new("powershell.exe")
+    let powershell = system_powershell_path()?;
+    let status = Command::new(powershell)
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .env("PANDORA_DEFENDER_TARGET", target.as_os_str())
         .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .status()?;
 
     Ok(status.code().unwrap_or(EXIT_FAILED as i32) as u32)
+}
+
+fn system_powershell_path() -> io::Result<PathBuf> {
+    let mut buffer = [0u16; 32_768];
+    let len = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+    if len == 0 || len >= buffer.len() {
+        return Err(io::Error::other("unable to resolve the Windows system directory"));
+    }
+
+    let mut path = PathBuf::from(OsString::from_wide(&buffer[..len]));
+    path.push(r"WindowsPowerShell\v1.0\powershell.exe");
+    if !fs::metadata(&path)?.is_file() {
+        return Err(io::Error::other("system PowerShell executable is unavailable"));
+    }
+    Ok(path)
 }
 
 fn canonical_launcher_path() -> io::Result<PathBuf> {
