@@ -96,25 +96,28 @@ impl BackendState {
                         && current.loader == expected_loader
                         && current.preferred_loader_version == expected_loader_version
                 });
-            let marker_is_current = matches!(
-                library_install_state::start_status(&root_path),
-                Ok(library_install_state::StartStatus::Incomplete(reason))
-                    if reason == marker_reason
-            );
-
-            if !identity_is_current || !marker_is_current {
+            if !identity_is_current {
                 return;
             }
 
             match result {
                 Ok(()) => {
-                    if let Err(err) = library_install_state::mark_published(
+                    match library_install_state::publish_if_incomplete_reason(
                         &root_path,
+                        marker_reason,
                         "identity-update-complete",
                     ) {
-                        this.send.send_warning(format!(
-                            "Game files were updated, but installation state could not be published ({err}); use Repair game files"
-                        ));
+                        Ok(true) => {},
+                        Ok(false) => {
+                            log::debug!(
+                                "Skipping stale game-files publication for marker reason {marker_reason}"
+                            );
+                        },
+                        Err(err) => {
+                            this.send.send_warning(format!(
+                                "Game files were updated, but installation state could not be published ({err}); use Repair game files"
+                            ));
+                        },
                     }
                 },
                 Err(err) => {
@@ -578,8 +581,32 @@ impl BackendState {
                             modal_action.set_finished();
                             return;
                         }
-                        if let Err(err) = library_install_state::mark_published(&root_path, "repair-complete") {
-                            modal_action.set_finished_with_error(format!("Repair completed but installation state could not be published: {err}").into());
+                        match library_install_state::publish_if_incomplete_reason(
+                            &root_path,
+                            "repair-in-progress",
+                            "repair-complete",
+                        ) {
+                            Ok(true) => {},
+                            Ok(false) => {
+                                modal_action.set_finished_with_error(
+                                    "Repair completed, but installation state changed before publication; use Repair game files"
+                                        .into(),
+                                );
+                                return;
+                            },
+                            Err(err) => {
+                                modal_action.set_finished_with_error(
+                                    format!("Repair completed but installation state could not be published: {err}").into(),
+                                );
+                                return;
+                            },
+                        }
+                        if modal_action.has_requested_cancel() {
+                            let _ = library_install_state::mark_incomplete(
+                                &root_path,
+                                "repair-cancelled",
+                            );
+                            modal_action.set_finished();
                             return;
                         }
                     },
