@@ -2973,6 +2973,67 @@ mod agent202_library_policy_tests {
     }
 
     #[tokio::test]
+    async fn first_install_trusts_existing_and_downloads_only_missing_libraries() {
+        let root = temp_dir("install-missing");
+        let existing = root.join("existing/corrupt.jar");
+        std::fs::create_dir_all(existing.parent().unwrap()).unwrap();
+        std::fs::write(&existing, b"corrupt-but-present").unwrap();
+
+        let body = b"new-library".to_vec();
+        let mut hasher = Sha1::new();
+        hasher.update(&body);
+        let expected = hex::encode(hasher.finalize());
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let response_body = body.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 2048];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response_body.len()
+            )
+            .unwrap();
+            stream.write_all(&response_body).unwrap();
+        });
+
+        let artifacts = vec![
+            GameLibraryArtifact {
+                path: "existing/corrupt.jar".into(),
+                sha1: Some("0000000000000000000000000000000000000000".into()),
+                size: Some(999),
+                url: "http://127.0.0.1:1/must-not-connect".into(),
+            },
+            GameLibraryArtifact {
+                path: "missing/new.jar".into(),
+                sha1: Some(expected.into()),
+                size: Some(body.len() as u32),
+                url: format!("http://{addr}/new.jar").into(),
+            },
+        ];
+
+        let modal = ModalAction::default();
+        let tracker = modal.push_tracker("install-missing-test".into());
+        let result = do_libraries_install_missing(
+            &reqwest::Client::new(),
+            &artifacts,
+            root.clone().into(),
+            &tracker,
+        )
+        .await
+        .unwrap();
+
+        server.join().unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(std::fs::read(&existing).unwrap(), b"corrupt-but-present");
+        assert_eq!(std::fs::read(root.join("missing/new.jar")).unwrap(), body);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn repair_detects_corruption_and_replaces_from_network() {
         let root = temp_dir("repair");
         let path = root.join("x/y.jar");
