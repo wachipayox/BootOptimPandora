@@ -346,14 +346,20 @@ mod tests {
         assert!(!d.join("training.meta").exists());
         assert!(!d.join("training.jsa").exists());
         assert!(!d.join("training.complete").exists());
+        assert!(d.join("training.invalid").is_file());
         assert!(!d.join("ready.jsa").exists());
+        assert_eq!(
+            prepare_eligible_cache(&d, &plan_b).unwrap(),
+            PrepareDecision::Stock,
+            "invalidated campaign must block a replacement writer until explicit reset"
+        );
 
         let _ = fs::remove_dir_all(d);
     }
 
     #[test]
     fn corrupt_training_metadata_or_completion_never_promotes() {
-        let d = temp_dir("training-corrupt");
+        let d = temp_dir("training-corrupt-meta");
         let plan = "c".repeat(64);
 
         fs::write(
@@ -367,8 +373,12 @@ mod tests {
             reconcile_training(&d, &plan).unwrap(),
             TrainingReconcile::Discarded("training-metadata-corrupt")
         );
+        assert!(d.join("training.invalid").is_file());
         assert!(!d.join("ready.jsa").exists());
+        assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Stock);
+        let _ = fs::remove_dir_all(d);
 
+        let d = temp_dir("training-corrupt-complete");
         assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Train);
         fs::write(d.join("training.jsa"), b"archive").unwrap();
         fs::write(d.join("training.complete"), b"not-complete\n").unwrap();
@@ -376,8 +386,10 @@ mod tests {
             reconcile_training(&d, &plan).unwrap(),
             TrainingReconcile::Discarded("training-completion-corrupt")
         );
+        assert!(d.join("training.invalid").is_file());
         assert!(!d.join("ready.jsa").exists());
         assert!(!d.join("training.meta").exists());
+        assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Stock);
 
         let _ = fs::remove_dir_all(d);
     }
