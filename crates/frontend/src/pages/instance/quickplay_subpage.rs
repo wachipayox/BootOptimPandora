@@ -115,6 +115,10 @@ impl Render for InstanceQuickplaySubpage {
         let instance = self.instance.read(cx);
         let playtime = instance.playtime;
         let instance_id = instance.id;
+        let worlds_loaded = instance.worlds.read(cx).is_some();
+        let servers_loaded = instance.servers.read(cx).is_some();
+        let worlds_cancelled = self.worlds_state.is_cancelled_by_launch();
+        let servers_cancelled = self.servers_state.is_cancelled_by_launch();
 
         self.worlds_state.set_observed();
         if self.worlds_state.should_load() {
@@ -167,7 +171,20 @@ impl Render for InstanceQuickplaySubpage {
                                 .border_1()
                                 .rounded(theme.radius)
                                 .border_color(theme.border)
-                                .child(List::new(&self.world_list).search_placeholder(t::common::search())),
+                                .when(worlds_cancelled && !worlds_loaded, |this| {
+                                    this.child(
+                                        div()
+                                            .size_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_color(theme.muted_foreground)
+                                            .child("Quickplay load cancelled by current launch"),
+                                    )
+                                })
+                                .when(!worlds_cancelled || worlds_loaded, |this| {
+                                    this.child(List::new(&self.world_list).search_placeholder(t::common::search()))
+                                }),
                         ),
                     )
                     .child(
@@ -178,7 +195,20 @@ impl Render for InstanceQuickplaySubpage {
                                 .border_1()
                                 .rounded(theme.radius)
                                 .border_color(theme.border)
-                                .child(List::new(&self.server_list).search_placeholder(t::common::search())),
+                                .when(servers_cancelled && !servers_loaded, |this| {
+                                    this.child(
+                                        div()
+                                            .size_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_color(theme.muted_foreground)
+                                            .child("Quickplay load cancelled by current launch"),
+                                    )
+                                })
+                                .when(!servers_cancelled || servers_loaded, |this| {
+                                    this.child(List::new(&self.server_list).search_placeholder(t::common::search()))
+                                }),
                         ),
                     ),
             )
@@ -421,11 +451,13 @@ impl ListDelegate for ServersListDelegate {
                     .child(crate::component::create_styled_text(&status.description, false)))
             })
             .when(summary.status.is_none() && !summary.pinging, |this| {
-                this.child(div()
-                    .whitespace_nowrap()
-                    .text_color(theme.danger)
-                    .h(rems(2.0))
-                    .child(t::instance::quickplay::unable_to_get_status()))
+                this.child(
+                    div()
+                        .whitespace_nowrap()
+                        .text_color(theme.muted_foreground)
+                        .h(rems(2.0))
+                        .child("Server status deferred"),
+                )
             });
 
         let id = self.id;
