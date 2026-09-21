@@ -72,6 +72,7 @@ pub enum MessageToBackend {
     DuplicateInstance {
         id: InstanceID,
         name: Ustr,
+        exact_clone: bool,
         modal_action: ModalAction,
     },
     ExportInstance {
@@ -112,6 +113,10 @@ pub enum MessageToBackend {
     SetInstanceSandboxing {
         id: InstanceID,
         sandbox: bool,
+    },
+    SetInstanceAppCdsEnabled {
+        id: InstanceID,
+        enabled: bool,
     },
     SetInstanceMemory {
         id: InstanceID,
