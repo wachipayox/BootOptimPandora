@@ -1,12 +1,14 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard},
 };
 
 use serde::{Deserialize, Serialize};
 
 const STATE_DIR: &str = ".bootoptim";
 const STATE_FILE: &str = "game-files-state-v1.json";
+static STATE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartStatus {
@@ -33,7 +35,13 @@ fn state_path(instance_root: &Path) -> PathBuf {
     instance_root.join(STATE_DIR).join(STATE_FILE)
 }
 
-fn write_state(instance_root: &Path, state: StateKind, reason: &str) -> io::Result<()> {
+fn lock_state() -> io::Result<MutexGuard<'static, ()>> {
+    STATE_LOCK
+        .lock()
+        .map_err(|_| io::Error::other("game-files state lock poisoned"))
+}
+
+fn write_state_unlocked(instance_root: &Path, state: StateKind, reason: &str) -> io::Result<()> {
     let dir = instance_root.join(STATE_DIR);
     std::fs::create_dir_all(&dir)?;
     let bytes = serde_json::to_vec(&StateFile {
@@ -46,14 +54,36 @@ fn write_state(instance_root: &Path, state: StateKind, reason: &str) -> io::Resu
 }
 
 pub fn mark_incomplete(instance_root: &Path, reason: &str) -> io::Result<()> {
-    write_state(instance_root, StateKind::Incomplete, reason)
+    let _guard = lock_state()?;
+    write_state_unlocked(instance_root, StateKind::Incomplete, reason)
 }
 
 pub fn mark_published(instance_root: &Path, reason: &str) -> io::Result<()> {
-    write_state(instance_root, StateKind::Published, reason)
+    let _guard = lock_state()?;
+    write_state_unlocked(instance_root, StateKind::Published, reason)
+}
+
+pub fn publish_if_incomplete_reason(
+    instance_root: &Path,
+    expected_reason: &str,
+    publish_reason: &str,
+) -> io::Result<bool> {
+    let _guard = lock_state()?;
+    match read_state_unlocked(instance_root)? {
+        StartStatus::Incomplete(reason) if reason == expected_reason => {
+            write_state_unlocked(instance_root, StateKind::Published, publish_reason)?;
+            Ok(true)
+        },
+        _ => Ok(false),
+    }
 }
 
 pub fn start_status(instance_root: &Path) -> io::Result<StartStatus> {
+    let _guard = lock_state()?;
+    read_state_unlocked(instance_root)
+}
+
+fn read_state_unlocked(instance_root: &Path) -> io::Result<StartStatus> {
     let path = state_path(instance_root);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
@@ -104,6 +134,33 @@ mod tests {
         let root = root("cancel");
         mark_incomplete(&root, "repair-in-progress").unwrap();
         assert_eq!(start_status(&root).unwrap(), StartStatus::Incomplete("repair-in-progress".to_owned()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn conditional_publish_does_not_overwrite_a_newer_transition() {
+        let root = root("conditional-publish");
+        mark_incomplete(&root, "version-change").unwrap();
+        mark_incomplete(&root, "repair-in-progress").unwrap();
+
+        assert!(!publish_if_incomplete_reason(
+            &root,
+            "version-change",
+            "identity-update-complete",
+        )
+        .unwrap());
+        assert_eq!(
+            start_status(&root).unwrap(),
+            StartStatus::Incomplete("repair-in-progress".to_owned())
+        );
+
+        assert!(publish_if_incomplete_reason(
+            &root,
+            "repair-in-progress",
+            "repair-complete",
+        )
+        .unwrap());
+        assert_eq!(start_status(&root).unwrap(), StartStatus::Published);
         let _ = std::fs::remove_dir_all(root);
     }
 
