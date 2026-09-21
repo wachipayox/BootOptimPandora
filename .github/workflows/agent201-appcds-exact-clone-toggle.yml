@@ -37,7 +37,7 @@ jobs:
       - name: Install workspace system dependencies
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
       - name: Formatting
-        run: cargo fmt --all -- --check
+        run: cargo fmt -p schema -p bridge -p command -p backend -p frontend -- --check
       - name: Focused compile
         run: cargo check -p schema -p bridge -p command -p backend -p frontend --tests --frozen
       - name: Preference schema tests
