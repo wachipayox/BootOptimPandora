@@ -489,7 +489,7 @@ fn publish_exact_appcds_candidate(
         check_cancel()?;
         let archive_dest = staging.join("archive.jsa");
         fs::copy(&source.archive_path, &archive_dest)?;
-        fs::File::open(&archive_dest)?.sync_all()?;
+        fs::OpenOptions::new().read(true).write(true).open(&archive_dest)?.sync_all()?;
         let copied = fs::read(&archive_dest)?;
         if copied.len() as u64 != source.archive_size || sha256_bytes(&copied) != source.archive_sha256 {
             return Err(Error::new(ErrorKind::InvalidData, "copied exact-clone archive failed verification"));
