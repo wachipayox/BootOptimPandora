@@ -1,0 +1,47 @@
+name: Agent 195 focused Windows security recommendation
+
+on:
+  push:
+    branches:
+      - "agent195/windows-defender-narrow-recommendation-20260920"
+    paths:
+      - "crates/frontend/src/settings/general.rs"
+      - "crates/frontend/src/settings/mod.rs"
+      - "crates/frontend/src/settings/windows_security.rs"
+      - "bootoptim-v0/WINDOWS_SECURITY_INTEGRATION.md"
+      - ".github/workflows/agent195-windows-security.yml"
+  pull_request:
+    branches:
+      - "agent/integration-current"
+    paths:
+      - "crates/frontend/src/settings/general.rs"
+      - "crates/frontend/src/settings/mod.rs"
+      - "crates/frontend/src/settings/windows_security.rs"
+      - "bootoptim-v0/WINDOWS_SECURITY_INTEGRATION.md"
+      - ".github/workflows/agent195-windows-security.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent195-windows-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-windows-security:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: agent195-windows-security
+      - name: Check new Windows security module formatting
+        run: rustfmt --edition 2024 --check crates/frontend/src/settings/windows_security.rs
+      - name: Check frontend tests
+        run: cargo check -p frontend --tests --frozen
+      - name: Test Windows security scope policy
+        run: cargo test -p frontend windows_security::tests --frozen -- --test-threads=1
