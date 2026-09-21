@@ -43,6 +43,17 @@ of the v0 AppCDS measurement prototype and must not silently expand its scope.
   launch-affecting configuration changes continue to invalidate only that
   profile's archive. Shared/global inputs must be represented explicitly rather
   than guessed.
+- A first-seen or changed identity may begin **training immediately**. It must
+  never be consumed until a later independently rebuilt identity matches it
+  exactly; a mismatch discards the untrusted training result and falls back to
+  stock. This deliberately removes a wasted proof-only game launch without
+  weakening the consumption gate.
+- Rebuilding identity on every Start must be incremental. The launcher must
+  reuse a versioned, per-profile local manifest/fingerprint for unchanged files
+  and fall back to full hashing on uncertainty (identity-cache corruption,
+  volume/journal/file-id discontinuity, reparse ambiguity, managed update,
+  repair/download or unsupported filesystem). Rehashing the whole modpack on
+  every launch is not acceptable on HDD hardware.
 
 ## Persistent per-profile game layout
 
