@@ -37,7 +37,11 @@ pub struct InstanceConfiguration {
     pub show_shader_tab: bool,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub sandbox: bool, // Default sandbox to false when loading old configuration json
-    #[serde(default = "crate::default_true", deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_true")]
+    #[serde(
+        default = "crate::default_true",
+        deserialize_with = "deserialize_appcds_enabled",
+        skip_serializing_if = "is_true"
+    )]
     pub appcds_enabled: bool,
 }
 
@@ -354,6 +358,14 @@ fn is_true(value: &bool) -> bool {
     *value
 }
 
+fn deserialize_appcds_enabled<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(bool::deserialize(value).unwrap_or(true))
+}
+
 #[cfg(test)]
 mod bootoptim_appcds_instance_preference_tests {
     use super::*;
@@ -365,6 +377,13 @@ mod bootoptim_appcds_instance_preference_tests {
         assert!(config.appcds_enabled);
         let serialized = serde_json::to_string(&config).unwrap();
         assert!(!serialized.contains("appcds_enabled"));
+    }
+
+    #[test]
+    fn appcds_malformed_value_falls_back_true() {
+        let json = r#"{"minecraft_version":"1.21.1","loader":"Vanilla","appcds_enabled":"bad"}"#;
+        let config: InstanceConfiguration = serde_json::from_str(json).unwrap();
+        assert!(config.appcds_enabled);
     }
 
     #[test]
