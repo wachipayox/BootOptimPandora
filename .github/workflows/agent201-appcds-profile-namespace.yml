@@ -1,0 +1,46 @@
+name: Agent 201 AppCDS profile namespace
+
+on:
+  push:
+    branches:
+      - "agent201/appcds-profile-namespace-20260921"
+  pull_request:
+    paths:
+      - "bootoptim-v0/interposer/**"
+      - "bootoptim-v0/APPCDS_PROFILE_NAMESPACE.md"
+      - "crates/backend/src/duplicate.rs"
+      - ".github/workflows/agent201-appcds-profile-namespace.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent201-appcds-profile-namespace-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focal-linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Whitespace gate
+        run: git diff --check 3410b4c47eec0f47012d3c33bbd5e1d58b669e14 HEAD
+      - name: Interposer tests
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
+      - name: Backend compile
+        run: cargo check -p backend --tests --frozen
+      - name: Clone cache isolation test
+        run: cargo test -p backend duplicate_skips_appcds_cache_but_preserves_other_bootoptim_state --frozen -- --test-threads=1
+
+  focal-windows:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Interposer tests
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc

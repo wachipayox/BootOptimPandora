@@ -109,7 +109,9 @@ fn duplicate_with_content_library(
             };
             // Persistent profile control state is identity/transaction state, not instance
             // payload. The destination namespace is created separately with a fresh UUID.
-            if relative == Path::new(CONTROL_DIR_NAME) {
+            if relative == Path::new(CONTROL_DIR_NAME)
+                || relative == Path::new(".bootoptim").join("appcds")
+            {
                 continue;
             }
             #[cfg(windows)]
@@ -432,4 +434,28 @@ mod tests {
         assert!(source.0.join(CONTROL_DIR_NAME).join("identity.json").is_file());
         assert_eq!(fs::read(source.0.join(".minecraft/mods/managed.jar")).unwrap(), b"source-v1");
     }
+    #[test]
+    fn duplicate_skips_appcds_cache_but_preserves_other_bootoptim_state() {
+        let source = TestRoot::new("appcds-source", true);
+        let destination = TestRoot::new("appcds-destination", false);
+        let content_library = TestRoot::new("appcds-content-library", false);
+
+        fs::create_dir_all(source.0.join(".bootoptim/appcds")).unwrap();
+        fs::write(source.0.join(".bootoptim/appcds/ready.jsa"), b"source-only-appcds").unwrap();
+        fs::write(source.0.join(".bootoptim/keep.txt"), b"keep").unwrap();
+
+        duplicate_with_content_library(
+            &source.0,
+            &destination.0,
+            &content_library.0,
+            &|_, _| {},
+            &|| Ok(()),
+        )
+        .unwrap();
+
+        assert!(!destination.0.join(".bootoptim/appcds").exists());
+        assert_eq!(fs::read(destination.0.join(".bootoptim/keep.txt")).unwrap(), b"keep");
+        assert!(source.0.join(".bootoptim/appcds/ready.jsa").is_file());
+    }
+
 }

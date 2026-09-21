@@ -7,6 +7,113 @@ mod tests {
         fs::create_dir_all(&p).unwrap(); p
     }
 
+
+    fn write_ready_profile_control(root: &Path, uuid: &str) {
+        let control = root.join(".pandora-layout-v1");
+        fs::create_dir_all(control.join("locks")).unwrap();
+        fs::write(
+            control.join("identity.json"),
+            format!("{{\n  \"schema\": 1,\n  \"profile_uuid\": \"{uuid}\"\n}}\n"),
+        )
+        .unwrap();
+        fs::write(
+            control.join("manifest.json"),
+            format!(
+                "{{\n  \"schema\": 1,\n  \"profile_uuid\": \"{uuid}\",\n  \"generation\": 1,\n  \"state\": \"ready\",\n  \"managed_input_fingerprint\": \"test\",\n  \"sync_identity\": \"\",\n  \"sandbox_policy\": \"\",\n  \"managed_entries\": {{}},\n  \"transaction_id\": null\n}}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(control.join("locks").join(format!("{uuid}.lock")), b"").unwrap();
+    }
+
+    #[test]
+    fn persistent_profile_namespace_is_uuid_bound_and_rename_stable() {
+        let root = temp_dir("profile-namespace");
+        let uuid = "01234567-89ab-cdef-8123-456789abcdef";
+        write_ready_profile_control(&root, uuid);
+
+        let scope = acquire_appcds_profile_scope(&root).unwrap();
+        assert_eq!(scope.namespace().profile_uuid(), Some(uuid));
+        drop(scope);
+
+        let cache = root.join(".bootoptim/appcds");
+        fs::create_dir_all(&cache).unwrap();
+        bind_appcds_cache_namespace(
+            &cache,
+            &AppCdsProfileNamespace::PersistentProfile(uuid.to_string()),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(cache.join("profile.namespace")).unwrap(),
+            format!("schema=1\nprofile_uuid={uuid}\n")
+        );
+
+        let renamed = root.with_extension("renamed");
+        fs::rename(&root, &renamed).unwrap();
+        let renamed_scope = acquire_appcds_profile_scope(&renamed).unwrap();
+        assert_eq!(renamed_scope.namespace().profile_uuid(), Some(uuid));
+        drop(renamed_scope);
+        let _ = fs::remove_dir_all(renamed);
+    }
+
+    #[test]
+    fn persistent_profile_namespace_rejects_recovery_and_conflicts() {
+        let root = temp_dir("profile-recovery");
+        let uuid = "11234567-89ab-cdef-8123-456789abcdef";
+        write_ready_profile_control(&root, uuid);
+        let control = root.join(".pandora-layout-v1");
+
+        fs::write(control.join("journal.json"), b"{}").unwrap();
+        assert!(acquire_appcds_profile_scope(&root).is_err());
+        fs::remove_file(control.join("journal.json")).unwrap();
+
+        fs::create_dir_all(control.join("conflicts")).unwrap();
+        fs::write(control.join("conflicts").join("pending"), b"evidence").unwrap();
+        assert!(acquire_appcds_profile_scope(&root).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persistent_cache_binding_quarantines_unbound_cache_and_rejects_wrong_uuid() {
+        let root = temp_dir("profile-cache-binding");
+        let cache = root.join(".bootoptim/appcds");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("ready.jsa"), b"legacy-unbound").unwrap();
+
+        let uuid = "21234567-89ab-cdef-8123-456789abcdef";
+        let namespace = AppCdsProfileNamespace::PersistentProfile(uuid.to_string());
+        bind_appcds_cache_namespace(&cache, &namespace).unwrap();
+        assert!(!cache.join("ready.jsa").exists());
+        assert_eq!(
+            fs::read_to_string(cache.join("profile.namespace")).unwrap(),
+            format!("schema=1\nprofile_uuid={uuid}\n")
+        );
+        assert!(
+            fs::read_dir(root.join(".bootoptim"))
+                .unwrap()
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().starts_with("appcds-unbound-v0-"))
+        );
+
+        let other = AppCdsProfileNamespace::PersistentProfile(
+            "31234567-89ab-cdef-8123-456789abcdef".to_string(),
+        );
+        assert!(bind_appcds_cache_namespace(&cache, &other).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_instance_cache_namespace_remains_local_and_compatible() {
+        let root = temp_dir("legacy-profile");
+        let scope = acquire_appcds_profile_scope(&root).unwrap();
+        assert_eq!(scope.namespace(), &AppCdsProfileNamespace::LegacyInstanceLocal);
+        let cache = root.join(".bootoptim/appcds");
+        bind_appcds_cache_namespace(&cache, scope.namespace()).unwrap();
+        assert!(cache.is_dir());
+        assert!(!cache.join("profile.namespace").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn sha256_known_vector() {
         assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
