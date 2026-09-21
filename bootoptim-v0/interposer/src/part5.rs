@@ -228,7 +228,9 @@ mod appcds_incremental_identity_plan_tests {
 
         let modified = fs::metadata(&lib).unwrap().modified().unwrap();
         fs::write(&lib, b"LIB-V2").unwrap();
-        File::open(&lib)
+        OpenOptions::new()
+            .write(true)
+            .open(&lib)
             .unwrap()
             .set_times(std::fs::FileTimes::new().set_modified(modified))
             .unwrap();
