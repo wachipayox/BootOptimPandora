@@ -146,6 +146,10 @@ pub fn request(action: DefenderProcessAction) -> DefenderProcessResult {
         return DefenderProcessResult::Failed;
     }
 
+    map_exit_result(action, exit_code)
+}
+
+fn map_exit_result(action: DefenderProcessAction, exit_code: u32) -> DefenderProcessResult {
     match (action, exit_code) {
         (DefenderProcessAction::Enable, EXIT_CHANGED) => DefenderProcessResult::Enabled,
         (DefenderProcessAction::Remove, EXIT_CHANGED) => DefenderProcessResult::Removed,
@@ -441,6 +445,46 @@ mod tests {
         assert_eq!(
             removal_plan(current, Some(Path::new(r"C:\Games\Minecraft.exe"))),
             RemovalPlan::RefuseInvalidOwnership
+        );
+    }
+
+    #[test]
+    fn helper_exit_codes_map_to_non_blocking_public_states() {
+        assert_eq!(
+            map_exit_result(DefenderProcessAction::Enable, EXIT_CHANGED),
+            DefenderProcessResult::Enabled
+        );
+        assert_eq!(
+            map_exit_result(DefenderProcessAction::Remove, EXIT_CHANGED),
+            DefenderProcessResult::Removed
+        );
+        assert_eq!(
+            map_exit_result(DefenderProcessAction::Enable, EXIT_ALREADY_OWNED),
+            DefenderProcessResult::AlreadyEnabledByPandora
+        );
+        assert_eq!(
+            map_exit_result(DefenderProcessAction::Enable, EXIT_PRESENT_UNOWNED),
+            DefenderProcessResult::PresentButNotOwned
+        );
+        assert_eq!(
+            map_exit_result(DefenderProcessAction::Remove, EXIT_ABSENT_CLEARED),
+            DefenderProcessResult::PreviousEntryAlreadyAbsent
+        );
+        assert_eq!(
+            map_exit_result(DefenderProcessAction::Remove, EXIT_NO_OWNERSHIP),
+            DefenderProcessResult::NothingOwned
+        );
+        assert_eq!(
+            map_exit_result(DefenderProcessAction::Remove, EXIT_INVALID_OWNERSHIP),
+            DefenderProcessResult::InvalidOwnershipRecord
+        );
+        assert_eq!(
+            map_exit_result(DefenderProcessAction::Enable, EXIT_BLOCKED),
+            DefenderProcessResult::DefenderBlockedOrUnavailable
+        );
+        assert_eq!(
+            map_exit_result(DefenderProcessAction::Enable, EXIT_FAILED),
+            DefenderProcessResult::Failed
         );
     }
 
