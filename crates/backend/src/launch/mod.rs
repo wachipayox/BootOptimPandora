@@ -80,6 +80,12 @@ pub enum AddVanillaJar {
     No,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LibraryLoadMode {
+    LaunchFast,
+    VerifyAndRepair,
+}
+
 impl Launcher {
     pub fn new(meta: Arc<MetadataManager>, directories: Arc<LauncherDirectories>, sender: FrontendHandle) -> Self {
         let launch_wrapper = launch_wrapper::create_wrapper(&directories.temp_dir).into();
@@ -109,7 +115,7 @@ impl Launcher {
         log::debug!("Creating launch version");
 
         let (version_info, add_vanilla_jar) = tokio::select! {
-            result = self.create_launch_version(http_client, modal_action, launch_tracker, &instance_info) => result?,
+            result = self.create_launch_version(http_client, modal_action, launch_tracker, &instance_info, LibraryLoadMode::LaunchFast) => result?,
             _ = modal_action.request_cancel.cancelled() => {
                 self.sender.send(MessageToFrontend::CloseModal);
                 return Err(LaunchError::CancelledByUser);
@@ -159,7 +165,7 @@ impl Launcher {
         let load_assets_future =
             self.load_assets(&self.meta, http_client, &dot_minecraft_path, &version_info, modal_action, launch_tracker);
         let load_libraries_future =
-            self.load_libraries(http_client, &artifacts, modal_action, launch_tracker);
+            self.load_libraries(http_client, &artifacts, modal_action, launch_tracker, LibraryLoadMode::LaunchFast);
         let load_log_configuration = self.load_log_configuration(http_client, version_info.logging.as_ref());
 
         log::debug!("Loading java, assets, libraries and log configuration");
@@ -264,6 +270,7 @@ impl Launcher {
         modal_action: &ModalAction,
         launch_tracker: &ProgressTracker,
         instance_info: &InstanceConfiguration,
+        library_mode: LibraryLoadMode,
     ) -> Result<(Arc<MinecraftVersion>, AddVanillaJar), LaunchError> {
         match instance_info.loader {
             Loader::Vanilla => {
@@ -432,6 +439,7 @@ impl Launcher {
                     "net/minecraftforge/forge/{0}/forge-{0}-installer.jar",
                     "https://maven.minecraftforge.net/net/minecraftforge/forge/{0}/forge-{0}-installer.jar",
                     true,
+                    library_mode,
                 ).await
             },
             Loader::NeoForge => {
@@ -457,6 +465,7 @@ impl Launcher {
                     "net/neoforged/neoforge/{0}/neoforge-{0}-installer.jar",
                     "https://maven.neoforged.net/releases/net/neoforged/neoforge/{0}/neoforge-{0}-installer.jar",
                     false,
+                    library_mode,
                 ).await
             },
         }
@@ -474,6 +483,7 @@ impl Launcher {
         installer_path: &'static str,
         installer_url: &'static str,
         check_mirrors: bool,
+        library_mode: LibraryLoadMode,
     ) -> Result<(Arc<MinecraftVersion>, AddVanillaJar), LaunchError> {
         launch_tracker.add_count(1);
 
@@ -481,13 +491,15 @@ impl Launcher {
             return Err(LaunchError::CantFindVersion(instance_info.minecraft_version.as_str()));
         };
 
-        // Download base Minecraft version and neoforge installer hash
-        let installer_hash_url = installer_hash_url.replace("{0}", &loader_version);
-        let (base_version, installer_sha1) = futures::future::join(
-            self.meta.fetch(MinecraftVersionMetadataItem(version_link)),
-            Self::download_sha1(http_client, &installer_hash_url)
-        ).await;
-        let base_version = base_version?;
+        // Base version metadata remains stock. The installer SHA-1 request is a
+        // library-repair authority and is deliberately absent from LaunchFast.
+        let base_version = self.meta.fetch(MinecraftVersionMetadataItem(version_link)).await?;
+        let installer_sha1 = if library_mode == LibraryLoadMode::VerifyAndRepair {
+            let installer_hash_url = installer_hash_url.replace("{0}", &loader_version);
+            Self::download_sha1(http_client, &installer_hash_url).await
+        } else {
+            None
+        };
 
         launch_tracker.add_count(1);
 
@@ -515,7 +527,8 @@ impl Launcher {
             modal_action,
             launch_tracker,
         );
-        let load_installer_library_future = self.load_libraries(http_client, artifacts, modal_action, launch_tracker);
+        let load_installer_library_future =
+            self.load_libraries(http_client, artifacts, modal_action, launch_tracker, library_mode);
 
         let (artifact_load_result, java_load_result) = futures::future::try_join(
             load_installer_library_future.map_err(LaunchError::from),
@@ -541,14 +554,14 @@ impl Launcher {
             if let Ok(install_profile_legacy) = serde_json::from_slice(&install_profile_bytes) {
                 launch_tracker.add_count(1);
                 let ret = self.create_forgelike_install_version_legacy(install_profile_legacy, installer_zip,
-                    base_version, http_client, modal_action, launch_tracker, instance_info, check_mirrors).await;
+                    base_version, http_client, modal_action, launch_tracker, instance_info, check_mirrors, library_mode).await;
                 return ret;
             }
         }
 
         self.create_forgelike_install_version_modern(install_profile?, installer_zip,
             installer_path, minecraft_jar_path, &java_load_result, base_version, http_client,
-            modal_action, launch_tracker, instance_info, check_mirrors).await
+            modal_action, launch_tracker, instance_info, check_mirrors, library_mode).await
     }
 
     async fn create_forgelike_install_version_modern(
@@ -564,6 +577,7 @@ impl Launcher {
         launch_tracker: &ProgressTracker,
         instance_info: &InstanceConfiguration,
         check_mirrors: bool,
+        library_mode: LibraryLoadMode,
     ) -> Result<(Arc<MinecraftVersion>, AddVanillaJar), LaunchError> {
         if &*install_profile.minecraft != instance_info.minecraft_version.as_str() {
             return Err(LaunchError::MismatchedLoaderVersions(install_profile.minecraft.clone()));
@@ -579,7 +593,8 @@ impl Launcher {
         };
         let version: PartialMinecraftVersion = serde_json::from_slice(&version_file.bytes()?)?;
 
-        // Extract files in maven/ into libraries, used in 1.16 and below
+        // Embedded Maven entries are libraries. LaunchFast never mutates them.
+        if library_mode == LibraryLoadMode::VerifyAndRepair {
         for entry in installer_zip.entries() {
             if entry.kind() != EntryKind::File {
                 continue;
@@ -602,9 +617,11 @@ impl Launcher {
                 _ = crate::fs::write_safe(&path_in_library, &bytes);
             }
         }
+        }
 
         // Download mirror list
-        let mirror = if check_mirrors && let Some(mirror_list) = &install_profile.mirror_list {
+        let mirror = if library_mode == LibraryLoadMode::VerifyAndRepair
+            && check_mirrors && let Some(mirror_list) = &install_profile.mirror_list {
             Self::download_random_mirror(http_client, mirror_list).await
         } else {
             None
@@ -615,7 +632,8 @@ impl Launcher {
         // Download libraries
         let libraries = install_profile.libraries.iter().filter_map(|library| {
             let mut artifact = library.downloads.artifact.clone()?;
-            if let Some(builtin) = installer_zip.by_name(format!("maven/{}", artifact.path)) {
+            if library_mode == LibraryLoadMode::VerifyAndRepair
+                && let Some(builtin) = installer_zip.by_name(format!("maven/{}", artifact.path)) {
                 if !path_is_normal(artifact.path.as_str()) {
                     log::warn!("Refusing to install artifact with illegal path: {}", artifact.path);
                     return None;
@@ -649,7 +667,7 @@ impl Launcher {
             Some(artifact)
         }).collect::<Vec<_>>();
 
-        self.load_libraries(http_client, &libraries, modal_action, launch_tracker).await?;
+        self.load_libraries(http_client, &libraries, modal_action, launch_tracker, library_mode).await?;
 
         let forge_temp = self.directories.temp_dir.join("forge_installer");
 
@@ -822,6 +840,7 @@ impl Launcher {
         launch_tracker: &ProgressTracker,
         instance_info: &InstanceConfiguration,
         check_mirrors: bool,
+        library_mode: LibraryLoadMode,
     ) -> Result<(Arc<MinecraftVersion>, AddVanillaJar), LaunchError> {
         if &*install_profile.install.minecraft != instance_info.minecraft_version.as_str() {
             return Err(LaunchError::MismatchedLoaderVersions(install_profile.install.minecraft.clone()));
@@ -836,13 +855,15 @@ impl Launcher {
             return Err(LoadLibrariesError::IllegalLibraryPath(forge_path.into()).into());
         }
         let forge_artifact_path = self.directories.libraries_dir.join(forge_path.as_str());
-        crate::fs::write_safe(&forge_artifact_path, &file.bytes()?)?;
+        if library_mode == LibraryLoadMode::VerifyAndRepair {
+            crate::fs::write_safe(&forge_artifact_path, &file.bytes()?)?;
+        }
 
         // Read partial minecraft version
         let version: PartialMinecraftVersion = install_profile.version_info.into_partial_version(ForgeSide::Client);
 
         // Download mirror list
-        let mirror = if check_mirrors {
+        let mirror = if library_mode == LibraryLoadMode::VerifyAndRepair && check_mirrors {
             Self::download_random_mirror(http_client, &install_profile.install.mirror_list).await
         } else {
             None
@@ -862,7 +883,7 @@ impl Launcher {
                 Some(artifact)
             }).collect::<Vec<_>>();
 
-            self.load_libraries(http_client, &libraries, modal_action, launch_tracker).await?;
+            self.load_libraries(http_client, &libraries, modal_action, launch_tracker, library_mode).await?;
         }
 
         Ok((Arc::new(version.apply_to(&base_version)), AddVanillaJar::Yes))
@@ -1067,18 +1088,83 @@ impl Launcher {
         artifacts: &[GameLibraryArtifact],
         modal_action: &ModalAction,
         launch_tracker: &ProgressTracker,
+        library_mode: LibraryLoadMode,
     ) -> Result<Vec<(Ustr, PathBuf)>, LoadLibrariesError> {
-        let initial_title = Arc::from("Verifying integrity of game libraries");
-        let libraries_tracker = modal_action.push_tracker(initial_title);
-
-        let result =
-            do_libraries_load(http_client, artifacts, self.directories.libraries_dir.clone(), &libraries_tracker).await;
-
-        libraries_tracker.set_finished(ProgressTrackerFinishType::from_err(result.is_err()));
+        let result = match library_mode {
+            LibraryLoadMode::LaunchFast => resolve_library_paths(artifacts, &self.directories.libraries_dir),
+            LibraryLoadMode::VerifyAndRepair => {
+                let libraries_tracker =
+                    modal_action.push_tracker(Arc::from("Verifying integrity of game libraries"));
+                let result = do_libraries_load(
+                    http_client,
+                    artifacts,
+                    self.directories.libraries_dir.clone(),
+                    &libraries_tracker,
+                )
+                .await;
+                libraries_tracker.set_finished(ProgressTrackerFinishType::from_err(result.is_err()));
+                result
+            },
+        };
 
         launch_tracker.add_count(1);
-
         result
+    }
+
+    pub async fn repair_game_files(
+        &self,
+        http_client: &reqwest::Client,
+        instance_info: InstanceConfiguration,
+        modal_action: &ModalAction,
+    ) -> Result<(), LaunchError> {
+        let repair_tracker = modal_action.push_tracker(Arc::from("Repairing game files"));
+        let (version_info, add_vanilla_jar) = self
+            .create_launch_version(
+                http_client,
+                modal_action,
+                &repair_tracker,
+                &instance_info,
+                LibraryLoadMode::VerifyAndRepair,
+            )
+            .await?;
+
+        let launch_rule_context = LaunchRuleContext {
+            is_demo_user: false,
+            custom_resolution: None,
+            quick_play: None,
+        };
+        let mut artifacts = Vec::new();
+        let mut natives_to_extract = HashMap::new();
+        launch_rule_context.collect_libraries(
+            &version_info.libraries,
+            &mut artifacts,
+            &mut natives_to_extract,
+        );
+        if add_vanilla_jar == AddVanillaJar::Yes {
+            let client_download = &version_info.downloads.client;
+            artifacts.push(GameLibraryArtifact {
+                path: format!(
+                    "net/minecraft/{0}/minecraft-client-{0}.jar",
+                    instance_info.minecraft_version
+                )
+                .into(),
+                sha1: Some(client_download.sha1),
+                size: Some(client_download.size),
+                url: client_download.url,
+            });
+        }
+
+        self.load_libraries(
+            http_client,
+            &artifacts,
+            modal_action,
+            &repair_tracker,
+            LibraryLoadMode::VerifyAndRepair,
+        )
+        .await?;
+
+        repair_tracker.set_finished(ProgressTrackerFinishType::Normal);
+        Ok(())
     }
 
     async fn load_log_configuration(
@@ -1714,6 +1800,20 @@ async fn do_asset_objects_load(
     futures::future::try_join_all(tasks).await?;
 
     Ok(())
+}
+
+fn resolve_library_paths(
+    artifacts: &[GameLibraryArtifact],
+    libraries_dir: &Path,
+) -> Result<Vec<(Ustr, PathBuf)>, LoadLibrariesError> {
+    let mut paths = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts {
+        if !path_is_normal(artifact.path.as_str()) {
+            return Err(LoadLibrariesError::IllegalLibraryPath(artifact.path));
+        }
+        paths.push((artifact.path, libraries_dir.join(artifact.path.as_str())));
+    }
+    Ok(paths)
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -2622,5 +2722,101 @@ mod bootoptim_library_order_tests {
             library("example:b:1", "b-1.jar"),
         ];
         assert_eq!(collect_paths(&libraries).0, vec!["a-1.jar", "b-1.jar"]);
+    }
+}
+
+
+#[cfg(test)]
+mod agent202_library_policy_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("pandora-agent202-{name}-{}-{nonce}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn launch_fast_maps_missing_and_corrupt_libraries_without_io() {
+        let root = temp_dir("fast");
+        let corrupt = root.join("a/b.jar");
+        std::fs::create_dir_all(corrupt.parent().unwrap()).unwrap();
+        std::fs::write(&corrupt, b"corrupt").unwrap();
+
+        let artifacts = vec![
+            GameLibraryArtifact {
+                path: "a/b.jar".into(),
+                sha1: Some("0000000000000000000000000000000000000000".into()),
+                size: Some(999),
+                url: "http://127.0.0.1:1/must-not-connect".into(),
+            },
+            GameLibraryArtifact {
+                path: "missing/c.jar".into(),
+                sha1: Some("1111111111111111111111111111111111111111".into()),
+                size: Some(123),
+                url: "http://127.0.0.1:1/must-not-connect".into(),
+            },
+        ];
+
+        let mapped = resolve_library_paths(&artifacts, &root).unwrap();
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(std::fs::read(&corrupt).unwrap(), b"corrupt");
+        assert!(!root.join("missing/c.jar").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn repair_detects_corruption_and_replaces_from_network() {
+        let root = temp_dir("repair");
+        let path = root.join("x/y.jar");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"corrupt").unwrap();
+
+        let body = b"repaired-library".to_vec();
+        let mut hasher = Sha1::new();
+        hasher.update(&body);
+        let expected = hex::encode(hasher.finalize());
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let response_body = body.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 2048];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response_body.len()
+            )
+            .unwrap();
+            stream.write_all(&response_body).unwrap();
+        });
+
+        let artifact = GameLibraryArtifact {
+            path: "x/y.jar".into(),
+            sha1: Some(expected.into()),
+            size: Some(body.len() as u64),
+            url: format!("http://{addr}/y.jar").into(),
+        };
+        let modal = ModalAction::default();
+        let tracker = modal.push_tracker("repair-test".into());
+        let result = do_libraries_load(
+            &reqwest::Client::new(),
+            &[artifact],
+            root.clone().into(),
+            &tracker,
+        )
+        .await
+        .unwrap();
+
+        server.join().unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(std::fs::read(&path).unwrap(), body);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

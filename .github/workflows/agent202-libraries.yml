@@ -1,0 +1,60 @@
+name: Agent 202 libraries launch-fast gate
+
+on:
+  push:
+    branches:
+      - "agent202/libraries-launch-fast-20260921"
+  pull_request:
+    branches:
+      - "agent/integration-current"
+    paths:
+      - "crates/backend/**"
+      - "crates/bridge/**"
+      - "crates/frontend/**"
+      - "bootoptim-v0/LIBRARIES_LAUNCH_POLICY.md"
+      - ".github/workflows/agent202-libraries.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent202-libraries-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install system dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check affected crates
+        run: cargo check -p bridge -p backend -p frontend --tests --frozen
+      - name: Test library launch policy
+        run: cargo test -p backend agent202_library_policy_tests --frozen -- --nocapture
+      - name: Test transactional game-files state
+        run: cargo test -p backend library_install_state::tests --frozen -- --nocapture
+
+  windows-release:
+    needs: focused
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Build packaged release candidate
+        run: cargo build --release --frozen --target x86_64-pc-windows-msvc
+      - name: Upload launcher
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent202-windows-release
+          path: target/x86_64-pc-windows-msvc/release/PandoraLauncher.exe
+          if-no-files-found: error

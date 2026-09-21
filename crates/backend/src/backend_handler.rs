@@ -44,6 +44,7 @@ use crate::{
     fs::FolderChanges,
     instance::Instance,
     launch::{ArgumentExpansionKey, LaunchError},
+    library_install_state,
     log_reader,
     metadata::{
         items::{
@@ -196,6 +197,9 @@ impl BackendState {
                     instance.configuration.modify(|configuration| {
                         configuration.minecraft_version = version;
                     });
+                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "minecraft-version-changed") {
+                        log::warn!("Unable to mark game files incomplete after Minecraft version change: {err}");
+                    }
                 }
             },
             MessageToBackend::SetInstanceLoader { id, loader } => {
@@ -204,6 +208,9 @@ impl BackendState {
                         configuration.loader = loader;
                         configuration.preferred_loader_version = None;
                     });
+                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "loader-changed") {
+                        log::warn!("Unable to mark game files incomplete after loader change: {err}");
+                    }
                 }
             },
             MessageToBackend::SetInstancePreferredAccount { id, account } => {
@@ -218,6 +225,9 @@ impl BackendState {
                     instance.configuration.modify(|configuration| {
                         configuration.preferred_loader_version = loader_version.map(Ustr::from);
                     });
+                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "loader-version-changed") {
+                        log::warn!("Unable to mark game files incomplete after loader version change: {err}");
+                    }
                 }
             },
             MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
@@ -406,6 +416,53 @@ impl BackendState {
                 live_game_output,
                 modal_action,
             } => self.start_instance(id, quick_play, live_game_output, modal_action).await,
+            MessageToBackend::RepairGameFiles { id, modal_action } => {
+                let (root_path, configuration) = {
+                    let state = self.instance_state.read();
+                    let Some(instance) = state.instances.get(id) else {
+                        modal_action.set_finished_with_error("Can't repair game files, unknown instance".into());
+                        return;
+                    };
+                    if instance.launch_keepalive.as_ref().is_some_and(|keepalive| keepalive.is_alive()) || !instance.processes.is_empty() {
+                        modal_action.set_finished_with_error("Can't repair game files while the instance is running or launching".into());
+                        return;
+                    }
+                    (instance.root_path.clone(), instance.configuration.get().clone())
+                };
+
+                if let Err(err) = library_install_state::mark_incomplete(&root_path, "repair-in-progress") {
+                    modal_action.set_finished_with_error(format!("Unable to start Repair game files: {err}").into());
+                    return;
+                }
+
+                let repair = self.launcher.repair_game_files(
+                    &self.http_client_provider.redirecting(),
+                    configuration,
+                    &modal_action,
+                );
+                let result = tokio::select! {
+                    result = repair => result,
+                    _ = modal_action.request_cancel.cancelled() => Err(LaunchError::CancelledByUser),
+                };
+
+                match result {
+                    Ok(()) => {
+                        if let Err(err) = library_install_state::mark_published(&root_path) {
+                            modal_action.set_finished_with_error(format!("Repair completed but installation state could not be published: {err}").into());
+                            return;
+                        }
+                    },
+                    Err(LaunchError::CancelledByUser) => {
+                        modal_action.set_finished();
+                        return;
+                    },
+                    Err(err) => {
+                        modal_action.set_finished_with_error(format!("Repair game files failed: {err}").into());
+                        return;
+                    },
+                }
+                modal_action.set_finished();
+            },
             MessageToBackend::SetContentEnabled {
                 id,
                 content_ids: mod_ids,
@@ -2089,7 +2146,7 @@ impl BackendState {
     ) {
         let keepalive = KeepAlive::new();
 
-        let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+        let (root_path, dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
             instance.cancel_quickplay_for_launch();
 
             if let Some(launch_keepalive) = &instance.launch_keepalive
@@ -2104,12 +2161,24 @@ impl BackendState {
             self.send.send(MessageToFrontend::MoveInstanceToTop { id });
             self.send.send(instance.create_modify_message());
 
-            (instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
+            (instance.root_path.clone(), instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
         } else {
             self.send.send_error("Can't launch instance, unknown id");
             modal_action.set_finished_with_error("Can't launch instance, unknown id".into());
             return;
         };
+
+        match library_install_state::start_status(&root_path) {
+            Ok(library_install_state::StartStatus::Published | library_install_state::StartStatus::LegacyPublished) => {},
+            Ok(library_install_state::StartStatus::Incomplete(reason)) => {
+                modal_action.set_finished_with_error(format!("Installation incomplete ({reason}); use Repair game files").into());
+                return;
+            },
+            Err(err) => {
+                modal_action.set_finished_with_error(format!("Installation state is unreadable ({err}); use Repair game files").into());
+                return;
+            },
+        }
 
         scopeguard::defer! {
             modal_action.set_finished();

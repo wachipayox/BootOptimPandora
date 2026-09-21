@@ -1801,6 +1801,9 @@ impl BackendState {
 
         let info_path = instance_dir.join("info_v1.json");
         crate::fs::write_safe(&info_path, serde_json::to_string(&instance_info).unwrap().as_bytes()).unwrap();
+        if let Err(err) = crate::library_install_state::mark_incomplete(&instance_dir, "new-install") {
+            log::warn!("Unable to mark new instance game files incomplete: {err}");
+        }
 
         Some(instance_dir.clone())
     }

@@ -233,6 +233,26 @@ pub fn start_instance(
     }).detach();
 }
 
+pub fn repair_game_files(
+    id: InstanceID,
+    backend_handle: &BackendHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let modal_action = ModalAction::default();
+    backend_handle.send(MessageToBackend::RepairGameFiles {
+        id,
+        modal_action: modal_action.clone(),
+    });
+    modals::generic::show_modal(
+        window,
+        cx,
+        "Repair game files".into(),
+        "Unable to repair game files".into(),
+        modal_action,
+    );
+}
+
 pub fn start_install(
     content_install: ContentInstall,
     backend_handle: &BackendHandle,

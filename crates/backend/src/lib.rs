@@ -18,6 +18,7 @@ mod id_slab;
 mod install_content;
 mod instance;
 mod java_manifest;
+mod library_install_state;
 mod launch;
 mod launch_wrapper;
 mod launcher_import;

@@ -154,6 +154,10 @@ pub enum MessageToBackend {
         live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
         modal_action: ModalAction,
     },
+    RepairGameFiles {
+        id: InstanceID,
+        modal_action: ModalAction,
+    },
     RequestLoadWorlds {
         id: InstanceID,
     },
