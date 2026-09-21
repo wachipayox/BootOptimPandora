@@ -141,13 +141,24 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         _ => Mode::Plan,
     };
 
+    let profile_scope = match acquire_appcds_profile_scope(&parsed.instance_dir) {
+        Ok(scope) => scope,
+        Err(_) => {
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=profile-namespace-ineligible");
+            return Ok(PrepareDecision::Stock);
+        }
+    };
     let cache_dir = parsed.instance_dir.join(".bootoptim").join("appcds");
-    fs::create_dir_all(&cache_dir)?;
+    if bind_appcds_cache_namespace(&cache_dir, profile_scope.namespace()).is_err() {
+        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=profile-cache-binding");
+        return Ok(PrepareDecision::Stock);
+    }
 
-    // Hashing is read-only and can happen outside the cache lock. Publication of
-    // the plan and every state transition is serialized so launch-plan.match can
-    // never describe a different concurrent preflight.
-    let plan = build_launch_plan(parsed)?;
+    // The persistent-profile lease (when present) is held across identity hashing,
+    // cache classification and the final helper decision. This composes with the
+    // layout publisher's per-UUID lock, while the AppCDS cache lock continues to
+    // serialize AppCDS state transitions inside this one profile namespace.
+    let plan = build_launch_plan_for_namespace(parsed, profile_scope.namespace())?;
     let Some(_lock) = try_lock(&cache_dir.join("cache.lock"))? else {
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=lock-busy");
         return Ok(PrepareDecision::Stock);
