@@ -9,7 +9,7 @@ use auth::{credentials::AccountCredentials, models::MinecraftAccessToken, secret
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget},
     instance::{ContentFolder, ContentSummary, ContentType, InstanceID},
-    keep_alive::KeepAlive,
+    keep_alive::{KeepAlive, KeepAliveHandle},
     message::{
         AccountCapesResult, AccountSkinResult, EmbeddedOrRaw, GameOutputMsg, LogFiles, MessageToBackend,
         MessageToFrontend, QuickPlayLaunch,
@@ -397,7 +397,7 @@ impl BackendState {
                 }
 
                 if let Some(id) = id {
-                    self.start_instance(id, quick_play, None, Default::default()).await
+                    self.spawn_start_instance(id, quick_play, None, ModalAction::default(), true);
                 }
             },
             MessageToBackend::StartInstance {
@@ -405,7 +405,7 @@ impl BackendState {
                 quick_play,
                 live_game_output,
                 modal_action,
-            } => self.start_instance(id, quick_play, live_game_output, modal_action).await,
+            } => self.spawn_start_instance(id, quick_play, live_game_output, modal_action, false),
             MessageToBackend::SetContentEnabled {
                 id,
                 content_ids: mod_ids,
@@ -2080,37 +2080,71 @@ impl BackendState {
         }
     }
 
-    async fn start_instance(
+    fn spawn_start_instance(
         self: &Arc<Self>,
         id: InstanceID,
         quick_play: Option<QuickPlayLaunch>,
         live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
         modal_action: ModalAction,
+        report_error_to_frontend: bool,
     ) {
         let keepalive = KeepAlive::new();
 
         let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            instance.cancel_quickplay_for_launch();
-
-            if let Some(launch_keepalive) = &instance.launch_keepalive
-                && launch_keepalive.is_alive()
-            {
-                modal_action.set_finished_with_error("Can't launch instance, already launching".into());
+            if let Err(error) = try_claim_launch(&mut instance.launch_keepalive, &keepalive) {
+                modal_action.set_finished_with_error(error.into());
+                if report_error_to_frontend {
+                    self.send.send_error(error);
+                }
                 return;
             }
 
-            instance.launch_keepalive = Some(keepalive.create_handle());
+            // A rejected duplicate must not disturb the current launch. Only after
+            // admission succeeds may this new launch cancel its Quickplay work.
+            instance.cancel_quickplay_for_launch();
 
             self.send.send(MessageToFrontend::MoveInstanceToTop { id });
             self.send.send(instance.create_modify_message());
 
             (instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
         } else {
-            self.send.send_error("Can't launch instance, unknown id");
-            modal_action.set_finished_with_error("Can't launch instance, unknown id".into());
+            let error = "Can't launch instance, unknown id";
+            self.send.send_error(error);
+            modal_action.set_finished_with_error(error.into());
             return;
         };
 
+        let this = self.clone();
+        tokio::task::spawn(async move {
+            this.start_instance_claimed(
+                id,
+                quick_play,
+                live_game_output,
+                modal_action.clone(),
+                keepalive,
+                dot_minecraft,
+                configuration,
+            )
+            .await;
+
+            if report_error_to_frontend
+                && let Some(error) = modal_action.get_error_message()
+            {
+                this.send.send_error(error);
+            }
+        });
+    }
+
+    async fn start_instance_claimed(
+        self: &Arc<Self>,
+        id: InstanceID,
+        quick_play: Option<QuickPlayLaunch>,
+        live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
+        modal_action: ModalAction,
+        keepalive: KeepAlive,
+        dot_minecraft: Arc<std::path::Path>,
+        configuration: schema::instance::InstanceConfiguration,
+    ) {
         scopeguard::defer! {
             modal_action.set_finished();
             drop(keepalive);
@@ -2542,6 +2576,47 @@ fn check_argument_expansions(argument: &str) {
         } else {
             dollar_last = false;
         }
+    }
+}
+
+pub(crate) const ALREADY_LAUNCHING_ERROR: &str = "Can't launch instance, already launching";
+
+pub(crate) fn try_claim_launch(
+    launch_keepalive: &mut Option<KeepAliveHandle>,
+    keepalive: &KeepAlive,
+) -> Result<(), &'static str> {
+    if launch_keepalive.as_ref().is_some_and(KeepAliveHandle::is_alive) {
+        return Err(ALREADY_LAUNCHING_ERROR);
+    }
+
+    *launch_keepalive = Some(keepalive.create_handle());
+    Ok(())
+}
+
+#[cfg(test)]
+mod launch_gate_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_launch_claim_is_rejected_until_first_launch_finishes() {
+        let mut slot = None;
+        let mut launch_entries = 0;
+
+        let first = KeepAlive::new();
+        if try_claim_launch(&mut slot, &first).is_ok() {
+            launch_entries += 1;
+        }
+
+        let second = KeepAlive::new();
+        let duplicate = try_claim_launch(&mut slot, &second);
+        assert_eq!(duplicate, Err(ALREADY_LAUNCHING_ERROR));
+        if duplicate.is_ok() {
+            launch_entries += 1;
+        }
+        assert_eq!(launch_entries, 1, "duplicate request entered launch work");
+
+        drop(first);
+        assert!(try_claim_launch(&mut slot, &second).is_ok());
     }
 }
 

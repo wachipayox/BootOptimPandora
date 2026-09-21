@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     ffi::OsStr,
     path::{Path, PathBuf},
     sync::{
@@ -23,7 +23,7 @@ use bridge::{
         ContentFolder, ContentType, InstanceContentSummary, InstanceID, ModpackFile, ModpackFilePath, ModpackFileSource,
     },
     manual_download::ManualCurseforgeDownload,
-    message::{EmbeddedOrRaw, MessageToFrontend},
+    message::{EmbeddedOrRaw, MessageToBackend, MessageToFrontend},
     modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType},
     quit::QuitCoordinator,
     safe_path::SafePath,
@@ -339,6 +339,36 @@ impl CachedMinecraftProfile {
     }
 }
 
+enum AdmittedBackendMessage {
+    Message(MessageToBackend),
+    RejectedStart(RejectedStart),
+}
+
+struct RejectedStart {
+    modal_action: Option<ModalAction>,
+    report_error_to_frontend: bool,
+}
+
+impl AdmittedBackendMessage {
+    fn freeze_duplicate(message: MessageToBackend, duplicate_at_admission: bool) -> Self {
+        if !duplicate_at_admission {
+            return Self::Message(message);
+        }
+
+        match message {
+            MessageToBackend::StartInstance { modal_action, .. } => Self::RejectedStart(RejectedStart {
+                modal_action: Some(modal_action),
+                report_error_to_frontend: false,
+            }),
+            MessageToBackend::StartInstanceByName { .. } => Self::RejectedStart(RejectedStart {
+                modal_action: None,
+                report_error_to_frontend: true,
+            }),
+            message => Self::Message(message),
+        }
+    }
+}
+
 impl BackendState {
     pub async fn create_manual_curseforge_download_session(&self, files: Vec<ManualCurseforgeDownload>) {
         self.manual_curseforge_downloads.start(files, self).await;
@@ -511,6 +541,56 @@ impl BackendState {
         true
     }
 
+    fn has_active_launch(&self) -> bool {
+        self.instance_state.read().instances.iter().any(|instance| {
+            instance
+                .launch_keepalive
+                .as_ref()
+                .is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive)
+        })
+    }
+
+    fn start_message_targets_active_launch(&self, message: &MessageToBackend) -> bool {
+        let instances = self.instance_state.read();
+
+        let id = match message {
+            MessageToBackend::StartInstance { id, .. } => Some(*id),
+            MessageToBackend::StartInstanceByName { name, .. } => {
+                let mut case_insensitive = None;
+                let mut exact = None;
+                for instance in instances.instances.iter() {
+                    if instance.name == name.as_str() {
+                        exact = Some(instance.id);
+                        break;
+                    }
+                    if instance.name.eq_ignore_ascii_case(name) {
+                        case_insensitive = Some(instance.id);
+                    }
+                }
+                exact.or(case_insensitive)
+            },
+            _ => None,
+        };
+
+        id.and_then(|id| instances.instances.get(id))
+            .and_then(|instance| instance.launch_keepalive.as_ref())
+            .is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive)
+    }
+
+    fn admit_backend_message(&self, message: MessageToBackend) -> AdmittedBackendMessage {
+        let duplicate_at_admission = self.start_message_targets_active_launch(&message);
+        AdmittedBackendMessage::freeze_duplicate(message, duplicate_at_admission)
+    }
+
+    fn reject_admitted_start(&self, rejected: RejectedStart) {
+        if let Some(modal_action) = rejected.modal_action {
+            modal_action.set_finished_with_error(crate::backend_handler::ALREADY_LAUNCHING_ERROR.into());
+        }
+        if rejected.report_error_to_frontend {
+            self.send.send_error(crate::backend_handler::ALREADY_LAUNCHING_ERROR);
+        }
+    }
+
     async fn handle(
         self: Arc<Self>,
         mut backend_recv: BackendReceiver,
@@ -523,7 +603,70 @@ impl BackendState {
         #[cfg(unix)]
         let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child()).unwrap();
 
+        let mut deferred_messages = VecDeque::new();
+        let mut backend_closed = false;
+
         loop {
+            let launch_active = self.has_active_launch();
+
+            if launch_active {
+                if let Some(index) = deferred_messages.iter().position(|admitted| {
+                    matches!(
+                        admitted,
+                        AdmittedBackendMessage::Message(message)
+                            if self.start_message_targets_active_launch(message)
+                    )
+                }) {
+                    let admitted = deferred_messages.remove(index).expect("deferred message index exists");
+                    let admitted = match admitted {
+                        AdmittedBackendMessage::Message(message) => {
+                            // The active-target decision above is the admission decision.
+                            // Freeze it before the launch task can release its keepalive.
+                            AdmittedBackendMessage::freeze_duplicate(message, true)
+                        },
+                        rejected => rejected,
+                    };
+                    match admitted {
+                        AdmittedBackendMessage::RejectedStart(rejected) => self.reject_admitted_start(rejected),
+                        AdmittedBackendMessage::Message(_) => unreachable!("active start admission must freeze as rejection"),
+                    }
+                    continue;
+                }
+
+                tokio::select! {
+                    message = backend_recv.recv(), if !backend_closed => {
+                        if let Some(message) = message {
+                            match self.admit_backend_message(message) {
+                                AdmittedBackendMessage::RejectedStart(rejected) => self.reject_admitted_start(rejected),
+                                admitted @ AdmittedBackendMessage::Message(_) => deferred_messages.push_back(admitted),
+                            }
+                        } else {
+                            log::info!("Backend receiver has shut down");
+                            backend_closed = true;
+                        }
+                    },
+                    _ = interval.tick() => {
+                        // Preserve the old launch serialization: this tick only wakes
+                        // the loop so it can observe launch completion. Normal tick,
+                        // filesystem and signal handling resume afterwards.
+                    }
+                }
+
+                continue;
+            }
+
+            if self.should_quit.load(Ordering::Relaxed) || backend_closed {
+                break;
+            }
+
+            if let Some(admitted) = deferred_messages.pop_front() {
+                match admitted {
+                    AdmittedBackendMessage::Message(message) => self.handle_message(message).await,
+                    AdmittedBackendMessage::RejectedStart(rejected) => self.reject_admitted_start(rejected),
+                }
+                continue;
+            }
+
             #[cfg(unix)]
             let signal_recv = signal.recv();
             #[cfg(not(unix))]
@@ -535,7 +678,7 @@ impl BackendState {
                         self.handle_message(message).await;
                     } else {
                         log::info!("Backend receiver has shut down");
-                        break;
+                        backend_closed = true;
                     }
                 },
                 event = watcher_rx.recv() => {
@@ -553,18 +696,11 @@ impl BackendState {
                     self.handle_tick();
                 }
             }
-
-            if self.should_quit.load(Ordering::Relaxed) {
-                while let Some(message) = backend_recv.try_recv() {
-                    self.handle_message(message).await;
-                }
-                self.handle_tick();
-                break;
-            }
         }
 
         self.send.send(MessageToFrontend::Quit);
     }
+
 
     fn handle_tick(&self) {
         self.meta.expire();
@@ -2050,4 +2186,86 @@ pub struct PrelaunchModCopy {
 enum PrelaunchModCopySource {
     FromContentLibrary { hash: [u8; 20] },
     FromBytes { bytes: Arc<[u8]> },
+}
+
+#[cfg(test)]
+mod launch_gate_tests {
+    use super::*;
+    use bridge::keep_alive::KeepAlive;
+
+    fn direct_start() -> MessageToBackend {
+        MessageToBackend::StartInstance {
+            id: InstanceID { index: 7, generation: 11 },
+            quick_play: None,
+            live_game_output: None,
+            modal_action: ModalAction::default(),
+        }
+    }
+
+    #[test]
+    fn duplicate_admission_stays_rejected_after_first_claim_finishes_and_queue_drains() {
+        let mut slot = None;
+        let first = KeepAlive::new();
+        crate::backend_handler::try_claim_launch(&mut slot, &first).unwrap();
+
+        let mut deferred = VecDeque::from([AdmittedBackendMessage::freeze_duplicate(
+            direct_start(),
+            slot.as_ref().is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive),
+        )]);
+        drop(first);
+
+        let mut rejected = 0;
+        let mut spawn_start_instance_calls = 0;
+        while let Some(admitted) = deferred.pop_front() {
+            match admitted {
+                AdmittedBackendMessage::RejectedStart(_) => rejected += 1,
+                AdmittedBackendMessage::Message(_) => {
+                    let second = KeepAlive::new();
+                    if crate::backend_handler::try_claim_launch(&mut slot, &second).is_ok() {
+                        spawn_start_instance_calls += 1;
+                    }
+                },
+            }
+        }
+
+        assert_eq!(rejected, 1);
+        assert_eq!(spawn_start_instance_calls, 0, "admitted duplicate became a later launch");
+        assert!(slot.as_ref().is_some_and(|handle| !handle.is_alive()));
+    }
+
+    #[test]
+    fn multiple_duplicates_and_by_name_freeze_without_instance_identity() {
+        let messages = [
+            direct_start(),
+            direct_start(),
+            MessageToBackend::StartInstanceByName {
+                name: "BootOptimLaptop".to_string(),
+                quick_play: None,
+            },
+        ];
+
+        let admitted = messages
+            .into_iter()
+            .map(|message| AdmittedBackendMessage::freeze_duplicate(message, true))
+            .collect::<Vec<_>>();
+
+        let mut direct_rejections = 0;
+        let mut name_rejections = 0;
+        for message in admitted {
+            match message {
+                AdmittedBackendMessage::RejectedStart(RejectedStart {
+                    modal_action: Some(_),
+                    report_error_to_frontend: false,
+                }) => direct_rejections += 1,
+                AdmittedBackendMessage::RejectedStart(RejectedStart {
+                    modal_action: None,
+                    report_error_to_frontend: true,
+                }) => name_rejections += 1,
+                AdmittedBackendMessage::Message(_) => panic!("duplicate remained a generic Start"),
+                _ => panic!("unexpected rejection representation"),
+            }
+        }
+        assert_eq!(direct_rejections, 2);
+        assert_eq!(name_rejections, 1);
+    }
 }
