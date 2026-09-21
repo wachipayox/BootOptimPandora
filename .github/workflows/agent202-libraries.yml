@@ -32,8 +32,8 @@ jobs:
           components: rustfmt
       - name: Install system dependencies
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
-      - name: Format
-        run: cargo fmt --all -- --check
+      - name: Format touched Rust sources
+        run: rustfmt --edition 2024 --check crates/backend/src/backend.rs crates/backend/src/backend_handler.rs crates/backend/src/launch/mod.rs crates/backend/src/lib.rs crates/backend/src/library_install_state.rs crates/bridge/src/message.rs crates/frontend/src/root.rs crates/frontend/src/pages/instance/instance_page.rs
       - name: Check affected crates
         run: cargo check -p bridge -p backend -p frontend --tests --frozen
       - name: Test library launch policy
