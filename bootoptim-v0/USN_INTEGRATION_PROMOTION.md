@@ -1,6 +1,6 @@
 # Agent 198 — USN asset-cache promotion onto persistent-layout integration
 
-Base authority: `agent/integration-current@4aa955d87eaadecc407abe7a5737ff4469a877bf`.
+Base authority: `agent/integration-current@3410b4c47eec0f47012d3c33bbd5e1d58b669e14`. The branch was first composed at `4aa955d87eaadecc407abe7a5737ff4469a877bf` and then refreshed by an explicit merge after integration advanced one documentation-only commit.
 
 This is a clean recomposition, not a merge/rebase of the historical USN stack. The semantic source is the clean PR #29 slice, which in turn carried the reviewed PR #27 direct unprivileged NTFS implementation. PR #31's metadata-only fast-rebootstrap policy is deliberately excluded because this promotion contract requires SHA-1 fallback when cache/journal/volume identity is uncertain.
 

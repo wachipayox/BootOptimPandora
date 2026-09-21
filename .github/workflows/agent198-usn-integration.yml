@@ -1,9 +1,6 @@
 name: Agent 198 USN integration gate
 
 on:
-  push:
-    branches:
-      - agent198/usn-integration-promotion-20260921
   pull_request:
     paths:
       - 'crates/backend/**'
