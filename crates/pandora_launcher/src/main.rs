@@ -18,8 +18,6 @@ use fern::colors::ColoredLevelConfig;
 use native_dialog::DialogBuilder;
 use parking_lot::RwLock;
 
-#[derive(Parser, Debug)]
-#[command()]
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum InternalDefenderProcessAction {
@@ -37,6 +35,8 @@ impl From<InternalDefenderProcessAction> for command::DefenderProcessAction {
     }
 }
 
+#[derive(Parser, Debug)]
+#[command()]
 struct Cli {
     /// Instance to launch, instead of opening the launcher
     #[arg(long)]
