@@ -526,21 +526,130 @@ fn remap_exact_clone_plan(
     let mut text = String::from_utf8(source_plan.to_vec())
         .map_err(|_| Error::new(ErrorKind::InvalidData, "AppCDS launch plan is not UTF-8"))?;
 
-    text = text.replace(&source_uuid.to_string(), &destination_uuid.to_string());
+    // UUID ownership is the only non-path identity field deliberately changed by
+    // exact cloning. It must occur exactly once in the PR #48 plan.
+    let source_uuid_field = format!("\"appcds_profile_uuid\": \"{source_uuid}\"");
+    if text.matches(&source_uuid_field).count() != 1 {
+        return Err(Error::new(ErrorKind::InvalidData, "ambiguous AppCDS profile UUID in source plan"));
+    }
+    text = text.replacen(
+        &source_uuid_field,
+        &format!("\"appcds_profile_uuid\": \"{destination_uuid}\""),
+        1,
+    );
 
-    let source_display = serde_json::to_string(&source_root.to_string_lossy().as_ref())
+    // Relocate only serialized artifact path objects that are actually inside
+    // the cloned instance root. JVM argv fingerprints/safe literals are not
+    // rewritten: if an effective argument changes because it embeds the old
+    // root, the independently rebuilt destination plan will differ and the
+    // inherited archive is rejected.
+    let source_display = source_root.to_string_lossy();
+    let destination_display = destination_root.to_string_lossy();
+    let source_display_json = serde_json::to_string(source_display.as_ref())
         .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
-    let dest_display = serde_json::to_string(&destination_root.to_string_lossy().as_ref())
+    let destination_display_json = serde_json::to_string(destination_display.as_ref())
         .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
-    let source_display = &source_display[1..source_display.len() - 1];
-    let dest_display = &dest_display[1..dest_display.len() - 1];
-    text = text.replace(source_display, dest_display);
-
+    let source_display_json = &source_display_json[1..source_display_json.len() - 1];
+    let destination_display_json = &destination_display_json[1..destination_display_json.len() - 1];
     let source_hex = os_path_hex(source_root.as_os_str());
-    let dest_hex = os_path_hex(destination_root.as_os_str());
-    text = text.replace(&source_hex, &dest_hex);
+    let destination_hex = os_path_hex(destination_root.as_os_str());
 
+    let mut replacements = Vec::<(usize, usize, String)>::new();
+    let mut cursor = 0usize;
+    while let Some(relative_key) = text[cursor..].find("\"path\"") {
+        let key = cursor + relative_key;
+        let after_key = key + "\"path\"".len();
+        let Some(relative_colon) = text[after_key..].find(':') else {
+            return Err(Error::new(ErrorKind::InvalidData, "malformed AppCDS path field"));
+        };
+        let after_colon = after_key + relative_colon + 1;
+        let Some(relative_brace) = text[after_colon..].find('{') else {
+            return Err(Error::new(ErrorKind::InvalidData, "malformed AppCDS path object"));
+        };
+        let object_start = after_colon + relative_brace;
+        let object_end = find_json_object_end(&text, object_start)?;
+        let raw = &text[object_start..object_end];
+        let parsed: serde_json::Value = serde_json::from_str(raw)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
+        let display = parsed
+            .get("display")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| Error::new(ErrorKind::InvalidData, "AppCDS path display missing"))?;
+        let encoded = parsed
+            .get("encoded_hex")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| Error::new(ErrorKind::InvalidData, "AppCDS encoded path missing"))?;
+
+        if path_display_is_within(display, source_display.as_ref()) {
+            if !encoded.starts_with(&source_hex) {
+                return Err(Error::new(ErrorKind::InvalidData, "AppCDS path encodings disagree"));
+            }
+            let display_suffix = &display[source_display.len()..];
+            let encoded_suffix = &encoded[source_hex.len()..];
+            let old_display = format!("\"display\":\"{source_display_json}");
+            let new_display = format!("\"display\":\"{destination_display_json}{display_suffix}");
+            let old_encoded = format!("\"encoded_hex\":\"{source_hex}{encoded_suffix}\"");
+            let new_encoded = format!("\"encoded_hex\":\"{destination_hex}{encoded_suffix}\"");
+            let updated = raw
+                .replacen(&old_display, &new_display, 1)
+                .replacen(&old_encoded, &new_encoded, 1);
+            if updated == raw {
+                return Err(Error::new(ErrorKind::InvalidData, "AppCDS path relocation failed"));
+            }
+            replacements.push((object_start, object_end, updated));
+        }
+        cursor = object_end;
+    }
+
+    for (start, end, updated) in replacements.into_iter().rev() {
+        text.replace_range(start..end, &updated);
+    }
     Ok(text.into_bytes())
+}
+
+fn path_display_is_within(display: &str, root: &str) -> bool {
+    if display == root {
+        return true;
+    }
+    display
+        .strip_prefix(root)
+        .map(|suffix| suffix.starts_with('/') || suffix.starts_with('\\'))
+        .unwrap_or(false)
+}
+
+fn find_json_object_end(text: &str, object_start: usize) -> Result<usize> {
+    let bytes = text.as_bytes();
+    if bytes.get(object_start) != Some(&b'{') {
+        return Err(Error::new(ErrorKind::InvalidData, "AppCDS path object does not start with brace"));
+    }
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for index in object_start..bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(index + 1);
+                }
+            },
+            _ => {}
+        }
+    }
+    Err(Error::new(ErrorKind::InvalidData, "unterminated AppCDS path object"))
 }
 
 fn ensure_exact_clone_regular_dir(path: &Path, root: &Path) -> Result<()> {
