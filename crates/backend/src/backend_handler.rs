@@ -64,7 +64,7 @@ use crate::{
 };
 
 impl BackendState {
-    fn provision_game_files_after_identity_change(
+    pub(crate) fn provision_game_files_after_identity_change(
         self: &Arc<Self>,
         id: InstanceID,
         root_path: Arc<Path>,
