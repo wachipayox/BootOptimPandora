@@ -1817,7 +1817,7 @@ impl BackendState {
             .await
         {
             Ok(()) => {
-                if let Err(err) = crate::library_install_state::mark_published(&instance_dir) {
+                if let Err(err) = crate::library_install_state::mark_published(&instance_dir, "initial-install-complete") {
                     self.send.send_warning(format!(
                         "Instance created, but game-files state could not be published ({err}); use Repair game files"
                     ));
