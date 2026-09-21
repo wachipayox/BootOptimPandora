@@ -3,6 +3,7 @@ use std::rc::Rc;
 use command::{DefenderProcessAction, DefenderProcessLocalState};
 use gpui::{prelude::*, *};
 use gpui_component::{
+    ActiveTheme,
     button::{Button, ButtonVariants},
     h_flex, v_flex,
 };
