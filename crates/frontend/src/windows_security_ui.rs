@@ -7,18 +7,15 @@ use gpui_component::{
 
 pub(crate) fn push_result(window: &mut Window, cx: &mut App, result: DefenderProcessResult) {
     let (kind, message) = match result {
-        DefenderProcessResult::Enabled => (
-            NotificationType::Success,
-            "Defender optimization enabled for this Pandora executable.",
-        ),
-        DefenderProcessResult::Removed => (
-            NotificationType::Success,
-            "Pandora's Defender process exclusion was removed.",
-        ),
-        DefenderProcessResult::AlreadyEnabledByPandora => (
-            NotificationType::Info,
-            "Pandora already controls this Defender process exclusion.",
-        ),
+        DefenderProcessResult::Enabled => {
+            (NotificationType::Success, "Defender optimization enabled for this Pandora executable.")
+        },
+        DefenderProcessResult::Removed => {
+            (NotificationType::Success, "Pandora's Defender process exclusion was removed.")
+        },
+        DefenderProcessResult::AlreadyEnabledByPandora => {
+            (NotificationType::Info, "Pandora already controls this Defender process exclusion.")
+        },
         DefenderProcessResult::PresentButNotOwned => (
             NotificationType::Info,
             "The same Defender exclusion already exists. Pandora did not claim or change it.",
@@ -27,10 +24,9 @@ pub(crate) fn push_result(window: &mut Window, cx: &mut App, result: DefenderPro
             NotificationType::Info,
             "The recorded Pandora exclusion was already absent. Its ownership record was cleared.",
         ),
-        DefenderProcessResult::NothingOwned => (
-            NotificationType::Info,
-            "Pandora has no owned Defender process exclusion to remove.",
-        ),
+        DefenderProcessResult::NothingOwned => {
+            (NotificationType::Info, "Pandora has no owned Defender process exclusion to remove.")
+        },
         DefenderProcessResult::InvalidOwnershipRecord => (
             NotificationType::Warning,
             "Pandora refused the change because its exclusion ownership record was not valid for this installation.",
