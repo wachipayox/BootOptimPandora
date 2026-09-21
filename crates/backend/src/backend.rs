@@ -1806,6 +1806,32 @@ impl BackendState {
         let info_path = instance_dir.join("info_v1.json");
         crate::fs::write_safe(&info_path, serde_json::to_string(&instance_info).unwrap().as_bytes()).unwrap();
 
+        // First install provisions only missing game libraries. Existing
+        // library bytes are trusted here and are never opened or hashed; the
+        // explicit Repair action remains the only full integrity authority.
+        let install_modal = ModalAction::default();
+        let http_client = self.http_client_provider.redirecting();
+        match self
+            .launcher
+            .provision_game_files(&http_client, instance_info.clone(), &install_modal)
+            .await
+        {
+            Ok(()) => {
+                if let Err(err) = crate::library_install_state::mark_published(&instance_dir) {
+                    self.send.send_warning(format!(
+                        "Instance created, but game-files state could not be published ({err}); use Repair game files"
+                    ));
+                }
+            },
+            Err(err) => {
+                log::warn!("Initial game-file provisioning failed: {err:?}");
+                self.send.send_warning(format!(
+                    "Instance created with incomplete game files ({err}); use Repair game files"
+                ));
+            },
+        }
+        install_modal.set_finished();
+
         Some(instance_dir.clone())
     }
 
