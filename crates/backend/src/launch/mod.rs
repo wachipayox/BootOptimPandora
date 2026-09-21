@@ -596,33 +596,37 @@ impl Launcher {
         let version: PartialMinecraftVersion = serde_json::from_slice(&version_file.bytes()?)?;
 
         // Embedded Maven entries are libraries. LaunchFast never mutates them.
-        if library_mode == LibraryLoadMode::VerifyAndRepair {
-        for entry in installer_zip.entries() {
-            if entry.kind() != EntryKind::File {
-                continue;
-            }
-
-            if let Some(path) = entry.name.strip_prefix("maven/") {
-                let Some(safe) = SafePath::new(path) else {
+        // Provisioning creates only missing entries; Repair keeps the stock
+        // overwrite/verification authority.
+        if library_mode != LibraryLoadMode::LaunchFast {
+            for entry in installer_zip.entries() {
+                if entry.kind() != EntryKind::File {
                     continue;
-                };
-                let Ok(bytes) = entry.bytes() else {
-                    continue;
-                };
-
-                let path_in_library = safe.to_path(&self.directories.libraries_dir);
-
-                if let Some(parent) = path_in_library.parent() {
-                    _ = std::fs::create_dir_all(parent);
                 }
 
-                _ = crate::fs::write_safe(&path_in_library, &bytes);
+                if let Some(path) = entry.name.strip_prefix("maven/") {
+                    let Some(safe) = SafePath::new(path) else {
+                        continue;
+                    };
+                    let path_in_library = safe.to_path(&self.directories.libraries_dir);
+                    if library_mode == LibraryLoadMode::ProvisionMissing && path_in_library.exists() {
+                        continue;
+                    }
+                    let Ok(bytes) = entry.bytes() else {
+                        continue;
+                    };
+
+                    if let Some(parent) = path_in_library.parent() {
+                        _ = std::fs::create_dir_all(parent);
+                    }
+
+                    _ = crate::fs::write_safe(&path_in_library, &bytes);
+                }
             }
-        }
         }
 
         // Download mirror list
-        let mirror = if library_mode == LibraryLoadMode::VerifyAndRepair
+        let mirror = if library_mode != LibraryLoadMode::LaunchFast
             && check_mirrors && let Some(mirror_list) = &install_profile.mirror_list {
             Self::download_random_mirror(http_client, mirror_list).await
         } else {
@@ -634,7 +638,7 @@ impl Launcher {
         // Download libraries
         let libraries = install_profile.libraries.iter().filter_map(|library| {
             let mut artifact = library.downloads.artifact.clone()?;
-            if library_mode == LibraryLoadMode::VerifyAndRepair
+            if library_mode != LibraryLoadMode::LaunchFast
                 && let Some(builtin) = installer_zip.by_name(format!("maven/{}", artifact.path)) {
                 if !path_is_normal(artifact.path.as_str()) {
                     log::warn!("Refusing to install artifact with illegal path: {}", artifact.path);
@@ -643,13 +647,17 @@ impl Launcher {
 
                 let path = self.directories.libraries_dir.join(artifact.path);
 
-                if let Some(sha1) = &artifact.sha1 {
+                if library_mode == LibraryLoadMode::ProvisionMissing {
+                    if path.exists() {
+                        return None;
+                    }
+                } else if let Some(sha1) = &artifact.sha1 {
                     let mut expected_hash = [0u8; 20];
-                    if hex::decode_to_slice(sha1.as_str(), &mut expected_hash).is_ok() {
-                        if crate::fs::check_sha1_hash(&path, expected_hash).unwrap_or(false) {
-                            return None;
-                        }
-                    };
+                    if hex::decode_to_slice(sha1.as_str(), &mut expected_hash).is_ok()
+                        && crate::fs::check_sha1_hash(&path, expected_hash).unwrap_or(false)
+                    {
+                        return None;
+                    }
                 }
 
                 if let Ok(bytes) = builtin.bytes() {
@@ -719,7 +727,7 @@ impl Launcher {
         data.insert("INSTALLER".into(), installer_path.as_os_str().to_os_string());
         data.insert("LIBRARY_DIR".into(), self.directories.libraries_dir.as_os_str().to_os_string());
 
-        if library_mode == LibraryLoadMode::VerifyAndRepair {
+        if library_mode != LibraryLoadMode::LaunchFast {
             let processor_tracker = modal_action.push_tracker("Forge Post Processors".into());
         processor_tracker.set_total(install_profile.processors.len());
 
@@ -734,8 +742,13 @@ impl Launcher {
 
             let jar = MavenCoordinate::create(&processor.jar);
 
-            // Check if the output already exists and the step can be skipped
-            let skip = self.can_skip_forge_processor(&jar, processor, &data);
+            // Repair keeps stock SHA-1 output validation. Provisioning only
+            // checks whether declared outputs exist, avoiding a full hash pass.
+            let skip = if library_mode == LibraryLoadMode::ProvisionMissing {
+                self.can_skip_forge_processor_without_hash(&jar, processor, &data)
+            } else {
+                self.can_skip_forge_processor(&jar, processor, &data)
+            };
             if skip {
                 processor_tracker.add_count(1);
                 continue;
