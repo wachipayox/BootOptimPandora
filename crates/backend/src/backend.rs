@@ -2203,25 +2203,32 @@ mod launch_gate_tests {
     }
 
     #[test]
-    fn duplicate_admission_stays_rejected_after_first_claim_finishes() {
+    fn duplicate_admission_stays_rejected_after_first_claim_finishes_and_queue_drains() {
         let mut slot = None;
         let first = KeepAlive::new();
         crate::backend_handler::try_claim_launch(&mut slot, &first).unwrap();
 
-        let admitted = AdmittedBackendMessage::freeze_duplicate(
+        let mut deferred = VecDeque::from([AdmittedBackendMessage::freeze_duplicate(
             direct_start(),
             slot.as_ref().is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive),
-        );
+        )]);
         drop(first);
 
+        let mut rejected = 0;
         let mut spawn_start_instance_calls = 0;
-        if let AdmittedBackendMessage::Message(_) = admitted {
-            let second = KeepAlive::new();
-            if crate::backend_handler::try_claim_launch(&mut slot, &second).is_ok() {
-                spawn_start_instance_calls += 1;
+        while let Some(admitted) = deferred.pop_front() {
+            match admitted {
+                AdmittedBackendMessage::RejectedStart(_) => rejected += 1,
+                AdmittedBackendMessage::Message(_) => {
+                    let second = KeepAlive::new();
+                    if crate::backend_handler::try_claim_launch(&mut slot, &second).is_ok() {
+                        spawn_start_instance_calls += 1;
+                    }
+                },
             }
         }
 
+        assert_eq!(rejected, 1);
         assert_eq!(spawn_start_instance_calls, 0, "admitted duplicate became a later launch");
         assert!(slot.as_ref().is_some_and(|handle| !handle.is_alive()));
     }
@@ -2242,10 +2249,24 @@ mod launch_gate_tests {
             .map(|message| AdmittedBackendMessage::freeze_duplicate(message, true))
             .collect::<Vec<_>>();
 
-        assert!(admitted.into_iter().all(|message| matches!(
-            message,
-            AdmittedBackendMessage::RejectedStart(RejectedStart { .. })
-        )));
+        let mut direct_rejections = 0;
+        let mut name_rejections = 0;
+        for message in admitted {
+            match message {
+                AdmittedBackendMessage::RejectedStart(RejectedStart {
+                    modal_action: Some(_),
+                    report_error_to_frontend: false,
+                }) => direct_rejections += 1,
+                AdmittedBackendMessage::RejectedStart(RejectedStart {
+                    modal_action: None,
+                    report_error_to_frontend: true,
+                }) => name_rejections += 1,
+                AdmittedBackendMessage::Message(_) => panic!("duplicate remained a generic Start"),
+                _ => panic!("unexpected rejection representation"),
+            }
+        }
+        assert_eq!(direct_rejections, 2);
+        assert_eq!(name_rejections, 1);
     }
 }
 
