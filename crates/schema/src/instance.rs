@@ -395,4 +395,20 @@ mod bootoptim_appcds_instance_preference_tests {
         let decoded: InstanceConfiguration = serde_json::from_str(&serialized).unwrap();
         assert!(!decoded.appcds_enabled);
     }
+
+    #[test]
+    fn appcds_preference_is_independent_between_profiles() {
+        let mut first = InstanceConfiguration::new(Ustr::from("1.21.1"), Loader::Vanilla);
+        let second = InstanceConfiguration::new(Ustr::from("1.21.1"), Loader::Vanilla);
+        first.appcds_enabled = false;
+
+        let first_json = serde_json::to_string(&first).unwrap();
+        let second_json = serde_json::to_string(&second).unwrap();
+        let first_reloaded: InstanceConfiguration = serde_json::from_str(&first_json).unwrap();
+        let second_reloaded: InstanceConfiguration = serde_json::from_str(&second_json).unwrap();
+
+        assert!(!first_reloaded.appcds_enabled);
+        assert!(second_reloaded.appcds_enabled);
+        assert!(!second_json.contains("appcds_enabled"));
+    }
 }
