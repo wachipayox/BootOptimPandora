@@ -37,6 +37,8 @@ pub struct InstanceConfiguration {
     pub show_shader_tab: bool,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub sandbox: bool, // Default sandbox to false when loading old configuration json
+    #[serde(default = "crate::default_true", deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_true")]
+    pub appcds_enabled: bool,
 }
 
 impl InstanceConfiguration {
@@ -57,6 +59,7 @@ impl InstanceConfiguration {
             disable_file_syncing: false,
             show_shader_tab: false,
             sandbox: false,  // todo: for now, off by default. In the future, turn this on by default
+            appcds_enabled: true,
         }
     }
 }
@@ -344,4 +347,33 @@ fn get_shared_library_path_for_name(name: &str) -> Option<Arc<Path>> {
     }
 
     None
+}
+
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+#[cfg(test)]
+mod bootoptim_appcds_instance_preference_tests {
+    use super::*;
+
+    #[test]
+    fn appcds_defaults_true_without_eager_persistence() {
+        let json = r#"{"minecraft_version":"1.21.1","loader":"Vanilla"}"#;
+        let config: InstanceConfiguration = serde_json::from_str(json).unwrap();
+        assert!(config.appcds_enabled);
+        let serialized = serde_json::to_string(&config).unwrap();
+        assert!(!serialized.contains("appcds_enabled"));
+    }
+
+    #[test]
+    fn appcds_false_round_trips_per_instance() {
+        let mut config = InstanceConfiguration::new(Ustr::from("1.21.1"), Loader::Vanilla);
+        config.appcds_enabled = false;
+        let serialized = serde_json::to_string(&config).unwrap();
+        assert!(serialized.contains("\"appcds_enabled\":false"));
+        let decoded: InstanceConfiguration = serde_json::from_str(&serialized).unwrap();
+        assert!(!decoded.appcds_enabled);
+    }
 }
