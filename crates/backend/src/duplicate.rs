@@ -584,12 +584,10 @@ fn remap_exact_clone_plan(
             if !encoded.starts_with(&source_hex) {
                 return Err(Error::new(ErrorKind::InvalidData, "AppCDS path encodings disagree"));
             }
-            let display_suffix = &display[source_display.len()..];
-            let encoded_suffix = &encoded[source_hex.len()..];
             let old_display = format!("\"display\":\"{source_display_json}");
-            let new_display = format!("\"display\":\"{destination_display_json}{display_suffix}");
-            let old_encoded = format!("\"encoded_hex\":\"{source_hex}{encoded_suffix}\"");
-            let new_encoded = format!("\"encoded_hex\":\"{destination_hex}{encoded_suffix}\"");
+            let new_display = format!("\"display\":\"{destination_display_json}");
+            let old_encoded = format!("\"encoded_hex\":\"{source_hex}");
+            let new_encoded = format!("\"encoded_hex\":\"{destination_hex}");
             let updated = raw
                 .replacen(&old_display, &new_display, 1)
                 .replacen(&old_encoded, &new_encoded, 1);
