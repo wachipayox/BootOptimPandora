@@ -1739,7 +1739,7 @@ impl BackendState {
             }
         }
 
-        return self.create_instance(&name, version, loader, icon).await;
+        return self.create_instance_impl(&name, version, loader, icon, false).await;
     }
 
     pub async fn create_instance(
@@ -1748,6 +1748,17 @@ impl BackendState {
         version: &str,
         loader: Loader,
         icon: Option<EmbeddedOrRaw>,
+    ) -> Option<PathBuf> {
+        self.create_instance_impl(name, version, loader, icon, true).await
+    }
+
+    async fn create_instance_impl(
+        &self,
+        name: &str,
+        version: &str,
+        loader: Loader,
+        icon: Option<EmbeddedOrRaw>,
+        publish_after_provision: bool,
     ) -> Option<PathBuf> {
         log::info!("Creating instance {name}");
         if !crate::fs::is_single_component_path_str(&name) {
@@ -1817,10 +1828,15 @@ impl BackendState {
             .await
         {
             Ok(()) => {
-                if let Err(err) = crate::library_install_state::mark_published(&instance_dir, "initial-install-complete") {
-                    self.send.send_warning(format!(
-                        "Instance created, but game-files state could not be published ({err}); use Repair game files"
-                    ));
+                if publish_after_provision {
+                    if let Err(err) = crate::library_install_state::mark_published(
+                        &instance_dir,
+                        "initial-install-complete",
+                    ) {
+                        self.send.send_warning(format!(
+                            "Instance created, but game-files state could not be published ({err}); use Repair game files"
+                        ));
+                    }
                 }
             },
             Err(err) => {
