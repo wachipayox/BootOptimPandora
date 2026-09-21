@@ -2800,7 +2800,7 @@ mod agent202_library_policy_tests {
         let artifact = GameLibraryArtifact {
             path: "x/y.jar".into(),
             sha1: Some(expected.into()),
-            size: Some(body.len() as u64),
+            size: Some(body.len() as u32),
             url: format!("http://{addr}/y.jar").into(),
         };
         let modal = ModalAction::default();
