@@ -1,9 +1,6 @@
 name: Agent 202 libraries launch-fast gate
 
 on:
-  push:
-    branches:
-      - "agent202/libraries-launch-fast-20260921"
   pull_request:
     branches:
       - "agent/integration-current"
@@ -27,13 +24,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - name: Install system dependencies
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
       - name: Format touched Rust sources
-        continue-on-error: true
         run: rustfmt --edition 2024 --check crates/backend/src/backend.rs crates/backend/src/backend_handler.rs crates/backend/src/launch/mod.rs crates/backend/src/lib.rs crates/backend/src/library_install_state.rs crates/bridge/src/message.rs crates/frontend/src/root.rs crates/frontend/src/pages/instance/instance_page.rs
       - name: Check affected crates
         run: cargo check -p bridge -p backend -p frontend --tests --frozen
@@ -48,6 +46,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
