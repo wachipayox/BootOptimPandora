@@ -198,7 +198,9 @@ impl BackendState {
         self.mod_metadata_manager.set_content_sources(sources);
 
         let mut dot_minecraft_dir = None;
+        let mut new_instance_root = None;
         let mut instance_running = false;
+        let mut content_copy_failed = false;
 
         let loader = content.loader;
         let minecraft_version = content.minecraft_version;
@@ -211,8 +213,13 @@ impl BackendState {
             let name = name.as_deref().unwrap_or("New Instance");
 
             // todo: use icon of mod/modpack/etc. for icon of instance
-            dot_minecraft_dir = self.create_instance_sanitized(&name, &minecraft_version, loader, None).await
-                .map(|v| v.join(".minecraft").into());
+            if let Some(root) = self
+                .create_instance_sanitized(&name, &minecraft_version, loader, None)
+                .await
+            {
+                dot_minecraft_dir = Some(root.join(".minecraft").into());
+                new_instance_root = Some(root);
+            }
         }
 
         let mut instance_lock_guard = None;
@@ -251,6 +258,7 @@ impl BackendState {
             for install in files {
                 let Some(install_path) = install.install_path else {
                     self.send.send_warning(format!("Unable to determine install path for {}", install.filename));
+                    content_copy_failed = true;
                     continue;
                 };
 
@@ -277,6 +285,7 @@ impl BackendState {
                         }
                     },
                     Err(err) => {
+                        content_copy_failed = true;
                         log::error!("Failed to install content to {:?}: {err}", target_path);
                         let message = format!("Failed to install content to {}: {err}", target_path.display());
                         modal_action.set_finished_with_error(Arc::from(message.as_str()));
@@ -290,6 +299,23 @@ impl BackendState {
         }
 
         drop(instance_lock_guard);
+
+        if let Some(root) = new_instance_root
+            && !content_copy_failed
+            && !modal_action.has_requested_cancel()
+            && modal_action.get_finished_at().is_none()
+            && let Err(err) = crate::library_install_state::mark_published(
+                &root,
+                "content-install-complete",
+            )
+        {
+            modal_action.set_finished_with_error(
+                format!(
+                    "Content installed, but game-files state could not be published ({err}); use Repair game files"
+                )
+                .into(),
+            );
+        }
     }
 
     async fn install_into_content_library(
