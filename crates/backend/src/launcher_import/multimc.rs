@@ -455,6 +455,14 @@ fn import_instances_from_multimc(backend: &BackendState, import_job: &ImportFrom
         };
 
         _ = std::fs::create_dir_all(&to_import.pandora_path);
+        if let Err(err) = crate::library_install_state::mark_incomplete(
+            &to_import.pandora_path,
+            "import-in-progress",
+        ) {
+            log::error!("Unable to mark imported game files incomplete: {err}");
+            tracker.set_finished(bridge::modal_action::ProgressTrackerFinishType::Error);
+            continue;
+        }
 
         // Copy .minecraft folder
         let mmc_dot_minecraft = to_import.folder.join(".minecraft");
