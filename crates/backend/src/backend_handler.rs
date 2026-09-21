@@ -291,7 +291,7 @@ impl BackendState {
                 let provision = {
                     let mut state = self.instance_state.write();
                     let Some(instance) = state.instances.get_mut(id) else {
-                        continue;
+                        return;
                     };
                     if instance.configuration.get().loader == loader {
                         return;
@@ -329,7 +329,7 @@ impl BackendState {
                 let provision = {
                     let mut state = self.instance_state.write();
                     let Some(instance) = state.instances.get_mut(id) else {
-                        continue;
+                        return;
                     };
                     if instance.configuration.get().preferred_loader_version == loader_version {
                         return;
