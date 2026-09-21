@@ -22,10 +22,13 @@ Each instance owns `.bootoptim/game-files-state-v1.json`.
   library scan**. This is a compatibility rule, not an integrity assertion.
 - unreadable/corrupt/unknown marker: Start fails closed to the same Repair instruction.
 
-New instances and Minecraft/loader/loader-version changes publish `incomplete` first. Repair
-writes `repair-in-progress` before touching libraries and publishes `published` only after the
-strong route returns success. Cancellation, network failure, hash mismatch after download, crash,
-or launcher termination therefore leaves the installation incomplete.
+New instances start as `incomplete`. Minecraft/loader/loader-version changes persist
+`incomplete` **before** mutating dependency identity; if that state write fails, the change is
+rejected. Repair writes `repair-in-progress` before touching libraries and publishes `published`
+only after the strong route returns success and no cancellation is pending. Cancellation, network
+failure, hash mismatch after download, crash, or launcher termination therefore leaves the
+installation incomplete. Content-only mod/resource updates do not change library identity and do
+not alter this marker.
 
 The current Pandora architecture has no separate game-dependency install transaction. For a new
 instance, the first explicit **Repair game files** operation is therefore also the provisioning
@@ -33,18 +36,30 @@ operation. Start itself never becomes that installer.
 
 ## Launch-fast boundary
 
-The fast route still parses the resolved in-memory library artifact list and rejects illegal
-relative paths. It does **not** stat, open, enumerate, hash, create parent directories, or contact
-library URLs. Forge/NeoForge launch-fast also skips installer `.sha1` fetches, library mirror
-lookups, embedded Maven-library extraction, library SHA-1 checks, and library writes. Missing
-installer/library files fail naturally when later loader/JVM code opens them.
+The fast `load_libraries` route still parses the resolved in-memory library artifact list and
+rejects illegal relative paths. It performs **no per-artifact filesystem stat/open/hash, directory
+creation, or library-network request**. The O(n) in-memory pass is still required to construct the
+classpath; the removed O(n) work is filesystem integrity probing.
+
+Forge/NeoForge launch-fast also skips installer `.sha1` fetches, library mirror lookup, embedded
+Maven-library extraction/SHA-1 rewrite, and the strong library download path. Two existing launch
+consumers remain intentionally outside that statement: Forge/NeoForge must open their already-local
+installer archive to derive launch metadata/processors, and Pandora still opens selected native
+archives when extracting natives. Neither path SHA-1 verifies or repairs the game-library set.
+Consequently a missing/corrupt ordinary classpath library is left for Java/loader/Minecraft, while a
+missing/corrupt Forge/NeoForge installer archive can still fail earlier during loader-version
+construction. In both cases Start performs no hidden library repair/download.
 
 Unchanged, deliberately outside this change:
 
-- Minecraft/version JSON and loader metadata resolution remains stock.
-- Java runtime verification/download remains stock on Start.
-- assets index and asset object verification/download remain stock; PR #45 is not composed here.
-- log configuration behavior remains stock.
+- Minecraft/version JSON and loader metadata resolution remains stock. Missing or stale metadata
+  follows the existing metadata-manager fetch/error behavior; this policy does not reinterpret it as
+  a library.
+- Java runtime verification/download remains stock on Start, including its existing integrity
+  checks and download behavior.
+- assets index and asset object verification/download remain stock on this branch; PR #45 is not
+  composed into the Agent 202 head.
+- log configuration behavior remains stock, including its own SHA-1/download path.
 - AppCDS, incremental identity, persistent layout, login, argv/classpath/module-path ordering,
   parallel-launch policy and graphical work are untouched.
 - Forge post-processor output checks remain stock; they are not game-library verification. Repair
