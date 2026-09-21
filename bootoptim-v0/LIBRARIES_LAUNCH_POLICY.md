@@ -27,7 +27,9 @@ transaction before publishing: existing library files are trusted by existence o
 libraries are downloaded, and only newly downloaded bytes are checked against advertised size/SHA-1.
 There is no cryptographic pass over already-present libraries. A standalone instance publishes only
 after that provisioning succeeds. A new content/modpack install keeps the same marker incomplete
-through the final content copy and publishes only after the entire install path completes.
+through the final content copy and publishes only after the entire install path completes. If an
+existing-instance content install changes the loader, its provision-missing dependency step is
+awaited inside that install operation before publication rather than being left as background work.
 
 Imports from ATLauncher, CurseForge, Modrinth and MultiMC write `import-in-progress` before
 copying/publishing the imported instance, so an interrupted import cannot silently become a
@@ -41,8 +43,10 @@ cannot be overwritten between the stale-state check and the final write. Provisi
 failure leaves the update incomplete and Start directs the user to Repair.
 
 Repair writes `repair-in-progress` before touching libraries and publishes `published` only after
-the strong route returns success and no cancellation is pending. Cancellation, network failure,
-hash mismatch after download, crash, or launcher termination therefore leaves the installation
+the strong route returns success and no cancellation is pending. Publication is compare-and-set;
+the modal is finished immediately after a successful final transition, and a cancellation racing
+that transition is written back to an incomplete marker. Cancellation, network failure, hash
+mismatch after download, crash, or launcher termination therefore leaves the installation
 incomplete. Content-only mod/resource updates do not change library identity and do not alter this
 marker.
 
