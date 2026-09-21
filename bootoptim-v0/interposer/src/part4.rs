@@ -282,4 +282,118 @@ mod tests {
             OsString::from("--add-modules=ALL-MODULE-PATH")
         ]));
     }
+
+    #[test]
+    fn first_eligible_identity_trains_without_a_proof_only_launch() {
+        let d = temp_dir("immediate-train");
+        let plan_bytes = b"{\"identity\":\"first\"}\n";
+        let plan_sha = sha256_hex(plan_bytes);
+
+        let stable = persist_plan_and_compare(&d, plan_bytes, &plan_sha).unwrap();
+        assert!(!stable, "first observation must still be FIRST_OR_MISMATCH");
+        assert_eq!(prepare_eligible_cache(&d, &plan_sha).unwrap(), PrepareDecision::Train);
+        assert_eq!(read_training_plan(&d.join("training.meta")).unwrap(), plan_sha);
+        assert!(!d.join("ready.jsa").exists());
+
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn training_needs_clean_exit_and_a_later_matching_identity_before_ready() {
+        let d = temp_dir("train-confirm");
+        let plan_bytes = b"{\"identity\":\"same\"}\n";
+        let plan_sha = sha256_hex(plan_bytes);
+
+        assert!(!persist_plan_and_compare(&d, plan_bytes, &plan_sha).unwrap());
+        assert_eq!(prepare_eligible_cache(&d, &plan_sha).unwrap(), PrepareDecision::Train);
+
+        // A concurrent launch, crash/kill, or archive that appears before Pandora
+        // has observed a clean Java exit must not consume or promote anything.
+        assert_eq!(reconcile_training(&d, &plan_sha).unwrap(), TrainingReconcile::Matching);
+        assert_eq!(prepare_eligible_cache(&d, &plan_sha).unwrap(), PrepareDecision::Stock);
+        fs::write(d.join("training.jsa"), b"partial-or-final-looking").unwrap();
+        assert_eq!(prepare_eligible_cache(&d, &plan_sha).unwrap(), PrepareDecision::Stock);
+        assert!(!d.join("ready.jsa").exists());
+
+        // Only a later independently rebuilt exact identity plus the clean-exit
+        // marker may promote and be consumed by that later launch.
+        fs::write(d.join("training.complete"), b"complete\n").unwrap();
+        assert!(persist_plan_and_compare(&d, plan_bytes, &plan_sha).unwrap());
+        assert_eq!(reconcile_training(&d, &plan_sha).unwrap(), TrainingReconcile::Matching);
+        assert_eq!(prepare_eligible_cache(&d, &plan_sha).unwrap(), PrepareDecision::Ready);
+        assert!(d.join("ready.jsa").is_file());
+        assert!(d.join("ready.meta").is_file());
+        assert!(!d.join("training.meta").exists());
+        assert!(!d.join("training.complete").exists());
+
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn intervening_identity_mismatch_discards_training_and_falls_back() {
+        let d = temp_dir("training-mismatch");
+        let plan_a = "a".repeat(64);
+        let plan_b = "b".repeat(64);
+
+        assert_eq!(prepare_eligible_cache(&d, &plan_a).unwrap(), PrepareDecision::Train);
+        fs::write(d.join("training.jsa"), b"archive-a").unwrap();
+        fs::write(d.join("training.complete"), b"complete\n").unwrap();
+
+        assert_eq!(
+            reconcile_training(&d, &plan_b).unwrap(),
+            TrainingReconcile::Discarded("training-plan-mismatch")
+        );
+        assert!(!d.join("training.meta").exists());
+        assert!(!d.join("training.jsa").exists());
+        assert!(!d.join("training.complete").exists());
+        assert!(!d.join("ready.jsa").exists());
+
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn corrupt_training_metadata_or_completion_never_promotes() {
+        let d = temp_dir("training-corrupt");
+        let plan = "c".repeat(64);
+
+        fs::write(
+            d.join("training.meta"),
+            format!("schema={}\nplan_sha256={}\nunexpected=true\n", SCHEMA_VERSION, plan),
+        )
+        .unwrap();
+        fs::write(d.join("training.jsa"), b"archive").unwrap();
+        fs::write(d.join("training.complete"), b"complete\n").unwrap();
+        assert_eq!(
+            reconcile_training(&d, &plan).unwrap(),
+            TrainingReconcile::Discarded("training-metadata-corrupt")
+        );
+        assert!(!d.join("ready.jsa").exists());
+
+        assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Train);
+        fs::write(d.join("training.jsa"), b"archive").unwrap();
+        fs::write(d.join("training.complete"), b"not-complete\n").unwrap();
+        assert_eq!(
+            reconcile_training(&d, &plan).unwrap(),
+            TrainingReconcile::Discarded("training-completion-corrupt")
+        );
+        assert!(!d.join("ready.jsa").exists());
+        assert!(!d.join("training.meta").exists());
+
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn verified_ready_archive_reuses_exact_identity_without_plan_history_gate() {
+        let d = temp_dir("ready-reuse");
+        let plan = "d".repeat(64);
+        let staging = d.join("staging-ready.jsa");
+        fs::write(&staging, b"verified-ready").unwrap();
+        promote_archive(&d, &staging, &plan).unwrap();
+
+        assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Ready);
+        assert_eq!(prepare_eligible_cache(&d, &"e".repeat(64)).unwrap(), PrepareDecision::Stock);
+        assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Ready);
+
+        let _ = fs::remove_dir_all(d);
+    }
 }
