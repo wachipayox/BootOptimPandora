@@ -83,6 +83,7 @@ pub enum AddVanillaJar {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LibraryLoadMode {
     LaunchFast,
+    ProvisionMissing,
     VerifyAndRepair,
 }
 
@@ -491,10 +492,11 @@ impl Launcher {
             return Err(LaunchError::CantFindVersion(instance_info.minecraft_version.as_str()));
         };
 
-        // Base version metadata remains stock. The installer SHA-1 request is a
-        // library-repair authority and is deliberately absent from LaunchFast.
+        // Base version metadata remains stock. The installer SHA-1 request is
+        // needed while provisioning/repairing downloads, but is deliberately
+        // absent from LaunchFast.
         let base_version = self.meta.fetch(MinecraftVersionMetadataItem(version_link)).await?;
-        let installer_sha1 = if library_mode == LibraryLoadMode::VerifyAndRepair {
+        let installer_sha1 = if library_mode != LibraryLoadMode::LaunchFast {
             let installer_hash_url = installer_hash_url.replace("{0}", &loader_version);
             Self::download_sha1(http_client, &installer_hash_url).await
         } else {
@@ -1094,6 +1096,19 @@ impl Launcher {
     ) -> Result<Vec<(Ustr, PathBuf)>, LoadLibrariesError> {
         let result = match library_mode {
             LibraryLoadMode::LaunchFast => resolve_library_paths(artifacts, &self.directories.libraries_dir),
+            LibraryLoadMode::ProvisionMissing => {
+                let libraries_tracker =
+                    modal_action.push_tracker(Arc::from("Installing missing game libraries"));
+                let result = do_libraries_install_missing(
+                    http_client,
+                    artifacts,
+                    self.directories.libraries_dir.clone(),
+                    &libraries_tracker,
+                )
+                .await;
+                libraries_tracker.set_finished(ProgressTrackerFinishType::from_err(result.is_err()));
+                result
+            },
             LibraryLoadMode::VerifyAndRepair => {
                 let libraries_tracker =
                     modal_action.push_tracker(Arc::from("Verifying integrity of game libraries"));
@@ -1111,6 +1126,62 @@ impl Launcher {
 
         launch_tracker.add_count(1);
         result
+    }
+
+    pub async fn provision_game_files(
+        &self,
+        http_client: &reqwest::Client,
+        instance_info: InstanceConfiguration,
+        modal_action: &ModalAction,
+    ) -> Result<(), LaunchError> {
+        let install_tracker = modal_action.push_tracker(Arc::from("Installing game files"));
+        let (version_info, add_vanilla_jar) = self
+            .create_launch_version(
+                http_client,
+                modal_action,
+                &install_tracker,
+                &instance_info,
+                LibraryLoadMode::ProvisionMissing,
+            )
+            .await?;
+
+        let launch_rule_context = LaunchRuleContext {
+            is_demo_user: false,
+            custom_resolution: None,
+            quick_play: None,
+        };
+        let mut artifacts = Vec::new();
+        let mut natives_to_extract = HashMap::new();
+        launch_rule_context.collect_libraries(
+            &version_info.libraries,
+            &mut artifacts,
+            &mut natives_to_extract,
+        );
+        if add_vanilla_jar == AddVanillaJar::Yes {
+            let client_download = &version_info.downloads.client;
+            artifacts.push(GameLibraryArtifact {
+                path: format!(
+                    "net/minecraft/{0}/minecraft-client-{0}.jar",
+                    instance_info.minecraft_version
+                )
+                .into(),
+                sha1: Some(client_download.sha1),
+                size: Some(client_download.size),
+                url: client_download.url,
+            });
+        }
+
+        self.load_libraries(
+            http_client,
+            &artifacts,
+            modal_action,
+            &install_tracker,
+            LibraryLoadMode::ProvisionMissing,
+        )
+        .await?;
+
+        install_tracker.set_finished(ProgressTrackerFinishType::Normal);
+        Ok(())
     }
 
     pub async fn repair_game_files(
