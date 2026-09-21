@@ -311,6 +311,7 @@ impl BackendState {
             && modal_action.get_finished_at().is_none()
             && let Some((instance_id, root_path, configuration)) = identity_provision
         {
+            let cancellation_root = root_path.clone();
             match self
                 .provision_game_files_for_identity_change(
                     instance_id,
@@ -321,7 +322,14 @@ impl BackendState {
                 )
                 .await
             {
-                Ok(true) => {},
+                Ok(true) => {
+                    if modal_action.has_requested_cancel() {
+                        let _ = crate::library_install_state::mark_incomplete(
+                            &cancellation_root,
+                            "content-install-cancelled",
+                        );
+                    }
+                },
                 Ok(false) => {
                     modal_action.set_finished_with_error(
                         "Content installed, but dependency identity/state changed before publication; use Repair game files"
@@ -349,7 +357,14 @@ impl BackendState {
                 "content-install-in-progress",
                 "content-install-complete",
             ) {
-                Ok(true) => {},
+                Ok(true) => {
+                    if modal_action.has_requested_cancel() {
+                        let _ = crate::library_install_state::mark_incomplete(
+                            &root,
+                            "content-install-cancelled",
+                        );
+                    }
+                },
                 Ok(false) => {
                     modal_action.set_finished_with_error(
                         "Content installed, but game-files state changed before publication; use Repair game files"
