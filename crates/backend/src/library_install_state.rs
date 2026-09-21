@@ -1,4 +1,7 @@
-use std::{io, path::{Path, PathBuf}};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -90,10 +93,7 @@ mod tests {
     fn interrupted_operation_blocks_start_until_publish() {
         let root = root("interrupted");
         mark_incomplete(&root, "update-in-progress").unwrap();
-        assert_eq!(
-            start_status(&root).unwrap(),
-            StartStatus::Incomplete("update-in-progress".to_owned())
-        );
+        assert_eq!(start_status(&root).unwrap(), StartStatus::Incomplete("update-in-progress".to_owned()));
         mark_published(&root).unwrap();
         assert_eq!(start_status(&root).unwrap(), StartStatus::Published);
         let _ = std::fs::remove_dir_all(root);
@@ -103,10 +103,7 @@ mod tests {
     fn cancelled_repair_does_not_publish() {
         let root = root("cancel");
         mark_incomplete(&root, "repair-in-progress").unwrap();
-        assert_eq!(
-            start_status(&root).unwrap(),
-            StartStatus::Incomplete("repair-in-progress".to_owned())
-        );
+        assert_eq!(start_status(&root).unwrap(), StartStatus::Incomplete("repair-in-progress".to_owned()));
         let _ = std::fs::remove_dir_all(root);
     }
 
