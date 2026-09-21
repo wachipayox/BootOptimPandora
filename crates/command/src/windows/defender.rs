@@ -270,7 +270,10 @@ fn canonical_launcher_path() -> io::Result<PathBuf> {
 
     let normalized = if wide.starts_with(&[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16]) {
         if wide.get(4..8).is_some_and(|p| {
-            p.eq_ignore_ascii_case(&[b'U' as u16, b'N' as u16, b'C' as u16, b'\\' as u16])
+            matches!(p[0], 0x55 | 0x75)
+                && matches!(p[1], 0x4e | 0x6e)
+                && matches!(p[2], 0x43 | 0x63)
+                && p[3] == b'\\' as u16
         }) {
             return Err(io::Error::other("network executable paths are not eligible"));
         }
