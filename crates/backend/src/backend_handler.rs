@@ -421,8 +421,8 @@ impl BackendState {
             } => self.start_instance(id, quick_play, live_game_output, modal_action).await,
             MessageToBackend::RepairGameFiles { id, modal_action } => {
                 let (root_path, configuration) = {
-                    let state = self.instance_state.read();
-                    let Some(instance) = state.instances.get(id) else {
+                    let mut state = self.instance_state.write();
+                    let Some(instance) = state.instances.get_mut(id) else {
                         modal_action.set_finished_with_error("Can't repair game files, unknown instance".into());
                         return;
                     };
@@ -438,8 +438,9 @@ impl BackendState {
                     return;
                 }
 
+                let http_client = self.http_client_provider.redirecting();
                 let repair = self.launcher.repair_game_files(
-                    &self.http_client_provider.redirecting(),
+                    &http_client,
                     configuration,
                     &modal_action,
                 );
