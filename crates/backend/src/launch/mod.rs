@@ -679,162 +679,160 @@ impl Launcher {
 
         self.load_libraries(http_client, &libraries, modal_action, launch_tracker, library_mode).await?;
 
-        let forge_temp = self.directories.temp_dir.join("forge_installer");
-
-        let mut data = FxHashMap::default();
-
-        for (key, sided_data) in install_profile.data {
-            let value = sided_data.client;
-            if value.is_empty() {
-                continue;
-            }
-
-            if value.starts_with('[') && value.ends_with(']') {
-                let artifact = MavenCoordinate::create(&value[1..value.len()-1]);
-                let artifact_path = artifact.artifact_path();
-                if let Some(target) = SafePath::new(&artifact_path) {
-                    let target = target.to_path(&self.directories.libraries_dir);
-                    data.insert(key, target.into_os_string());
-                } else {
-                    log::error!("Artifact generated invalid path: {}", artifact_path);
-                }
-            } else if value.starts_with('\'') && value.ends_with('\'') {
-                data.insert(key, OsString::from(&value[1..value.len()-1]));
-            } else {
-                let mut file_name = &*value;
-                if file_name.starts_with('/') {
-                    file_name = &file_name[1..];
-                }
-                let Some(file) = installer_zip.by_name(&file_name) else {
-                    return Err(LaunchError::MissingFileInZipError(Cow::Owned(file_name.to_string())));
-                };
-                if let Some(target) = SafePath::new(file_name) {
-                    let target = target.to_path(&forge_temp);
-                    crate::fs::write_safe(&target, &file.bytes()?)?;
-                    data.insert(key, target.into_os_string());
-                } else {
-                    log::error!("Unable to extract {}", file_name);
-                }
-            }
-        }
-
-        drop(installer_zip);
-
-        data.insert("SIDE".into(), "client".into());
-        data.insert("MINECRAFT_JAR".into(), minecraft_jar_path.as_os_str().to_os_string());
-        data.insert("MINECRAFT_VERSION".into(), OsString::from(&*install_profile.minecraft));
-        // ROOT is omitted
-        data.insert("INSTALLER".into(), installer_path.as_os_str().to_os_string());
-        data.insert("LIBRARY_DIR".into(), self.directories.libraries_dir.as_os_str().to_os_string());
-
         if library_mode != LibraryLoadMode::LaunchFast {
-            let processor_tracker = modal_action.push_tracker("Forge Post Processors".into());
-        processor_tracker.set_total(install_profile.processors.len());
+            let forge_temp = self.directories.temp_dir.join("forge_installer");
+            let mut data = FxHashMap::default();
 
-        for processor in install_profile.processors.iter() {
-            if let Some(sides) = &processor.sides {
-                if !sides.iter().any(|side| *side == ForgeSide::Client) {
-                    processor_tracker.add_count(1);
-
+            for (key, sided_data) in install_profile.data {
+                let value = sided_data.client;
+                if value.is_empty() {
                     continue;
                 }
-            }
 
-            let jar = MavenCoordinate::create(&processor.jar);
-
-            // Repair keeps stock SHA-1 output validation. Provisioning only
-            // checks whether declared outputs exist, avoiding a full hash pass.
-            let skip = if library_mode == LibraryLoadMode::ProvisionMissing {
-                self.can_skip_forge_processor_without_hash(&jar, processor, &data)
-            } else {
-                self.can_skip_forge_processor(&jar, processor, &data)
-            };
-            if skip {
-                processor_tracker.add_count(1);
-                continue;
-            }
-
-            let relative_jar_path = jar.artifact_path();
-
-            let Some(safe_jar_path) = SafePath::new(&relative_jar_path) else {
-                log::error!("Unable to run processor, invalid path: {}", relative_jar_path);
-                processor_tracker.add_count(1);
-                continue;
-            };
-
-            let jar_path = safe_jar_path.to_path(&self.directories.libraries_dir);
-            let jar_file = std::fs::File::open(&jar_path)?;
-            let jar_zip = jar_file.read_zip()?;
-
-            let Some(manifest_file) = jar_zip.by_name("META-INF/MANIFEST.MF") else {
-                return Err(LaunchError::MissingFileInZipError(Cow::Borrowed("META-INF/MANIFEST.MF")));
-            };
-
-            let manifest_bytes = manifest_file.bytes()?;
-
-            drop(jar_zip);
-            drop(jar_file);
-
-            let Ok(manifest_str) = str::from_utf8(&manifest_bytes) else {
-                log::error!("Unable to run processor, MANIFEST.MF is not utf8 encoded");
-                processor_tracker.add_count(1);
-                continue;
-            };
-
-            let manifest_map = crate::java_manifest::parse_java_manifest(manifest_str);
-
-            let Some(main_class) = manifest_map.get("Main-Class") else {
-                log::error!("Unable to run processor, can't find Main-Class in MANIFEST.MF");
-                processor_tracker.add_count(1);
-                continue;
-            };
-
-            let mut command = std::process::Command::new(java_path);
-
-            command.current_dir(&forge_temp);
-            command.stdin(Stdio::inherit());
-            command.stdout(Stdio::inherit());
-            command.stderr(Stdio::inherit());
-
-            command.arg("-cp");
-            command.arg(std::env::join_paths(processor.classpath.iter().map(|f| {
-                let artifact = MavenCoordinate::create(&**f);
-                self.directories.libraries_dir.join(artifact.artifact_path()).into_os_string()
-            }).chain(std::iter::once(jar_path.into_os_string()))).unwrap());
-
-            command.arg(main_class);
-
-            for arg in processor.args.iter() {
-                let expanded = if arg.starts_with('[') && arg.ends_with(']') {
-                    let artifact = MavenCoordinate::create(&arg[1..arg.len()-1]);
+                if value.starts_with('[') && value.ends_with(']') {
+                    let artifact = MavenCoordinate::create(&value[1..value.len()-1]);
                     let artifact_path = artifact.artifact_path();
                     if let Some(target) = SafePath::new(&artifact_path) {
                         let target = target.to_path(&self.directories.libraries_dir);
-                        Cow::Owned(target.into_os_string())
+                        data.insert(key, target.into_os_string());
                     } else {
                         log::error!("Artifact generated invalid path: {}", artifact_path);
+                    }
+                } else if value.starts_with('\'') && value.ends_with('\'') {
+                    data.insert(key, OsString::from(&value[1..value.len()-1]));
+                } else {
+                    let mut file_name = &*value;
+                    if file_name.starts_with('/') {
+                        file_name = &file_name[1..];
+                    }
+                    let Some(file) = installer_zip.by_name(&file_name) else {
+                        return Err(LaunchError::MissingFileInZipError(Cow::Owned(file_name.to_string())));
+                    };
+                    if let Some(target) = SafePath::new(file_name) {
+                        let target = target.to_path(&forge_temp);
+                        crate::fs::write_safe(&target, &file.bytes()?)?;
+                        data.insert(key, target.into_os_string());
+                    } else {
+                        log::error!("Unable to extract {}", file_name);
+                    }
+                }
+            }
+
+            data.insert("SIDE".into(), "client".into());
+            data.insert("MINECRAFT_JAR".into(), minecraft_jar_path.as_os_str().to_os_string());
+            data.insert("MINECRAFT_VERSION".into(), OsString::from(&*install_profile.minecraft));
+            // ROOT is omitted
+            data.insert("INSTALLER".into(), installer_path.as_os_str().to_os_string());
+            data.insert("LIBRARY_DIR".into(), self.directories.libraries_dir.as_os_str().to_os_string());
+
+            let processor_tracker = modal_action.push_tracker("Forge Post Processors".into());
+            processor_tracker.set_total(install_profile.processors.len());
+
+            for processor in install_profile.processors.iter() {
+                if let Some(sides) = &processor.sides {
+                    if !sides.iter().any(|side| *side == ForgeSide::Client) {
+                        processor_tracker.add_count(1);
                         continue;
                     }
-                } else if &**arg == "{ROOT}/libraries/" {
-                    Cow::Borrowed(self.directories.libraries_dir.as_os_str())
+                }
+
+                let jar = MavenCoordinate::create(&processor.jar);
+
+                // Repair keeps stock SHA-1 output validation. Provisioning only
+                // checks whether declared outputs exist, avoiding a full hash pass.
+                let skip = if library_mode == LibraryLoadMode::ProvisionMissing {
+                    self.can_skip_forge_processor_without_hash(&jar, processor, &data)
                 } else {
-                    expand_forge_argument(&arg, &data)
+                    self.can_skip_forge_processor(&jar, processor, &data)
                 };
-                command.arg(expanded);
+                if skip {
+                    processor_tracker.add_count(1);
+                    continue;
+                }
+
+                let relative_jar_path = jar.artifact_path();
+
+                let Some(safe_jar_path) = SafePath::new(&relative_jar_path) else {
+                    log::error!("Unable to run processor, invalid path: {}", relative_jar_path);
+                    processor_tracker.add_count(1);
+                    continue;
+                };
+
+                let jar_path = safe_jar_path.to_path(&self.directories.libraries_dir);
+                let jar_file = std::fs::File::open(&jar_path)?;
+                let jar_zip = jar_file.read_zip()?;
+
+                let Some(manifest_file) = jar_zip.by_name("META-INF/MANIFEST.MF") else {
+                    return Err(LaunchError::MissingFileInZipError(Cow::Borrowed("META-INF/MANIFEST.MF")));
+                };
+
+                let manifest_bytes = manifest_file.bytes()?;
+
+                drop(jar_zip);
+                drop(jar_file);
+
+                let Ok(manifest_str) = str::from_utf8(&manifest_bytes) else {
+                    log::error!("Unable to run processor, MANIFEST.MF is not utf8 encoded");
+                    processor_tracker.add_count(1);
+                    continue;
+                };
+
+                let manifest_map = crate::java_manifest::parse_java_manifest(manifest_str);
+
+                let Some(main_class) = manifest_map.get("Main-Class") else {
+                    log::error!("Unable to run processor, can't find Main-Class in MANIFEST.MF");
+                    processor_tracker.add_count(1);
+                    continue;
+                };
+
+                let mut command = std::process::Command::new(java_path);
+
+                command.current_dir(&forge_temp);
+                command.stdin(Stdio::inherit());
+                command.stdout(Stdio::inherit());
+                command.stderr(Stdio::inherit());
+
+                command.arg("-cp");
+                command.arg(std::env::join_paths(processor.classpath.iter().map(|f| {
+                    let artifact = MavenCoordinate::create(&**f);
+                    self.directories.libraries_dir.join(artifact.artifact_path()).into_os_string()
+                }).chain(std::iter::once(jar_path.into_os_string()))).unwrap());
+
+                command.arg(main_class);
+
+                for arg in processor.args.iter() {
+                    let expanded = if arg.starts_with('[') && arg.ends_with(']') {
+                        let artifact = MavenCoordinate::create(&arg[1..arg.len()-1]);
+                        let artifact_path = artifact.artifact_path();
+                        if let Some(target) = SafePath::new(&artifact_path) {
+                            let target = target.to_path(&self.directories.libraries_dir);
+                            Cow::Owned(target.into_os_string())
+                        } else {
+                            log::error!("Artifact generated invalid path: {}", artifact_path);
+                            continue;
+                        }
+                    } else if &**arg == "{ROOT}/libraries/" {
+                        Cow::Borrowed(self.directories.libraries_dir.as_os_str())
+                    } else {
+                        expand_forge_argument(&arg, &data)
+                    };
+                    command.arg(expanded);
+                }
+
+                let mut child = command.spawn()?;
+                let exit_code = child.wait()?;
+
+                if !exit_code.success() {
+                    return Err(LaunchError::ForgePostProcessorError);
+                }
+
+                processor_tracker.add_count(1);
             }
-
-            let mut child = command.spawn()?;
-            let exit_code = child.wait()?;
-
-            if !exit_code.success() {
-                return Err(LaunchError::ForgePostProcessorError);
-            }
-
-            processor_tracker.add_count(1);
-        }
 
             processor_tracker.set_finished(ProgressTrackerFinishType::Normal);
         }
+
+        drop(installer_zip);
 
         launch_tracker.add_count(1);
 
