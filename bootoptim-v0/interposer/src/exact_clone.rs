@@ -26,7 +26,7 @@ fn try_adopt_exact_clone_candidate(
             if ensure_plain_profile_directory(&candidate, &meta).is_err() {
                 return reject_exact_clone_candidate(&bootoptim, &candidate);
             }
-        }
+        },
     }
 
     let validation = validate_exact_clone_candidate(&candidate, cache_dir, profile_uuid, plan);
@@ -111,19 +111,14 @@ fn validate_exact_clone_candidate(
 fn exact_clone_meta_value(text: &str, key: &str) -> io::Result<String> {
     let prefix = format!("{key}=");
     let mut values = text.lines().filter_map(|line| line.strip_prefix(&prefix));
-    let value = values
-        .next()
-        .ok_or_else(|| invalid_exact_clone_candidate("missing candidate metadata"))?;
+    let value = values.next().ok_or_else(|| invalid_exact_clone_candidate("missing candidate metadata"))?;
     if values.next().is_some() || value.is_empty() {
         return Err(invalid_exact_clone_candidate("ambiguous candidate metadata"));
     }
     Ok(value.to_string())
 }
 
-fn reject_exact_clone_candidate(
-    bootoptim: &Path,
-    candidate: &Path,
-) -> io::Result<ExactCloneAdoption> {
+fn reject_exact_clone_candidate(bootoptim: &Path, candidate: &Path) -> io::Result<ExactCloneAdoption> {
     let rejected = bootoptim.join(format!("{EXACT_CLONE_REJECTED_PREFIX}{}", unique_suffix()));
     match fs::rename(candidate, rejected) {
         Ok(()) => Ok(ExactCloneAdoption::Rejected),
@@ -132,7 +127,7 @@ fn reject_exact_clone_candidate(
             // Pandora's existing helper-error path launches stock and preserves
             // the candidate evidence for inspection.
             Err(error)
-        }
+        },
     }
 }
 
