@@ -311,12 +311,32 @@ impl BackendState {
             && modal_action.get_finished_at().is_none()
             && let Some((instance_id, root_path, configuration)) = identity_provision
         {
-            self.provision_game_files_after_identity_change(
-                instance_id,
-                root_path,
-                configuration,
-                "content-install-loader-changed",
-            );
+            match self
+                .provision_game_files_for_identity_change(
+                    instance_id,
+                    root_path,
+                    configuration,
+                    "content-install-loader-changed",
+                    &modal_action,
+                )
+                .await
+            {
+                Ok(true) => {},
+                Ok(false) => {
+                    modal_action.set_finished_with_error(
+                        "Content installed, but dependency identity/state changed before publication; use Repair game files"
+                            .into(),
+                    );
+                },
+                Err(err) => {
+                    modal_action.set_finished_with_error(
+                        format!(
+                            "Content installed, but game-file provisioning did not complete ({err}); use Repair game files"
+                        )
+                        .into(),
+                    );
+                },
+            }
         }
 
         if let Some(root) = new_instance_root
