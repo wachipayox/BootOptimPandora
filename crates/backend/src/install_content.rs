@@ -222,7 +222,16 @@ impl BackendState {
             if let Some(instance) = instance_state.instances.get_mut(instance_id) {
                 instance_running = !instance.processes.is_empty();
 
-                if instance.configuration.get().loader == Loader::Vanilla {
+                if instance.configuration.get().loader == Loader::Vanilla && loader != Loader::Vanilla {
+                    if let Err(err) = crate::library_install_state::mark_incomplete(
+                        &instance.root_path,
+                        "content-install-loader-changed",
+                    ) {
+                        self.send.send_error(format!(
+                            "Unable to install content: game-files state could not be marked incomplete: {err}"
+                        ));
+                        return;
+                    }
                     instance.configuration.modify(|config| {
                         config.loader = loader;
                     });
