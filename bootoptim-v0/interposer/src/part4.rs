@@ -195,6 +195,109 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    fn write_exact_clone_candidate(
+        root: &Path,
+        profile_uuid: &str,
+        expected_plan_sha256: &str,
+        archive: &[u8],
+    ) {
+        let candidate = root.join(".bootoptim/appcds-exact-clone-candidate");
+        fs::create_dir_all(&candidate).unwrap();
+        let archive_sha256 = hash_file_bytes_for_test(archive);
+        fs::write(candidate.join("archive.jsa"), archive).unwrap();
+        fs::write(
+            candidate.join("candidate.meta"),
+            format!(
+                "schema=1\nsource_profile_uuid=61234567-89ab-cdef-8123-456789abcdef\ndestination_profile_uuid={profile_uuid}\nsource_plan_sha256=source\nexpected_plan_sha256={expected_plan_sha256}\narchive_sha256={archive_sha256}\narchive_size={}\n",
+                archive.len()
+            ),
+        )
+        .unwrap();
+        fs::write(candidate.join("candidate.complete"), b"complete\n").unwrap();
+    }
+
+    fn hash_file_bytes_for_test(bytes: &[u8]) -> String {
+        sha256_hex(bytes)
+    }
+
+    #[test]
+    fn exact_clone_candidate_promotes_only_after_destination_plan_matches() {
+        let root = temp_dir("exact-clone-adopt");
+        let uuid = "71234567-89ab-cdef-8123-456789abcdef";
+        write_ready_profile_control(&root, uuid);
+        let scope = acquire_appcds_profile_scope(&root).unwrap();
+        let cache = root.join(".bootoptim/appcds");
+        bind_appcds_cache_namespace(&cache, scope.namespace()).unwrap();
+
+        let plan = LaunchPlan {
+            bytes: b"{\"destination\":true}\n".to_vec(),
+            sha256: sha256_hex(b"{\"destination\":true}\n"),
+            eligible: true,
+        };
+        write_exact_clone_candidate(&root, uuid, &plan.sha256, b"inherited-ready");
+        assert_eq!(
+            try_adopt_exact_clone_candidate(&root, &cache, scope.namespace(), &plan).unwrap(),
+            ExactCloneAdoption::Adopted
+        );
+        assert_eq!(classify_cache(&cache, &plan.sha256).unwrap().0, CacheState::Ready);
+        assert!(!root.join(".bootoptim/appcds-exact-clone-candidate").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn exact_clone_input_change_rejects_candidate_and_never_creates_ready() {
+        let root = temp_dir("exact-clone-input-change");
+        let uuid = "81234567-89ab-cdef-8123-456789abcdef";
+        write_ready_profile_control(&root, uuid);
+        let scope = acquire_appcds_profile_scope(&root).unwrap();
+        let cache = root.join(".bootoptim/appcds");
+        bind_appcds_cache_namespace(&cache, scope.namespace()).unwrap();
+
+        let inherited = sha256_hex(b"source-effective-plan");
+        write_exact_clone_candidate(&root, uuid, &inherited, b"inherited-ready");
+        let changed = LaunchPlan {
+            bytes: b"changed-mod-config-java-loader-or-args".to_vec(),
+            sha256: sha256_hex(b"changed-mod-config-java-loader-or-args"),
+            eligible: true,
+        };
+        assert_eq!(
+            try_adopt_exact_clone_candidate(&root, &cache, scope.namespace(), &changed).unwrap(),
+            ExactCloneAdoption::Rejected
+        );
+        assert!(!cache.join("ready.jsa").exists());
+        assert!(
+            fs::read_dir(root.join(".bootoptim"))
+                .unwrap()
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().starts_with("appcds-exact-clone-rejected-"))
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn exact_clone_partial_or_corrupt_candidate_never_adopts_ready() {
+        let root = temp_dir("exact-clone-corrupt");
+        let uuid = "91234567-89ab-cdef-8123-456789abcdef";
+        write_ready_profile_control(&root, uuid);
+        let scope = acquire_appcds_profile_scope(&root).unwrap();
+        let cache = root.join(".bootoptim/appcds");
+        bind_appcds_cache_namespace(&cache, scope.namespace()).unwrap();
+        let plan = LaunchPlan {
+            bytes: b"plan".to_vec(),
+            sha256: sha256_hex(b"plan"),
+            eligible: true,
+        };
+        write_exact_clone_candidate(&root, uuid, &plan.sha256, b"archive");
+        fs::remove_file(root.join(".bootoptim/appcds-exact-clone-candidate/candidate.complete")).unwrap();
+
+        assert_eq!(
+            try_adopt_exact_clone_candidate(&root, &cache, scope.namespace(), &plan).unwrap(),
+            ExactCloneAdoption::Rejected
+        );
+        assert!(!cache.join("ready.jsa").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn sha256_known_vector() {
         assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
