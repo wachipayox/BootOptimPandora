@@ -717,7 +717,8 @@ impl Launcher {
         data.insert("INSTALLER".into(), installer_path.as_os_str().to_os_string());
         data.insert("LIBRARY_DIR".into(), self.directories.libraries_dir.as_os_str().to_os_string());
 
-        let processor_tracker = modal_action.push_tracker("Forge Post Processors".into());
+        if library_mode == LibraryLoadMode::VerifyAndRepair {
+            let processor_tracker = modal_action.push_tracker("Forge Post Processors".into());
         processor_tracker.set_total(install_profile.processors.len());
 
         for processor in install_profile.processors.iter() {
@@ -817,7 +818,8 @@ impl Launcher {
             processor_tracker.add_count(1);
         }
 
-        processor_tracker.set_finished(ProgressTrackerFinishType::Normal);
+            processor_tracker.set_finished(ProgressTrackerFinishType::Normal);
+        }
 
         launch_tracker.add_count(1);
 
