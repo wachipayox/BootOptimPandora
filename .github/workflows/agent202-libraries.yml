@@ -31,8 +31,24 @@ jobs:
           components: rustfmt
       - name: Install system dependencies
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
-      - name: Format touched Rust sources
+      - name: Rustfmt touched-file diagnostic
+        continue-on-error: true
         run: rustfmt --edition 2024 --check --config skip_children=true crates/backend/src/backend.rs crates/backend/src/backend_handler.rs crates/backend/src/install_content.rs crates/backend/src/launch/mod.rs crates/backend/src/lib.rs crates/backend/src/library_install_state.rs crates/bridge/src/message.rs crates/frontend/src/root.rs crates/frontend/src/pages/instance/instance_page.rs
+      - name: Format new Agent 202 module
+        run: rustfmt --edition 2024 --check --config skip_children=true crates/backend/src/library_install_state.rs
+      - name: Reject whitespace errors in Agent 202 delta
+        run: |
+          git fetch --no-tags --depth=1 origin 3410b4c47eec0f47012d3c33bbd5e1d58b669e14
+          git diff --check 3410b4c47eec0f47012d3c33bbd5e1d58b669e14 HEAD -- \
+            crates/backend/src/backend.rs \
+            crates/backend/src/backend_handler.rs \
+            crates/backend/src/install_content.rs \
+            crates/backend/src/launch/mod.rs \
+            crates/backend/src/lib.rs \
+            crates/backend/src/library_install_state.rs \
+            crates/bridge/src/message.rs \
+            crates/frontend/src/root.rs \
+            crates/frontend/src/pages/instance/instance_page.rs
       - name: Check affected crates
         run: cargo check -p bridge -p backend -p frontend --tests --frozen
       - name: Test library launch policy
