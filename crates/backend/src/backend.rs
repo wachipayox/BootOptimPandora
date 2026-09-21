@@ -2269,4 +2269,3 @@ mod launch_gate_tests {
         assert_eq!(name_rejections, 1);
     }
 }
-
