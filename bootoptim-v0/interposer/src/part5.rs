@@ -111,6 +111,7 @@ mod config_identity_tests {
             instance_dir: d.clone(),
             launcher_exe: Some(launcher),
             upstream_commit: UPSTREAM_DEFAULT.to_string(),
+            appcds_identity_normal_gui: false,
             java_exe: java.clone().into_os_string(),
             java_args: vec![OsString::from("-cp"), env::join_paths([lib.clone()]).unwrap(), OsString::from("com.moulberry.pandora.LaunchWrapper")],
         };
