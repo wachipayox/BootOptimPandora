@@ -450,6 +450,10 @@ impl BackendState {
 
                 match result {
                     Ok(()) => {
+                        if modal_action.has_requested_cancel() {
+                            modal_action.set_finished();
+                            return;
+                        }
                         if let Err(err) = library_install_state::mark_published(&root_path) {
                             modal_action.set_finished_with_error(format!("Repair completed but installation state could not be published: {err}").into());
                             return;
