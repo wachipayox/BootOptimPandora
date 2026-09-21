@@ -304,17 +304,37 @@ impl BackendState {
             && !content_copy_failed
             && !modal_action.has_requested_cancel()
             && modal_action.get_finished_at().is_none()
-            && let Err(err) = crate::library_install_state::mark_published(
-                &root,
-                "content-install-complete",
-            )
         {
-            modal_action.set_finished_with_error(
-                format!(
-                    "Content installed, but game-files state could not be published ({err}); use Repair game files"
-                )
-                .into(),
-            );
+            match crate::library_install_state::start_status(&root) {
+                Ok(crate::library_install_state::StartStatus::Incomplete(reason))
+                    if reason == "content-install-in-progress" =>
+                {
+                    if let Err(err) = crate::library_install_state::mark_published(
+                        &root,
+                        "content-install-complete",
+                    ) {
+                        modal_action.set_finished_with_error(
+                            format!(
+                                "Content installed, but game-files state could not be published ({err}); use Repair game files"
+                            )
+                            .into(),
+                        );
+                    }
+                },
+                Ok(_) => {
+                    modal_action.set_finished_with_error(
+                        "Content installed, but game files are incomplete; use Repair game files".into(),
+                    );
+                },
+                Err(err) => {
+                    modal_action.set_finished_with_error(
+                        format!(
+                            "Content installed, but game-files state is unreadable ({err}); use Repair game files"
+                        )
+                        .into(),
+                    );
+                },
+            }
         }
     }
 
