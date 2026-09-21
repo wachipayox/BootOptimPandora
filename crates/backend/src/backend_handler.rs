@@ -64,69 +64,81 @@ use crate::{
 };
 
 impl BackendState {
-    pub(crate) fn provision_game_files_after_identity_change(
+    pub(crate) async fn provision_game_files_for_identity_change(
+        self: &Arc<Self>,
+        id: InstanceID,
+        root_path: Arc<Path>,
+        configuration: schema::instance::InstanceConfiguration,
+        marker_reason: &'static str,
+        modal_action: &ModalAction,
+    ) -> Result<bool, String> {
+        let expected_minecraft_version = configuration.minecraft_version;
+        let expected_loader = configuration.loader;
+        let expected_loader_version = configuration.preferred_loader_version;
+
+        let http_client = self.http_client_provider.redirecting();
+        self.launcher
+            .provision_game_files(&http_client, configuration, modal_action)
+            .await
+            .map_err(|err| format!("Game-file provisioning failed: {err}"))?;
+
+        let identity_is_current = self
+            .instance_state
+            .read()
+            .instances
+            .get(id)
+            .is_some_and(|instance| {
+                let current = instance.configuration.get();
+                current.minecraft_version == expected_minecraft_version
+                    && current.loader == expected_loader
+                    && current.preferred_loader_version == expected_loader_version
+            });
+        if !identity_is_current {
+            return Ok(false);
+        }
+
+        library_install_state::publish_if_incomplete_reason(
+            &root_path,
+            marker_reason,
+            "identity-update-complete",
+        )
+        .map_err(|err| format!("Game-files state could not be published: {err}"))
+    }
+
+    fn schedule_game_files_after_identity_change(
         self: &Arc<Self>,
         id: InstanceID,
         root_path: Arc<Path>,
         configuration: schema::instance::InstanceConfiguration,
         marker_reason: &'static str,
     ) {
-        let expected_minecraft_version = configuration.minecraft_version;
-        let expected_loader = configuration.loader;
-        let expected_loader_version = configuration.preferred_loader_version;
         let this = self.clone();
-
         tokio::task::spawn(async move {
             let modal_action = ModalAction::default();
-            let http_client = this.http_client_provider.redirecting();
-            let result = this
-                .launcher
-                .provision_game_files(&http_client, configuration, &modal_action)
-                .await;
-            modal_action.set_finished();
-
-            let identity_is_current = this
-                .instance_state
-                .read()
-                .instances
-                .get(id)
-                .is_some_and(|instance| {
-                    let current = instance.configuration.get();
-                    current.minecraft_version == expected_minecraft_version
-                        && current.loader == expected_loader
-                        && current.preferred_loader_version == expected_loader_version
-                });
-            if !identity_is_current {
-                return;
-            }
-
-            match result {
-                Ok(()) => {
-                    match library_install_state::publish_if_incomplete_reason(
-                        &root_path,
-                        marker_reason,
-                        "identity-update-complete",
-                    ) {
-                        Ok(true) => {},
-                        Ok(false) => {
-                            log::debug!(
-                                "Skipping stale game-files publication for marker reason {marker_reason}"
-                            );
-                        },
-                        Err(err) => {
-                            this.send.send_warning(format!(
-                                "Game files were updated, but installation state could not be published ({err}); use Repair game files"
-                            ));
-                        },
-                    }
+            match this
+                .provision_game_files_for_identity_change(
+                    id,
+                    root_path,
+                    configuration,
+                    marker_reason,
+                    &modal_action,
+                )
+                .await
+            {
+                Ok(true) => {},
+                Ok(false) => {
+                    log::debug!(
+                        "Skipping stale game-files publication for marker reason {marker_reason}"
+                    );
                 },
                 Err(err) => {
-                    log::warn!("Game-file provisioning after identity change failed: {err:?}");
+                    log::warn!("{err}");
                     this.send.send_warning(format!(
                         "Game files are incomplete after the version/loader change ({err}); use Repair game files"
                     ));
                 },
             }
+            modal_action.set_finished();
         });
     }
 
@@ -282,7 +294,7 @@ impl BackendState {
                     Some((instance.root_path.clone(), instance.configuration.get().clone()))
                 };
                 if let Some((root_path, configuration)) = provision {
-                    self.provision_game_files_after_identity_change(
+                    self.schedule_game_files_after_identity_change(
                         id,
                         root_path,
                         configuration,
@@ -312,7 +324,7 @@ impl BackendState {
                     Some((instance.root_path.clone(), instance.configuration.get().clone()))
                 };
                 if let Some((root_path, configuration)) = provision {
-                    self.provision_game_files_after_identity_change(
+                    self.schedule_game_files_after_identity_change(
                         id,
                         root_path,
                         configuration,
@@ -351,7 +363,7 @@ impl BackendState {
                     Some((instance.root_path.clone(), instance.configuration.get().clone()))
                 };
                 if let Some((root_path, configuration)) = provision {
-                    self.provision_game_files_after_identity_change(
+                    self.schedule_game_files_after_identity_change(
                         id,
                         root_path,
                         configuration,
