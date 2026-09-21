@@ -398,45 +398,35 @@ fn training_state_present(cache_dir: &Path) -> bool {
 
 fn invalidate_training(cache_dir: &Path) -> io::Result<()> {
     let invalid = cache_dir.join("training.invalid");
-    write_atomic_replace(&invalid, b"invalid\n")?;
 
-    let mut first_error = None;
+    // Persist the tombstone before touching campaign files. A mismatching
+    // preflight can race the Java process that is still writing training.jsa
+    // and will later write training.complete through Pandora. The tombstone is
+    // therefore intentionally not auto-cleared: even if those late writes
+    // recreate canonical paths, no later preflight can consume them or start a
+    // second writer in the same namespace. A deliberate cache reset starts the
+    // next campaign.
+    if !invalid.exists() {
+        write_atomic_replace(&invalid, b"invalid\n")?;
+    }
+
+    // Once the tombstone exists, cleanup is best-effort. Windows may refuse to
+    // remove training.jsa while HotSpot still has it open; that is safe because
+    // training.invalid remains the authoritative no-consume/no-retrain latch.
     for name in ["training.meta", "training.jsa", "training.complete"] {
         match fs::remove_file(cache_dir.join(name)) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
-            }
+            Err(_) => {}
         }
     }
-
-    if first_error.is_none()
-        && !["training.meta", "training.jsa", "training.complete"]
-            .into_iter()
-            .any(|name| cache_dir.join(name).exists())
-    {
-        match fs::remove_file(&invalid) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => first_error = Some(error),
-        }
-    }
-
-    if let Some(error) = first_error {
-        Err(error)
-    } else {
-        Ok(())
-    }
+    Ok(())
 }
 
 fn cleanup_training_files(cache_dir: &Path) {
     let _ = fs::remove_file(cache_dir.join("training.meta"));
     let _ = fs::remove_file(cache_dir.join("training.jsa"));
     let _ = fs::remove_file(cache_dir.join("training.complete"));
-    let _ = fs::remove_file(cache_dir.join("training.invalid"));
 }
 
 fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
