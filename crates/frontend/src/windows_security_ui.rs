@@ -46,7 +46,7 @@ pub(crate) fn push_result(window: &mut Window, cx: &mut App, result: DefenderPro
     };
 
     let mut notification: Notification = (kind, SharedString::new_static(message)).into();
-    if kind == NotificationType::Error {
+    if matches!(result, DefenderProcessResult::Failed) {
         notification = notification.autohide(false);
     }
     window.push_notification(notification, cx);
