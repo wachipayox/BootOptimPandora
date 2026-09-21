@@ -339,6 +339,36 @@ impl CachedMinecraftProfile {
     }
 }
 
+enum AdmittedBackendMessage {
+    Message(MessageToBackend),
+    RejectedStart(RejectedStart),
+}
+
+struct RejectedStart {
+    modal_action: Option<ModalAction>,
+    report_error_to_frontend: bool,
+}
+
+impl AdmittedBackendMessage {
+    fn freeze_duplicate(message: MessageToBackend, duplicate_at_admission: bool) -> Self {
+        if !duplicate_at_admission {
+            return Self::Message(message);
+        }
+
+        match message {
+            MessageToBackend::StartInstance { modal_action, .. } => Self::RejectedStart(RejectedStart {
+                modal_action: Some(modal_action),
+                report_error_to_frontend: false,
+            }),
+            MessageToBackend::StartInstanceByName { .. } => Self::RejectedStart(RejectedStart {
+                modal_action: None,
+                report_error_to_frontend: true,
+            }),
+            message => Self::Message(message),
+        }
+    }
+}
+
 impl BackendState {
     pub async fn create_manual_curseforge_download_session(&self, files: Vec<ManualCurseforgeDownload>) {
         self.manual_curseforge_downloads.start(files, self).await;
@@ -547,6 +577,20 @@ impl BackendState {
             .is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive)
     }
 
+    fn admit_backend_message(&self, message: MessageToBackend) -> AdmittedBackendMessage {
+        let duplicate_at_admission = self.start_message_targets_active_launch(&message);
+        AdmittedBackendMessage::freeze_duplicate(message, duplicate_at_admission)
+    }
+
+    fn reject_admitted_start(&self, rejected: RejectedStart) {
+        if let Some(modal_action) = rejected.modal_action {
+            modal_action.set_finished_with_error(crate::backend_handler::ALREADY_LAUNCHING_ERROR.into());
+        }
+        if rejected.report_error_to_frontend {
+            self.send.send_error(crate::backend_handler::ALREADY_LAUNCHING_ERROR);
+        }
+    }
+
     async fn handle(
         self: Arc<Self>,
         mut backend_recv: BackendReceiver,
@@ -566,22 +610,35 @@ impl BackendState {
             let launch_active = self.has_active_launch();
 
             if launch_active {
-                if let Some(index) = deferred_messages
-                    .iter()
-                    .position(|message| self.start_message_targets_active_launch(message))
-                {
-                    let message = deferred_messages.remove(index).expect("deferred message index exists");
-                    self.handle_message(message).await;
+                if let Some(index) = deferred_messages.iter().position(|admitted| {
+                    matches!(
+                        admitted,
+                        AdmittedBackendMessage::Message(message)
+                            if self.start_message_targets_active_launch(message)
+                    )
+                }) {
+                    let admitted = deferred_messages.remove(index).expect("deferred message index exists");
+                    let admitted = match admitted {
+                        AdmittedBackendMessage::Message(message) => {
+                            // The active-target decision above is the admission decision.
+                            // Freeze it before the launch task can release its keepalive.
+                            AdmittedBackendMessage::freeze_duplicate(message, true)
+                        },
+                        rejected => rejected,
+                    };
+                    match admitted {
+                        AdmittedBackendMessage::RejectedStart(rejected) => self.reject_admitted_start(rejected),
+                        AdmittedBackendMessage::Message(_) => unreachable!("active start admission must freeze as rejection"),
+                    }
                     continue;
                 }
 
                 tokio::select! {
                     message = backend_recv.recv(), if !backend_closed => {
                         if let Some(message) = message {
-                            if self.start_message_targets_active_launch(&message) {
-                                self.handle_message(message).await;
-                            } else {
-                                deferred_messages.push_back(message);
+                            match self.admit_backend_message(message) {
+                                AdmittedBackendMessage::RejectedStart(rejected) => self.reject_admitted_start(rejected),
+                                admitted @ AdmittedBackendMessage::Message(_) => deferred_messages.push_back(admitted),
                             }
                         } else {
                             log::info!("Backend receiver has shut down");
@@ -602,8 +659,11 @@ impl BackendState {
                 break;
             }
 
-            if let Some(message) = deferred_messages.pop_front() {
-                self.handle_message(message).await;
+            if let Some(admitted) = deferred_messages.pop_front() {
+                match admitted {
+                    AdmittedBackendMessage::Message(message) => self.handle_message(message).await,
+                    AdmittedBackendMessage::RejectedStart(rejected) => self.reject_admitted_start(rejected),
+                }
                 continue;
             }
 
@@ -640,6 +700,68 @@ impl BackendState {
 
         self.send.send(MessageToFrontend::Quit);
     }
+
+
+#[cfg(test)]
+mod launch_admission_tests {
+    use super::*;
+    use bridge::keep_alive::KeepAlive;
+
+    fn direct_start() -> MessageToBackend {
+        MessageToBackend::StartInstance {
+            id: InstanceID { index: 7, generation: 11 },
+            quick_play: None,
+            live_game_output: None,
+            modal_action: ModalAction::default(),
+        }
+    }
+
+    #[test]
+    fn duplicate_admission_stays_rejected_after_first_claim_finishes() {
+        let mut slot = None;
+        let first = KeepAlive::new();
+        crate::backend_handler::try_claim_launch(&mut slot, &first).unwrap();
+
+        let admitted = AdmittedBackendMessage::freeze_duplicate(
+            direct_start(),
+            slot.as_ref().is_some_and(bridge::keep_alive::KeepAliveHandle::is_alive),
+        );
+        drop(first);
+
+        let mut spawn_start_instance_calls = 0;
+        if let AdmittedBackendMessage::Message(_) = admitted {
+            let second = KeepAlive::new();
+            if crate::backend_handler::try_claim_launch(&mut slot, &second).is_ok() {
+                spawn_start_instance_calls += 1;
+            }
+        }
+
+        assert_eq!(spawn_start_instance_calls, 0, "admitted duplicate became a later launch");
+        assert!(slot.as_ref().is_some_and(|handle| !handle.is_alive()));
+    }
+
+    #[test]
+    fn multiple_duplicates_and_by_name_freeze_without_instance_identity() {
+        let messages = [
+            direct_start(),
+            direct_start(),
+            MessageToBackend::StartInstanceByName {
+                name: "BootOptimLaptop".to_string(),
+                quick_play: None,
+            },
+        ];
+
+        let admitted = messages
+            .into_iter()
+            .map(|message| AdmittedBackendMessage::freeze_duplicate(message, true))
+            .collect::<Vec<_>>();
+
+        assert!(admitted.into_iter().all(|message| matches!(
+            message,
+            AdmittedBackendMessage::RejectedStart(RejectedStart { .. })
+        )));
+    }
+}
 
     fn handle_tick(&self) {
         self.meta.expire();
