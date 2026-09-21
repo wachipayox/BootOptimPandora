@@ -487,4 +487,16 @@ mod bootoptim_appcds_instance_toggle_tests {
         let command = PandoraCommand::new(if cfg!(windows) { "javaw.exe" } else { "java" });
         assert!(command.bootoptim_appcds_enabled);
     }
+
+    #[test]
+    fn appcds_preference_can_be_reenabled_without_mutating_command_args() {
+        let mut command = PandoraCommand::new(if cfg!(windows) { "javaw.exe" } else { "java" });
+        command.arg("-Xmx4G");
+        let original = command.args.iter().map(|arg| arg.0.clone()).collect::<Vec<_>>();
+        command.bootoptim_appcds_enabled(false);
+        assert!(!command.bootoptim_appcds_enabled);
+        command.bootoptim_appcds_enabled(true);
+        assert!(command.bootoptim_appcds_enabled);
+        assert_eq!(command.args.iter().map(|arg| arg.0.clone()).collect::<Vec<_>>(), original);
+    }
 }
