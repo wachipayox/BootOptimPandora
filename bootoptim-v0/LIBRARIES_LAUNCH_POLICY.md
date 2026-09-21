@@ -62,9 +62,11 @@ Unchanged, deliberately outside this change:
 - log configuration behavior remains stock, including its own SHA-1/download path.
 - AppCDS, incremental identity, persistent layout, login, argv/classpath/module-path ordering,
   parallel-launch policy and graphical work are untouched.
-- Forge post-processor output checks remain stock; they are not game-library verification. Repair
-  may resolve the Java runtime when Forge/NeoForge processor construction requires it, exactly as
-  the pre-existing loader setup path did. Repair does not verify assets.
+- Forge/NeoForge post-processors are **not** rerun from LaunchFast. Published Start trusts the
+  transaction marker and leaves missing/corrupt generated loader outputs to fail later instead of
+  hashing or regenerating them. The strong Repair path retains the stock processor output checks
+  and processor execution. Repair may resolve the Java runtime when processor construction requires
+  it. Repair does not verify assets.
 
 ## Residual risk accepted by product
 
