@@ -260,10 +260,10 @@ impl BackendState {
                 let provision = {
                     let mut state = self.instance_state.write();
                     let Some(instance) = state.instances.get_mut(id) else {
-                        continue;
+                        return;
                     };
                     if instance.configuration.get().minecraft_version == version {
-                        continue;
+                        return;
                     }
                     if let Err(err) =
                         library_install_state::mark_incomplete(&instance.root_path, "minecraft-version-changed")
@@ -271,7 +271,7 @@ impl BackendState {
                         self.send.send_error(format!(
                             "Unable to change Minecraft version: game-files state could not be marked incomplete: {err}"
                         ));
-                        continue;
+                        return;
                     }
                     instance.configuration.modify(|configuration| {
                         configuration.minecraft_version = version;
@@ -291,16 +291,16 @@ impl BackendState {
                 let provision = {
                     let mut state = self.instance_state.write();
                     let Some(instance) = state.instances.get_mut(id) else {
-                        continue;
+                        return;
                     };
                     if instance.configuration.get().loader == loader {
-                        continue;
+                        return;
                     }
                     if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "loader-changed") {
                         self.send.send_error(format!(
                             "Unable to change loader: game-files state could not be marked incomplete: {err}"
                         ));
-                        continue;
+                        return;
                     }
                     instance.configuration.modify(|configuration| {
                         configuration.loader = loader;
@@ -329,10 +329,10 @@ impl BackendState {
                 let provision = {
                     let mut state = self.instance_state.write();
                     let Some(instance) = state.instances.get_mut(id) else {
-                        continue;
+                        return;
                     };
                     if instance.configuration.get().preferred_loader_version == loader_version {
-                        continue;
+                        return;
                     }
                     if let Err(err) =
                         library_install_state::mark_incomplete(&instance.root_path, "loader-version-changed")
@@ -340,7 +340,7 @@ impl BackendState {
                         self.send.send_error(format!(
                             "Unable to change loader version: game-files state could not be marked incomplete: {err}"
                         ));
-                        continue;
+                        return;
                     }
                     instance.configuration.modify(|configuration| {
                         configuration.preferred_loader_version = loader_version;
