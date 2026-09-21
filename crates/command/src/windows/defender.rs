@@ -84,8 +84,12 @@ pub fn local_state() -> DefenderProcessLocalState {
         return DefenderProcessLocalState::InvalidOwnershipRecord;
     };
     let marker = owner_file(&current);
-    let Ok(owner) = read_owner(&marker) else {
-        return DefenderProcessLocalState::NotManaged;
+    let owner = match read_owner(&marker) {
+        Ok(owner) => owner,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return DefenderProcessLocalState::NotManaged;
+        }
+        Err(_) => return DefenderProcessLocalState::InvalidOwnershipRecord,
     };
 
     if owner == current {
@@ -128,7 +132,7 @@ pub fn request(action: DefenderProcessAction) -> DefenderProcessResult {
     }
 
     unsafe {
-        WaitForSingleObject(sei.hProcess, INFINITE);
+        _ = WaitForSingleObject(sei.hProcess, INFINITE);
     }
 
     let mut exit_code = EXIT_FAILED;
@@ -162,7 +166,11 @@ fn elevated_enable() -> u32 {
     };
     let marker = owner_file(&target);
 
-    let existing_owner = read_owner(&marker).ok();
+    let existing_owner = match read_owner(&marker) {
+        Ok(owner) => Some(owner),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(_) => return EXIT_INVALID_OWNERSHIP,
+    };
     if let Some(owner) = existing_owner.as_ref() {
         if owner != &target && validate_owned_target(&target, owner) {
             return EXIT_INVALID_OWNERSHIP;
@@ -206,11 +214,13 @@ fn elevated_remove() -> u32 {
         return EXIT_FAILED;
     };
     let marker = owner_file(&current);
-    let Ok(target) = read_owner(&marker) else {
-        return EXIT_NO_OWNERSHIP;
+    let target = match read_owner(&marker) {
+        Ok(target) => target,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return EXIT_NO_OWNERSHIP,
+        Err(_) => return EXIT_INVALID_OWNERSHIP,
     };
 
-    if !validate_owned_target(&current, &target) {
+    if removal_plan(&current, Some(&target)) != RemovalPlan::RemoveOwnedTarget {
         return EXIT_INVALID_OWNERSHIP;
     }
 
@@ -284,6 +294,22 @@ fn canonical_launcher_path() -> io::Result<PathBuf> {
     }
 
     Ok(normalized)
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemovalPlan {
+    NothingOwned,
+    RemoveOwnedTarget,
+    RefuseInvalidOwnership,
+}
+
+fn removal_plan(current: &Path, owned: Option<&Path>) -> RemovalPlan {
+    match owned {
+        None => RemovalPlan::NothingOwned,
+        Some(owned) if validate_owned_target(current, owned) => RemovalPlan::RemoveOwnedTarget,
+        Some(_) => RemovalPlan::RefuseInvalidOwnership,
+    }
 }
 
 fn validate_owned_target(current: &Path, owned: &Path) -> bool {
@@ -377,6 +403,20 @@ mod tests {
             current,
             Path::new(r"C:\Program Files\Pandora\mods")
         ));
+    }
+
+    #[test]
+    fn removal_requires_owned_target_in_same_launcher_directory() {
+        let current = Path::new(r"C:\Program Files\Pandora\PandoraLauncher.exe");
+        assert_eq!(removal_plan(current, None), RemovalPlan::NothingOwned);
+        assert_eq!(
+            removal_plan(current, Some(Path::new(r"C:\Program Files\Pandora\PandoraLauncher-old.exe"))),
+            RemovalPlan::RemoveOwnedTarget
+        );
+        assert_eq!(
+            removal_plan(current, Some(Path::new(r"C:\Games\Minecraft.exe"))),
+            RemovalPlan::RefuseInvalidOwnership
+        );
     }
 
     #[test]
