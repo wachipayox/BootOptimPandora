@@ -2189,7 +2189,7 @@ enum PrelaunchModCopySource {
 }
 
 #[cfg(test)]
-mod launch_admission_tests {
+mod launch_gate_tests {
     use super::*;
     use bridge::keep_alive::KeepAlive;
 
