@@ -2149,7 +2149,7 @@ impl BackendState {
     ) {
         let keepalive = KeepAlive::new();
 
-        let (root_path, dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+        let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
             let root_path = instance.root_path.clone();
             match library_install_state::start_status(&root_path) {
                 Ok(library_install_state::StartStatus::Published | library_install_state::StartStatus::LegacyPublished) => {},
@@ -2177,7 +2177,7 @@ impl BackendState {
             self.send.send(MessageToFrontend::MoveInstanceToTop { id });
             self.send.send(instance.create_modify_message());
 
-            (root_path, instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
+            (instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
         } else {
             self.send.send_error("Can't launch instance, unknown id");
             modal_action.set_finished_with_error("Can't launch instance, unknown id".into());
