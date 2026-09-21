@@ -194,23 +194,25 @@ impl BackendState {
             },
             MessageToBackend::SetInstanceMinecraftVersion { id, version } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "minecraft-version-changed") {
+                        self.send.send_error(format!("Unable to change Minecraft version: game-files state could not be marked incomplete: {err}"));
+                        return;
+                    }
                     instance.configuration.modify(|configuration| {
                         configuration.minecraft_version = version;
                     });
-                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "minecraft-version-changed") {
-                        log::warn!("Unable to mark game files incomplete after Minecraft version change: {err}");
-                    }
                 }
             },
             MessageToBackend::SetInstanceLoader { id, loader } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "loader-changed") {
+                        self.send.send_error(format!("Unable to change loader: game-files state could not be marked incomplete: {err}"));
+                        return;
+                    }
                     instance.configuration.modify(|configuration| {
                         configuration.loader = loader;
                         configuration.preferred_loader_version = None;
                     });
-                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "loader-changed") {
-                        log::warn!("Unable to mark game files incomplete after loader change: {err}");
-                    }
                 }
             },
             MessageToBackend::SetInstancePreferredAccount { id, account } => {
@@ -222,12 +224,13 @@ impl BackendState {
             },
             MessageToBackend::SetInstancePreferredLoaderVersion { id, loader_version } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "loader-version-changed") {
+                        self.send.send_error(format!("Unable to change loader version: game-files state could not be marked incomplete: {err}"));
+                        return;
+                    }
                     instance.configuration.modify(|configuration| {
                         configuration.preferred_loader_version = loader_version.map(Ustr::from);
                     });
-                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "loader-version-changed") {
-                        log::warn!("Unable to mark game files incomplete after loader version change: {err}");
-                    }
                 }
             },
             MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
@@ -2147,6 +2150,19 @@ impl BackendState {
         let keepalive = KeepAlive::new();
 
         let (root_path, dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            let root_path = instance.root_path.clone();
+            match library_install_state::start_status(&root_path) {
+                Ok(library_install_state::StartStatus::Published | library_install_state::StartStatus::LegacyPublished) => {},
+                Ok(library_install_state::StartStatus::Incomplete(reason)) => {
+                    modal_action.set_finished_with_error(format!("Installation incomplete ({reason}); use Repair game files").into());
+                    return;
+                },
+                Err(err) => {
+                    modal_action.set_finished_with_error(format!("Installation state is unreadable ({err}); use Repair game files").into());
+                    return;
+                },
+            }
+
             instance.cancel_quickplay_for_launch();
 
             if let Some(launch_keepalive) = &instance.launch_keepalive
@@ -2161,24 +2177,12 @@ impl BackendState {
             self.send.send(MessageToFrontend::MoveInstanceToTop { id });
             self.send.send(instance.create_modify_message());
 
-            (instance.root_path.clone(), instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
+            (root_path, instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
         } else {
             self.send.send_error("Can't launch instance, unknown id");
             modal_action.set_finished_with_error("Can't launch instance, unknown id".into());
             return;
         };
-
-        match library_install_state::start_status(&root_path) {
-            Ok(library_install_state::StartStatus::Published | library_install_state::StartStatus::LegacyPublished) => {},
-            Ok(library_install_state::StartStatus::Incomplete(reason)) => {
-                modal_action.set_finished_with_error(format!("Installation incomplete ({reason}); use Repair game files").into());
-                return;
-            },
-            Err(err) => {
-                modal_action.set_finished_with_error(format!("Installation state is unreadable ({err}); use Repair game files").into());
-                return;
-            },
-        }
 
         scopeguard::defer! {
             modal_action.set_finished();
