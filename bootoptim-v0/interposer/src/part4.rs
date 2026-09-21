@@ -102,6 +102,87 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn persistent_profile_scope_lock_excludes_second_process() {
+        const ROOT_ENV: &str = "BOOTOPTIM_TEST_PROFILE_SCOPE_ROOT";
+        const READY_ENV: &str = "BOOTOPTIM_TEST_PROFILE_SCOPE_READY";
+        const ROLE_ENV: &str = "BOOTOPTIM_TEST_PROFILE_SCOPE_ROLE";
+
+        if let Some(root) = env::var_os(ROOT_ENV) {
+            let root = PathBuf::from(root);
+            let role = env::var(ROLE_ENV).unwrap_or_default();
+            let scope = acquire_appcds_profile_scope(&root);
+            if role == "holder" {
+                let _scope = scope.expect("holder must acquire persistent profile lease");
+                fs::write(PathBuf::from(env::var_os(READY_ENV).unwrap()), b"ready").unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+            } else {
+                assert!(scope.is_err(), "contender must fail closed while profile lease is held");
+            }
+            return;
+        }
+
+        let root = temp_dir("profile-process-lock");
+        let ready = root.join("holder.ready");
+        let uuid = "41234567-89ab-cdef-8123-456789abcdef";
+        write_ready_profile_control(&root, uuid);
+        let exe = env::current_exe().unwrap();
+        let test_name = "tests::persistent_profile_scope_lock_excludes_second_process";
+
+        let mut holder = Command::new(&exe)
+            .arg("--exact")
+            .arg(test_name)
+            .arg("--nocapture")
+            .env(ROOT_ENV, &root)
+            .env(READY_ENV, &ready)
+            .env(ROLE_ENV, "holder")
+            .spawn()
+            .unwrap();
+
+        for _ in 0..100 {
+            if ready.is_file() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(ready.is_file(), "profile lease holder did not acquire in time");
+
+        let contender = Command::new(&exe)
+            .arg("--exact")
+            .arg(test_name)
+            .arg("--nocapture")
+            .env(ROOT_ENV, &root)
+            .env(READY_ENV, &ready)
+            .env(ROLE_ENV, "contender")
+            .status()
+            .unwrap();
+        assert!(contender.success());
+        assert!(holder.wait().unwrap().success());
+
+        assert!(acquire_appcds_profile_scope(&root).is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deleting_profile_root_deletes_bound_appcds_cache() {
+        let root = temp_dir("profile-delete");
+        let uuid = "51234567-89ab-cdef-8123-456789abcdef";
+        write_ready_profile_control(&root, uuid);
+        let cache = root.join(".bootoptim/appcds");
+        bind_appcds_cache_namespace(
+            &cache,
+            &AppCdsProfileNamespace::PersistentProfile(uuid.to_string()),
+        )
+        .unwrap();
+        fs::write(cache.join("ready.jsa"), b"profile-owned").unwrap();
+        assert!(cache.join("ready.jsa").is_file());
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(!root.exists());
+        assert!(!cache.exists());
+    }
+
     #[test]
     fn legacy_instance_cache_namespace_remains_local_and_compatible() {
         let root = temp_dir("legacy-profile");
