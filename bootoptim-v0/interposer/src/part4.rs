@@ -177,6 +177,7 @@ mod tests {
             instance_dir: d.clone(),
             launcher_exe: Some(launcher),
             upstream_commit: UPSTREAM_DEFAULT.to_string(),
+            appcds_identity_normal_gui: false,
             java_exe: java.clone().into_os_string(),
             java_args: vec![
                 OsString::from("-DauthToken=VERY_SECRET"),
@@ -228,6 +229,7 @@ mod tests {
             instance_dir: parsed.instance_dir.clone(),
             launcher_exe: parsed.launcher_exe.clone(),
             upstream_commit: parsed.upstream_commit.clone(),
+            appcds_identity_normal_gui: false,
             java_exe: java2.clone().into_os_string(),
             java_args: parsed.java_args.clone(),
         };
