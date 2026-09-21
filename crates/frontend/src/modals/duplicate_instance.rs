@@ -11,6 +11,7 @@ struct DuplicateInstanceModalState {
     backend_handle: BackendHandle,
     name_input_state: Entity<InputState>,
     name_invalid: bool,
+    exact_clone: bool,
     default_name: SharedString,
     _name_input_subscription: Subscription,
 }
@@ -56,6 +57,7 @@ impl DuplicateInstanceModalState {
             backend_handle,
             name_input_state,
             name_invalid: false,
+            exact_clone: false,
             default_name,
             _name_input_subscription,
         }
@@ -67,7 +69,17 @@ impl DuplicateInstanceModalState {
             .child(crate::labelled(
                 t::instance::name(),
                 Input::new(&self.name_input_state).when(self.name_invalid, |this| this.border_color(cx.theme().danger)),
-            ));
+            ))
+            .child(
+                gpui_component::checkbox::Checkbox::new("exact_clone")
+                    .label("Exact local clone (reuse validated AppCDS)")
+                    .tooltip("Explicitly carries a proven READY AppCDS archive. The new profile UUID is still reminted; any effective launch-input change rejects the inherited archive and launches stock.")
+                    .checked(self.exact_clone)
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.exact_clone = *value;
+                        cx.notify();
+                    }))
+            );
 
         let name_is_invalid = self.name_invalid;
         dialog
@@ -94,6 +106,7 @@ impl DuplicateInstanceModalState {
                             let backend_handle = this.backend_handle.clone();
                             let instance_id = this.instance_id;
                             let modal_action = ModalAction::default();
+                            let exact_clone = this.exact_clone;
 
                             window.close_dialog(cx);
 
@@ -102,6 +115,7 @@ impl DuplicateInstanceModalState {
                             backend_handle.send(MessageToBackend::DuplicateInstance {
                                 id: instance_id,
                                 name: name.as_str().into(),
+                                exact_clone,
                                 modal_action,
                             });
                         }))))
