@@ -59,7 +59,56 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: agent201-appcds-exact-clone-toggle-windows
       - name: Interposer native lock and exact-clone tests
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc
       - name: Backend exact-clone tests
         run: cargo test -p backend exact_clone --frozen --target x86_64-pc-windows-msvc -- --test-threads=1
+
+
+  final-windows-release:
+    needs: [focal-linux, focal-windows]
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: agent201-appcds-exact-clone-toggle-windows
+      - name: Build release interposer
+        run: cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml --release --locked --target x86_64-pc-windows-msvc
+      - name: Build release Pandora
+        run: cargo build --release --frozen --target x86_64-pc-windows-msvc
+      - name: Verify packaged control linkage
+        shell: pwsh
+        run: |
+          $launcher = "target/x86_64-pc-windows-msvc/release/pandora_launcher.exe"
+          $ascii = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($launcher))
+          foreach ($marker in @("AppCDS enabled", "Exact local clone", "BOOTOPTIM_INTERPOSER")) {
+            if (-not $ascii.Contains($marker)) { throw "release Pandora missing marker: $marker" }
+          }
+      - name: Assemble candidate artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bootoptim-v0/dist-agent201-continuation | Out-Null
+          Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe bootoptim-v0/dist-agent201-continuation/
+          Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe bootoptim-v0/dist-agent201-continuation/BootOptimPandora-v0.exe
+          $files = @(
+            "bootoptim-v0/dist-agent201-continuation/bootoptim-launch-interposer.exe",
+            "bootoptim-v0/dist-agent201-continuation/BootOptimPandora-v0.exe"
+          )
+          $lines = foreach ($file in $files) {
+            $hash = Get-FileHash -Algorithm SHA256 $file
+            "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), (Split-Path $file -Leaf)
+          }
+          $lines | Set-Content -Encoding ascii bootoptim-v0/dist-agent201-continuation/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bootoptim-pandora-agent201-continuation-windows-x86_64
+          path: bootoptim-v0/dist-agent201-continuation/*
+          if-no-files-found: error
