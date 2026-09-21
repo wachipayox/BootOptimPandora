@@ -68,10 +68,18 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
       - name: Build packaged release candidate
-        run: cargo build --release --frozen --target x86_64-pc-windows-msvc
+        run: cargo build -p pandora_launcher --release --frozen --target x86_64-pc-windows-msvc
+      - name: Assemble checksummed smoke artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifact | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe artifact/BootOptimPandora-agent202.exe
+          "${{ github.event.pull_request.head.sha }}" | Set-Content -NoNewline artifact/COMMIT.txt
+          $hash = (Get-FileHash artifact/BootOptimPandora-agent202.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  BootOptimPandora-agent202.exe" | Set-Content -NoNewline artifact/SHA256SUMS.txt
       - name: Upload launcher
         uses: actions/upload-artifact@v4
         with:
-          name: agent202-windows-release
-          path: target/x86_64-pc-windows-msvc/release/PandoraLauncher.exe
+          name: bootoptim-pandora-agent202-${{ github.event.pull_request.head.sha }}-windows-x86_64
+          path: artifact/*
           if-no-files-found: error
