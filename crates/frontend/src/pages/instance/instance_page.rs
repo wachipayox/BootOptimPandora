@@ -47,6 +47,7 @@ impl Page for InstancePage {
         let id = instance.id;
         let name = instance.name.clone();
         let data = self.data.clone();
+        let repair_backend_handle = data.backend_handle.clone();
 
         let button = match instance.status {
             InstanceStatus::NotRunning => {
@@ -128,11 +129,8 @@ impl Page for InstancePage {
 
         let repair_game_files_button = Button::new("repair_game_files")
             .label("Repair game files")
-            .on_click({
-                let backend_handle = data.backend_handle.clone();
-                move |_, window, cx| {
-                    root::repair_game_files(id, &backend_handle, window, cx);
-                }
+            .on_click(move |_, window, cx| {
+                root::repair_game_files(id, &repair_backend_handle, window, cx);
             });
 
         let open_dot_minecraft_button = Button::new("open_dot_minecraft")
