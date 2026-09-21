@@ -872,7 +872,9 @@ impl Launcher {
             return Err(LoadLibrariesError::IllegalLibraryPath(forge_path.into()).into());
         }
         let forge_artifact_path = self.directories.libraries_dir.join(forge_path.as_str());
-        if library_mode == LibraryLoadMode::VerifyAndRepair {
+        if library_mode == LibraryLoadMode::VerifyAndRepair
+            || (library_mode == LibraryLoadMode::ProvisionMissing && !forge_artifact_path.exists())
+        {
             crate::fs::write_safe(&forge_artifact_path, &file.bytes()?)?;
         }
 
@@ -880,7 +882,7 @@ impl Launcher {
         let version: PartialMinecraftVersion = install_profile.version_info.into_partial_version(ForgeSide::Client);
 
         // Download mirror list
-        let mirror = if library_mode == LibraryLoadMode::VerifyAndRepair && check_mirrors {
+        let mirror = if library_mode != LibraryLoadMode::LaunchFast && check_mirrors {
             Self::download_random_mirror(http_client, &install_profile.install.mirror_list).await
         } else {
             None
