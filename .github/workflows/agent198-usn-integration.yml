@@ -1,0 +1,94 @@
+name: Agent 198 USN integration gate
+
+on:
+  pull_request:
+    paths:
+      - 'crates/backend/**'
+      - 'crates/bridge/**'
+      - 'crates/frontend/**'
+      - 'bootoptim-v0/USN_INTEGRATION_PROMOTION.md'
+      - 'bootoptim-v0/usn-unprivileged-probe/**'
+      - '.github/workflows/agent198-usn-integration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install system dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+      - name: Format scoped composed Rust
+        run: |
+          rustfmt --edition 2024 --check \
+            crates/backend/src/asset_probe_context.rs \
+            crates/backend/src/asset_usn_cache.rs \
+            crates/backend/src/asset_usn_cache/activation_probe.rs \
+            crates/backend/src/asset_usn_cache/windows.rs \
+            crates/backend/src/asset_usn_cache/windows/direct_integration_tests.rs \
+            crates/backend/src/asset_usn_cache/windows_direct.rs
+          cargo fmt --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml -- --check
+      - name: Check affected crates
+        run: cargo check -p bridge -p backend -p frontend --tests --frozen
+      - name: Test launch authority
+        run: cargo test -p bridge asset_verification_mode --frozen
+      - name: Test USN state machine
+        run: cargo test -p backend asset_usn_cache --frozen
+      - name: Assert no elevated helper dependency
+        shell: bash
+        run: |
+          if git grep -n -E 'BOOTOPTIM_ASSET_USN_HELPER|ShellExecuteExW|runas|usn_protocol|bootoptim-usn-helper' -- crates/backend/src/asset_usn_cache.rs crates/backend/src/asset_usn_cache; then
+            echo 'unexpected helper/UAC/protocol dependency in active asset consumer' >&2
+            exit 1
+          fi
+
+  windows-direct:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check backend
+        run: cargo check -p backend --tests --frozen
+      - name: Test asset cache and direct NTFS semantics
+        run: cargo test -p backend asset_usn_cache --frozen -- --nocapture
+      - name: Test launch authority
+        run: cargo test -p bridge asset_verification_mode --frozen
+      - name: Restricted-token direct capability probe
+        shell: pwsh
+        run: |
+          cargo generate-lockfile --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml --offline
+          cargo run --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml --locked --offline
+
+  windows-release:
+    needs: [focused, windows-direct]
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Build release launcher
+        run: cargo build -p pandora_launcher --release --frozen --target x86_64-pc-windows-msvc
+      - name: Assemble checksummed smoke artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifact | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe artifact/BootOptimPandora-agent198.exe
+          "${{ github.sha }}" | Set-Content -NoNewline artifact/COMMIT.txt
+          $hash = (Get-FileHash artifact/BootOptimPandora-agent198.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  BootOptimPandora-agent198.exe" | Set-Content -NoNewline artifact/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bootoptim-pandora-agent198-${{ github.sha }}-windows-x86_64
+          path: artifact/*
+          if-no-files-found: error
