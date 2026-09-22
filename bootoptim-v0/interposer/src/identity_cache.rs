@@ -69,11 +69,12 @@ struct IdentityPreflightDiagnostics {
 }
 
 impl IdentityPreflightDiagnostics {
-    fn new(request: IdentityCacheRequest) -> Self {
+    fn new(request: IdentityCacheRequest, cache_dir: &Path) -> Self {
+        let enabled = env::var_os(APPCDS_IDENTITY_DIAGNOSTICS_ENV).is_some_and(|value| value == "1");
         Self {
-            enabled: env::var_os(APPCDS_IDENTITY_DIAGNOSTICS_ENV).is_some_and(|value| value == "1"),
+            enabled,
             request,
-            manifest: "not-read",
+            manifest: if enabled { identity_manifest_state(cache_dir) } else { "not-read" },
             eligible: 0,
             reused: 0,
             strong: 0,
@@ -83,7 +84,9 @@ impl IdentityPreflightDiagnostics {
     }
 
     fn capture_cache(&mut self, cache: &IdentityDigestCache, publication: &'static str) {
-        self.manifest = cache.manifest_state;
+        if cache.manifest_state != "not-read" {
+            self.manifest = cache.manifest_state;
+        }
         self.eligible = cache.expected_keys.len() as u64;
         self.reused = cache.reused_files;
         self.strong = cache.stock_files;
@@ -446,6 +449,21 @@ fn serialize_identity_manifest(records: &BTreeMap<String, CachedIdentityDigest>)
     out.into_bytes()
 }
 
+fn identity_manifest_state(cache_dir: &Path) -> &'static str {
+    let path = cache_dir.join(APPCDS_IDENTITY_MANIFEST);
+    match fs::metadata(&path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => "absent",
+        Err(_) => "damaged",
+        Ok(_) => {
+            if read_identity_manifest(&path).is_some() {
+                "valid"
+            } else {
+                "damaged"
+            }
+        },
+    }
+}
+
 fn read_identity_manifest(path: &Path) -> Option<BTreeMap<String, CachedIdentityDigest>> {
     let meta = fs::metadata(path).ok()?;
     if !meta.is_file() || meta.len() > 64 * 1024 * 1024 {
@@ -601,12 +619,14 @@ mod appcds_identity_cache_tests {
         let root = env::temp_dir().join(format!("bootoptim-id-diag-{}", unique_suffix()));
         fs::create_dir_all(&root).unwrap();
 
+        assert_eq!(identity_manifest_state(&root), "absent");
         let mut cache = IdentityDigestCache::begin(&root, true);
         assert_eq!(cache.manifest_state, "absent");
         cache.expected_keys.insert("missing".to_string());
         assert_eq!(cache.finish().unwrap(), "skipped-coverage");
 
         fs::write(root.join(APPCDS_IDENTITY_MANIFEST), b"not-a-manifest\n").unwrap();
+        assert_eq!(identity_manifest_state(&root), "damaged");
         let mut cache = IdentityDigestCache::begin(&root, true);
         assert_eq!(cache.manifest_state, "damaged");
         cache.complete = false;
