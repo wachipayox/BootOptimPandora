@@ -37,8 +37,8 @@ jobs:
           rustfmt --edition 2024 --check bootoptim-v0/ntfs_usn_direct.rs bootoptim-v0/interposer/src/identity_cache.rs crates/backend/src/asset_usn_cache/windows_direct.rs
       - name: Run portable helper tests
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
-      - name: Check affected backend and command crates
-        run: cargo check -p backend -p command --tests --frozen
+      - name: Check affected command crate
+        run: cargo check -p command --tests --frozen
 
       - name: Test launch probe schema and phase ordering
         run: cargo test -p bridge launch_probe --frozen
@@ -60,7 +60,7 @@ jobs:
         run: cargo check -p backend -p command --tests --frozen --target x86_64-pc-windows-msvc
 
       - name: Test standalone interposer
-        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc -- --test-threads=1
 
       - name: Test asset cache against shared direct capability
         run: cargo test -p backend asset_usn_cache --frozen --target x86_64-pc-windows-msvc -- --nocapture
