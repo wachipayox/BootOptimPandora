@@ -219,6 +219,7 @@ impl PandoraCommand {
             "BOOTOPTIM_APPCDS_MODE",
             "BOOTOPTIM_APPCDS_IDENTITY_CACHE",
             "BOOTOPTIM_APPCDS_IDENTITY_FORCE_STOCK",
+            "BOOTOPTIM_APPCDS_IDENTITY_DIAGNOSTICS",
         ] {
             if let Some(value) = std::env::var_os(key) {
                 preflight.env(key, value);
@@ -253,6 +254,11 @@ impl PandoraCommand {
                 output.stderr.len()
             );
             return None;
+        }
+        if std::env::var_os("BOOTOPTIM_APPCDS_IDENTITY_DIAGNOSTICS").is_some_and(|value| value == "1") {
+            if let Some(line) = bootoptim_identity_diagnostic_line(&output.stderr) {
+                log::info!("{line}");
+            }
         }
         let decision = String::from_utf8_lossy(&output.stdout);
         match decision.trim() {
@@ -376,6 +382,13 @@ fn bootoptim_os_flag(prefix: &str, path: &Path) -> OsString {
     out
 }
 
+fn bootoptim_identity_diagnostic_line(stderr: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .find(|line| line.starts_with("BOOTOPTIM_APPCDS_IDENTITY_DIAG "))
+        .map(str::to_owned)
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PandoraStdioReadMode {
     Null,
@@ -489,6 +502,15 @@ mod appcds_identity_authority_tests {
         assert!(!command.appcds_identity_normal_gui);
         command.bootoptim_appcds_identity_normal_gui(true);
         assert!(command.appcds_identity_normal_gui);
+    }
+
+    #[test]
+    fn identity_diagnostic_forwarding_is_single_line_and_ignores_other_helper_stderr() {
+        let stderr = b"BOOTOPTIM_INTERPOSER status=ready activation=enabled\nBOOTOPTIM_APPCDS_IDENTITY_DIAG requested=true authority=accepted authority_reason=normal-gui manifest=absent eligible=42 reused=0 strong=42 unverifiable=none publication=published\nBOOTOPTIM_APPCDS_IDENTITY_DIAG duplicate\n";
+        assert_eq!(
+            bootoptim_identity_diagnostic_line(stderr).as_deref(),
+            Some("BOOTOPTIM_APPCDS_IDENTITY_DIAG requested=true authority=accepted authority_reason=normal-gui manifest=absent eligible=42 reused=0 strong=42 unverifiable=none publication=published")
+        );
     }
 }
 
