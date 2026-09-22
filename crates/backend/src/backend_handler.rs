@@ -70,6 +70,7 @@ impl BackendState {
         root_path: Arc<Path>,
         configuration: schema::instance::InstanceConfiguration,
         marker_reason: &'static str,
+        marker_generation: u64,
         modal_action: &ModalAction,
     ) -> Result<bool, String> {
         let expected_minecraft_version = configuration.minecraft_version;
@@ -100,9 +101,10 @@ impl BackendState {
             return Err("Game-file provisioning was cancelled".to_string());
         }
 
-        library_install_state::publish_if_incomplete_reason(
+        library_install_state::publish_if_incomplete_generation(
             &root_path,
             marker_reason,
+            marker_generation,
             "identity-update-complete",
         )
         .map_err(|err| format!("Game-files state could not be published: {err}"))
@@ -114,6 +116,7 @@ impl BackendState {
         root_path: Arc<Path>,
         configuration: schema::instance::InstanceConfiguration,
         marker_reason: &'static str,
+        marker_generation: u64,
     ) {
         let this = self.clone();
         tokio::task::spawn(async move {
@@ -124,6 +127,7 @@ impl BackendState {
                     root_path,
                     configuration,
                     marker_reason,
+                    marker_generation,
                     &modal_action,
                 )
                 .await
@@ -283,25 +287,34 @@ impl BackendState {
                     if instance.configuration.get().minecraft_version == version {
                         return;
                     }
-                    if let Err(err) =
-                        library_install_state::mark_incomplete(&instance.root_path, "minecraft-version-changed")
-                    {
-                        self.send.send_error(format!(
-                            "Unable to change Minecraft version: game-files state could not be marked incomplete: {err}"
-                        ));
-                        return;
-                    }
+                    let marker_generation = match library_install_state::mark_incomplete(
+                        &instance.root_path,
+                        "minecraft-version-changed",
+                    ) {
+                        Ok(generation) => generation,
+                        Err(err) => {
+                            self.send.send_error(format!(
+                                "Unable to change Minecraft version: game-files state could not be marked incomplete: {err}"
+                            ));
+                            return;
+                        },
+                    };
                     instance.configuration.modify(|configuration| {
                         configuration.minecraft_version = version;
                     });
-                    Some((instance.root_path.clone(), instance.configuration.get().clone()))
+                    Some((
+                        instance.root_path.clone(),
+                        instance.configuration.get().clone(),
+                        marker_generation,
+                    ))
                 };
-                if let Some((root_path, configuration)) = provision {
+                if let Some((root_path, configuration, marker_generation)) = provision {
                     self.schedule_game_files_after_identity_change(
                         id,
                         root_path,
                         configuration,
                         "minecraft-version-changed",
+                        marker_generation,
                     );
                 }
             },
@@ -314,24 +327,33 @@ impl BackendState {
                     if instance.configuration.get().loader == loader {
                         return;
                     }
-                    if let Err(err) = library_install_state::mark_incomplete(&instance.root_path, "loader-changed") {
-                        self.send.send_error(format!(
-                            "Unable to change loader: game-files state could not be marked incomplete: {err}"
-                        ));
-                        return;
-                    }
+                    let marker_generation =
+                        match library_install_state::mark_incomplete(&instance.root_path, "loader-changed") {
+                            Ok(generation) => generation,
+                            Err(err) => {
+                                self.send.send_error(format!(
+                                    "Unable to change loader: game-files state could not be marked incomplete: {err}"
+                                ));
+                                return;
+                            },
+                        };
                     instance.configuration.modify(|configuration| {
                         configuration.loader = loader;
                         configuration.preferred_loader_version = None;
                     });
-                    Some((instance.root_path.clone(), instance.configuration.get().clone()))
+                    Some((
+                        instance.root_path.clone(),
+                        instance.configuration.get().clone(),
+                        marker_generation,
+                    ))
                 };
-                if let Some((root_path, configuration)) = provision {
+                if let Some((root_path, configuration, marker_generation)) = provision {
                     self.schedule_game_files_after_identity_change(
                         id,
                         root_path,
                         configuration,
                         "loader-changed",
+                        marker_generation,
                     );
                 }
             },
@@ -352,25 +374,34 @@ impl BackendState {
                     if instance.configuration.get().preferred_loader_version == loader_version {
                         return;
                     }
-                    if let Err(err) =
-                        library_install_state::mark_incomplete(&instance.root_path, "loader-version-changed")
-                    {
-                        self.send.send_error(format!(
-                            "Unable to change loader version: game-files state could not be marked incomplete: {err}"
-                        ));
-                        return;
-                    }
+                    let marker_generation = match library_install_state::mark_incomplete(
+                        &instance.root_path,
+                        "loader-version-changed",
+                    ) {
+                        Ok(generation) => generation,
+                        Err(err) => {
+                            self.send.send_error(format!(
+                                "Unable to change loader version: game-files state could not be marked incomplete: {err}"
+                            ));
+                            return;
+                        },
+                    };
                     instance.configuration.modify(|configuration| {
                         configuration.preferred_loader_version = loader_version;
                     });
-                    Some((instance.root_path.clone(), instance.configuration.get().clone()))
+                    Some((
+                        instance.root_path.clone(),
+                        instance.configuration.get().clone(),
+                        marker_generation,
+                    ))
                 };
-                if let Some((root_path, configuration)) = provision {
+                if let Some((root_path, configuration, marker_generation)) = provision {
                     self.schedule_game_files_after_identity_change(
                         id,
                         root_path,
                         configuration,
                         "loader-version-changed",
+                        marker_generation,
                     );
                 }
             },
@@ -574,10 +605,16 @@ impl BackendState {
                     (instance.root_path.clone(), instance.configuration.get().clone())
                 };
 
-                if let Err(err) = library_install_state::mark_incomplete(&root_path, "repair-in-progress") {
-                    modal_action.set_finished_with_error(format!("Unable to start Repair game files: {err}").into());
-                    return;
-                }
+                let repair_generation =
+                    match library_install_state::mark_incomplete(&root_path, "repair-in-progress") {
+                        Ok(generation) => generation,
+                        Err(err) => {
+                            modal_action.set_finished_with_error(
+                                format!("Unable to start Repair game files: {err}").into(),
+                            );
+                            return;
+                        },
+                    };
 
                 let http_client = self.http_client_provider.redirecting();
                 let repair = self.launcher.repair_game_files(
@@ -596,9 +633,10 @@ impl BackendState {
                             modal_action.set_finished();
                             return;
                         }
-                        match library_install_state::publish_if_incomplete_reason(
+                        match library_install_state::publish_if_incomplete_generation(
                             &root_path,
                             "repair-in-progress",
+                            repair_generation,
                             "repair-complete",
                         ) {
                             Ok(true) => {
