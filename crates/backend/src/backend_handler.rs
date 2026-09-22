@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     io::{BufRead, Read},
+    path::Path,
     sync::{Arc, atomic::Ordering},
     time::{Duration, Instant, SystemTime},
 };
@@ -44,6 +45,7 @@ use crate::{
     fs::FolderChanges,
     instance::Instance,
     launch::{ArgumentExpansionKey, LaunchError},
+    library_install_state,
     log_reader,
     metadata::{
         items::{
@@ -62,6 +64,91 @@ use crate::{
 };
 
 impl BackendState {
+    pub(crate) async fn provision_game_files_for_identity_change(
+        self: &Arc<Self>,
+        id: InstanceID,
+        root_path: Arc<Path>,
+        configuration: schema::instance::InstanceConfiguration,
+        marker_reason: &'static str,
+        marker_generation: u64,
+        modal_action: &ModalAction,
+    ) -> Result<bool, String> {
+        let expected_minecraft_version = configuration.minecraft_version;
+        let expected_loader = configuration.loader;
+        let expected_loader_version = configuration.preferred_loader_version;
+
+        let http_client = self.http_client_provider.redirecting();
+        self.launcher
+            .provision_game_files(&http_client, configuration, modal_action)
+            .await
+            .map_err(|err| format!("Game-file provisioning failed: {err}"))?;
+
+        let identity_is_current = self
+            .instance_state
+            .write()
+            .instances
+            .get_mut(id)
+            .is_some_and(|instance| {
+                let current = instance.configuration.get();
+                current.minecraft_version == expected_minecraft_version
+                    && current.loader == expected_loader
+                    && current.preferred_loader_version == expected_loader_version
+            });
+        if !identity_is_current {
+            return Ok(false);
+        }
+        if modal_action.has_requested_cancel() {
+            return Err("Game-file provisioning was cancelled".to_string());
+        }
+
+        library_install_state::publish_if_incomplete_generation(
+            &root_path,
+            marker_reason,
+            marker_generation,
+            "identity-update-complete",
+        )
+        .map_err(|err| format!("Game-files state could not be published: {err}"))
+    }
+
+    fn schedule_game_files_after_identity_change(
+        self: &Arc<Self>,
+        id: InstanceID,
+        root_path: Arc<Path>,
+        configuration: schema::instance::InstanceConfiguration,
+        marker_reason: &'static str,
+        marker_generation: u64,
+    ) {
+        let this = self.clone();
+        tokio::task::spawn(async move {
+            let modal_action = ModalAction::default();
+            match this
+                .provision_game_files_for_identity_change(
+                    id,
+                    root_path,
+                    configuration,
+                    marker_reason,
+                    marker_generation,
+                    &modal_action,
+                )
+                .await
+            {
+                Ok(true) => {},
+                Ok(false) => {
+                    log::debug!(
+                        "Skipping stale game-files publication for marker reason {marker_reason}"
+                    );
+                },
+                Err(err) => {
+                    log::warn!("{err}");
+                    this.send.send_warning(format!(
+                        "Game files are incomplete after the version/loader change ({err}); use Repair game files"
+                    ));
+                },
+            }
+            modal_action.set_finished();
+        });
+    }
+
     pub async fn handle_message(self: &Arc<Self>, message: MessageToBackend) {
         match message {
             MessageToBackend::RequestMetadata { request, force_reload } => {
@@ -192,18 +279,82 @@ impl BackendState {
                 self.rename_instance(id, &name).await;
             },
             MessageToBackend::SetInstanceMinecraftVersion { id, version } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                let provision = {
+                    let mut state = self.instance_state.write();
+                    let Some(instance) = state.instances.get_mut(id) else {
+                        return;
+                    };
+                    if instance.configuration.get().minecraft_version == version {
+                        return;
+                    }
+                    let marker_generation = match library_install_state::mark_incomplete(
+                        &instance.root_path,
+                        "minecraft-version-changed",
+                    ) {
+                        Ok(generation) => generation,
+                        Err(err) => {
+                            self.send.send_error(format!(
+                                "Unable to change Minecraft version: game-files state could not be marked incomplete: {err}"
+                            ));
+                            return;
+                        },
+                    };
                     instance.configuration.modify(|configuration| {
                         configuration.minecraft_version = version;
                     });
+                    Some((
+                        instance.root_path.clone(),
+                        instance.configuration.get().clone(),
+                        marker_generation,
+                    ))
+                };
+                if let Some((root_path, configuration, marker_generation)) = provision {
+                    self.schedule_game_files_after_identity_change(
+                        id,
+                        root_path,
+                        configuration,
+                        "minecraft-version-changed",
+                        marker_generation,
+                    );
                 }
             },
             MessageToBackend::SetInstanceLoader { id, loader } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                let provision = {
+                    let mut state = self.instance_state.write();
+                    let Some(instance) = state.instances.get_mut(id) else {
+                        return;
+                    };
+                    if instance.configuration.get().loader == loader {
+                        return;
+                    }
+                    let marker_generation =
+                        match library_install_state::mark_incomplete(&instance.root_path, "loader-changed") {
+                            Ok(generation) => generation,
+                            Err(err) => {
+                                self.send.send_error(format!(
+                                    "Unable to change loader: game-files state could not be marked incomplete: {err}"
+                                ));
+                                return;
+                            },
+                        };
                     instance.configuration.modify(|configuration| {
                         configuration.loader = loader;
                         configuration.preferred_loader_version = None;
                     });
+                    Some((
+                        instance.root_path.clone(),
+                        instance.configuration.get().clone(),
+                        marker_generation,
+                    ))
+                };
+                if let Some((root_path, configuration, marker_generation)) = provision {
+                    self.schedule_game_files_after_identity_change(
+                        id,
+                        root_path,
+                        configuration,
+                        "loader-changed",
+                        marker_generation,
+                    );
                 }
             },
             MessageToBackend::SetInstancePreferredAccount { id, account } => {
@@ -214,10 +365,44 @@ impl BackendState {
                 }
             },
             MessageToBackend::SetInstancePreferredLoaderVersion { id, loader_version } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                let loader_version = loader_version.map(Ustr::from);
+                let provision = {
+                    let mut state = self.instance_state.write();
+                    let Some(instance) = state.instances.get_mut(id) else {
+                        return;
+                    };
+                    if instance.configuration.get().preferred_loader_version == loader_version {
+                        return;
+                    }
+                    let marker_generation = match library_install_state::mark_incomplete(
+                        &instance.root_path,
+                        "loader-version-changed",
+                    ) {
+                        Ok(generation) => generation,
+                        Err(err) => {
+                            self.send.send_error(format!(
+                                "Unable to change loader version: game-files state could not be marked incomplete: {err}"
+                            ));
+                            return;
+                        },
+                    };
                     instance.configuration.modify(|configuration| {
-                        configuration.preferred_loader_version = loader_version.map(Ustr::from);
+                        configuration.preferred_loader_version = loader_version;
                     });
+                    Some((
+                        instance.root_path.clone(),
+                        instance.configuration.get().clone(),
+                        marker_generation,
+                    ))
+                };
+                if let Some((root_path, configuration, marker_generation)) = provision {
+                    self.schedule_game_files_after_identity_change(
+                        id,
+                        root_path,
+                        configuration,
+                        "loader-version-changed",
+                        marker_generation,
+                    );
                 }
             },
             MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
@@ -406,6 +591,92 @@ impl BackendState {
                 live_game_output,
                 modal_action,
             } => self.start_instance(id, quick_play, live_game_output, modal_action).await,
+            MessageToBackend::RepairGameFiles { id, modal_action } => {
+                let (root_path, configuration) = {
+                    let mut state = self.instance_state.write();
+                    let Some(instance) = state.instances.get_mut(id) else {
+                        modal_action.set_finished_with_error("Can't repair game files, unknown instance".into());
+                        return;
+                    };
+                    if instance.launch_keepalive.as_ref().is_some_and(|keepalive| keepalive.is_alive()) || !instance.processes.is_empty() {
+                        modal_action.set_finished_with_error("Can't repair game files while the instance is running or launching".into());
+                        return;
+                    }
+                    (instance.root_path.clone(), instance.configuration.get().clone())
+                };
+
+                let repair_generation =
+                    match library_install_state::mark_incomplete(&root_path, "repair-in-progress") {
+                        Ok(generation) => generation,
+                        Err(err) => {
+                            modal_action.set_finished_with_error(
+                                format!("Unable to start Repair game files: {err}").into(),
+                            );
+                            return;
+                        },
+                    };
+
+                let http_client = self.http_client_provider.redirecting();
+                let repair = self.launcher.repair_game_files(
+                    &http_client,
+                    configuration,
+                    &modal_action,
+                );
+                let result = tokio::select! {
+                    result = repair => result,
+                    _ = modal_action.request_cancel.cancelled() => Err(LaunchError::CancelledByUser),
+                };
+
+                match result {
+                    Ok(()) => {
+                        if modal_action.has_requested_cancel() {
+                            modal_action.set_finished();
+                            return;
+                        }
+                        match library_install_state::publish_if_incomplete_generation(
+                            &root_path,
+                            "repair-in-progress",
+                            repair_generation,
+                            "repair-complete",
+                        ) {
+                            Ok(true) => {
+                                // Close the cancellation surface immediately after the
+                                // guarded publication, then repair a cancellation that
+                                // raced the final compare-and-set back to incomplete.
+                                modal_action.set_finished();
+                                if modal_action.has_requested_cancel() {
+                                    let _ = library_install_state::mark_incomplete(
+                                        &root_path,
+                                        "repair-cancelled",
+                                    );
+                                }
+                                return;
+                            },
+                            Ok(false) => {
+                                modal_action.set_finished_with_error(
+                                    "Repair completed, but installation state changed before publication; use Repair game files"
+                                        .into(),
+                                );
+                                return;
+                            },
+                            Err(err) => {
+                                modal_action.set_finished_with_error(
+                                    format!("Repair completed but installation state could not be published: {err}").into(),
+                                );
+                                return;
+                            },
+                        }
+                    },
+                    Err(LaunchError::CancelledByUser) => {
+                        modal_action.set_finished();
+                        return;
+                    },
+                    Err(err) => {
+                        modal_action.set_finished_with_error(format!("Repair game files failed: {err}").into());
+                        return;
+                    },
+                }
+            },
             MessageToBackend::SetContentEnabled {
                 id,
                 content_ids: mod_ids,
@@ -2090,6 +2361,19 @@ impl BackendState {
         let keepalive = KeepAlive::new();
 
         let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            let root_path = instance.root_path.clone();
+            match library_install_state::start_status(&root_path) {
+                Ok(library_install_state::StartStatus::Published | library_install_state::StartStatus::LegacyPublished) => {},
+                Ok(library_install_state::StartStatus::Incomplete(reason)) => {
+                    modal_action.set_finished_with_error(format!("Installation incomplete ({reason}); use Repair game files").into());
+                    return;
+                },
+                Err(err) => {
+                    modal_action.set_finished_with_error(format!("Installation state is unreadable ({err}); use Repair game files").into());
+                    return;
+                },
+            }
+
             instance.cancel_quickplay_for_launch();
 
             if let Some(launch_keepalive) = &instance.launch_keepalive
