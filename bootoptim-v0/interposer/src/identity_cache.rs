@@ -69,21 +69,23 @@ struct IdentityPreflightDiagnostics {
 }
 
 impl IdentityPreflightDiagnostics {
-    fn new(request: IdentityCacheRequest, cache_dir: &Path) -> Self {
+    fn new(request: IdentityCacheRequest) -> Self {
         let enabled = env::var_os(APPCDS_IDENTITY_DIAGNOSTICS_ENV).is_some_and(|value| value == "1");
         Self {
             enabled,
             request,
-            manifest: if enabled {
-                identity_manifest_state(cache_dir)
-            } else {
-                "not-read"
-            },
+            manifest: "not-read",
             eligible: 0,
             reused: 0,
             strong: 0,
             unverifiable: "none".to_string(),
             publication: "not-run",
+        }
+    }
+
+    fn classify_manifest(&mut self, cache_dir: &Path) {
+        if self.enabled {
+            self.manifest = identity_manifest_state(cache_dir);
         }
     }
 
