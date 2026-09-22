@@ -41,6 +41,7 @@ pub struct InstanceSettingsSubpage {
     disable_file_syncing: bool,
     sandbox_available: bool,
     sandbox: bool,
+    appcds_enabled: bool,
 
     memory_override_enabled: bool,
     memory_min_input_state: Entity<InputState>,
@@ -99,6 +100,7 @@ impl InstanceSettingsSubpage {
         let account = entry.configuration.preferred_account;
         let disable_file_syncing = entry.configuration.disable_file_syncing;
         let sandbox = entry.configuration.sandbox;
+        let appcds_enabled = entry.configuration.appcds_enabled;
 
         let sandbox_available = if cfg!(target_os = "linux") {
             command::is_command_available("bwrap") && command::is_command_available("xdg-dbus-proxy")
@@ -238,6 +240,7 @@ impl InstanceSettingsSubpage {
             disable_file_syncing,
             sandbox_available,
             sandbox,
+            appcds_enabled,
             memory_override_enabled: memory.enabled,
             memory_min_input_state,
             memory_max_input_state,
@@ -892,6 +895,21 @@ impl Render for InstanceSettingsSubpage {
                         disable_file_syncing: *value
                     });
                 }))
+            ))
+            .child(crate::labelled(
+                "AppCDS",
+                Checkbox::new("appcds_enabled")
+                    .label("AppCDS enabled")
+                    .tooltip("Use this instance's validated AppCDS archive when eligible; disabling keeps the cache but always launches stock.")
+                    .checked(self.appcds_enabled)
+                    .on_click(cx.listener(|page, value, _, cx| {
+                        page.appcds_enabled = *value;
+                        page.backend_handle.send(MessageToBackend::SetInstanceAppCdsEnabled {
+                            id: page.instance_id,
+                            enabled: *value,
+                        });
+                        cx.notify();
+                    }))
             ))
             .child(crate::labelled(
                 t::instance::security::label(),

@@ -32,6 +32,7 @@ pub struct PandoraCommand {
     pub(crate) inherit_env: Option<fn(&OsStr) -> bool>,
     pub(crate) env: BTreeMap<PandoraArg, PandoraArg>,
     pub(crate) current_dir: Option<PathBuf>,
+    pub(crate) bootoptim_appcds_enabled: bool,
     pub(crate) stdin: PandoraStdioWriteMode,
     pub(crate) stdout: PandoraStdioReadMode,
     pub(crate) stderr: PandoraStdioReadMode,
@@ -55,6 +56,7 @@ impl PandoraCommand {
             inherit_env: None,
             env: BTreeMap::default(),
             current_dir: None,
+            bootoptim_appcds_enabled: true,
             stdin: Default::default(),
             stdout: Default::default(),
             stderr: Default::default(),
@@ -79,6 +81,10 @@ impl PandoraCommand {
 
     pub fn current_dir(&mut self, current_dir: &Path) {
         self.current_dir = Some(current_dir.to_path_buf());
+    }
+
+    pub fn bootoptim_appcds_enabled(&mut self, enabled: bool) {
+        self.bootoptim_appcds_enabled = enabled;
     }
 
     pub fn stdin(&mut self, stdin: PandoraStdioWriteMode) {
@@ -140,6 +146,10 @@ impl PandoraCommand {
     }
 
     fn maybe_bootoptim_prepare(&mut self) -> Option<BootOptimTraining> {
+        if !self.bootoptim_appcds_enabled {
+            log::info!("BOOTOPTIM_INTERPOSER status=disabled-per-instance activation=stock");
+            return None;
+        }
         let helper = std::env::var_os("BOOTOPTIM_LAUNCH_INTERPOSER")?;
         let helper = PathBuf::from(helper);
         if !helper.is_file() {
@@ -451,5 +461,42 @@ mod bootoptim_windows_preflight_tests {
         assert_eq!(output.status.code(), Some(7));
         assert!(String::from_utf8_lossy(&output.stdout).contains("READY"));
         assert!(String::from_utf8_lossy(&output.stderr).contains("helper-diagnostic"));
+    }
+}
+
+
+#[cfg(test)]
+mod bootoptim_appcds_instance_toggle_tests {
+    use super::*;
+
+    #[test]
+    fn disabled_instance_never_enters_preflight_or_train_ready_decision() {
+        let mut command = PandoraCommand::new(if cfg!(windows) { "javaw.exe" } else { "java" });
+        command.bootoptim_appcds_enabled(false);
+        command.arg("com.moulberry.pandora.LaunchWrapper");
+        command.current_dir(Path::new("."));
+        assert!(command.maybe_bootoptim_prepare().is_none());
+        assert!(command.args.iter().all(|arg| {
+            let text = arg.0.to_string_lossy();
+            !text.starts_with("-XX:SharedArchiveFile=") && !text.starts_with("-XX:ArchiveClassesAtExit=")
+        }));
+    }
+
+    #[test]
+    fn appcds_preference_defaults_enabled_for_legacy_callers() {
+        let command = PandoraCommand::new(if cfg!(windows) { "javaw.exe" } else { "java" });
+        assert!(command.bootoptim_appcds_enabled);
+    }
+
+    #[test]
+    fn appcds_preference_can_be_reenabled_without_mutating_command_args() {
+        let mut command = PandoraCommand::new(if cfg!(windows) { "javaw.exe" } else { "java" });
+        command.arg("-Xmx4G");
+        let original = command.args.iter().map(|arg| arg.0.clone()).collect::<Vec<_>>();
+        command.bootoptim_appcds_enabled(false);
+        assert!(!command.bootoptim_appcds_enabled);
+        command.bootoptim_appcds_enabled(true);
+        assert!(command.bootoptim_appcds_enabled);
+        assert_eq!(command.args.iter().map(|arg| arg.0.clone()).collect::<Vec<_>>(), original);
     }
 }

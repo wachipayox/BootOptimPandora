@@ -170,10 +170,10 @@ impl BackendState {
                     }
                 }
             },
-            MessageToBackend::DuplicateInstance { id, name, modal_action } => {
+            MessageToBackend::DuplicateInstance { id, name, exact_clone, modal_action } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
-                    crate::duplicate::duplicate_instance(backend, id, &name, modal_action).await;
+                    crate::duplicate::duplicate_instance(backend, id, &name, exact_clone, modal_action).await;
                 });
             },
             MessageToBackend::ExportInstance {
@@ -242,6 +242,13 @@ impl BackendState {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {
                         configuration.sandbox = sandbox;
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceAppCdsEnabled { id, enabled } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.appcds_enabled = enabled;
                     });
                 }
             },

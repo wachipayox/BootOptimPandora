@@ -1,4 +1,12 @@
 fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
+    let scope = acquire_appcds_profile_scope(&parsed.instance_dir)?;
+    build_launch_plan_for_namespace(parsed, scope.namespace())
+}
+
+fn build_launch_plan_for_namespace(
+    parsed: &ParsedArgs,
+    profile_namespace: &AppCdsProfileNamespace,
+) -> io::Result<LaunchPlan> {
     let java_path = absolute_path(&parsed.instance_dir, Path::new(&parsed.java_exe));
     let java_hash = hash_file(&java_path).ok();
     let java_root = java_path.parent().and_then(Path::parent).map(Path::to_path_buf);
@@ -130,6 +138,9 @@ fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
     push_json_str(&mut out, "os", env::consts::OS, true);
     push_json_str(&mut out, "arch", env::consts::ARCH, true);
     push_json_bool(&mut out, "activation_eligible", eligible, true);
+    if let Some(profile_uuid) = profile_namespace.profile_uuid() {
+        push_json_str(&mut out, "appcds_profile_uuid", profile_uuid, true);
+    }
     out.push_str("  \"java\": {\n");
     push_json_os(&mut out, "path", &encode_os(java_path.as_os_str()), 4, true);
     push_json_opt_str(&mut out, "sha256", java_hash.as_deref(), 4, true);
