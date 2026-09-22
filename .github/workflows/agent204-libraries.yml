@@ -9,7 +9,7 @@ on:
       - "crates/bridge/**"
       - "crates/frontend/**"
       - "bootoptim-v0/LIBRARIES_LAUNCH_POLICY.md"
-      - ".github/workflows/agent202-libraries.yml"
+      - ".github/workflows/agent204-libraries.yml"
 
 permissions:
   contents: read

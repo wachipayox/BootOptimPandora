@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   focused:
-    if: ${{ github.head_ref != 'agent204/libraries-launchfast-recompose-20260922' }}
+    if: ${{ github.head_ref != 'agent204/libraries-launchfast-recompose-20260922-v2' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
@@ -50,7 +50,7 @@ jobs:
           fi
 
   windows-direct:
-    if: ${{ github.head_ref != 'agent204/libraries-launchfast-recompose-20260922' }}
+    if: ${{ github.head_ref != 'agent204/libraries-launchfast-recompose-20260922-v2' }}
     runs-on: windows-2022
     timeout-minutes: 25
     steps:
@@ -71,7 +71,7 @@ jobs:
           cargo run --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml --locked --offline
 
   windows-release:
-    if: ${{ github.head_ref != 'agent204/libraries-launchfast-recompose-20260922' }}
+    if: ${{ github.head_ref != 'agent204/libraries-launchfast-recompose-20260922-v2' }}
     needs: [focused, windows-direct]
     runs-on: windows-2022
     timeout-minutes: 25
