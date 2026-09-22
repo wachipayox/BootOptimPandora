@@ -1,11 +1,28 @@
 fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
+    let mut identity_cache = IdentityDigestCache::stock();
+    build_launch_plan_with_cache(parsed, &mut identity_cache)
+}
+
+fn build_launch_plan_with_cache(
+    parsed: &ParsedArgs,
+    identity_cache: &mut IdentityDigestCache,
+) -> io::Result<LaunchPlan> {
     let scope = acquire_appcds_profile_scope(&parsed.instance_dir)?;
-    build_launch_plan_for_namespace(parsed, scope.namespace())
+    build_launch_plan_for_namespace_with_cache(parsed, scope.namespace(), identity_cache)
 }
 
 fn build_launch_plan_for_namespace(
     parsed: &ParsedArgs,
     profile_namespace: &AppCdsProfileNamespace,
+) -> io::Result<LaunchPlan> {
+    let mut identity_cache = IdentityDigestCache::stock();
+    build_launch_plan_for_namespace_with_cache(parsed, profile_namespace, &mut identity_cache)
+}
+
+fn build_launch_plan_for_namespace_with_cache(
+    parsed: &ParsedArgs,
+    profile_namespace: &AppCdsProfileNamespace,
+    identity_cache: &mut IdentityDigestCache,
 ) -> io::Result<LaunchPlan> {
     let java_path = absolute_path(&parsed.instance_dir, Path::new(&parsed.java_exe));
     let java_hash = hash_file(&java_path).ok();
@@ -20,7 +37,7 @@ fn build_launch_plan_for_namespace(
     if let Some(raw) = classpath_raw.as_ref() {
         for entry in env::split_paths(raw) {
             let resolved = absolute_path(&parsed.instance_dir, &entry);
-            match artifact_from_path("classpath", &resolved) {
+            match artifact_from_path_with_cache("classpath", &resolved, identity_cache) {
                 Ok(a) => classpath.push(a),
                 Err(_) => classpath_valid = false,
             }
@@ -36,7 +53,7 @@ fn build_launch_plan_for_namespace(
         Ok(Some(raw)) => {
             for entry in env::split_paths(&raw) {
                 let resolved = absolute_path(&parsed.instance_dir, &entry);
-                match artifact_from_path("module-path", &resolved) {
+                match artifact_from_path_with_cache("module-path", &resolved, identity_cache) {
                     Ok(a) => module_path.push(a),
                     Err(_) => module_path_valid = false,
                 }
@@ -69,7 +86,7 @@ fn build_launch_plan_for_namespace(
         // canonical identity bytes and never changes Pandora/FML launch order.
         paths.sort_by_key(|p| encode_os(p.as_os_str()).encoded_hex);
         for p in paths {
-            match artifact_from_path("mod", &p) {
+            match artifact_from_path_with_cache("mod", &p, identity_cache) {
                 Ok(a) => mods.push(a),
                 Err(_) => mods_valid = false,
             }
@@ -82,7 +99,7 @@ fn build_launch_plan_for_namespace(
     // A local dynamic archive must also be invalidated when launch-affecting
     // pack configuration changes between training and consumption. This is a
     // strong local snapshot, not a trusted distribution/repair manifest.
-    let (pack_inputs, pack_inputs_valid) = collect_pack_inputs(&parsed.instance_dir);
+    let (pack_inputs, pack_inputs_valid) = collect_pack_inputs_with_cache(&parsed.instance_dir, identity_cache);
     let resource_pack_selection_sha256 = resource_pack_selection_fingerprint(&parsed.instance_dir).ok();
     let pack_manifest_sha256 = if mods_valid && pack_inputs_valid {
         resource_pack_selection_sha256.as_deref().map(|selection| {
@@ -220,6 +237,14 @@ fn has_unsupported_module_configuration(args: &[OsString]) -> bool {
 }
 
 fn collect_pack_inputs(instance_dir: &Path) -> (Vec<Artifact>, bool) {
+    let mut identity_cache = IdentityDigestCache::stock();
+    collect_pack_inputs_with_cache(instance_dir, &mut identity_cache)
+}
+
+fn collect_pack_inputs_with_cache(
+    instance_dir: &Path,
+    identity_cache: &mut IdentityDigestCache,
+) -> (Vec<Artifact>, bool) {
     const ROOTS: &[&str] = &["config", "defaultconfigs", "kubejs", "scripts"];
     let mut paths = Vec::new();
     let mut valid = true;
@@ -241,7 +266,7 @@ fn collect_pack_inputs(instance_dir: &Path) -> (Vec<Artifact>, bool) {
     paths.sort_by_key(|p| encode_os(p.as_os_str()).encoded_hex);
     let mut artifacts = Vec::with_capacity(paths.len());
     for path in paths {
-        match pack_input_artifact(instance_dir, &path) {
+        match pack_input_artifact_with_cache(instance_dir, &path, identity_cache) {
             Ok(artifact) => artifacts.push(artifact),
             Err(_) => valid = false,
         }
