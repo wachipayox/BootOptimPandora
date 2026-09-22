@@ -199,6 +199,7 @@ impl BackendState {
 
         let mut dot_minecraft_dir = None;
         let mut new_instance_root = None;
+        let mut new_instance_generation = None;
         let mut identity_provision = None;
         let mut instance_running = false;
         let mut content_copy_failed = false;
@@ -219,6 +220,15 @@ impl BackendState {
                 .await
             {
                 dot_minecraft_dir = Some(root.join(".minecraft").into());
+                match crate::library_install_state::incomplete_generation(
+                    &root,
+                    "content-install-in-progress",
+                ) {
+                    Ok(generation) => new_instance_generation = generation,
+                    Err(err) => {
+                        log::warn!("Unable to read new content-install marker generation: {err}");
+                    },
+                }
                 new_instance_root = Some(root);
             }
         }
@@ -232,15 +242,18 @@ impl BackendState {
                 instance_running = !instance.processes.is_empty();
 
                 if instance.configuration.get().loader == Loader::Vanilla && loader != Loader::Vanilla {
-                    if let Err(err) = crate::library_install_state::mark_incomplete(
+                    let marker_generation = match crate::library_install_state::mark_incomplete(
                         &instance.root_path,
                         "content-install-loader-changed",
                     ) {
-                        self.send.send_error(format!(
-                            "Unable to install content: game-files state could not be marked incomplete: {err}"
-                        ));
-                        return;
-                    }
+                        Ok(generation) => generation,
+                        Err(err) => {
+                            self.send.send_error(format!(
+                                "Unable to install content: game-files state could not be marked incomplete: {err}"
+                            ));
+                            return;
+                        },
+                    };
                     instance.configuration.modify(|config| {
                         config.loader = loader;
                     });
@@ -248,6 +261,7 @@ impl BackendState {
                         instance_id,
                         instance.root_path.clone(),
                         instance.configuration.get().clone(),
+                        marker_generation,
                     ));
                 }
 
@@ -311,7 +325,7 @@ impl BackendState {
         if !content_copy_failed
             && !modal_action.has_requested_cancel()
             && modal_action.get_finished_at().is_none()
-            && let Some((instance_id, root_path, configuration)) = identity_provision
+            && let Some((instance_id, root_path, configuration, marker_generation)) = identity_provision
         {
             let cancellation_root = root_path.clone();
             match self
@@ -320,6 +334,7 @@ impl BackendState {
                     root_path,
                     configuration,
                     "content-install-loader-changed",
+                    marker_generation,
                     &modal_action,
                 )
                 .await
@@ -354,9 +369,16 @@ impl BackendState {
             && !modal_action.has_requested_cancel()
             && modal_action.get_finished_at().is_none()
         {
-            match crate::library_install_state::publish_if_incomplete_reason(
+            let Some(marker_generation) = new_instance_generation else {
+                modal_action.set_finished_with_error(
+                    "Content installed, but the installation transaction is incomplete; use Repair game files".into(),
+                );
+                return;
+            };
+            match crate::library_install_state::publish_if_incomplete_generation(
                 &root,
                 "content-install-in-progress",
+                marker_generation,
                 "content-install-complete",
             ) {
                 Ok(true) => {
