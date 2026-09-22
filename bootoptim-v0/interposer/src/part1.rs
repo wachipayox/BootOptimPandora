@@ -149,6 +149,9 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         _ => Mode::Plan,
     };
 
+    let identity_request = IdentityDigestCache::request_state(parsed.appcds_identity_normal_gui);
+    let mut identity_diag = IdentityPreflightDiagnostics::new(identity_request);
+
     let profile_scope = match acquire_appcds_profile_scope(&parsed.instance_dir) {
         Ok(scope) => scope,
         Err(_) => {
@@ -162,23 +165,33 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         return Ok(PrepareDecision::Stock);
     }
 
-    let identity_requested = IdentityDigestCache::requested(parsed.appcds_identity_normal_gui);
+    let identity_requested = identity_request.authorized;
     let mut held_lock = None;
     let plan = if identity_requested {
         let Some(lock) = try_lock(&cache_dir.join("cache.lock"))? else {
-            let _ = build_launch_plan_for_namespace(parsed, profile_scope.namespace())?;
+            let mut stock_cache = IdentityDigestCache::stock();
+            let _ = build_launch_plan_for_namespace_with_cache(parsed, profile_scope.namespace(), &mut stock_cache)?;
+            identity_diag.capture_cache(&stock_cache, "lock-busy");
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=identity-lock-busy");
             return Ok(PrepareDecision::Stock);
         };
         held_lock = Some(lock);
         let mut identity_cache = IdentityDigestCache::begin(&cache_dir, true);
         let plan = build_launch_plan_for_namespace_with_cache(parsed, profile_scope.namespace(), &mut identity_cache)?;
-        if identity_cache.finish().is_err() {
-            eprintln!("BOOTOPTIM_INTERPOSER identity_cache=publish-failed fallback=future-stock");
-        }
+        let publication = match identity_cache.finish() {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                eprintln!("BOOTOPTIM_INTERPOSER identity_cache=publish-failed fallback=future-stock");
+                "failed"
+            },
+        };
+        identity_diag.capture_cache(&identity_cache, publication);
         plan
     } else {
-        build_launch_plan_for_namespace(parsed, profile_scope.namespace())?
+        let mut stock_cache = IdentityDigestCache::stock();
+        let plan = build_launch_plan_for_namespace_with_cache(parsed, profile_scope.namespace(), &mut stock_cache)?;
+        identity_diag.capture_cache(&stock_cache, "not-authorized");
+        plan
     };
 
     if held_lock.is_none() {
