@@ -1,0 +1,85 @@
+name: Agent 204 libraries launch-fast recomposition gate
+
+on:
+  pull_request:
+    branches:
+      - "agent/integration-current"
+    paths:
+      - "crates/backend/**"
+      - "crates/bridge/**"
+      - "crates/frontend/**"
+      - "bootoptim-v0/LIBRARIES_LAUNCH_POLICY.md"
+      - ".github/workflows/agent202-libraries.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent204-libraries-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install system dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+      - name: Rustfmt touched-file diagnostic
+        continue-on-error: true
+        run: rustfmt --edition 2024 --check --config skip_children=true crates/backend/src/backend.rs crates/backend/src/backend_handler.rs crates/backend/src/install_content.rs crates/backend/src/launch/mod.rs crates/backend/src/lib.rs crates/backend/src/library_install_state.rs crates/bridge/src/message.rs crates/frontend/src/root.rs crates/frontend/src/pages/instance/instance_page.rs
+      - name: Format LaunchFast state module
+        run: rustfmt --edition 2024 --check --config skip_children=true crates/backend/src/library_install_state.rs
+      - name: Reject whitespace errors in LaunchFast delta
+        run: |
+          git fetch --no-tags --depth=1 origin 7a821e8d5f89c71677d149b3140e21f4ed171ec4
+          git diff --check 7a821e8d5f89c71677d149b3140e21f4ed171ec4 HEAD -- \
+            crates/backend/src/backend.rs \
+            crates/backend/src/backend_handler.rs \
+            crates/backend/src/install_content.rs \
+            crates/backend/src/launch/mod.rs \
+            crates/backend/src/lib.rs \
+            crates/backend/src/library_install_state.rs \
+            crates/bridge/src/message.rs \
+            crates/frontend/src/root.rs \
+            crates/frontend/src/pages/instance/instance_page.rs
+      - name: Check affected crates
+        run: cargo check -p bridge -p backend -p frontend --tests --frozen
+      - name: Test library launch policy
+        run: cargo test -p backend agent202_library_policy_tests --frozen -- --nocapture
+      - name: Test transactional game-files state
+        run: cargo test -p backend library_install_state::tests --frozen -- --nocapture
+
+  windows-release:
+    needs: focused
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Build packaged release candidate
+        run: cargo build -p pandora_launcher --release --frozen --target x86_64-pc-windows-msvc
+      - name: Assemble checksummed smoke artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifact | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe artifact/BootOptimPandora-agent204.exe
+          "${{ github.event.pull_request.head.sha }}" | Set-Content -NoNewline artifact/COMMIT.txt
+          $hash = (Get-FileHash artifact/BootOptimPandora-agent204.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  BootOptimPandora-agent204.exe" | Set-Content -NoNewline artifact/SHA256SUMS.txt
+      - name: Upload launcher
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootoptim-pandora-agent204-${{ github.event.pull_request.head.sha }}-windows-x86_64
+          path: artifact/*
+          if-no-files-found: error
