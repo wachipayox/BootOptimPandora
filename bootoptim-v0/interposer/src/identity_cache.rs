@@ -74,7 +74,11 @@ impl IdentityPreflightDiagnostics {
         Self {
             enabled,
             request,
-            manifest: if enabled { identity_manifest_state(cache_dir) } else { "not-read" },
+            manifest: if enabled {
+                identity_manifest_state(cache_dir)
+            } else {
+                "not-read"
+            },
             eligible: 0,
             reused: 0,
             strong: 0,
