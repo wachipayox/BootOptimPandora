@@ -57,11 +57,19 @@ impl PrepareDecision {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TrainingReconcile {
+    Clean,
+    Matching,
+    Discarded(&'static str),
+}
+
 #[derive(Debug)]
 struct ParsedArgs {
     instance_dir: PathBuf,
     launcher_exe: Option<PathBuf>,
     upstream_commit: String,
+    appcds_identity_normal_gui: bool,
     java_exe: OsString,
     java_args: Vec<OsString>,
 }
@@ -154,19 +162,45 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         return Ok(PrepareDecision::Stock);
     }
 
-    // The persistent-profile lease (when present) is held across identity hashing,
-    // cache classification and the final helper decision. This composes with the
-    // layout publisher's per-UUID lock, while the AppCDS cache lock continues to
-    // serialize AppCDS state transitions inside this one profile namespace.
-    let plan = build_launch_plan_for_namespace(parsed, profile_scope.namespace())?;
-    let Some(_lock) = try_lock(&cache_dir.join("cache.lock"))? else {
+    let identity_requested = IdentityDigestCache::requested(parsed.appcds_identity_normal_gui);
+    let mut held_lock = None;
+    let plan = if identity_requested {
+        let Some(lock) = try_lock(&cache_dir.join("cache.lock"))? else {
+            let _ = build_launch_plan_for_namespace(parsed, profile_scope.namespace())?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=identity-lock-busy");
+            return Ok(PrepareDecision::Stock);
+        };
+        held_lock = Some(lock);
+        let mut identity_cache = IdentityDigestCache::begin(&cache_dir, true);
+        let plan = build_launch_plan_for_namespace_with_cache(
+            parsed,
+            profile_scope.namespace(),
+            &mut identity_cache,
+        )?;
+        if identity_cache.finish().is_err() {
+            eprintln!("BOOTOPTIM_INTERPOSER identity_cache=publish-failed fallback=future-stock");
+        }
+        plan
+    } else {
+        build_launch_plan_for_namespace(parsed, profile_scope.namespace())?
+    };
+
+    if held_lock.is_none() {
+        held_lock = try_lock(&cache_dir.join("cache.lock"))?;
+    }
+    let Some(_lock) = held_lock else {
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=lock-busy");
         return Ok(PrepareDecision::Stock);
     };
     let stable = persist_plan_and_compare(&cache_dir, &plan.bytes, &plan.sha256)?;
 
+    let training_reconcile = reconcile_training(&cache_dir, &plan.sha256)?;
+
     if mode == Mode::Plan {
-        eprintln!("BOOTOPTIM_INTERPOSER status=plan-only deterministic={}", if stable { "true" } else { "false" });
+        eprintln!(
+            "BOOTOPTIM_INTERPOSER status=plan-only deterministic={}",
+            if stable { "true" } else { "false" }
+        );
         return Ok(PrepareDecision::Stock);
     }
 
@@ -175,57 +209,78 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         return Ok(PrepareDecision::Stock);
     }
 
+    if let TrainingReconcile::Discarded(reason) = training_reconcile {
+        let state = if reason == "training-plan-mismatch" {
+            CacheState::Stale
+        } else {
+            CacheState::Failed
+        };
+        write_state(&cache_dir, state, reason)?;
+        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason={reason}");
+        return Ok(PrepareDecision::Stock);
+    }
+
     if !plan.eligible {
+        if training_state_present(&cache_dir) {
+            invalidate_training(&cache_dir)?;
+        }
         write_state(&cache_dir, CacheState::Failed, "identity-ineligible")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=identity-ineligible");
         return Ok(PrepareDecision::Stock);
     }
 
-    // An explicitly requested local exact clone carries only an untrusted candidate,
-    // never READY state. The destination must independently rebuild its complete
-    // effective launch plan while holding the reminted profile lease and AppCDS
-    // cache lock. Only an exact match may promote the inherited archive.
-    match try_adopt_exact_clone_candidate(
-        &parsed.instance_dir,
-        &cache_dir,
-        profile_scope.namespace(),
-        &plan,
-    )? {
-        ExactCloneAdoption::None => {}
-        ExactCloneAdoption::Adopted => {
-            write_state(&cache_dir, CacheState::Ready, "exact-clone-plan-confirmed")?;
-            eprintln!("BOOTOPTIM_INTERPOSER status=ready activation=exact-clone");
-            return Ok(PrepareDecision::Ready);
-        }
-        ExactCloneAdoption::Rejected => {
-            write_state(&cache_dir, CacheState::Stale, "exact-clone-candidate-rejected")?;
-            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=exact-clone-candidate-rejected");
-            return Ok(PrepareDecision::Stock);
+    if matches!(training_reconcile, TrainingReconcile::Clean) {
+        match try_adopt_exact_clone_candidate(
+            &parsed.instance_dir,
+            &cache_dir,
+            profile_scope.namespace(),
+            &plan,
+        )? {
+            ExactCloneAdoption::None => {}
+            ExactCloneAdoption::Adopted => {
+                write_state(&cache_dir, CacheState::Ready, "exact-clone-plan-confirmed")?;
+                eprintln!("BOOTOPTIM_INTERPOSER status=ready activation=exact-clone");
+                return Ok(PrepareDecision::Ready);
+            }
+            ExactCloneAdoption::Rejected => {
+                write_state(&cache_dir, CacheState::Stale, "exact-clone-candidate-rejected")?;
+                eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=exact-clone-candidate-rejected");
+                return Ok(PrepareDecision::Stock);
+            }
         }
     }
 
-    if !stable {
-        write_state(&cache_dir, CacheState::Absent, "plan-not-yet-proven")?;
-        eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=plan-not-yet-proven");
-        return Ok(PrepareDecision::Stock);
-    }
+    prepare_eligible_cache(&cache_dir, &plan.sha256)
+}
 
-    let (state, _) = classify_cache(&cache_dir, &plan.sha256)?;
+fn prepare_eligible_cache(cache_dir: &Path, plan_sha256: &str) -> io::Result<PrepareDecision> {
+    let (state, _) = classify_cache(cache_dir, plan_sha256)?;
     match state {
         CacheState::Ready => {
-            cleanup_training_files(&cache_dir);
-            write_state(&cache_dir, CacheState::Ready, "identity-match")?;
+            if training_state_present(cache_dir) {
+                invalidate_training(cache_dir)?;
+                write_state(cache_dir, CacheState::Failed, "ambiguous-ready-and-training")?;
+                eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=ambiguous-ready-and-training");
+                return Ok(PrepareDecision::Stock);
+            }
+            write_state(cache_dir, CacheState::Ready, "identity-match")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=ready activation=enabled");
             return Ok(PrepareDecision::Ready);
         }
         CacheState::Stale => {
-            write_state(&cache_dir, CacheState::Stale, "identity-mismatch")?;
+            if training_state_present(cache_dir) {
+                invalidate_training(cache_dir)?;
+            }
+            write_state(cache_dir, CacheState::Stale, "identity-mismatch")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=stale");
             return Ok(PrepareDecision::Stock);
         }
         CacheState::Failed | CacheState::Generating => {
-            cleanup_orphan_staging(&cache_dir)?;
-            write_state(&cache_dir, CacheState::Failed, "incomplete-or-failed")?;
+            cleanup_orphan_staging(cache_dir)?;
+            if training_state_present(cache_dir) {
+                invalidate_training(cache_dir)?;
+            }
+            write_state(cache_dir, CacheState::Failed, "incomplete-or-failed")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=failed-state");
             return Ok(PrepareDecision::Stock);
         }
@@ -235,67 +290,187 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
     let training_meta = cache_dir.join("training.meta");
     let training_archive = cache_dir.join("training.jsa");
     let training_complete = cache_dir.join("training.complete");
-    if training_meta.is_file() {
-        let pending_plan = read_training_plan(&training_meta)?;
-        if pending_plan != plan.sha256 {
-            write_state(&cache_dir, CacheState::Stale, "training-plan-mismatch")?;
+
+    if training_meta.exists() {
+        if !training_meta.is_file() {
+            invalidate_training(cache_dir)?;
+            write_state(cache_dir, CacheState::Failed, "training-metadata-corrupt")?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-metadata-corrupt");
+            return Ok(PrepareDecision::Stock);
+        }
+
+        let pending_plan = match read_training_plan(&training_meta) {
+            Ok(plan) => plan,
+            Err(_) => {
+                invalidate_training(cache_dir)?;
+                write_state(cache_dir, CacheState::Failed, "training-metadata-corrupt")?;
+                eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-metadata-corrupt");
+                return Ok(PrepareDecision::Stock);
+            }
+        };
+        if pending_plan != plan_sha256 {
+            invalidate_training(cache_dir)?;
+            write_state(cache_dir, CacheState::Stale, "training-plan-mismatch")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-plan-mismatch");
             return Ok(PrepareDecision::Stock);
         }
 
-        if !training_complete.is_file() {
-            write_state(&cache_dir, CacheState::Generating, "training-pending")?;
+        if !training_complete.exists() {
+            write_state(cache_dir, CacheState::Generating, "training-pending")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-pending");
             return Ok(PrepareDecision::Stock);
         }
 
+        if !training_complete.is_file() || fs::read(&training_complete)? != b"complete\n" {
+            invalidate_training(cache_dir)?;
+            write_state(cache_dir, CacheState::Failed, "training-completion-corrupt")?;
+            eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-completion-corrupt");
+            return Ok(PrepareDecision::Stock);
+        }
+
         if !training_archive.is_file() {
-            write_state(&cache_dir, CacheState::Failed, "training-complete-without-archive")?;
+            invalidate_training(cache_dir)?;
+            write_state(cache_dir, CacheState::Failed, "training-complete-without-archive")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-complete-without-archive");
             return Ok(PrepareDecision::Stock);
         }
 
         if fs::metadata(&training_archive)?.len() == 0 {
-            write_state(&cache_dir, CacheState::Failed, "training-empty")?;
+            invalidate_training(cache_dir)?;
+            write_state(cache_dir, CacheState::Failed, "training-empty")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-empty");
             return Ok(PrepareDecision::Stock);
         }
 
-        promote_archive(&cache_dir, &training_archive, &plan.sha256)?;
-        let _ = fs::remove_file(&training_meta);
-        let _ = fs::remove_file(&training_complete);
-        write_state(&cache_dir, CacheState::Ready, "promotion-complete")?;
+        promote_archive(cache_dir, &training_archive, plan_sha256)?;
+        cleanup_training_files(cache_dir);
+        write_state(cache_dir, CacheState::Ready, "promotion-complete")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=ready promotion=complete");
         return Ok(PrepareDecision::Ready);
     }
 
-    if training_archive.exists() || training_complete.exists() {
-        write_state(&cache_dir, CacheState::Failed, "orphan-training-state")?;
+    if training_archive.exists() || training_complete.exists() || cache_dir.join("training.invalid").exists() {
+        invalidate_training(cache_dir)?;
+        write_state(cache_dir, CacheState::Failed, "orphan-training-state")?;
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=orphan-training-state");
         return Ok(PrepareDecision::Stock);
     }
 
-    write_atomic_replace(&training_meta, format!("schema={}\nplan_sha256={}\n", SCHEMA_VERSION, plan.sha256).as_bytes())?;
-    write_state(&cache_dir, CacheState::Generating, "training")?;
+    // The first eligible identity trains immediately. training.meta is the
+    // persisted training identity; no archive can be consumed in this launch
+    // because HotSpot has not produced training.jsa or a clean-exit marker yet.
+    write_atomic_replace(
+        &training_meta,
+        format!("schema={}\nplan_sha256={}\n", SCHEMA_VERSION, plan_sha256).as_bytes(),
+    )?;
+    write_state(cache_dir, CacheState::Generating, "training")?;
     eprintln!("BOOTOPTIM_INTERPOSER status=generating activation=training");
     Ok(PrepareDecision::Train)
 }
 
-fn read_training_plan(path: &Path) -> io::Result<String> {
-    let text = fs::read_to_string(path)?;
-    let mut schema_ok = false;
-    let mut plan = None;
-    for line in text.lines() {
-        if line == format!("schema={}", SCHEMA_VERSION) {
-            schema_ok = true;
-        } else if let Some(value) = line.strip_prefix("plan_sha256=") {
-            plan = Some(value.to_string());
+fn reconcile_training(cache_dir: &Path, plan_sha256: &str) -> io::Result<TrainingReconcile> {
+    let training_meta = cache_dir.join("training.meta");
+    let training_archive = cache_dir.join("training.jsa");
+    let training_complete = cache_dir.join("training.complete");
+    let invalid = cache_dir.join("training.invalid");
+
+    if invalid.exists() {
+        invalidate_training(cache_dir)?;
+        return Ok(TrainingReconcile::Discarded("training-invalidated"));
+    }
+
+    if !training_meta.exists() {
+        if training_archive.exists() || training_complete.exists() {
+            invalidate_training(cache_dir)?;
+            return Ok(TrainingReconcile::Discarded("orphan-training-state"));
+        }
+        return Ok(TrainingReconcile::Clean);
+    }
+
+    if !training_meta.is_file() {
+        invalidate_training(cache_dir)?;
+        return Ok(TrainingReconcile::Discarded("training-metadata-corrupt"));
+    }
+
+    let pending_plan = match read_training_plan(&training_meta) {
+        Ok(plan) => plan,
+        Err(_) => {
+            invalidate_training(cache_dir)?;
+            return Ok(TrainingReconcile::Discarded("training-metadata-corrupt"));
+        }
+    };
+    if pending_plan != plan_sha256 {
+        invalidate_training(cache_dir)?;
+        return Ok(TrainingReconcile::Discarded("training-plan-mismatch"));
+    }
+
+    if training_complete.exists() {
+        if !training_complete.is_file() || fs::read(&training_complete)? != b"complete\n" {
+            invalidate_training(cache_dir)?;
+            return Ok(TrainingReconcile::Discarded("training-completion-corrupt"));
+        }
+        if !training_archive.is_file() || fs::metadata(&training_archive)?.len() == 0 {
+            invalidate_training(cache_dir)?;
+            return Ok(TrainingReconcile::Discarded("training-complete-without-archive"));
         }
     }
-    if !schema_ok {
+
+    Ok(TrainingReconcile::Matching)
+}
+
+fn read_training_plan(path: &Path) -> io::Result<String> {
+    let text = fs::read_to_string(path)?;
+    let mut lines = text.lines();
+    let expected_schema = format!("schema={}", SCHEMA_VERSION);
+    if lines.next() != Some(expected_schema.as_str()) {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "training schema"));
     }
-    plan.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "training plan"))
+    let plan_line = lines
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "training plan"))?;
+    if lines.next().is_some() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "training metadata trailing data"));
+    }
+    let plan = plan_line
+        .strip_prefix("plan_sha256=")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "training plan"))?;
+    if plan.len() != 64 || !plan.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "training plan digest"));
+    }
+    Ok(plan.to_string())
+}
+
+fn training_state_present(cache_dir: &Path) -> bool {
+    ["training.meta", "training.jsa", "training.complete", "training.invalid"]
+        .into_iter()
+        .any(|name| cache_dir.join(name).exists())
+}
+
+fn invalidate_training(cache_dir: &Path) -> io::Result<()> {
+    let invalid = cache_dir.join("training.invalid");
+
+    // Persist the tombstone before touching campaign files. A mismatching
+    // preflight can race the Java process that is still writing training.jsa
+    // and will later write training.complete through Pandora. The tombstone is
+    // therefore intentionally not auto-cleared: even if those late writes
+    // recreate canonical paths, no later preflight can consume them or start a
+    // second writer in the same namespace. A deliberate cache reset starts the
+    // next campaign.
+    if !invalid.exists() {
+        write_atomic_replace(&invalid, b"invalid\n")?;
+    }
+
+    // Once the tombstone exists, cleanup is best-effort. Windows may refuse to
+    // remove training.jsa while HotSpot still has it open; that is safe because
+    // training.invalid remains the authoritative no-consume/no-retrain latch.
+    for name in ["training.meta", "training.jsa", "training.complete"] {
+        match fs::remove_file(cache_dir.join(name)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => {}
+        }
+    }
+    Ok(())
 }
 
 fn cleanup_training_files(cache_dir: &Path) {
@@ -308,6 +483,8 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
     let mut instance_dir = None;
     let mut launcher_exe = None;
     let mut upstream_commit = UPSTREAM_DEFAULT.to_string();
+    let mut appcds_identity_normal_gui = false;
+    let mut identity_authority_seen = false;
     let mut i = 0usize;
     while i < args.len() {
         if args[i] == OsStr::new("--") {
@@ -323,6 +500,17 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
         } else if args[i] == OsStr::new("--upstream-commit") {
             i += 1;
             upstream_commit = args.get(i).map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        } else if args[i] == OsStr::new("--appcds-identity-authority") {
+            if identity_authority_seen {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "duplicate identity authority"));
+            }
+            identity_authority_seen = true;
+            i += 1;
+            appcds_identity_normal_gui = match args.get(i).and_then(|s| s.to_str()) {
+                Some("normal-gui") => true,
+                Some("unknown") => false,
+                _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid identity authority")),
+            };
         } else {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "unknown control argument"));
         }
@@ -331,5 +519,5 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
     let java_exe = args.get(i).cloned().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing java"))?;
     let java_args = args.get(i + 1..).unwrap_or_default().to_vec();
     let instance_dir = instance_dir.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing instance"))?;
-    Ok(ParsedArgs { instance_dir, launcher_exe, upstream_commit, java_exe, java_args })
+    Ok(ParsedArgs { instance_dir, launcher_exe, upstream_commit, appcds_identity_normal_gui, java_exe, java_args })
 }
