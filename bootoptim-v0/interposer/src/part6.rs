@@ -1,4 +1,13 @@
 fn pack_input_artifact(instance_dir: &Path, path: &Path) -> io::Result<Artifact> {
+    let mut identity_cache = IdentityDigestCache::stock();
+    pack_input_artifact_with_cache(instance_dir, path, &mut identity_cache)
+}
+
+fn pack_input_artifact_with_cache(
+    instance_dir: &Path,
+    path: &Path,
+    identity_cache: &mut IdentityDigestCache,
+) -> io::Result<Artifact> {
     let meta = fs::metadata(path)?;
     if !meta.is_file() {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "pack input not file"));
@@ -26,11 +35,12 @@ fn pack_input_artifact(instance_dir: &Path, path: &Path) -> io::Result<Artifact>
             sha256: sha256_hex(&bytes),
         })
     } else {
+        let (size, sha256) = identity_cache.resolve_raw("pack-input", path)?;
         Ok(Artifact {
             role: "pack-input",
             path: encode_os(path.as_os_str()),
-            size: meta.len(),
-            sha256: hash_file(path)?,
+            size,
+            sha256,
         })
     }
 }
