@@ -42,7 +42,9 @@ fn state_path(instance_root: &Path) -> PathBuf {
 }
 
 fn lock_state() -> io::Result<MutexGuard<'static, ()>> {
-    STATE_LOCK.lock().map_err(|_| io::Error::other("game-files state lock poisoned"))
+    STATE_LOCK
+        .lock()
+        .map_err(|_| io::Error::other("game-files state lock poisoned"))
 }
 
 fn write_state_unlocked(
@@ -72,7 +74,10 @@ fn read_state_file_unlocked(instance_root: &Path) -> io::Result<Option<StateFile
     };
     let state: StateFile = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     if state.schema != 1 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported game-files state schema"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported game-files state schema",
+        ));
     }
     Ok(Some(state))
 }
@@ -89,7 +94,10 @@ pub fn mark_published(instance_root: &Path, reason: &str) -> io::Result<()> {
     write_state_unlocked(instance_root, StateKind::Published, reason, 0)
 }
 
-pub fn incomplete_generation(instance_root: &Path, expected_reason: &str) -> io::Result<Option<u64>> {
+pub fn incomplete_generation(
+    instance_root: &Path,
+    expected_reason: &str,
+) -> io::Result<Option<u64>> {
     let _guard = lock_state()?;
     Ok(match read_state_file_unlocked(instance_root)? {
         Some(StateFile {
@@ -146,7 +154,10 @@ mod tests {
 
     fn root(name: &str) -> PathBuf {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("pandora-agent202-state-{name}-{}-{nonce}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "pandora-agent202-state-{name}-{}-{nonce}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         root
     }
@@ -162,7 +173,10 @@ mod tests {
     fn interrupted_operation_blocks_start_until_publish() {
         let root = root("interrupted");
         mark_incomplete(&root, "update-in-progress").unwrap();
-        assert_eq!(start_status(&root).unwrap(), StartStatus::Incomplete("update-in-progress".to_owned()));
+        assert_eq!(
+            start_status(&root).unwrap(),
+            StartStatus::Incomplete("update-in-progress".to_owned())
+        );
         mark_published(&root, "test-publish").unwrap();
         assert_eq!(start_status(&root).unwrap(), StartStatus::Published);
         let _ = std::fs::remove_dir_all(root);
@@ -172,7 +186,10 @@ mod tests {
     fn cancelled_repair_does_not_publish() {
         let root = root("cancel");
         mark_incomplete(&root, "repair-in-progress").unwrap();
-        assert_eq!(start_status(&root).unwrap(), StartStatus::Incomplete("repair-in-progress".to_owned()));
+        assert_eq!(
+            start_status(&root).unwrap(),
+            StartStatus::Incomplete("repair-in-progress".to_owned())
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -189,7 +206,10 @@ mod tests {
             "identity-update-complete",
         )
         .unwrap());
-        assert_eq!(start_status(&root).unwrap(), StartStatus::Incomplete("repair-in-progress".to_owned()));
+        assert_eq!(
+            start_status(&root).unwrap(),
+            StartStatus::Incomplete("repair-in-progress".to_owned())
+        );
 
         assert!(publish_if_incomplete_generation(
             &root,
