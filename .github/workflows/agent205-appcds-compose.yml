@@ -25,6 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -54,6 +55,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
@@ -79,6 +82,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
@@ -92,7 +97,7 @@ jobs:
           New-Item -ItemType Directory -Force artifact | Out-Null
           Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe artifact/
           Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe artifact/BootOptimPandora-agent206.exe
-          "${{ github.sha }}" | Set-Content -NoNewline artifact/COMMIT.txt
+          "${{ github.event.pull_request.head.sha }}" | Set-Content -NoNewline artifact/COMMIT.txt
           $files = @(
             "artifact/bootoptim-launch-interposer.exe",
             "artifact/BootOptimPandora-agent206.exe"
@@ -105,6 +110,6 @@ jobs:
           Get-Content artifact/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: bootoptim-pandora-agent206-${{ github.sha }}-windows-x86_64
+          name: bootoptim-pandora-agent206-${{ github.event.pull_request.head.sha }}-windows-x86_64
           path: artifact/*
           if-no-files-found: error
