@@ -4,9 +4,9 @@ mod tests {
 
     fn temp_dir(label: &str) -> PathBuf {
         let p = env::temp_dir().join(format!("bootoptim-interposer-test-{label}-{}", unique_suffix()));
-        fs::create_dir_all(&p).unwrap(); p
+        fs::create_dir_all(&p).unwrap();
+        p
     }
-
 
     fn write_ready_profile_control(root: &Path, uuid: &str) {
         let control = root.join(".pandora-layout-v1");
@@ -38,11 +38,7 @@ mod tests {
 
         let cache = root.join(".bootoptim/appcds");
         fs::create_dir_all(&cache).unwrap();
-        bind_appcds_cache_namespace(
-            &cache,
-            &AppCdsProfileNamespace::PersistentProfile(uuid.to_string()),
-        )
-        .unwrap();
+        bind_appcds_cache_namespace(&cache, &AppCdsProfileNamespace::PersistentProfile(uuid.to_string())).unwrap();
         assert_eq!(
             fs::read_to_string(cache.join("profile.namespace")).unwrap(),
             format!("schema=1\nprofile_uuid={uuid}\n")
@@ -95,9 +91,7 @@ mod tests {
                 .any(|entry| entry.file_name().to_string_lossy().starts_with("appcds-unbound-v0-"))
         );
 
-        let other = AppCdsProfileNamespace::PersistentProfile(
-            "31234567-89ab-cdef-8123-456789abcdef".to_string(),
-        );
+        let other = AppCdsProfileNamespace::PersistentProfile("31234567-89ab-cdef-8123-456789abcdef".to_string());
         assert!(bind_appcds_cache_namespace(&cache, &other).is_err());
         let _ = fs::remove_dir_all(root);
     }
@@ -170,11 +164,7 @@ mod tests {
         let uuid = "51234567-89ab-cdef-8123-456789abcdef";
         write_ready_profile_control(&root, uuid);
         let cache = root.join(".bootoptim/appcds");
-        bind_appcds_cache_namespace(
-            &cache,
-            &AppCdsProfileNamespace::PersistentProfile(uuid.to_string()),
-        )
-        .unwrap();
+        bind_appcds_cache_namespace(&cache, &AppCdsProfileNamespace::PersistentProfile(uuid.to_string())).unwrap();
         fs::write(cache.join("ready.jsa"), b"profile-owned").unwrap();
         assert!(cache.join("ready.jsa").is_file());
 
@@ -195,12 +185,7 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    fn write_exact_clone_candidate(
-        root: &Path,
-        profile_uuid: &str,
-        expected_plan_sha256: &str,
-        archive: &[u8],
-    ) {
+    fn write_exact_clone_candidate(root: &Path, profile_uuid: &str, expected_plan_sha256: &str, archive: &[u8]) {
         let candidate = root.join(".bootoptim/appcds-exact-clone-candidate");
         fs::create_dir_all(&candidate).unwrap();
         let archive_sha256 = hash_file_bytes_for_test(archive);
@@ -305,7 +290,16 @@ mod tests {
 
     #[test]
     fn parses_control_args_and_preserves_unicode_spaces() {
-        let args = vec![OsString::from("--instance-dir"), OsString::from("C:\\Pack Ünicode\\Instance One"), OsString::from("--launcher-exe"), OsString::from("C:\\Pandora Folder\\Pandora.exe"), OsString::from("--"), OsString::from("C:\\Java 25\\bin\\javaw.exe"), OsString::from("-cp"), OsString::from("C:\\Lib A\\a.jar;C:\\Lïb B\\b.jar")];
+        let args = vec![
+            OsString::from("--instance-dir"),
+            OsString::from("C:\\Pack Ünicode\\Instance One"),
+            OsString::from("--launcher-exe"),
+            OsString::from("C:\\Pandora Folder\\Pandora.exe"),
+            OsString::from("--"),
+            OsString::from("C:\\Java 25\\bin\\javaw.exe"),
+            OsString::from("-cp"),
+            OsString::from("C:\\Lib A\\a.jar;C:\\Lïb B\\b.jar"),
+        ];
         let p = parse_args(args).unwrap();
         assert_eq!(p.java_args.len(), 2);
         assert!(p.instance_dir.to_string_lossy().contains("Ünicode"));
@@ -314,7 +308,12 @@ mod tests {
 
     #[test]
     fn classpath_parser_keeps_original_string() {
-        let args = vec![OsString::from("-Xmx6G"), OsString::from("-cp"), OsString::from("A B.jar;Ü.jar"), OsString::from("Main")];
+        let args = vec![
+            OsString::from("-Xmx6G"),
+            OsString::from("-cp"),
+            OsString::from("A B.jar;Ü.jar"),
+            OsString::from("Main"),
+        ];
         assert_eq!(find_classpath(&args).unwrap(), OsString::from("A B.jar;Ü.jar"));
     }
 
@@ -324,12 +323,17 @@ mod tests {
         let args = vec![OsString::from("-p"), raw.clone(), OsString::from("Main")];
         assert_eq!(find_module_path(&args).unwrap(), Some(raw));
 
-        let long = vec![OsString::from("--module-path=first.jar;second.jar"), OsString::from("Main")];
+        let long = vec![
+            OsString::from("--module-path=first.jar;second.jar"),
+            OsString::from("Main"),
+        ];
         assert_eq!(find_module_path(&long).unwrap(), Some(OsString::from("first.jar;second.jar")));
 
         let duplicate = vec![
-            OsString::from("-p"), OsString::from("first.jar"),
-            OsString::from("--module-path"), OsString::from("second.jar"),
+            OsString::from("-p"),
+            OsString::from("first.jar"),
+            OsString::from("--module-path"),
+            OsString::from("second.jar"),
         ];
         assert!(find_module_path(&duplicate).is_err());
     }
@@ -345,7 +349,8 @@ mod tests {
 
     #[test]
     fn lock_excludes_second_owner() {
-        let d = temp_dir("lock"); let p = d.join("cache.lock");
+        let d = temp_dir("lock");
+        let p = d.join("cache.lock");
         let g1 = try_lock(&p).unwrap().unwrap();
         assert!(try_lock(&p).unwrap().is_none());
         drop(g1);
@@ -390,7 +395,9 @@ mod tests {
             .unwrap();
 
         for _ in 0..100 {
-            if ready.is_file() { break; }
+            if ready.is_file() {
+                break;
+            }
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
         assert!(ready.is_file(), "holder did not acquire lock in time");
@@ -420,7 +427,8 @@ mod tests {
 
     #[test]
     fn promotion_and_stale_detection_are_exact() {
-        let d = temp_dir("promote"); let staging = d.join("staging-ok.jsa");
+        let d = temp_dir("promote");
+        let staging = d.join("staging-ok.jsa");
         fs::write(&staging, b"archive bytes").unwrap();
         promote_archive(&d, &staging, "plan-a").unwrap();
         assert_eq!(classify_cache(&d, "plan-a").unwrap().0, CacheState::Ready);
@@ -448,7 +456,11 @@ mod tests {
         fs::create_dir_all(java_root.join("bin")).unwrap();
         let java = java_root.join(if cfg!(windows) { "bin/javaw.exe" } else { "bin/java" });
         fs::write(&java, b"fake-java-v1").unwrap();
-        fs::write(java_root.join("release"), b"JAVA_VERSION=\"25.0.4\"\nIMPLEMENTOR=\"Oracle Corporation\"\n").unwrap();
+        fs::write(
+            java_root.join("release"),
+            b"JAVA_VERSION=\"25.0.4\"\nIMPLEMENTOR=\"Oracle Corporation\"\n",
+        )
+        .unwrap();
         let lib = d.join("library one.jar");
         fs::write(&lib, b"jar-v1").unwrap();
         let module_a = d.join("module one.jar");
@@ -472,8 +484,10 @@ mod tests {
             java_exe: java.clone().into_os_string(),
             java_args: vec![
                 OsString::from("-DauthToken=VERY_SECRET"),
-                OsString::from("-cp"), cp,
-                OsString::from("--module-path"), module_path_raw.clone(),
+                OsString::from("-cp"),
+                cp,
+                OsString::from("--module-path"),
+                module_path_raw.clone(),
                 OsString::from("com.moulberry.pandora.LaunchWrapper"),
             ],
         };
@@ -506,7 +520,11 @@ mod tests {
         assert_ne!(p1.sha256, config_changed.sha256);
         fs::write(d.join("config/fml.toml"), b"earlyWindowControl=true\n").unwrap();
 
-        fs::write(d.join("options.txt"), b"resourcePacks:[\"vanilla\",\"file/Test Pack.zip\"]\nincompatibleResourcePacks:[]\n").unwrap();
+        fs::write(
+            d.join("options.txt"),
+            b"resourcePacks:[\"vanilla\",\"file/Test Pack.zip\"]\nincompatibleResourcePacks:[]\n",
+        )
+        .unwrap();
         let resource_selection_changed = build_launch_plan(&parsed).unwrap();
         assert_ne!(p1.sha256, resource_selection_changed.sha256);
         fs::write(d.join("options.txt"), b"resourcePacks:[\"vanilla\"]\nincompatibleResourcePacks:[]\n").unwrap();
@@ -515,7 +533,11 @@ mod tests {
         fs::create_dir_all(java2_root.join("bin")).unwrap();
         let java2 = java2_root.join(if cfg!(windows) { "bin/javaw.exe" } else { "bin/java" });
         fs::write(&java2, b"fake-java-v1").unwrap();
-        fs::write(java2_root.join("release"), b"JAVA_VERSION=\"25.0.4\"\nIMPLEMENTOR=\"Oracle Corporation\"\n").unwrap();
+        fs::write(
+            java2_root.join("release"),
+            b"JAVA_VERSION=\"25.0.4\"\nIMPLEMENTOR=\"Oracle Corporation\"\n",
+        )
+        .unwrap();
         let moved = ParsedArgs {
             instance_dir: parsed.instance_dir.clone(),
             launcher_exe: parsed.launcher_exe.clone(),
@@ -546,34 +568,33 @@ mod tests {
     #[test]
     fn upgrade_module_path_is_fail_closed() {
         assert!(has_unsupported_module_configuration(&[
-            OsString::from("--upgrade-module-path"), OsString::from("upgrade.jar")
+            OsString::from("--upgrade-module-path"),
+            OsString::from("upgrade.jar")
         ]));
-        assert!(has_unsupported_module_configuration(&[
-            OsString::from("--upgrade-module-path=upgrade.jar")
-        ]));
+        assert!(has_unsupported_module_configuration(&[OsString::from(
+            "--upgrade-module-path=upgrade.jar"
+        )]));
     }
 
     #[test]
     fn patch_module_is_fail_closed() {
         assert!(has_unsupported_module_configuration(&[
-            OsString::from("--patch-module"), OsString::from("example=patch.jar")
+            OsString::from("--patch-module"),
+            OsString::from("example=patch.jar")
         ]));
-        assert!(has_unsupported_module_configuration(&[
-            OsString::from("--patch-module=example=patch.jar")
-        ]));
+        assert!(has_unsupported_module_configuration(&[OsString::from(
+            "--patch-module=example=patch.jar"
+        )]));
     }
 
     #[test]
     fn limit_modules_is_fail_closed() {
         assert!(has_unsupported_module_configuration(&[
-            OsString::from("--limit-modules"), OsString::from("java.base")
+            OsString::from("--limit-modules"),
+            OsString::from("java.base")
         ]));
-        assert!(has_unsupported_module_configuration(&[
-            OsString::from("--limit-modules=java.base")
-        ]));
-        assert!(!has_unsupported_module_configuration(&[
-            OsString::from("--add-modules=ALL-MODULE-PATH")
-        ]));
+        assert!(has_unsupported_module_configuration(&[OsString::from("--limit-modules=java.base")]));
+        assert!(!has_unsupported_module_configuration(&[OsString::from("--add-modules=ALL-MODULE-PATH")]));
     }
 
     #[test]
@@ -717,11 +738,7 @@ mod tests {
         fs::write(&lib, b"lib-v1-large-placeholder").unwrap();
         fs::write(root.join("mods/mod.jar"), b"mod-v1-large-placeholder").unwrap();
         fs::write(root.join("config/raw.cfg"), b"raw-config-v1").unwrap();
-        fs::write(
-            root.join("options.txt"),
-            b"resourcePacks:[\"vanilla\"]\nincompatibleResourcePacks:[]\n",
-        )
-        .unwrap();
+        fs::write(root.join("options.txt"), b"resourcePacks:[\"vanilla\"]\nincompatibleResourcePacks:[]\n").unwrap();
         let launcher = root.join("Pandora.exe");
         fs::write(&launcher, b"launcher-v1").unwrap();
 
@@ -743,42 +760,30 @@ mod tests {
         bind_appcds_cache_namespace(&cache, scope.namespace()).unwrap();
 
         let mut seed = IdentityDigestCache::begin(&cache, true);
-        let first =
-            build_launch_plan_for_namespace_with_cache(&parsed, scope.namespace(), &mut seed).unwrap();
+        let first = build_launch_plan_for_namespace_with_cache(&parsed, scope.namespace(), &mut seed).unwrap();
         assert_eq!(seed.stats().0, 0);
         assert!(seed.stats().1 > 0);
         seed.finish().unwrap();
         assert!(cache.join(APPCDS_IDENTITY_MANIFEST).is_file());
         assert!(!persist_plan_and_compare(&cache, &first.bytes, &first.sha256).unwrap());
-        assert_eq!(
-            prepare_eligible_cache(&cache, &first.sha256).unwrap(),
-            PrepareDecision::Train
-        );
+        assert_eq!(prepare_eligible_cache(&cache, &first.sha256).unwrap(), PrepareDecision::Train);
 
         fs::write(cache.join("training.jsa"), b"trained-archive").unwrap();
         fs::write(cache.join("training.complete"), b"complete\n").unwrap();
 
         let mut reuse = IdentityDigestCache::begin(&cache, true);
-        let second =
-            build_launch_plan_for_namespace_with_cache(&parsed, scope.namespace(), &mut reuse).unwrap();
+        let second = build_launch_plan_for_namespace_with_cache(&parsed, scope.namespace(), &mut reuse).unwrap();
         assert_eq!(first.bytes, second.bytes);
         assert!(reuse.stats().0 > 0);
         assert_eq!(reuse.stats().1, 0);
         reuse.finish().unwrap();
 
         assert!(persist_plan_and_compare(&cache, &second.bytes, &second.sha256).unwrap());
-        assert_eq!(
-            reconcile_training(&cache, &second.sha256).unwrap(),
-            TrainingReconcile::Matching
-        );
-        assert_eq!(
-            prepare_eligible_cache(&cache, &second.sha256).unwrap(),
-            PrepareDecision::Ready
-        );
+        assert_eq!(reconcile_training(&cache, &second.sha256).unwrap(), TrainingReconcile::Matching);
+        assert_eq!(prepare_eligible_cache(&cache, &second.sha256).unwrap(), PrepareDecision::Ready);
         assert!(cache.join("ready.jsa").is_file());
         assert!(!cache.join("training.meta").exists());
         assert!(!cache.join("training.complete").exists());
         let _ = fs::remove_dir_all(root);
     }
-
 }
