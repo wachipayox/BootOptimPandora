@@ -131,7 +131,7 @@ fn main() {
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=invalid-control-args");
             println!("STOCK");
             return;
-        }
+        },
     };
 
     match prepare_launch(&parsed) {
@@ -139,7 +139,7 @@ fn main() {
         Err(_) => {
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=helper-error");
             println!("STOCK");
-        }
+        },
     }
 }
 
@@ -154,7 +154,7 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         Err(_) => {
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=profile-namespace-ineligible");
             return Ok(PrepareDecision::Stock);
-        }
+        },
     };
     let cache_dir = parsed.instance_dir.join(".bootoptim").join("appcds");
     if bind_appcds_cache_namespace(&cache_dir, profile_scope.namespace()).is_err() {
@@ -172,11 +172,7 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         };
         held_lock = Some(lock);
         let mut identity_cache = IdentityDigestCache::begin(&cache_dir, true);
-        let plan = build_launch_plan_for_namespace_with_cache(
-            parsed,
-            profile_scope.namespace(),
-            &mut identity_cache,
-        )?;
+        let plan = build_launch_plan_for_namespace_with_cache(parsed, profile_scope.namespace(), &mut identity_cache)?;
         if identity_cache.finish().is_err() {
             eprintln!("BOOTOPTIM_INTERPOSER identity_cache=publish-failed fallback=future-stock");
         }
@@ -230,23 +226,18 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
     }
 
     if matches!(training_reconcile, TrainingReconcile::Clean) {
-        match try_adopt_exact_clone_candidate(
-            &parsed.instance_dir,
-            &cache_dir,
-            profile_scope.namespace(),
-            &plan,
-        )? {
-            ExactCloneAdoption::None => {}
+        match try_adopt_exact_clone_candidate(&parsed.instance_dir, &cache_dir, profile_scope.namespace(), &plan)? {
+            ExactCloneAdoption::None => {},
             ExactCloneAdoption::Adopted => {
                 write_state(&cache_dir, CacheState::Ready, "exact-clone-plan-confirmed")?;
                 eprintln!("BOOTOPTIM_INTERPOSER status=ready activation=exact-clone");
                 return Ok(PrepareDecision::Ready);
-            }
+            },
             ExactCloneAdoption::Rejected => {
                 write_state(&cache_dir, CacheState::Stale, "exact-clone-candidate-rejected")?;
                 eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=exact-clone-candidate-rejected");
                 return Ok(PrepareDecision::Stock);
-            }
+            },
         }
     }
 
@@ -266,7 +257,7 @@ fn prepare_eligible_cache(cache_dir: &Path, plan_sha256: &str) -> io::Result<Pre
             write_state(cache_dir, CacheState::Ready, "identity-match")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=ready activation=enabled");
             return Ok(PrepareDecision::Ready);
-        }
+        },
         CacheState::Stale => {
             if training_state_present(cache_dir) {
                 invalidate_training(cache_dir)?;
@@ -274,7 +265,7 @@ fn prepare_eligible_cache(cache_dir: &Path, plan_sha256: &str) -> io::Result<Pre
             write_state(cache_dir, CacheState::Stale, "identity-mismatch")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=stale");
             return Ok(PrepareDecision::Stock);
-        }
+        },
         CacheState::Failed | CacheState::Generating => {
             cleanup_orphan_staging(cache_dir)?;
             if training_state_present(cache_dir) {
@@ -283,8 +274,8 @@ fn prepare_eligible_cache(cache_dir: &Path, plan_sha256: &str) -> io::Result<Pre
             write_state(cache_dir, CacheState::Failed, "incomplete-or-failed")?;
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=failed-state");
             return Ok(PrepareDecision::Stock);
-        }
-        CacheState::Absent => {}
+        },
+        CacheState::Absent => {},
     }
 
     let training_meta = cache_dir.join("training.meta");
@@ -306,7 +297,7 @@ fn prepare_eligible_cache(cache_dir: &Path, plan_sha256: &str) -> io::Result<Pre
                 write_state(cache_dir, CacheState::Failed, "training-metadata-corrupt")?;
                 eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=training-metadata-corrupt");
                 return Ok(PrepareDecision::Stock);
-            }
+            },
         };
         if pending_plan != plan_sha256 {
             invalidate_training(cache_dir)?;
@@ -397,7 +388,7 @@ fn reconcile_training(cache_dir: &Path, plan_sha256: &str) -> io::Result<Trainin
         Err(_) => {
             invalidate_training(cache_dir)?;
             return Ok(TrainingReconcile::Discarded("training-metadata-corrupt"));
-        }
+        },
     };
     if pending_plan != plan_sha256 {
         invalidate_training(cache_dir)?;
@@ -425,9 +416,7 @@ fn read_training_plan(path: &Path) -> io::Result<String> {
     if lines.next() != Some(expected_schema.as_str()) {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "training schema"));
     }
-    let plan_line = lines
-        .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "training plan"))?;
+    let plan_line = lines.next().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "training plan"))?;
     if lines.next().is_some() {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "training metadata trailing data"));
     }
@@ -465,9 +454,9 @@ fn invalidate_training(cache_dir: &Path) -> io::Result<()> {
     // training.invalid remains the authoritative no-consume/no-retrain latch.
     for name in ["training.meta", "training.jsa", "training.complete"] {
         match fs::remove_file(cache_dir.join(name)) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(_) => {}
+            Ok(()) => {},
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {},
+            Err(_) => {},
         }
     }
     Ok(())
@@ -516,8 +505,18 @@ fn parse_args(args: Vec<OsString>) -> io::Result<ParsedArgs> {
         }
         i += 1;
     }
-    let java_exe = args.get(i).cloned().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing java"))?;
+    let java_exe = args
+        .get(i)
+        .cloned()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing java"))?;
     let java_args = args.get(i + 1..).unwrap_or_default().to_vec();
     let instance_dir = instance_dir.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing instance"))?;
-    Ok(ParsedArgs { instance_dir, launcher_exe, upstream_commit, appcds_identity_normal_gui, java_exe, java_args })
+    Ok(ParsedArgs {
+        instance_dir,
+        launcher_exe,
+        upstream_commit,
+        appcds_identity_normal_gui,
+        java_exe,
+        java_args,
+    })
 }
