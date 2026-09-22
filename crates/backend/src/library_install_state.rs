@@ -36,9 +36,7 @@ fn state_path(instance_root: &Path) -> PathBuf {
 }
 
 fn lock_state() -> io::Result<MutexGuard<'static, ()>> {
-    STATE_LOCK
-        .lock()
-        .map_err(|_| io::Error::other("game-files state lock poisoned"))
+    STATE_LOCK.lock().map_err(|_| io::Error::other("game-files state lock poisoned"))
 }
 
 fn write_state_unlocked(instance_root: &Path, state: StateKind, reason: &str) -> io::Result<()> {
@@ -143,23 +141,10 @@ mod tests {
         mark_incomplete(&root, "version-change").unwrap();
         mark_incomplete(&root, "repair-in-progress").unwrap();
 
-        assert!(!publish_if_incomplete_reason(
-            &root,
-            "version-change",
-            "identity-update-complete",
-        )
-        .unwrap());
-        assert_eq!(
-            start_status(&root).unwrap(),
-            StartStatus::Incomplete("repair-in-progress".to_owned())
-        );
+        assert!(!publish_if_incomplete_reason(&root, "version-change", "identity-update-complete",).unwrap());
+        assert_eq!(start_status(&root).unwrap(), StartStatus::Incomplete("repair-in-progress".to_owned()));
 
-        assert!(publish_if_incomplete_reason(
-            &root,
-            "repair-in-progress",
-            "repair-complete",
-        )
-        .unwrap());
+        assert!(publish_if_incomplete_reason(&root, "repair-in-progress", "repair-complete",).unwrap());
         assert_eq!(start_status(&root).unwrap(), StartStatus::Published);
         let _ = std::fs::remove_dir_all(root);
     }
