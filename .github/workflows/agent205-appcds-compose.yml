@@ -1,4 +1,4 @@
-name: Agent 205 AppCDS composed two-run gate
+name: Agent 206 AppCDS identity diagnostics gate
 
 on:
   pull_request:
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: agent205-appcds-compose-${{ github.ref }}
+  group: agent206-appcds-identity-diag-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
       - name: Whitespace and scoped formatting
         run: |
           git diff --check 7a821e8d5f89c71677d149b3140e21f4ed171ec4...HEAD
-          rustfmt --edition 2024 --check bootoptim-v0/ntfs_usn_direct.rs bootoptim-v0/interposer/src/identity_cache.rs bootoptim-v0/interposer/src/part1.rs bootoptim-v0/interposer/src/part2.rs bootoptim-v0/interposer/src/part4.rs crates/backend/src/asset_usn_cache/windows_direct.rs
+          rustfmt --edition 2024 --check bootoptim-v0/ntfs_usn_direct.rs bootoptim-v0/interposer/src/identity_cache.rs bootoptim-v0/interposer/src/part1.rs bootoptim-v0/interposer/src/part2.rs bootoptim-v0/interposer/src/part4.rs crates/command/src/command.rs crates/backend/src/asset_usn_cache/windows_direct.rs
       - name: Portable interposer suite
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
       - name: Check affected crates
@@ -91,7 +91,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force artifact | Out-Null
           Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe artifact/
-          Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe artifact/BootOptimPandora-agent205.exe
+          Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe artifact/BootOptimPandora-agent206.exe
           "${{ github.sha }}" | Set-Content -NoNewline artifact/COMMIT.txt
           $files = @(
             "artifact/bootoptim-launch-interposer.exe",
@@ -105,6 +105,6 @@ jobs:
           Get-Content artifact/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: bootoptim-pandora-agent205-${{ github.sha }}-windows-x86_64
+          name: bootoptim-pandora-agent206-${{ github.sha }}-windows-x86_64
           path: artifact/*
           if-no-files-found: error
