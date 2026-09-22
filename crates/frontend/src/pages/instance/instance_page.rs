@@ -47,6 +47,7 @@ impl Page for InstancePage {
         let id = instance.id;
         let name = instance.name.clone();
         let data = self.data.clone();
+        let repair_backend_handle = data.backend_handle.clone();
 
         let button = match instance.status {
             InstanceStatus::NotRunning => {
@@ -126,6 +127,12 @@ impl Page for InstancePage {
             },
         };
 
+        let repair_game_files_button = Button::new("repair_game_files")
+            .label("Repair game files")
+            .on_click(move |_, window, cx| {
+                root::repair_game_files(id, &repair_backend_handle, window, cx);
+            });
+
         let open_dot_minecraft_button = Button::new("open_dot_minecraft")
             .info()
             .icon(PandoraIcon::FolderOpen)
@@ -137,7 +144,7 @@ impl Page for InstancePage {
             }
         });
 
-        h_flex().gap_3().child(button).child(open_dot_minecraft_button)
+        h_flex().gap_3().child(button).child(repair_game_files_button).child(open_dot_minecraft_button)
     }
 
     fn scrollable(&self, _cx: &App) -> bool {
