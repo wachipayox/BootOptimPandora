@@ -1,5 +1,6 @@
 const APPCDS_IDENTITY_CACHE_ENV: &str = "BOOTOPTIM_APPCDS_IDENTITY_CACHE";
 const APPCDS_IDENTITY_FORCE_STOCK_ENV: &str = "BOOTOPTIM_APPCDS_IDENTITY_FORCE_STOCK";
+const APPCDS_IDENTITY_DIAGNOSTICS_ENV: &str = "BOOTOPTIM_APPCDS_IDENTITY_DIAGNOSTICS";
 const APPCDS_IDENTITY_MANIFEST: &str = "identity-manifest-v1.txt";
 const APPCDS_IDENTITY_HEADER: &str = "BOOTOPTIM_APPCDS_IDENTITY_V1";
 
@@ -35,6 +36,82 @@ fn identity_cache_authorized(normal_gui: bool, requested: bool, force_stock: boo
     cfg!(windows) && normal_gui && requested && !force_stock
 }
 
+fn identity_cache_authority_reason(normal_gui: bool, requested: bool, force_stock: bool) -> &'static str {
+    if !requested {
+        "not-requested"
+    } else if force_stock {
+        "force-stock"
+    } else if !cfg!(windows) {
+        "unsupported-platform"
+    } else if !normal_gui {
+        "unknown-authority"
+    } else {
+        "normal-gui"
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct IdentityCacheRequest {
+    requested: bool,
+    authorized: bool,
+    reason: &'static str,
+}
+
+struct IdentityPreflightDiagnostics {
+    enabled: bool,
+    request: IdentityCacheRequest,
+    manifest: &'static str,
+    eligible: u64,
+    reused: u64,
+    strong: u64,
+    unverifiable: String,
+    publication: &'static str,
+}
+
+impl IdentityPreflightDiagnostics {
+    fn new(request: IdentityCacheRequest) -> Self {
+        Self {
+            enabled: env::var_os(APPCDS_IDENTITY_DIAGNOSTICS_ENV).is_some_and(|value| value == "1"),
+            request,
+            manifest: "not-read",
+            eligible: 0,
+            reused: 0,
+            strong: 0,
+            unverifiable: "none".to_string(),
+            publication: "not-run",
+        }
+    }
+
+    fn capture_cache(&mut self, cache: &IdentityDigestCache, publication: &'static str) {
+        self.manifest = cache.manifest_state;
+        self.eligible = cache.expected_keys.len() as u64;
+        self.reused = cache.reused_files;
+        self.strong = cache.stock_files;
+        self.unverifiable = cache.unverifiable_summary();
+        self.publication = publication;
+    }
+}
+
+impl Drop for IdentityPreflightDiagnostics {
+    fn drop(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        eprintln!(
+            "BOOTOPTIM_APPCDS_IDENTITY_DIAG requested={} authority={} authority_reason={} manifest={} eligible={} reused={} strong={} unverifiable={} publication={}",
+            self.request.requested,
+            if self.request.authorized { "accepted" } else { "rejected" },
+            self.request.reason,
+            self.manifest,
+            self.eligible,
+            self.reused,
+            self.strong,
+            self.unverifiable,
+            self.publication
+        );
+    }
+}
+
 fn evidence_allows_reuse(cached: &CachedIdentityDigest, current: &CurrentIdentityEvidence) -> bool {
     current.handle_identity_unchanged
         && current.volume_serial == cached.volume_serial
@@ -58,8 +135,10 @@ struct IdentityDigestCache {
     records: BTreeMap<String, CachedIdentityDigest>,
     expected_keys: std::collections::BTreeSet<String>,
     complete: bool,
+    manifest_state: &'static str,
     reused_files: u64,
     stock_files: u64,
+    unverifiable: BTreeMap<&'static str, u64>,
     #[cfg(windows)]
     volumes: Vec<(String, u64, ntfs_usn_direct::Volume)>,
 }
@@ -73,25 +152,42 @@ impl IdentityDigestCache {
             records: BTreeMap::new(),
             expected_keys: std::collections::BTreeSet::new(),
             complete: false,
+            manifest_state: "not-read",
             reused_files: 0,
             stock_files: 0,
+            unverifiable: BTreeMap::new(),
             #[cfg(windows)]
             volumes: Vec::new(),
         }
     }
 
-    fn requested(normal_gui: bool) -> bool {
+    fn request_state(normal_gui: bool) -> IdentityCacheRequest {
         let requested = env::var_os(APPCDS_IDENTITY_CACHE_ENV).is_some_and(|value| value == "1");
         let force_stock = env::var_os(APPCDS_IDENTITY_FORCE_STOCK_ENV).is_some_and(|value| value == "1");
-        identity_cache_authorized(normal_gui, requested, force_stock)
+        IdentityCacheRequest {
+            requested,
+            authorized: identity_cache_authorized(normal_gui, requested, force_stock),
+            reason: identity_cache_authority_reason(normal_gui, requested, force_stock),
+        }
+    }
+
+    fn requested(normal_gui: bool) -> bool {
+        Self::request_state(normal_gui).authorized
     }
 
     fn begin(cache_dir: &Path, active: bool) -> Self {
         let manifest_path = cache_dir.join(APPCDS_IDENTITY_MANIFEST);
-        let cached = if active {
-            read_identity_manifest(&manifest_path).unwrap_or_default()
+        let (manifest_state, cached) = if active {
+            match fs::metadata(&manifest_path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => ("absent", BTreeMap::new()),
+                Err(_) => ("damaged", BTreeMap::new()),
+                Ok(_) => match read_identity_manifest(&manifest_path) {
+                    Some(records) => ("valid", records),
+                    None => ("damaged", BTreeMap::new()),
+                },
+            }
         } else {
-            BTreeMap::new()
+            ("not-read", BTreeMap::new())
         };
         Self {
             active,
@@ -100,20 +196,38 @@ impl IdentityDigestCache {
             records: BTreeMap::new(),
             expected_keys: std::collections::BTreeSet::new(),
             complete: active,
+            manifest_state,
             reused_files: 0,
             stock_files: 0,
+            unverifiable: BTreeMap::new(),
             #[cfg(windows)]
             volumes: Vec::new(),
         }
     }
 
-    fn resolve_raw(&mut self, role: &'static str, path: &Path) -> io::Result<(u64, String)> {
-        if !self.active {
-            return stock_raw_digest(path);
+    fn note_unverifiable(&mut self, reason: &'static str) {
+        *self.unverifiable.entry(reason).or_insert(0) += 1;
+    }
+
+    fn unverifiable_summary(&self) -> String {
+        if self.unverifiable.is_empty() {
+            return "none".to_string();
         }
+        self.unverifiable
+            .iter()
+            .map(|(reason, count)| format!("{reason}:{count}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn resolve_raw(&mut self, role: &'static str, path: &Path) -> io::Result<(u64, String)> {
         let path_hex = encode_os(path.as_os_str()).encoded_hex;
         let key = identity_record_key(role, &path_hex);
         self.expected_keys.insert(key.clone());
+        if !self.active {
+            self.stock_files += 1;
+            return stock_raw_digest(path);
+        }
 
         #[cfg(windows)]
         {
@@ -122,11 +236,18 @@ impl IdentityDigestCache {
                 Err(_) => {
                     self.complete = false;
                     self.stock_files += 1;
+                    self.note_unverifiable("open");
                     return stock_raw_digest(path);
                 },
             };
             let identity = protected.identity().clone();
-            let evidence = self.query_file_evidence(&protected).ok();
+            let evidence = match self.query_file_evidence(&protected) {
+                Ok(evidence) => Some(evidence),
+                Err(_) => {
+                    self.note_unverifiable("pre-evidence");
+                    None
+                },
+            };
 
             if let (Some(cached), Some(current)) = (self.cached.get(&key), evidence.as_ref()) {
                 if cached.role == role
@@ -145,12 +266,19 @@ impl IdentityDigestCache {
 
             self.stock_files += 1;
             let (size, digest) = hash_protected_file(&mut protected)?;
-            let after = self.query_file_evidence(&protected).ok();
+            let after = match self.query_file_evidence(&protected) {
+                Ok(evidence) => Some(evidence),
+                Err(_) => {
+                    self.note_unverifiable("post-evidence");
+                    None
+                },
+            };
             if let Some(current) = after.as_ref() {
                 if current.file_id == identity.file_id && current.handle_identity_unchanged {
                     self.records
                         .insert(key, record_from_current(role, path_hex, size, digest.clone(), &identity, current));
                 } else {
+                    self.note_unverifiable("post-identity");
                     self.complete = false;
                 }
             } else {
@@ -163,6 +291,7 @@ impl IdentityDigestCache {
         {
             self.complete = false;
             self.stock_files += 1;
+            self.note_unverifiable("unsupported-platform");
             stock_raw_digest(path)
         }
     }
@@ -194,26 +323,31 @@ impl IdentityDigestCache {
         })
     }
 
-    fn finish(&self) -> io::Result<()> {
-        if !self.active || !self.complete || self.records.len() != self.expected_keys.len() {
-            return Ok(());
+    fn finish(&self) -> io::Result<&'static str> {
+        if !self.active {
+            return Ok("not-active");
         }
-        if self.expected_keys.iter().any(|key| !self.records.contains_key(key)) {
-            return Ok(());
+        if !self.complete {
+            return Ok("skipped-incomplete");
+        }
+        if self.records.len() != self.expected_keys.len()
+            || self.expected_keys.iter().any(|key| !self.records.contains_key(key))
+        {
+            return Ok("skipped-coverage");
         }
         let bytes = serialize_identity_manifest(&self.records);
         #[cfg(windows)]
         {
-            return ntfs_usn_direct::atomic_replace(&self.manifest_path, &bytes);
+            ntfs_usn_direct::atomic_replace(&self.manifest_path, &bytes)?;
+            return Ok("published");
         }
         #[cfg(not(windows))]
         {
             let _ = bytes;
-            Ok(())
+            Ok("unsupported-platform")
         }
     }
 
-    #[cfg(test)]
     fn stats(&self) -> (u64, u64) {
         (self.reused_files, self.stock_files)
     }
@@ -447,9 +581,34 @@ mod appcds_identity_cache_tests {
         assert!(!identity_cache_authorized(false, true, false));
         assert!(!identity_cache_authorized(true, false, false));
         assert!(!identity_cache_authorized(true, true, true));
+        assert_eq!(identity_cache_authority_reason(true, false, false), "not-requested");
+        assert_eq!(identity_cache_authority_reason(true, true, true), "force-stock");
         if cfg!(windows) {
             assert!(identity_cache_authorized(true, true, false));
+            assert_eq!(identity_cache_authority_reason(false, true, false), "unknown-authority");
+            assert_eq!(identity_cache_authority_reason(true, true, false), "normal-gui");
+        } else {
+            assert_eq!(identity_cache_authority_reason(true, true, false), "unsupported-platform");
         }
+    }
+
+    #[test]
+    fn manifest_and_publication_diagnostics_explain_absent_corrupt_and_incomplete_coverage() {
+        let root = env::temp_dir().join(format!("bootoptim-id-diag-{}", unique_suffix()));
+        fs::create_dir_all(&root).unwrap();
+
+        let mut cache = IdentityDigestCache::begin(&root, true);
+        assert_eq!(cache.manifest_state, "absent");
+        cache.expected_keys.insert("missing".to_string());
+        assert_eq!(cache.finish().unwrap(), "skipped-coverage");
+
+        fs::write(root.join(APPCDS_IDENTITY_MANIFEST), b"not-a-manifest\n").unwrap();
+        let mut cache = IdentityDigestCache::begin(&root, true);
+        assert_eq!(cache.manifest_state, "damaged");
+        cache.complete = false;
+        assert_eq!(cache.finish().unwrap(), "skipped-incomplete");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
