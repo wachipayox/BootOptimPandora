@@ -151,7 +151,7 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
 
     let identity_request = IdentityDigestCache::request_state(parsed.appcds_identity_normal_gui);
     let cache_dir = parsed.instance_dir.join(".bootoptim").join("appcds");
-    let mut identity_diag = IdentityPreflightDiagnostics::new(identity_request, &cache_dir);
+    let mut identity_diag = IdentityPreflightDiagnostics::new(identity_request);
 
     let profile_scope = match acquire_appcds_profile_scope(&parsed.instance_dir) {
         Ok(scope) => scope,
@@ -164,6 +164,7 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=profile-cache-binding");
         return Ok(PrepareDecision::Stock);
     }
+    identity_diag.classify_manifest(&cache_dir);
 
     let identity_requested = identity_request.authorized;
     let mut held_lock = None;
