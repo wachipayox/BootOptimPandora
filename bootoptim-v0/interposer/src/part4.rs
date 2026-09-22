@@ -468,6 +468,7 @@ mod tests {
             instance_dir: d.clone(),
             launcher_exe: Some(launcher),
             upstream_commit: UPSTREAM_DEFAULT.to_string(),
+            appcds_identity_normal_gui: false,
             java_exe: java.clone().into_os_string(),
             java_args: vec![
                 OsString::from("-DauthToken=VERY_SECRET"),
@@ -519,6 +520,7 @@ mod tests {
             instance_dir: parsed.instance_dir.clone(),
             launcher_exe: parsed.launcher_exe.clone(),
             upstream_commit: parsed.upstream_commit.clone(),
+            appcds_identity_normal_gui: false,
             java_exe: java2.clone().into_os_string(),
             java_args: parsed.java_args.clone(),
         };
@@ -573,4 +575,210 @@ mod tests {
             OsString::from("--add-modules=ALL-MODULE-PATH")
         ]));
     }
+
+    #[test]
+    fn first_eligible_identity_trains_without_a_proof_only_launch() {
+        let d = temp_dir("immediate-train");
+        let plan_bytes = b"{\"identity\":\"first\"}\n";
+        let plan_sha = sha256_hex(plan_bytes);
+
+        let stable = persist_plan_and_compare(&d, plan_bytes, &plan_sha).unwrap();
+        assert!(!stable, "first observation must still be FIRST_OR_MISMATCH");
+        assert_eq!(prepare_eligible_cache(&d, &plan_sha).unwrap(), PrepareDecision::Train);
+        assert_eq!(read_training_plan(&d.join("training.meta")).unwrap(), plan_sha);
+        assert!(!d.join("ready.jsa").exists());
+
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn training_needs_clean_exit_and_a_later_matching_identity_before_ready() {
+        let d = temp_dir("train-confirm");
+        let plan_bytes = b"{\"identity\":\"same\"}\n";
+        let plan_sha = sha256_hex(plan_bytes);
+
+        assert!(!persist_plan_and_compare(&d, plan_bytes, &plan_sha).unwrap());
+        assert_eq!(prepare_eligible_cache(&d, &plan_sha).unwrap(), PrepareDecision::Train);
+
+        // A concurrent launch, crash/kill, or archive that appears before Pandora
+        // has observed a clean Java exit must not consume or promote anything.
+        assert_eq!(reconcile_training(&d, &plan_sha).unwrap(), TrainingReconcile::Matching);
+        assert_eq!(prepare_eligible_cache(&d, &plan_sha).unwrap(), PrepareDecision::Stock);
+        fs::write(d.join("training.jsa"), b"partial-or-final-looking").unwrap();
+        assert_eq!(prepare_eligible_cache(&d, &plan_sha).unwrap(), PrepareDecision::Stock);
+        assert!(!d.join("ready.jsa").exists());
+
+        // Only a later independently rebuilt exact identity plus the clean-exit
+        // marker may promote and be consumed by that later launch.
+        fs::write(d.join("training.complete"), b"complete\n").unwrap();
+        assert!(persist_plan_and_compare(&d, plan_bytes, &plan_sha).unwrap());
+        assert_eq!(reconcile_training(&d, &plan_sha).unwrap(), TrainingReconcile::Matching);
+        assert_eq!(prepare_eligible_cache(&d, &plan_sha).unwrap(), PrepareDecision::Ready);
+        assert!(d.join("ready.jsa").is_file());
+        assert!(d.join("ready.meta").is_file());
+        assert!(!d.join("training.meta").exists());
+        assert!(!d.join("training.complete").exists());
+
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn intervening_identity_mismatch_discards_training_and_falls_back() {
+        let d = temp_dir("training-mismatch");
+        let plan_a = "a".repeat(64);
+        let plan_b = "b".repeat(64);
+
+        assert_eq!(prepare_eligible_cache(&d, &plan_a).unwrap(), PrepareDecision::Train);
+        fs::write(d.join("training.jsa"), b"archive-a").unwrap();
+        fs::write(d.join("training.complete"), b"complete\n").unwrap();
+
+        assert_eq!(
+            reconcile_training(&d, &plan_b).unwrap(),
+            TrainingReconcile::Discarded("training-plan-mismatch")
+        );
+        assert!(!d.join("training.meta").exists());
+        assert!(!d.join("training.jsa").exists());
+        assert!(!d.join("training.complete").exists());
+        assert!(d.join("training.invalid").is_file());
+        assert!(!d.join("ready.jsa").exists());
+        assert_eq!(
+            prepare_eligible_cache(&d, &plan_b).unwrap(),
+            PrepareDecision::Stock,
+            "invalidated campaign must block a replacement writer until explicit reset"
+        );
+
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn corrupt_training_metadata_or_completion_never_promotes() {
+        let d = temp_dir("training-corrupt-meta");
+        let plan = "c".repeat(64);
+
+        fs::write(
+            d.join("training.meta"),
+            format!("schema={}\nplan_sha256={}\nunexpected=true\n", SCHEMA_VERSION, plan),
+        )
+        .unwrap();
+        fs::write(d.join("training.jsa"), b"archive").unwrap();
+        fs::write(d.join("training.complete"), b"complete\n").unwrap();
+        assert_eq!(
+            reconcile_training(&d, &plan).unwrap(),
+            TrainingReconcile::Discarded("training-metadata-corrupt")
+        );
+        assert!(d.join("training.invalid").is_file());
+        assert!(!d.join("ready.jsa").exists());
+        assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Stock);
+        let _ = fs::remove_dir_all(d);
+
+        let d = temp_dir("training-corrupt-complete");
+        assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Train);
+        fs::write(d.join("training.jsa"), b"archive").unwrap();
+        fs::write(d.join("training.complete"), b"not-complete\n").unwrap();
+        assert_eq!(
+            reconcile_training(&d, &plan).unwrap(),
+            TrainingReconcile::Discarded("training-completion-corrupt")
+        );
+        assert!(d.join("training.invalid").is_file());
+        assert!(!d.join("ready.jsa").exists());
+        assert!(!d.join("training.meta").exists());
+        assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Stock);
+
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn verified_ready_archive_reuses_exact_identity_without_plan_history_gate() {
+        let d = temp_dir("ready-reuse");
+        let plan = "d".repeat(64);
+        let staging = d.join("staging-ready.jsa");
+        fs::write(&staging, b"verified-ready").unwrap();
+        promote_archive(&d, &staging, &plan).unwrap();
+
+        assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Ready);
+        assert_eq!(prepare_eligible_cache(&d, &"e".repeat(64)).unwrap(), PrepareDecision::Stock);
+        assert_eq!(prepare_eligible_cache(&d, &plan).unwrap(), PrepareDecision::Ready);
+
+        let _ = fs::remove_dir_all(d);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn composed_first_run_strong_train_second_run_usn_reuse_promotes_ready() {
+        let root = temp_dir("composed-two-run");
+        let uuid = "a1234567-89ab-cdef-8123-456789abcdef";
+        write_ready_profile_control(&root, uuid);
+        fs::create_dir_all(root.join("runtime/bin")).unwrap();
+        fs::create_dir_all(root.join("mods")).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        let java = root.join("runtime/bin/javaw.exe");
+        let lib = root.join("library.jar");
+        fs::write(&java, b"fake-java-v1").unwrap();
+        fs::write(root.join("runtime/release"), b"JAVA_VERSION=\"25.0.4\"\n").unwrap();
+        fs::write(&lib, b"lib-v1-large-placeholder").unwrap();
+        fs::write(root.join("mods/mod.jar"), b"mod-v1-large-placeholder").unwrap();
+        fs::write(root.join("config/raw.cfg"), b"raw-config-v1").unwrap();
+        fs::write(
+            root.join("options.txt"),
+            b"resourcePacks:[\"vanilla\"]\nincompatibleResourcePacks:[]\n",
+        )
+        .unwrap();
+        let launcher = root.join("Pandora.exe");
+        fs::write(&launcher, b"launcher-v1").unwrap();
+
+        let parsed = ParsedArgs {
+            instance_dir: root.clone(),
+            launcher_exe: Some(launcher),
+            upstream_commit: UPSTREAM_DEFAULT.to_string(),
+            appcds_identity_normal_gui: true,
+            java_exe: java.into_os_string(),
+            java_args: vec![
+                OsString::from("-cp"),
+                env::join_paths([lib]).unwrap(),
+                OsString::from("com.moulberry.pandora.LaunchWrapper"),
+            ],
+        };
+
+        let scope = acquire_appcds_profile_scope(&root).unwrap();
+        let cache = root.join(".bootoptim/appcds");
+        bind_appcds_cache_namespace(&cache, scope.namespace()).unwrap();
+
+        let mut seed = IdentityDigestCache::begin(&cache, true);
+        let first =
+            build_launch_plan_for_namespace_with_cache(&parsed, scope.namespace(), &mut seed).unwrap();
+        assert_eq!(seed.stats().0, 0);
+        assert!(seed.stats().1 > 0);
+        seed.finish().unwrap();
+        assert!(cache.join(APPCDS_IDENTITY_MANIFEST).is_file());
+        assert!(!persist_plan_and_compare(&cache, &first.bytes, &first.sha256).unwrap());
+        assert_eq!(
+            prepare_eligible_cache(&cache, &first.sha256).unwrap(),
+            PrepareDecision::Train
+        );
+
+        fs::write(cache.join("training.jsa"), b"trained-archive").unwrap();
+        fs::write(cache.join("training.complete"), b"complete\n").unwrap();
+
+        let mut reuse = IdentityDigestCache::begin(&cache, true);
+        let second =
+            build_launch_plan_for_namespace_with_cache(&parsed, scope.namespace(), &mut reuse).unwrap();
+        assert_eq!(first.bytes, second.bytes);
+        assert!(reuse.stats().0 > 0);
+        assert_eq!(reuse.stats().1, 0);
+        reuse.finish().unwrap();
+
+        assert!(persist_plan_and_compare(&cache, &second.bytes, &second.sha256).unwrap());
+        assert_eq!(
+            reconcile_training(&cache, &second.sha256).unwrap(),
+            TrainingReconcile::Matching
+        );
+        assert_eq!(
+            prepare_eligible_cache(&cache, &second.sha256).unwrap(),
+            PrepareDecision::Ready
+        );
+        assert!(cache.join("ready.jsa").is_file());
+        assert!(!cache.join("training.meta").exists());
+        assert!(!cache.join("training.complete").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
 }
