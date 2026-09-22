@@ -36,9 +36,10 @@ game-library transaction marker. Minecraft/loader/loader-version changes persist
 **before** mutating dependency identity; if that state write fails, the change is rejected. After a successful
 identity mutation Pandora schedules the same provision-missing transaction against the new identity.
 It publishes only if the instance still has exactly that Minecraft/loader/loader-version identity.
-Publication itself is a process-local compare-and-set on the marker's expected incomplete reason,
-serialized with all Agent 202 marker writes, so a newer change, Repair or other marker transition
-cannot be overwritten between the stale-state check and the final write. Provisioning
+Each incomplete transition also receives a process-local monotonically increasing generation token.
+Publication is a serialized compare-and-set on both the expected reason and that exact generation,
+so even a repeated A→B→A update or two same-kind Repairs cannot let an older completion publish a
+newer transaction. Provisioning
 failure leaves the update incomplete and Start directs the user to Repair.
 
 Repair writes `repair-in-progress` before touching libraries and publishes `published` only after
@@ -103,7 +104,8 @@ completed; it is not a cryptographic statement about current library contents.
 - a newly downloaded library with the wrong SHA-1 is rejected and is not installed;
 - strong repair detects a corrupt SHA-1 and replaces it from a test HTTP origin;
 - interrupted/update-in-progress state blocks Start without auto-repair;
-- compare-and-set publication refuses to overwrite a newer marker transition;
+- compare-and-set publication refuses to overwrite a newer marker transition, including a repeated
+  transition with the same textual reason but a newer generation token;
 - cancelled Repair leaves an incomplete marker even when cancellation races with final publication;
 - corrupt marker fails closed;
 - diff excludes assets/AppCDS sources.
