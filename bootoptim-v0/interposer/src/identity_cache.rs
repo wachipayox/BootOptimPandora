@@ -100,7 +100,11 @@ impl Drop for IdentityPreflightDiagnostics {
         eprintln!(
             "BOOTOPTIM_APPCDS_IDENTITY_DIAG requested={} authority={} authority_reason={} manifest={} eligible={} reused={} strong={} unverifiable={} publication={}",
             self.request.requested,
-            if self.request.authorized { "accepted" } else { "rejected" },
+            if self.request.authorized {
+                "accepted"
+            } else {
+                "rejected"
+            },
             self.request.reason,
             self.manifest,
             self.eligible,
