@@ -1,0 +1,110 @@
+name: Agent 205 AppCDS composed two-run gate
+
+on:
+  pull_request:
+    paths:
+      - "bootoptim-v0/**"
+      - "crates/schema/**"
+      - "crates/bridge/**"
+      - "crates/command/**"
+      - "crates/backend/**"
+      - "crates/frontend/**"
+      - ".github/workflows/agent205-appcds-compose.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent205-appcds-compose-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install system dependencies
+        run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
+      - name: Whitespace and scoped formatting
+        run: |
+          git diff --check 7a821e8d5f89c71677d149b3140e21f4ed171ec4...HEAD
+          rustfmt --edition 2024 --check bootoptim-v0/ntfs_usn_direct.rs bootoptim-v0/interposer/src/identity_cache.rs bootoptim-v0/interposer/src/part1.rs bootoptim-v0/interposer/src/part2.rs bootoptim-v0/interposer/src/part4.rs crates/backend/src/asset_usn_cache/windows_direct.rs
+      - name: Portable interposer suite
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
+      - name: Check affected crates
+        run: cargo check -p schema -p bridge -p command -p backend -p frontend --tests --frozen
+      - name: Toggle and authority
+        run: |
+          cargo test -p schema bootoptim_appcds_instance_preference_tests --frozen
+          cargo test -p command bootoptim_appcds_instance_toggle_tests --frozen
+          cargo test -p command appcds_identity_authority_tests --frozen
+      - name: Clone isolation and exact clone
+        run: |
+          cargo test -p backend duplicate_skips_appcds_cache_but_preserves_other_bootoptim_state --frozen -- --test-threads=1
+          cargo test -p backend exact_clone --frozen -- --test-threads=1
+
+  focused-windows:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Composed interposer semantics
+        run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked --target x86_64-pc-windows-msvc -- --test-threads=1
+      - name: Shared direct NTFS and asset regression
+        run: cargo test -p backend asset_usn_cache --frozen --target x86_64-pc-windows-msvc -- --nocapture
+      - name: Command authority and toggle
+        run: cargo test -p command appcds --frozen --target x86_64-pc-windows-msvc
+      - name: Clone namespace and candidate
+        run: |
+          cargo test -p backend duplicate_skips_appcds_cache_but_preserves_other_bootoptim_state --frozen --target x86_64-pc-windows-msvc -- --test-threads=1
+          cargo test -p backend exact_clone --frozen --target x86_64-pc-windows-msvc -- --test-threads=1
+      - name: Restricted-token direct capability probe
+        shell: pwsh
+        run: |
+          cargo generate-lockfile --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml --offline
+          cargo run --manifest-path bootoptim-v0/usn-unprivileged-probe/Cargo.toml --locked --offline
+
+  windows-release:
+    needs: [focused-linux, focused-windows]
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Build one release candidate
+        run: |
+          cargo build --manifest-path bootoptim-v0/interposer/Cargo.toml --release --locked --target x86_64-pc-windows-msvc
+          cargo build -p pandora_launcher --release --frozen --target x86_64-pc-windows-msvc
+      - name: Assemble checksummed Windows artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifact | Out-Null
+          Copy-Item bootoptim-v0/interposer/target/x86_64-pc-windows-msvc/release/bootoptim-launch-interposer.exe artifact/
+          Copy-Item target/x86_64-pc-windows-msvc/release/pandora_launcher.exe artifact/BootOptimPandora-agent205.exe
+          "${{ github.sha }}" | Set-Content -NoNewline artifact/COMMIT.txt
+          $files = @(
+            "artifact/bootoptim-launch-interposer.exe",
+            "artifact/BootOptimPandora-agent205.exe"
+          )
+          $lines = foreach ($file in $files) {
+            $hash = Get-FileHash -Algorithm SHA256 $file
+            "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), (Split-Path $file -Leaf)
+          }
+          $lines | Set-Content -Encoding ascii artifact/SHA256SUMS.txt
+          Get-Content artifact/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bootoptim-pandora-agent205-${{ github.sha }}-windows-x86_64
+          path: artifact/*
+          if-no-files-found: error
