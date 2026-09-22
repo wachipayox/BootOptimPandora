@@ -84,9 +84,9 @@ impl BackendState {
 
         let identity_is_current = self
             .instance_state
-            .read()
+            .write()
             .instances
-            .get(id)
+            .get_mut(id)
             .is_some_and(|instance| {
                 let current = instance.configuration.get();
                 current.minecraft_version == expected_minecraft_version
@@ -638,7 +638,6 @@ impl BackendState {
                         return;
                     },
                 }
-                modal_action.set_finished();
             },
             MessageToBackend::SetContentEnabled {
                 id,
