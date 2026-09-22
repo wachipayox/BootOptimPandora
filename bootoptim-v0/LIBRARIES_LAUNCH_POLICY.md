@@ -100,10 +100,9 @@ completed; it is not a cryptographic statement about current library contents.
 - missing and corrupt libraries map to classpath paths with no file or network access in LaunchFast;
 - first-install provisioning leaves an existing corrupt library untouched and downloads only a
   missing library, validating only the downloaded bytes;
+- a newly downloaded library with the wrong SHA-1 is rejected and is not installed;
 - strong repair detects a corrupt SHA-1 and replaces it from a test HTTP origin;
 - interrupted/update-in-progress state blocks Start without auto-repair;
-- identity updates provision missing dependencies asynchronously and publish only for the still-current
-  identity/marker generation;
 - compare-and-set publication refuses to overwrite a newer marker transition;
 - cancelled Repair leaves an incomplete marker even when cancellation races with final publication;
 - corrupt marker fails closed;
@@ -123,7 +122,8 @@ Use the exact packaged Windows artifact and the same existing Start→Java marke
    republished.
 5. Corrupt one library in place; repeat Start (no repair/network), then Repair (detect + replace).
 6. Start Repair and cancel it; confirm marker remains incomplete and Start instructs Repair.
-7. Change Minecraft/loader version and interrupt before Repair; confirm Start stays blocked and does
-   not silently provision.
+7. Change Minecraft/loader version and interrupt its provision-missing update before publication.
+   After restart, confirm Start stays blocked and does not provision/repair from Start; recover with
+   **Repair game files**.
 8. Report Repair duration separately from Start→Java. Java→menu/TTMM is a different metric and no
    savings claim should be inferred from this launcher-phase change.

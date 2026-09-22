@@ -33,7 +33,7 @@ jobs:
         run: sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
       - name: Rustfmt touched-file diagnostic
         continue-on-error: true
-        run: rustfmt --edition 2024 --check --config skip_children=true crates/backend/src/backend.rs crates/backend/src/backend_handler.rs crates/backend/src/install_content.rs crates/backend/src/launcher_import/atlauncher.rs crates/backend/src/launcher_import/curseforge.rs crates/backend/src/launcher_import/modrinth.rs crates/backend/src/launcher_import/multimc.rs crates/backend/src/launch/mod.rs crates/backend/src/lib.rs crates/backend/src/library_install_state.rs crates/bridge/src/message.rs crates/frontend/src/root.rs crates/frontend/src/pages/instance/instance_page.rs
+        run: rustfmt --edition 2024 --check --config skip_children=true crates/backend/src/backend.rs crates/backend/src/backend_handler.rs crates/backend/src/install_content.rs crates/backend/src/launch/mod.rs crates/backend/src/lib.rs crates/backend/src/library_install_state.rs crates/bridge/src/message.rs crates/frontend/src/root.rs crates/frontend/src/pages/instance/instance_page.rs
       - name: Format new Agent 202 module
         run: rustfmt --edition 2024 --check --config skip_children=true crates/backend/src/library_install_state.rs
       - name: Reject whitespace errors in Agent 202 delta
@@ -43,10 +43,6 @@ jobs:
             crates/backend/src/backend.rs \
             crates/backend/src/backend_handler.rs \
             crates/backend/src/install_content.rs \
-            crates/backend/src/launcher_import/atlauncher.rs \
-            crates/backend/src/launcher_import/curseforge.rs \
-            crates/backend/src/launcher_import/modrinth.rs \
-            crates/backend/src/launcher_import/multimc.rs \
             crates/backend/src/launch/mod.rs \
             crates/backend/src/lib.rs \
             crates/backend/src/library_install_state.rs \
