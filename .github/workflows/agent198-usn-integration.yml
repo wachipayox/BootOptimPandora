@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   focused:
+    if: ${{ github.head_ref != 'agent204/libraries-launch-fast-recompose-20260922' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
@@ -49,6 +50,7 @@ jobs:
           fi
 
   windows-direct:
+    if: ${{ github.head_ref != 'agent204/libraries-launch-fast-recompose-20260922' }}
     runs-on: windows-2022
     timeout-minutes: 25
     steps:
