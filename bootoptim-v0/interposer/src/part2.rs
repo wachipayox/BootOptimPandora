@@ -8,7 +8,7 @@ fn build_launch_plan_with_cache(
     identity_cache: &mut IdentityDigestCache,
 ) -> io::Result<LaunchPlan> {
     let java_path = absolute_path(&parsed.instance_dir, Path::new(&parsed.java_exe));
-    let java_hash = identity_cache.resolve_raw("java", &java_path).ok().map(|(_, digest)| digest);
+    let java_hash = hash_file(&java_path).ok();
     let java_root = java_path.parent().and_then(Path::parent).map(Path::to_path_buf);
     let release_path = java_root.as_ref().map(|p| p.join("release"));
     let release_hash = release_path.as_ref().and_then(|p| hash_file(p).ok());
@@ -93,8 +93,8 @@ fn build_launch_plan_with_cache(
     };
 
     let helper_path = env::current_exe().ok();
-    let helper_artifact = helper_path.as_ref().and_then(|p| artifact_from_path_with_cache("helper", p, identity_cache).ok());
-    let launcher_artifact = parsed.launcher_exe.as_ref().and_then(|p| artifact_from_path_with_cache("launcher", p, identity_cache).ok());
+    let helper_artifact = helper_path.as_ref().and_then(|p| artifact_from_path("helper", p).ok());
+    let launcher_artifact = parsed.launcher_exe.as_ref().and_then(|p| artifact_from_path("launcher", p).ok());
 
     let argv = parsed.java_args.iter().enumerate().map(|(index, arg)| {
         let sensitive = is_sensitive_arg(arg);

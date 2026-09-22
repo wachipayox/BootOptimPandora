@@ -27,10 +27,12 @@ path record:
 
 No size, mtime, ChangeTime, TTL or watcher event is an acceptance predicate.
 
-The small inputs with existing semantic canonicalization (selected config files), Java
-\`release\`, resource-pack selection and READY archive verification remain on their stock
-paths. This deliberately optimizes the large byte-sensitive identity inputs without
-changing the bytes produced by \`launch-plan.json\`.
+The incremental cache is deliberately limited to classpath, module-path, mod and raw
+pack-input files. The Java executable, helper/launcher components, selected config files
+with semantic canonicalization, Java \`release\`, resource-pack selection and READY archive
+verification remain on their stock hashing paths. This keeps accessory/cross-volume
+components from becoming a prerequisite for reuse of the large byte-sensitive identity
+inputs and does not change the bytes produced by \`launch-plan.json\`.
 
 ## Shared direct capability
 
