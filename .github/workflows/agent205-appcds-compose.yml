@@ -95,7 +95,7 @@ jobs:
           "${{ github.sha }}" | Set-Content -NoNewline artifact/COMMIT.txt
           $files = @(
             "artifact/bootoptim-launch-interposer.exe",
-            "artifact/BootOptimPandora-agent205.exe"
+            "artifact/BootOptimPandora-agent206.exe"
           )
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash -Algorithm SHA256 $file
