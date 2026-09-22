@@ -111,6 +111,7 @@ mod config_identity_tests {
             instance_dir: d.clone(),
             launcher_exe: Some(launcher),
             upstream_commit: UPSTREAM_DEFAULT.to_string(),
+            appcds_identity_normal_gui: false,
             java_exe: java.clone().into_os_string(),
             java_args: vec![OsString::from("-cp"), env::join_paths([lib.clone()]).unwrap(), OsString::from("com.moulberry.pandora.LaunchWrapper")],
         };
@@ -146,5 +147,184 @@ mod config_identity_tests {
         fs::write(&java, b"fake-java-v2").unwrap();
         assert_ne!(p1.sha256, build_launch_plan(&parsed).unwrap().sha256);
         let _ = fs::remove_dir_all(d);
+    }
+}
+
+
+#[cfg(test)]
+mod appcds_incremental_identity_plan_tests {
+    use super::*;
+
+    fn fixture(label: &str) -> (PathBuf, ParsedArgs, PathBuf) {
+        let root = env::temp_dir().join(format!("bootoptim-incremental-{label}-{}", unique_suffix()));
+        fs::create_dir_all(root.join("runtime/bin")).unwrap();
+        fs::create_dir_all(root.join("mods")).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        let java = root.join(if cfg!(windows) { "runtime/bin/javaw.exe" } else { "runtime/bin/java" });
+        let lib = root.join("library.jar");
+        fs::write(&java, b"fake-java-v1").unwrap();
+        fs::write(
+            root.join("runtime/release"),
+            b"JAVA_VERSION=\"25.0.4\"\nIMPLEMENTOR=\"Oracle Corporation\"\n",
+        )
+        .unwrap();
+        fs::write(&lib, b"lib-v1").unwrap();
+        fs::write(root.join("mods/mod.jar"), b"mod-v1").unwrap();
+        fs::write(root.join("config/raw.cfg"), b"raw-config-v1").unwrap();
+        fs::write(
+            root.join("options.txt"),
+            b"resourcePacks:[\"vanilla\"]\nincompatibleResourcePacks:[]\n",
+        )
+        .unwrap();
+        let launcher = root.join("Pandora.exe");
+        fs::write(&launcher, b"launcher-v1").unwrap();
+        let parsed = ParsedArgs {
+            instance_dir: root.clone(),
+            launcher_exe: Some(launcher),
+            upstream_commit: UPSTREAM_DEFAULT.to_string(),
+            appcds_identity_normal_gui: true,
+            java_exe: java.into_os_string(),
+            java_args: vec![
+                OsString::from("-cp"),
+                env::join_paths([lib.clone()]).unwrap(),
+                OsString::from("com.moulberry.pandora.LaunchWrapper"),
+            ],
+        };
+        (root, parsed, lib)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn seed_and_reuse_preserve_launch_plan_bytes_exactly() {
+        let (root, parsed, _) = fixture("bytes");
+        let stock = build_launch_plan(&parsed).unwrap();
+        let cache_dir = root.join(".identity-test");
+        fs::create_dir_all(&cache_dir).unwrap();
+
+        let mut seed = IdentityDigestCache::begin(&cache_dir, true);
+        let seeded = build_launch_plan_with_cache(&parsed, &mut seed).unwrap();
+        seed.finish().unwrap();
+        assert_eq!(stock.bytes, seeded.bytes);
+        assert!(seed.stats().1 > 0);
+
+        let mut reuse = IdentityDigestCache::begin(&cache_dir, true);
+        let reused = build_launch_plan_with_cache(&parsed, &mut reuse).unwrap();
+        reuse.finish().unwrap();
+        assert_eq!(stock.bytes, reused.bytes);
+        assert!(reuse.stats().0 > 0);
+        assert_eq!(reuse.stats().1, 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn same_size_restored_mtime_mutation_hashes_stock_and_changes_plan() {
+        let (root, parsed, lib) = fixture("mtime");
+        let cache_dir = root.join(".identity-test");
+        fs::create_dir_all(&cache_dir).unwrap();
+        let mut seed = IdentityDigestCache::begin(&cache_dir, true);
+        let before = build_launch_plan_with_cache(&parsed, &mut seed).unwrap();
+        seed.finish().unwrap();
+
+        let modified = fs::metadata(&lib).unwrap().modified().unwrap();
+        fs::write(&lib, b"LIB-V2").unwrap();
+        OpenOptions::new()
+            .write(true)
+            .open(&lib)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+
+        let mut second = IdentityDigestCache::begin(&cache_dir, true);
+        let after = build_launch_plan_with_cache(&parsed, &mut second).unwrap();
+        assert_ne!(before.bytes, after.bytes);
+        assert!(second.stats().1 >= 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn delete_recreate_and_rename_do_not_reuse_old_record() {
+        let (root, mut parsed, lib) = fixture("replace");
+        let cache_dir = root.join(".identity-test");
+        fs::create_dir_all(&cache_dir).unwrap();
+        let mut seed = IdentityDigestCache::begin(&cache_dir, true);
+        let original = build_launch_plan_with_cache(&parsed, &mut seed).unwrap();
+        seed.finish().unwrap();
+
+        fs::remove_file(&lib).unwrap();
+        fs::write(&lib, b"lib-v1").unwrap();
+        let mut recreate = IdentityDigestCache::begin(&cache_dir, true);
+        let recreated = build_launch_plan_with_cache(&parsed, &mut recreate).unwrap();
+        assert_eq!(original.bytes, recreated.bytes);
+        assert!(recreate.stats().1 >= 1);
+
+        let renamed = root.join("renamed-library.jar");
+        fs::rename(&lib, &renamed).unwrap();
+        parsed.java_args[1] = env::join_paths([renamed]).unwrap();
+        let mut rename = IdentityDigestCache::begin(&cache_dir, true);
+        let renamed_plan = build_launch_plan_with_cache(&parsed, &mut rename).unwrap();
+        assert_ne!(original.bytes, renamed_plan.bytes);
+        assert!(rename.stats().1 >= 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn corrupt_or_partial_manifest_forces_seed_hashes() {
+        let (root, parsed, _) = fixture("corrupt");
+        let cache_dir = root.join(".identity-test");
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::write(cache_dir.join(APPCDS_IDENTITY_MANIFEST), b"corrupt").unwrap();
+        let mut corrupt = IdentityDigestCache::begin(&cache_dir, true);
+        let stock = build_launch_plan(&parsed).unwrap();
+        let from_corrupt = build_launch_plan_with_cache(&parsed, &mut corrupt).unwrap();
+        assert_eq!(stock.bytes, from_corrupt.bytes);
+        assert_eq!(corrupt.stats().0, 0);
+        assert!(corrupt.stats().1 > 0);
+
+        fs::write(
+            cache_dir.join(APPCDS_IDENTITY_MANIFEST),
+            b"BOOTOPTIM_APPCDS_IDENTITY_V1\ncount=4\n",
+        )
+        .unwrap();
+        let mut partial = IdentityDigestCache::begin(&cache_dir, true);
+        let from_partial = build_launch_plan_with_cache(&parsed, &mut partial).unwrap();
+        assert_eq!(stock.bytes, from_partial.bytes);
+        assert_eq!(partial.stats().0, 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lock_contention_is_one_shot_and_never_authorizes_reuse() {
+        let root = env::temp_dir().join(format!("bootoptim-lock-test-{}", unique_suffix()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("cache.lock");
+        let first = try_lock(&path).unwrap().unwrap();
+        assert!(try_lock(&path).unwrap().is_none());
+        drop(first);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reparse_or_handle_capability_failure_cannot_publish_reuse_record() {
+        let root = env::temp_dir().join(format!("bootoptim-reparse-test-{}", unique_suffix()));
+        fs::create_dir_all(&root).unwrap();
+        let target = root.join("target");
+        let link = root.join("link");
+        fs::write(&target, b"target").unwrap();
+        if std::os::windows::fs::symlink_file(&target, &link).is_err() {
+            let _ = fs::remove_dir_all(root);
+            return;
+        }
+        let mut cache = IdentityDigestCache::begin(&root, true);
+        let (_, digest) = cache.resolve_raw("classpath", &link).unwrap();
+        assert_eq!(digest, hash_file(&target).unwrap());
+        assert_eq!(cache.stats().0, 0);
+        assert!(!cache.complete);
+        cache.finish().unwrap();
+        assert!(!root.join(APPCDS_IDENTITY_MANIFEST).exists());
+        let _ = fs::remove_dir_all(root);
     }
 }
