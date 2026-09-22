@@ -1788,10 +1788,14 @@ impl BackendState {
         let instance_dir = self.directories.instances_dir.join(name);
 
         _ = std::fs::create_dir_all(&instance_dir);
-        if let Err(err) = crate::library_install_state::mark_incomplete(&instance_dir, "new-install") {
-            self.send.send_error(format!("Unable to create instance game-files state: {err}"));
-            return None;
-        }
+        let install_generation =
+            match crate::library_install_state::mark_incomplete(&instance_dir, "new-install") {
+                Ok(generation) => generation,
+                Err(err) => {
+                    self.send.send_error(format!("Unable to create instance game-files state: {err}"));
+                    return None;
+                },
+            };
 
         let mut instance_info = InstanceConfiguration::new(version.into(), loader);
 
@@ -1829,9 +1833,10 @@ impl BackendState {
         {
             Ok(()) => {
                 if publish_after_provision {
-                    match crate::library_install_state::publish_if_incomplete_reason(
+                    match crate::library_install_state::publish_if_incomplete_generation(
                         &instance_dir,
                         "new-install",
+                        install_generation,
                         "initial-install-complete",
                     ) {
                         Ok(true) => {},
