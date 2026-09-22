@@ -31,10 +31,9 @@ through the final content copy and publishes only after the entire install path 
 existing-instance content install changes the loader, its provision-missing dependency step is
 awaited inside that install operation before publication rather than being left as background work.
 
-Imports from ATLauncher, CurseForge, Modrinth and MultiMC write `import-in-progress` before
-copying/publishing the imported instance, so an interrupted import cannot silently become a
-launchable legacy install. Minecraft/loader/loader-version changes persist `incomplete` **before**
-mutating dependency identity; if that state write fails, the change is rejected. After a successful
+Launcher-to-launcher imports keep their pre-policy compatibility behavior and are outside this
+game-library transaction marker. Minecraft/loader/loader-version changes persist `incomplete`
+**before** mutating dependency identity; if that state write fails, the change is rejected. After a successful
 identity mutation Pandora schedules the same provision-missing transaction against the new identity.
 It publishes only if the instance still has exactly that Minecraft/loader/loader-version identity.
 Publication itself is a process-local compare-and-set on the marker's expected incomplete reason,
