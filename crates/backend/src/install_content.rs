@@ -223,9 +223,10 @@ impl BackendState {
             }
         }
 
-        let mut instance_lock_guard = None;
+        {
+            let mut instance_lock_guard = None;
 
-        if let bridge::install::InstallTarget::Instance(instance_id) = content.target {
+            if let bridge::install::InstallTarget::Instance(instance_id) = content.target {
             let mut instance_state = self.instance_state.write();
             if let Some(instance) = instance_state.instances.get_mut(instance_id) {
                 instance_running = !instance.processes.is_empty();
@@ -304,7 +305,8 @@ impl BackendState {
             }
         }
 
-        drop(instance_lock_guard);
+            drop(instance_lock_guard);
+        }
 
         if !content_copy_failed
             && !modal_action.has_requested_cancel()
