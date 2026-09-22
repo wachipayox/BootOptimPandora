@@ -166,8 +166,14 @@ mod tests {
     #[test]
     fn cancelled_repair_does_not_publish() {
         let root = root("cancel");
-        mark_incomplete(&root, "repair-in-progress").unwrap();
-        assert_eq!(start_status(&root).unwrap(), StartStatus::Incomplete("repair-in-progress".to_owned()));
+        let repair_generation = mark_incomplete(&root, "repair-in-progress").unwrap();
+        mark_incomplete(&root, "repair-cancelled").unwrap();
+
+        assert!(
+            !publish_if_incomplete_generation(&root, "repair-in-progress", repair_generation, "repair-complete",)
+                .unwrap()
+        );
+        assert_eq!(start_status(&root).unwrap(), StartStatus::Incomplete("repair-cancelled".to_owned()));
         let _ = std::fs::remove_dir_all(root);
     }
 
