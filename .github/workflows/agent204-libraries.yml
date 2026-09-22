@@ -49,6 +49,13 @@ jobs:
             crates/bridge/src/message.rs \
             crates/frontend/src/root.rs \
             crates/frontend/src/pages/instance/instance_page.rs
+      - name: Assert Repair is sole library network authority
+        shell: bash
+        run: |
+          if git grep -n -E 'ProvisionMissing|provision_game_files|do_libraries_install_missing' -- crates/backend/src; then
+            echo 'install/update library provisioning authority must not exist outside explicit Repair' >&2
+            exit 1
+          fi
       - name: Check affected crates
         run: cargo check -p bridge -p backend -p frontend --tests --frozen
       - name: Test library launch policy

@@ -200,7 +200,7 @@ impl BackendState {
         let mut dot_minecraft_dir = None;
         let mut new_instance_root = None;
         let mut new_instance_generation = None;
-        let mut identity_provision = None;
+        let mut identity_publish = None;
         let mut instance_running = false;
         let mut content_copy_failed = false;
 
@@ -257,7 +257,7 @@ impl BackendState {
                     instance.configuration.modify(|config| {
                         config.loader = loader;
                     });
-                    identity_provision = Some((
+                    identity_publish = Some((
                         instance_id,
                         instance.root_path.clone(),
                         instance.configuration.get().clone(),
@@ -325,19 +325,16 @@ impl BackendState {
         if !content_copy_failed
             && !modal_action.has_requested_cancel()
             && modal_action.get_finished_at().is_none()
-            && let Some((instance_id, root_path, configuration, marker_generation)) = identity_provision
+            && let Some((instance_id, root_path, configuration, marker_generation)) = identity_publish
         {
             let cancellation_root = root_path.clone();
-            match self
-                .provision_game_files_for_identity_change(
-                    instance_id,
-                    root_path,
-                    configuration,
-                    "content-install-loader-changed",
-                    marker_generation,
-                    &modal_action,
-                )
-                .await
+            match self.publish_game_files_after_identity_change(
+                instance_id,
+                root_path,
+                configuration,
+                "content-install-loader-changed",
+                marker_generation,
+            )
             {
                 Ok(true) => {
                     if modal_action.has_requested_cancel() {
@@ -356,7 +353,7 @@ impl BackendState {
                 Err(err) => {
                     modal_action.set_finished_with_error(
                         format!(
-                            "Content installed, but game-file provisioning did not complete ({err}); use Repair game files"
+                            "Content installed, but game-file publication did not complete ({err}); use Repair game files"
                         )
                         .into(),
                     );

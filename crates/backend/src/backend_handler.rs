@@ -64,24 +64,17 @@ use crate::{
 };
 
 impl BackendState {
-    pub(crate) async fn provision_game_files_for_identity_change(
+    pub(crate) fn publish_game_files_after_identity_change(
         self: &Arc<Self>,
         id: InstanceID,
         root_path: Arc<Path>,
         configuration: schema::instance::InstanceConfiguration,
         marker_reason: &'static str,
         marker_generation: u64,
-        modal_action: &ModalAction,
     ) -> Result<bool, String> {
         let expected_minecraft_version = configuration.minecraft_version;
         let expected_loader = configuration.loader;
         let expected_loader_version = configuration.preferred_loader_version;
-
-        let http_client = self.http_client_provider.redirecting();
-        self.launcher
-            .provision_game_files(&http_client, configuration, modal_action)
-            .await
-            .map_err(|err| format!("Game-file provisioning failed: {err}"))?;
 
         let identity_is_current = self
             .instance_state
@@ -97,9 +90,6 @@ impl BackendState {
         if !identity_is_current {
             return Ok(false);
         }
-        if modal_action.has_requested_cancel() {
-            return Err("Game-file provisioning was cancelled".to_string());
-        }
 
         library_install_state::publish_if_incomplete_generation(
             &root_path,
@@ -110,7 +100,7 @@ impl BackendState {
         .map_err(|err| format!("Game-files state could not be published: {err}"))
     }
 
-    fn schedule_game_files_after_identity_change(
+    fn finish_game_files_after_identity_change(
         self: &Arc<Self>,
         id: InstanceID,
         root_path: Arc<Path>,
@@ -118,35 +108,24 @@ impl BackendState {
         marker_reason: &'static str,
         marker_generation: u64,
     ) {
-        let this = self.clone();
-        tokio::task::spawn(async move {
-            let modal_action = ModalAction::default();
-            match this
-                .provision_game_files_for_identity_change(
-                    id,
-                    root_path,
-                    configuration,
-                    marker_reason,
-                    marker_generation,
-                    &modal_action,
-                )
-                .await
-            {
-                Ok(true) => {},
-                Ok(false) => {
-                    log::debug!(
-                        "Skipping stale game-files publication for marker reason {marker_reason}"
-                    );
-                },
-                Err(err) => {
-                    log::warn!("{err}");
-                    this.send.send_warning(format!(
-                        "Game files are incomplete after the version/loader change ({err}); use Repair game files"
-                    ));
-                },
-            }
-            modal_action.set_finished();
-        });
+        match self.publish_game_files_after_identity_change(
+            id,
+            root_path,
+            configuration,
+            marker_reason,
+            marker_generation,
+        ) {
+            Ok(true) => {},
+            Ok(false) => {
+                log::debug!("Skipping stale game-files publication for marker reason {marker_reason}");
+            },
+            Err(err) => {
+                log::warn!("{err}");
+                self.send.send_warning(format!(
+                    "Game files remain incomplete after the version/loader change ({err}); use Repair game files"
+                ));
+            },
+        }
     }
 
     pub async fn handle_message(self: &Arc<Self>, message: MessageToBackend) {
@@ -309,7 +288,7 @@ impl BackendState {
                     ))
                 };
                 if let Some((root_path, configuration, marker_generation)) = provision {
-                    self.schedule_game_files_after_identity_change(
+                    self.finish_game_files_after_identity_change(
                         id,
                         root_path,
                         configuration,
@@ -348,7 +327,7 @@ impl BackendState {
                     ))
                 };
                 if let Some((root_path, configuration, marker_generation)) = provision {
-                    self.schedule_game_files_after_identity_change(
+                    self.finish_game_files_after_identity_change(
                         id,
                         root_path,
                         configuration,
@@ -396,7 +375,7 @@ impl BackendState {
                     ))
                 };
                 if let Some((root_path, configuration, marker_generation)) = provision {
-                    self.schedule_game_files_after_identity_change(
+                    self.finish_game_files_after_identity_change(
                         id,
                         root_path,
                         configuration,

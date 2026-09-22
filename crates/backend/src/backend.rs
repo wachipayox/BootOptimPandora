@@ -1758,7 +1758,7 @@ impl BackendState {
         version: &str,
         loader: Loader,
         icon: Option<EmbeddedOrRaw>,
-        publish_after_provision: bool,
+        publish_after_create: bool,
     ) -> Option<PathBuf> {
         log::info!("Creating instance {name}");
         if !crate::fs::is_single_component_path_str(&name) {
@@ -1821,50 +1821,33 @@ impl BackendState {
         let info_path = instance_dir.join("info_v1.json");
         crate::fs::write_safe(&info_path, serde_json::to_string(&instance_info).unwrap().as_bytes()).unwrap();
 
-        // First install provisions only missing game libraries. Existing
-        // library bytes are trusted here and are never opened or hashed; the
-        // explicit Repair action remains the only full integrity authority.
-        let install_modal = ModalAction::default();
-        let http_client = self.http_client_provider.redirecting();
-        match self
-            .launcher
-            .provision_game_files(&http_client, instance_info.clone(), &install_modal)
-            .await
-        {
-            Ok(()) => {
-                if publish_after_provision {
-                    match crate::library_install_state::publish_if_incomplete_generation(
-                        &instance_dir,
-                        "new-install",
-                        install_generation,
-                        "initial-install-complete",
-                    ) {
-                        Ok(true) => {},
-                        Ok(false) => self.send.send_warning(
-                            "Instance created, but game-files state changed before publication; use Repair game files"
-                                .to_string(),
-                        ),
-                        Err(err) => self.send.send_warning(format!(
-                            "Instance created, but game-files state could not be published ({err}); use Repair game files"
-                        )),
-                    }
-                } else if let Err(err) = crate::library_install_state::mark_incomplete(
-                    &instance_dir,
-                    "content-install-in-progress",
-                ) {
-                    self.send.send_warning(format!(
-                        "Game files were provisioned, but content-install state could not be recorded ({err}); use Repair game files"
-                    ));
-                }
-            },
-            Err(err) => {
-                log::warn!("Initial game-file provisioning failed: {err:?}");
-                self.send.send_warning(format!(
-                    "Instance created with incomplete game files ({err}); use Repair game files"
-                ));
-            },
+        // Instance creation owns only transactional publication state.
+        // It never verifies, downloads or repairs game libraries; explicit
+        // Repair game files is the sole strong library authority.
+        if publish_after_create {
+            match crate::library_install_state::publish_if_incomplete_generation(
+                &instance_dir,
+                "new-install",
+                install_generation,
+                "initial-install-complete",
+            ) {
+                Ok(true) => {},
+                Ok(false) => self.send.send_warning(
+                    "Instance created, but game-files state changed before publication; use Repair game files"
+                        .to_string(),
+                ),
+                Err(err) => self.send.send_warning(format!(
+                    "Instance created, but game-files state could not be published ({err}); use Repair game files"
+                )),
+            }
+        } else if let Err(err) = crate::library_install_state::mark_incomplete(
+            &instance_dir,
+            "content-install-in-progress",
+        ) {
+            self.send.send_warning(format!(
+                "Instance created, but content-install state could not be recorded ({err}); use Repair game files"
+            ));
         }
-        install_modal.set_finished();
 
         Some(instance_dir.clone())
     }

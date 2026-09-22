@@ -83,7 +83,6 @@ pub enum AddVanillaJar {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LibraryLoadMode {
     LaunchFast,
-    ProvisionMissing,
     VerifyAndRepair,
 }
 
@@ -596,8 +595,7 @@ impl Launcher {
         let version: PartialMinecraftVersion = serde_json::from_slice(&version_file.bytes()?)?;
 
         // Embedded Maven entries are libraries. LaunchFast never mutates them.
-        // Provisioning creates only missing entries; Repair keeps the stock
-        // overwrite/verification authority.
+        // Repair keeps the stock overwrite/verification authority.
         if library_mode != LibraryLoadMode::LaunchFast {
             for entry in installer_zip.entries() {
                 if entry.kind() != EntryKind::File {
@@ -609,9 +607,6 @@ impl Launcher {
                         continue;
                     };
                     let path_in_library = safe.to_path(&self.directories.libraries_dir);
-                    if library_mode == LibraryLoadMode::ProvisionMissing && path_in_library.exists() {
-                        continue;
-                    }
                     let Ok(bytes) = entry.bytes() else {
                         continue;
                     };
@@ -647,11 +642,7 @@ impl Launcher {
 
                 let path = self.directories.libraries_dir.join(artifact.path);
 
-                if library_mode == LibraryLoadMode::ProvisionMissing {
-                    if path.exists() {
-                        return None;
-                    }
-                } else if let Some(sha1) = &artifact.sha1 {
+                if let Some(sha1) = &artifact.sha1 {
                     let mut expected_hash = [0u8; 20];
                     if hex::decode_to_slice(sha1.as_str(), &mut expected_hash).is_ok()
                         && crate::fs::check_sha1_hash(&path, expected_hash).unwrap_or(false)
@@ -738,13 +729,7 @@ impl Launcher {
 
                 let jar = MavenCoordinate::create(&processor.jar);
 
-                // Repair keeps stock SHA-1 output validation. Provisioning only
-                // checks whether declared outputs exist, avoiding a full hash pass.
-                let skip = if library_mode == LibraryLoadMode::ProvisionMissing {
-                    self.can_skip_forge_processor_without_hash(&jar, processor, &data)
-                } else {
-                    self.can_skip_forge_processor(&jar, processor, &data)
-                };
+                let skip = self.can_skip_forge_processor(&jar, processor, &data);
                 if skip {
                     processor_tracker.add_count(1);
                     continue;
@@ -870,9 +855,7 @@ impl Launcher {
             return Err(LoadLibrariesError::IllegalLibraryPath(forge_path.into()).into());
         }
         let forge_artifact_path = self.directories.libraries_dir.join(forge_path.as_str());
-        if library_mode == LibraryLoadMode::VerifyAndRepair
-            || (library_mode == LibraryLoadMode::ProvisionMissing && !forge_artifact_path.exists())
-        {
+        if library_mode == LibraryLoadMode::VerifyAndRepair {
             crate::fs::write_safe(&forge_artifact_path, &file.bytes()?)?;
         }
 
@@ -1116,19 +1099,6 @@ impl Launcher {
     ) -> Result<Vec<(Ustr, PathBuf)>, LoadLibrariesError> {
         let result = match library_mode {
             LibraryLoadMode::LaunchFast => resolve_library_paths(artifacts, &self.directories.libraries_dir),
-            LibraryLoadMode::ProvisionMissing => {
-                let libraries_tracker =
-                    modal_action.push_tracker(Arc::from("Installing missing game libraries"));
-                let result = do_libraries_install_missing(
-                    http_client,
-                    artifacts,
-                    self.directories.libraries_dir.clone(),
-                    &libraries_tracker,
-                )
-                .await;
-                libraries_tracker.set_finished(ProgressTrackerFinishType::from_err(result.is_err()));
-                result
-            },
             LibraryLoadMode::VerifyAndRepair => {
                 let libraries_tracker =
                     modal_action.push_tracker(Arc::from("Verifying integrity of game libraries"));
@@ -1146,62 +1116,6 @@ impl Launcher {
 
         launch_tracker.add_count(1);
         result
-    }
-
-    pub async fn provision_game_files(
-        &self,
-        http_client: &reqwest::Client,
-        instance_info: InstanceConfiguration,
-        modal_action: &ModalAction,
-    ) -> Result<(), LaunchError> {
-        let install_tracker = modal_action.push_tracker(Arc::from("Installing game files"));
-        let (version_info, add_vanilla_jar) = self
-            .create_launch_version(
-                http_client,
-                modal_action,
-                &install_tracker,
-                &instance_info,
-                LibraryLoadMode::ProvisionMissing,
-            )
-            .await?;
-
-        let launch_rule_context = LaunchRuleContext {
-            is_demo_user: false,
-            custom_resolution: None,
-            quick_play: None,
-        };
-        let mut artifacts = Vec::new();
-        let mut natives_to_extract = HashMap::new();
-        launch_rule_context.collect_libraries(
-            &version_info.libraries,
-            &mut artifacts,
-            &mut natives_to_extract,
-        );
-        if add_vanilla_jar == AddVanillaJar::Yes {
-            let client_download = &version_info.downloads.client;
-            artifacts.push(GameLibraryArtifact {
-                path: format!(
-                    "net/minecraft/{0}/minecraft-client-{0}.jar",
-                    instance_info.minecraft_version
-                )
-                .into(),
-                sha1: Some(client_download.sha1),
-                size: Some(client_download.size),
-                url: client_download.url,
-            });
-        }
-
-        self.load_libraries(
-            http_client,
-            &artifacts,
-            modal_action,
-            &install_tracker,
-            LibraryLoadMode::ProvisionMissing,
-        )
-        .await?;
-
-        install_tracker.set_finished(ProgressTrackerFinishType::Normal);
-        Ok(())
     }
 
     pub async fn repair_game_files(
@@ -1335,30 +1249,6 @@ impl Launcher {
         };
 
         Some(expand_logging_argument(client.argument.as_str(), &path))
-    }
-
-    fn can_skip_forge_processor_without_hash(
-        &self,
-        jar: &MavenCoordinate<'_>,
-        processor: &schema::forge::ForgeInstallProcessor,
-        data: &FxHashMap<String, OsString>,
-    ) -> bool {
-        if let Some(outputs) = &processor.outputs {
-            if outputs.is_empty() {
-                return false;
-            }
-            for (key, _) in outputs {
-                let key = expand_forge_argument(key, data);
-                if !Path::new(&key).exists() {
-                    return false;
-                }
-            }
-            true
-        } else {
-            // The stock fallback for known processors uses only output
-            // existence checks when explicit output hashes are unavailable.
-            self.can_skip_forge_processor(jar, processor, data)
-        }
     }
 
     fn can_skip_forge_processor(&self, jar: &MavenCoordinate<'_>, processor: &schema::forge::ForgeInstallProcessor, data: &FxHashMap<String, OsString>) -> bool {
@@ -1990,97 +1880,6 @@ pub enum LoadLibrariesError {
     WrongHash,
     #[error("Illegal library path {0}, directory traversal?")]
     IllegalLibraryPath(Ustr),
-}
-
-async fn do_libraries_install_missing(
-    http_client: &reqwest::Client,
-    artifacts: &[GameLibraryArtifact],
-    libraries_dir: Arc<Path>,
-    libraries_tracker: &ProgressTracker,
-) -> Result<Vec<(Ustr, PathBuf)>, LoadLibrariesError> {
-    let download_semaphore = tokio::sync::Semaphore::new(8);
-    let started_downloading = AtomicBool::new(false);
-    let mut total_size = 0;
-    let mut tasks = Vec::new();
-
-    let _ = std::fs::create_dir_all(&libraries_dir);
-
-    for artifact in artifacts {
-        let expected_hash = if let Some(sha1) = &artifact.sha1 {
-            let mut expected_hash = [0u8; 20];
-            let Ok(_) = hex::decode_to_slice(sha1.as_str(), &mut expected_hash) else {
-                return Err(LoadLibrariesError::InvalidHash(*sha1));
-            };
-            Some(expected_hash)
-        } else {
-            None
-        };
-
-        if !path_is_normal(artifact.path.as_str()) {
-            return Err(LoadLibrariesError::IllegalLibraryPath(artifact.path));
-        }
-
-        let artifact_path = libraries_dir.join(artifact.path.as_str());
-        let Some(artifact_path_parent) = artifact_path.parent() else {
-            return Err(LoadLibrariesError::IllegalLibraryPath(artifact.path));
-        };
-        let _ = std::fs::create_dir_all(artifact_path_parent);
-
-        let tracker_size = artifact.size.unwrap_or(1000000);
-        total_size += tracker_size;
-
-        let started_downloading = &started_downloading;
-        let download_semaphore = &download_semaphore;
-
-        let task = async move {
-            // First-install/update provisioning trusts already-present files.
-            // Only missing artifacts are downloaded; existing library bytes are
-            // never opened or hashed here.
-            if artifact_path.exists() {
-                libraries_tracker.add_count(tracker_size as usize);
-                return Ok((artifact.path, artifact_path));
-            }
-
-            if !started_downloading.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                libraries_tracker.set_title(Arc::from("Downloading missing game libraries"));
-            }
-
-            let permit = download_semaphore.acquire().await.unwrap();
-            let response = http_client.get(artifact.url.as_str()).send().await?;
-            let bytes = Arc::new(response.bytes().await?);
-            drop(permit);
-
-            if let Some(artifact_size) = artifact.size
-                && bytes.len() != artifact_size as usize
-            {
-                return Err(LoadLibrariesError::WrongResponseSize(artifact_size as usize, bytes.len()));
-            }
-
-            if let Some(expected_hash) = expected_hash {
-                let bytes = Arc::clone(&bytes);
-                let correct_hash = tokio::task::spawn_blocking(move || {
-                    let mut hasher = Sha1::new();
-                    hasher.update(&*bytes);
-                    let actual_hash = hasher.finalize();
-                    expected_hash == *actual_hash
-                })
-                .await
-                .unwrap();
-
-                if !correct_hash {
-                    return Err(LoadLibrariesError::WrongHash);
-                }
-            }
-
-            tokio::fs::write(artifact_path.clone(), &*bytes).await?;
-            libraries_tracker.add_count(tracker_size as usize);
-            Ok((artifact.path, artifact_path))
-        };
-        tasks.push(task);
-    }
-
-    libraries_tracker.set_total(total_size as usize);
-    futures::future::try_join_all(tasks).await
 }
 
 async fn do_libraries_load(
@@ -3017,111 +2816,6 @@ mod agent202_library_policy_tests {
         assert_eq!(mapped.len(), 2);
         assert_eq!(std::fs::read(&corrupt).unwrap(), b"corrupt");
         assert!(!root.join("missing/c.jar").exists());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[tokio::test]
-    async fn first_install_trusts_existing_and_downloads_only_missing_libraries() {
-        let root = temp_dir("install-missing");
-        let existing = root.join("existing/corrupt.jar");
-        std::fs::create_dir_all(existing.parent().unwrap()).unwrap();
-        std::fs::write(&existing, b"corrupt-but-present").unwrap();
-
-        let body = b"new-library".to_vec();
-        let mut hasher = Sha1::new();
-        hasher.update(&body);
-        let expected = hex::encode(hasher.finalize());
-
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let response_body = body.clone();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0u8; 2048];
-            let _ = stream.read(&mut request);
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                response_body.len()
-            )
-            .unwrap();
-            stream.write_all(&response_body).unwrap();
-        });
-
-        let artifacts = vec![
-            GameLibraryArtifact {
-                path: "existing/corrupt.jar".into(),
-                sha1: Some("0000000000000000000000000000000000000000".into()),
-                size: Some(999),
-                url: "http://127.0.0.1:1/must-not-connect".into(),
-            },
-            GameLibraryArtifact {
-                path: "missing/new.jar".into(),
-                sha1: Some(expected.into()),
-                size: Some(body.len() as u32),
-                url: format!("http://{addr}/new.jar").into(),
-            },
-        ];
-
-        let modal = ModalAction::default();
-        let tracker = modal.push_tracker("install-missing-test".into());
-        let result = do_libraries_install_missing(
-            &reqwest::Client::new(),
-            &artifacts,
-            root.clone().into(),
-            &tracker,
-        )
-        .await
-        .unwrap();
-
-        server.join().unwrap();
-        assert_eq!(result.len(), 2);
-        assert_eq!(std::fs::read(&existing).unwrap(), b"corrupt-but-present");
-        assert_eq!(std::fs::read(root.join("missing/new.jar")).unwrap(), body);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[tokio::test]
-    async fn first_install_rejects_a_bad_new_download_hash() {
-        let root = temp_dir("install-bad-download");
-        let body = b"unexpected-library".to_vec();
-
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let response_body = body.clone();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0u8; 2048];
-            let _ = stream.read(&mut request);
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                response_body.len()
-            )
-            .unwrap();
-            stream.write_all(&response_body).unwrap();
-        });
-
-        let artifact = GameLibraryArtifact {
-            path: "missing/bad.jar".into(),
-            sha1: Some("0000000000000000000000000000000000000000".into()),
-            size: Some(body.len() as u32),
-            url: format!("http://{addr}/bad.jar").into(),
-        };
-
-        let modal = ModalAction::default();
-        let tracker = modal.push_tracker("install-bad-download-test".into());
-        let result = do_libraries_install_missing(
-            &reqwest::Client::new(),
-            &[artifact],
-            root.clone().into(),
-            &tracker,
-        )
-        .await;
-
-        server.join().unwrap();
-        assert!(matches!(result, Err(LoadLibrariesError::WrongHash)));
-        assert!(!root.join("missing/bad.jar").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 
