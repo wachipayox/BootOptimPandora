@@ -61,8 +61,8 @@ fn build_launch_plan_for_namespace_with_cache(
             if module_path.is_empty() {
                 module_path_valid = false;
             }
-        }
-        Ok(None) => {}
+        },
+        Ok(None) => {},
         Err(()) => module_path_valid = false,
     }
 
@@ -75,11 +75,15 @@ fn build_launch_plan_for_namespace_with_cache(
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let p = entry.path();
-                    if p.extension().and_then(OsStr::to_str).map(|s| s.eq_ignore_ascii_case("jar")).unwrap_or(false) {
+                    if p.extension()
+                        .and_then(OsStr::to_str)
+                        .map(|s| s.eq_ignore_ascii_case("jar"))
+                        .unwrap_or(false)
+                    {
                         paths.push(p);
                     }
                 }
-            }
+            },
             Err(_) => mods_valid = false,
         }
         // Mods are fingerprinted as an unordered set only. This sorting is for
@@ -102,9 +106,9 @@ fn build_launch_plan_for_namespace_with_cache(
     let (pack_inputs, pack_inputs_valid) = collect_pack_inputs_with_cache(&parsed.instance_dir, identity_cache);
     let resource_pack_selection_sha256 = resource_pack_selection_fingerprint(&parsed.instance_dir).ok();
     let pack_manifest_sha256 = if mods_valid && pack_inputs_valid {
-        resource_pack_selection_sha256.as_deref().map(|selection| {
-            pack_manifest_digest(&mods, &pack_inputs, selection)
-        })
+        resource_pack_selection_sha256
+            .as_deref()
+            .map(|selection| pack_manifest_digest(&mods, &pack_inputs, selection))
     } else {
         None
     };
@@ -113,21 +117,39 @@ fn build_launch_plan_for_namespace_with_cache(
     let helper_artifact = helper_path.as_ref().and_then(|p| artifact_from_path("helper", p).ok());
     let launcher_artifact = parsed.launcher_exe.as_ref().and_then(|p| artifact_from_path("launcher", p).ok());
 
-    let argv = parsed.java_args.iter().enumerate().map(|(index, arg)| {
-        let sensitive = is_sensitive_arg(arg);
-        ArgFingerprint {
-            index,
-            kind: classify_arg(arg),
-            sha256: if sensitive { "REDACTED".to_string() } else { sha256_hex(&os_bytes(arg)) },
-            safe_literal: if sensitive { None } else { safe_literal(arg) },
-        }
-    }).collect::<Vec<_>>();
+    let argv = parsed
+        .java_args
+        .iter()
+        .enumerate()
+        .map(|(index, arg)| {
+            let sensitive = is_sensitive_arg(arg);
+            ArgFingerprint {
+                index,
+                kind: classify_arg(arg),
+                sha256: if sensitive {
+                    "REDACTED".to_string()
+                } else {
+                    sha256_hex(&os_bytes(arg))
+                },
+                safe_literal: if sensitive { None } else { safe_literal(arg) },
+            }
+        })
+        .collect::<Vec<_>>();
 
     // Hidden JVM injection would make the final command unknowable. Record only
     // presence (never contents) and fail closed for AppCDS when any is present.
     let injected_env = ["JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS"]
         .into_iter()
-        .map(|k| (k.to_string(), if env::var_os(k).is_some() { "present".to_string() } else { "unset".to_string() }))
+        .map(|k| {
+            (
+                k.to_string(),
+                if env::var_os(k).is_some() {
+                    "present".to_string()
+                } else {
+                    "unset".to_string()
+                },
+            )
+        })
         .collect::<BTreeMap<_, _>>();
     let injected_env_present = injected_env.values().any(|v| v == "present");
 
@@ -162,16 +184,37 @@ fn build_launch_plan_for_namespace_with_cache(
     push_json_os(&mut out, "path", &encode_os(java_path.as_os_str()), 4, true);
     push_json_opt_str(&mut out, "sha256", java_hash.as_deref(), 4, true);
     push_json_opt_str(&mut out, "release_sha256", release_hash.as_deref(), 4, true);
-    push_json_str_indent(&mut out, "vendor", release_values.get("IMPLEMENTOR").map(String::as_str).unwrap_or(""), 4, true);
-    push_json_str_indent(&mut out, "version", release_values.get("JAVA_VERSION").map(String::as_str).unwrap_or(""), 4, false);
+    push_json_str_indent(
+        &mut out,
+        "vendor",
+        release_values.get("IMPLEMENTOR").map(String::as_str).unwrap_or(""),
+        4,
+        true,
+    );
+    push_json_str_indent(
+        &mut out,
+        "version",
+        release_values.get("JAVA_VERSION").map(String::as_str).unwrap_or(""),
+        4,
+        false,
+    );
     out.push_str("  },\n");
     out.push_str("  \"argv\": [\n");
     for (n, arg) in argv.iter().enumerate() {
         out.push_str("    {");
-        out.push_str(&format!("\"index\":{},\"kind\":\"{}\",\"sha256\":\"{}\",\"safe_literal\":", arg.index, arg.kind, arg.sha256));
-        if let Some(lit) = &arg.safe_literal { push_json_string_value(&mut out, lit); } else { out.push_str("null"); }
+        out.push_str(&format!(
+            "\"index\":{},\"kind\":\"{}\",\"sha256\":\"{}\",\"safe_literal\":",
+            arg.index, arg.kind, arg.sha256
+        ));
+        if let Some(lit) = &arg.safe_literal {
+            push_json_string_value(&mut out, lit);
+        } else {
+            out.push_str("null");
+        }
         out.push('}');
-        if n + 1 != argv.len() { out.push(','); }
+        if n + 1 != argv.len() {
+            out.push(',');
+        }
         out.push('\n');
     }
     out.push_str("  ],\n");
@@ -180,15 +223,30 @@ fn build_launch_plan_for_namespace_with_cache(
     push_artifact_array(&mut out, "mods", &mods, true);
     push_artifact_array(&mut out, "pack_inputs", &pack_inputs, true);
     push_json_opt_str(&mut out, "pack_manifest_sha256", pack_manifest_sha256.as_deref(), 2, true);
-    push_json_opt_str(&mut out, "resource_pack_selection_sha256", resource_pack_selection_sha256.as_deref(), 2, true);
+    push_json_opt_str(
+        &mut out,
+        "resource_pack_selection_sha256",
+        resource_pack_selection_sha256.as_deref(),
+        2,
+        true,
+    );
     let mut components = Vec::new();
-    if let Some(a) = launcher_artifact { components.push(a); }
-    if let Some(a) = helper_artifact { components.push(a); }
+    if let Some(a) = launcher_artifact {
+        components.push(a);
+    }
+    if let Some(a) = helper_artifact {
+        components.push(a);
+    }
     push_artifact_array(&mut out, "components", &components, true);
     out.push_str("  \"injected_jvm_env_presence\": {\n");
     for (idx, (k, v)) in injected_env.iter().enumerate() {
-        out.push_str("    "); push_json_string_value(&mut out, k); out.push(':'); push_json_string_value(&mut out, v);
-        if idx + 1 != injected_env.len() { out.push(','); }
+        out.push_str("    ");
+        push_json_string_value(&mut out, k);
+        out.push(':');
+        push_json_string_value(&mut out, v);
+        if idx + 1 != injected_env.len() {
+            out.push(',');
+        }
         out.push('\n');
     }
     out.push_str("  }\n");
@@ -196,7 +254,11 @@ fn build_launch_plan_for_namespace_with_cache(
 
     let bytes = out.into_bytes();
     let sha256 = sha256_hex(&bytes);
-    Ok(LaunchPlan { bytes, sha256, eligible })
+    Ok(LaunchPlan {
+        bytes,
+        sha256,
+        eligible,
+    })
 }
 
 fn find_module_path(args: &[OsString]) -> Result<Option<OsString>, ()> {
@@ -356,7 +418,10 @@ fn persist_plan_and_compare(cache_dir: &Path, bytes: &[u8], sha: &str) -> io::Re
     let stable = fs::read(&plan_path).ok().map(|old| old == bytes).unwrap_or(false);
     write_atomic_replace(&plan_path, bytes)?;
     write_atomic_replace(&cache_dir.join("launch-plan.sha256"), format!("{}\n", sha).as_bytes())?;
-    write_atomic_replace(&cache_dir.join("launch-plan.match"), if stable { b"MATCH\n" } else { b"FIRST_OR_MISMATCH\n" })?;
+    write_atomic_replace(
+        &cache_dir.join("launch-plan.match"),
+        if stable { b"MATCH\n" } else { b"FIRST_OR_MISMATCH\n" },
+    )?;
     Ok(stable)
 }
 
@@ -443,7 +508,13 @@ fn has_staging(cache_dir: &Path) -> io::Result<bool> {
 }
 
 fn write_state(cache_dir: &Path, state: CacheState, reason: &str) -> io::Result<()> {
-    let text = format!("schema={}\nstate={}\nreason={}\nhelper_version={}\n", SCHEMA_VERSION, state.as_str(), reason, HELPER_VERSION);
+    let text = format!(
+        "schema={}\nstate={}\nreason={}\nhelper_version={}\n",
+        SCHEMA_VERSION,
+        state.as_str(),
+        reason,
+        HELPER_VERSION
+    );
     write_atomic_replace(&cache_dir.join("state.meta"), text.as_bytes())
 }
 
@@ -466,9 +537,22 @@ fn read_metadata(path: &Path) -> io::Result<ReadyMetadata> {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "schema"));
     }
     Ok(ReadyMetadata {
-        plan_sha256: map.get("plan_sha256").ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "plan"))?.to_string(),
-        archive_sha256: map.get("archive_sha256").ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "archive"))?.to_string(),
-        archive_size: map.get("archive_size").ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "size"))?.parse().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "size"))?,
-        helper_version: map.get("helper_version").ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "helper"))?.to_string(),
+        plan_sha256: map
+            .get("plan_sha256")
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "plan"))?
+            .to_string(),
+        archive_sha256: map
+            .get("archive_sha256")
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "archive"))?
+            .to_string(),
+        archive_size: map
+            .get("archive_size")
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "size"))?
+            .parse()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "size"))?,
+        helper_version: map
+            .get("helper_version")
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "helper"))?
+            .to_string(),
     })
 }
