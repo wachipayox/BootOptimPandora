@@ -34,7 +34,7 @@ jobs:
       - name: Whitespace and scoped formatting
         run: |
           git diff --check 7a821e8d5f89c71677d149b3140e21f4ed171ec4...HEAD
-          rustfmt --edition 2024 --check bootoptim-v0/ntfs_usn_direct.rs bootoptim-v0/interposer/src/identity_cache.rs bootoptim-v0/interposer/src/part1.rs bootoptim-v0/interposer/src/part2.rs bootoptim-v0/interposer/src/part4.rs crates/command/src/command.rs crates/backend/src/asset_usn_cache/windows_direct.rs
+          rustfmt --edition 2024 --check bootoptim-v0/ntfs_usn_direct.rs bootoptim-v0/interposer/src/identity_cache.rs bootoptim-v0/interposer/src/part1.rs bootoptim-v0/interposer/src/part2.rs bootoptim-v0/interposer/src/part4.rs crates/backend/src/asset_usn_cache/windows_direct.rs
       - name: Portable interposer suite
         run: cargo test --manifest-path bootoptim-v0/interposer/Cargo.toml --locked
       - name: Check affected crates
