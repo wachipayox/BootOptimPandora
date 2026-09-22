@@ -3,7 +3,7 @@ use std::{
 };
 
 use bridge::{
-    handle::FrontendHandle, message::{MessageToFrontend, QuickPlayLaunch}, modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
+    handle::FrontendHandle, message::{MessageToFrontend, QuickPlayLaunch}, modal_action::{AssetVerificationMode, ModalAction, ProgressTracker, ProgressTrackerFinishType}, safe_path::SafePath
 };
 #[cfg(windows)]
 use command::PandoraArg;
@@ -243,6 +243,7 @@ impl Launcher {
             log_configuration,
             rule_context: launch_rule_context,
             login_info,
+            appcds_identity_normal_gui: modal_action.asset_verification_mode() == AssetVerificationMode::Normal,
         };
 
         if modal_action.has_requested_cancel() {
@@ -2137,6 +2138,7 @@ pub struct LaunchContext {
     pub log_configuration: Option<OsString>,
     pub rule_context: LaunchRuleContext,
     pub login_info: MinecraftLoginInfo,
+    pub appcds_identity_normal_gui: bool,
 }
 
 impl LaunchContext {
@@ -2184,6 +2186,7 @@ impl LaunchContext {
         let mut iter = wrapping_command.iter();
         let mut command = PandoraCommand::new(iter.next().unwrap().to_os_string());
         command.bootoptim_appcds_enabled(self.configuration.appcds_enabled);
+        command.bootoptim_appcds_identity_normal_gui(self.appcds_identity_normal_gui);
         for arg in iter {
             command.arg(arg.to_os_string());
         }
