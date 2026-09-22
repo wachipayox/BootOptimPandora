@@ -1,5 +1,6 @@
 use super::*;
 use crate::{asset_probe_context, asset_usn_cache::AssetUsnCacheRuntime};
+use rand::{RngCore, rngs::OsRng};
 use sha1::{Digest, Sha1};
 use std::{
     fs::OpenOptions,
