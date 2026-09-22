@@ -152,12 +152,17 @@ struct IdentityDigestCache {
     reused_files: u64,
     stock_files: u64,
     unverifiable: BTreeMap<&'static str, u64>,
+    track_stock_diagnostics: bool,
     #[cfg(windows)]
     volumes: Vec<(String, u64, ntfs_usn_direct::Volume)>,
 }
 
 impl IdentityDigestCache {
     fn stock() -> Self {
+        Self::stock_with_diagnostics(false)
+    }
+
+    fn stock_with_diagnostics(track_stock_diagnostics: bool) -> Self {
         Self {
             active: false,
             manifest_path: PathBuf::new(),
@@ -169,6 +174,7 @@ impl IdentityDigestCache {
             reused_files: 0,
             stock_files: 0,
             unverifiable: BTreeMap::new(),
+            track_stock_diagnostics,
             #[cfg(windows)]
             volumes: Vec::new(),
         }
@@ -213,6 +219,7 @@ impl IdentityDigestCache {
             reused_files: 0,
             stock_files: 0,
             unverifiable: BTreeMap::new(),
+            track_stock_diagnostics: false,
             #[cfg(windows)]
             volumes: Vec::new(),
         }
@@ -234,13 +241,18 @@ impl IdentityDigestCache {
     }
 
     fn resolve_raw(&mut self, role: &'static str, path: &Path) -> io::Result<(u64, String)> {
+        if !self.active {
+            if self.track_stock_diagnostics {
+                let path_hex = encode_os(path.as_os_str()).encoded_hex;
+                self.expected_keys.insert(identity_record_key(role, &path_hex));
+                self.stock_files += 1;
+            }
+            return stock_raw_digest(path);
+        }
+
         let path_hex = encode_os(path.as_os_str()).encoded_hex;
         let key = identity_record_key(role, &path_hex);
         self.expected_keys.insert(key.clone());
-        if !self.active {
-            self.stock_files += 1;
-            return stock_raw_digest(path);
-        }
 
         #[cfg(windows)]
         {

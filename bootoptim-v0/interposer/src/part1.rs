@@ -170,7 +170,7 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
     let mut held_lock = None;
     let plan = if identity_requested {
         let Some(lock) = try_lock(&cache_dir.join("cache.lock"))? else {
-            let mut stock_cache = IdentityDigestCache::stock();
+            let mut stock_cache = IdentityDigestCache::stock_with_diagnostics(identity_diag.enabled);
             let _ = build_launch_plan_for_namespace_with_cache(parsed, profile_scope.namespace(), &mut stock_cache)?;
             identity_diag.capture_cache(&stock_cache, "lock-busy");
             eprintln!("BOOTOPTIM_INTERPOSER status=fail-open reason=identity-lock-busy");
@@ -189,7 +189,7 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
         identity_diag.capture_cache(&identity_cache, publication);
         plan
     } else {
-        let mut stock_cache = IdentityDigestCache::stock();
+        let mut stock_cache = IdentityDigestCache::stock_with_diagnostics(identity_diag.enabled);
         let plan = build_launch_plan_for_namespace_with_cache(parsed, profile_scope.namespace(), &mut stock_cache)?;
         identity_diag.capture_cache(&stock_cache, "not-authorized");
         plan
