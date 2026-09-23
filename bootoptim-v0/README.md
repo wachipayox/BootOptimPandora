@@ -46,6 +46,13 @@ Each preflight writes an instance-local `.bootoptim/appcds/launch-plan.json`. Th
 - `pack_manifest_sha256`, a canonical digest over top-level mod JAR identity, the launch-affecting pack-input snapshot and resource-pack-selection fingerprint. In v0 this is a **local strong invalidation manifest**, not a signed distribution manifest and never an automatic repair authority;
 - presence only, never contents, for `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, and `JDK_JAVA_OPTIONS`. Any presence makes AppCDS ineligible because the final hidden JVM command would not be fully known.
 
+To diagnose incremental identity-cache misses or a `FIRST_OR_MISMATCH` plan, set
+`BOOTOPTIM_APPCDS_IDENTITY_DIAGNOSTICS=1` for one normal GUI launch. This is
+opt-in-only and does not change cache or READY acceptance. It reports miss reasons,
+bytes reused/rehash, same-vs-changed rehash digests, bounded opaque sample tokens,
+and changed plan field names without logging paths or values. See
+[`APPCDS_REUSE_MISS_DIAGNOSTICS.md`](APPCDS_REUSE_MISS_DIAGNOSTICS.md).
+
 The exact-pack architecture research requires pack-manifest/config identity in addition to Java/classpath/mod identity. v0 therefore refuses AppCDS activation if the local pack manifest cannot be established (for example missing `mods/`, no top-level mod JAR, missing/unparseable `options.txt` resource-pack selection, or unreadable/ambiguous pack-input tree). Stock launch remains available.
 
 Java module options whose exact CDS semantics are not part of this v0 are explicitly fail-closed: `--upgrade-module-path`, `--patch-module`, and `--limit-modules` (including `--option=value` forms) make activation ineligible. They are recorded through the argv fingerprint but never interpreted into an AppCDS-compatible tuple.

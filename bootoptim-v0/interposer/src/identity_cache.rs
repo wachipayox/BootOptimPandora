@@ -64,6 +64,12 @@ struct IdentityPreflightDiagnostics {
     eligible: u64,
     reused: u64,
     strong: u64,
+    reused_bytes: u64,
+    strong_bytes: u64,
+    rehash_digest_same: u64,
+    rehash_digest_changed: u64,
+    miss_reasons: String,
+    miss_examples: String,
     unverifiable: String,
     failure_details: String,
     publication: &'static str,
@@ -79,6 +85,12 @@ impl IdentityPreflightDiagnostics {
             eligible: 0,
             reused: 0,
             strong: 0,
+            reused_bytes: 0,
+            strong_bytes: 0,
+            rehash_digest_same: 0,
+            rehash_digest_changed: 0,
+            miss_reasons: "none".to_string(),
+            miss_examples: "none".to_string(),
             unverifiable: "none".to_string(),
             failure_details: "none".to_string(),
             publication: "not-run",
@@ -98,6 +110,12 @@ impl IdentityPreflightDiagnostics {
         self.eligible = cache.expected_keys.len() as u64;
         self.reused = cache.reused_files;
         self.strong = cache.stock_files;
+        self.reused_bytes = cache.reused_bytes;
+        self.strong_bytes = cache.strong_bytes;
+        self.rehash_digest_same = cache.rehash_digest_same;
+        self.rehash_digest_changed = cache.rehash_digest_changed;
+        self.miss_reasons = cache.miss_reasons_summary();
+        self.miss_examples = cache.miss_examples_summary();
         self.unverifiable = cache.unverifiable_summary();
         self.failure_details = cache.failure_details_summary();
         self.publication = publication;
@@ -110,7 +128,7 @@ impl Drop for IdentityPreflightDiagnostics {
             return;
         }
         eprintln!(
-            "BOOTOPTIM_APPCDS_IDENTITY_DIAG requested={} authority={} authority_reason={} manifest={} eligible={} reused={} strong={} unverifiable={} failure_details={} publication={}",
+            "BOOTOPTIM_APPCDS_IDENTITY_DIAG requested={} authority={} authority_reason={} manifest={} eligible={} reused={} strong={} reused_bytes={} strong_bytes={} rehash_digest_same={} rehash_digest_changed={} miss_reasons={} miss_examples={} unverifiable={} failure_details={} publication={}",
             self.request.requested,
             if self.request.authorized {
                 "accepted"
@@ -122,6 +140,12 @@ impl Drop for IdentityPreflightDiagnostics {
             self.eligible,
             self.reused,
             self.strong,
+            self.reused_bytes,
+            self.strong_bytes,
+            self.rehash_digest_same,
+            self.rehash_digest_changed,
+            self.miss_reasons,
+            self.miss_examples,
             self.unverifiable,
             self.failure_details,
             self.publication
@@ -136,19 +160,43 @@ struct EvidenceQueryError {
 }
 
 fn evidence_allows_reuse(cached: &CachedIdentityDigest, current: &CurrentIdentityEvidence) -> bool {
-    current.handle_identity_unchanged
-        && current.volume_serial == cached.volume_serial
-        && current.journal_id == cached.journal_id
-        && current.first_usn >= 0
-        && current.lowest_valid_usn >= 0
-        && current.next_usn >= 0
-        && current.file_usn >= 0
-        && current.next_usn >= current.first_usn
-        && current.next_usn >= current.lowest_valid_usn
-        && current.next_usn >= cached.snapshot_next_usn
-        && current.first_usn.max(current.lowest_valid_usn) <= cached.snapshot_next_usn
-        && current.file_id == cached.file_id
-        && current.file_usn == cached.file_usn
+    evidence_reuse_miss_reason(cached, current).is_none()
+}
+
+fn evidence_reuse_miss_reason(
+    cached: &CachedIdentityDigest,
+    current: &CurrentIdentityEvidence,
+) -> Option<&'static str> {
+    if !current.handle_identity_unchanged {
+        return Some("handle-identity-changed");
+    }
+    if current.volume_serial != cached.volume_serial {
+        return Some("volume-serial-changed");
+    }
+    if current.journal_id != cached.journal_id {
+        return Some("journal-id-changed");
+    }
+    if current.first_usn < 0
+        || current.lowest_valid_usn < 0
+        || current.next_usn < 0
+        || current.next_usn < current.first_usn
+        || current.next_usn < current.lowest_valid_usn
+    {
+        return Some("journal-bounds-invalid");
+    }
+    if current.next_usn < cached.snapshot_next_usn {
+        return Some("journal-next-regressed");
+    }
+    if current.first_usn.max(current.lowest_valid_usn) > cached.snapshot_next_usn {
+        return Some("journal-window-expired");
+    }
+    if current.file_id != cached.file_id {
+        return Some("file-id-changed");
+    }
+    if current.file_usn < 0 || current.file_usn != cached.file_usn {
+        return Some("file-usn-changed");
+    }
+    None
 }
 
 struct IdentityDigestCache {
@@ -161,6 +209,13 @@ struct IdentityDigestCache {
     manifest_state: &'static str,
     reused_files: u64,
     stock_files: u64,
+    reused_bytes: u64,
+    strong_bytes: u64,
+    rehash_digest_same: u64,
+    rehash_digest_changed: u64,
+    miss_reasons: BTreeMap<(&'static str, &'static str), u64>,
+    miss_examples: Vec<String>,
+    track_reuse_diagnostics: bool,
     unverifiable: BTreeMap<&'static str, u64>,
     track_stock_diagnostics: bool,
     track_failure_diagnostics: bool,
@@ -185,6 +240,13 @@ impl IdentityDigestCache {
             manifest_state: "not-read",
             reused_files: 0,
             stock_files: 0,
+            reused_bytes: 0,
+            strong_bytes: 0,
+            rehash_digest_same: 0,
+            rehash_digest_changed: 0,
+            miss_reasons: BTreeMap::new(),
+            miss_examples: Vec::new(),
+            track_reuse_diagnostics: false,
             unverifiable: BTreeMap::new(),
             track_stock_diagnostics,
             track_failure_diagnostics: track_stock_diagnostics,
@@ -236,6 +298,13 @@ impl IdentityDigestCache {
             manifest_state,
             reused_files: 0,
             stock_files: 0,
+            reused_bytes: 0,
+            strong_bytes: 0,
+            rehash_digest_same: 0,
+            rehash_digest_changed: 0,
+            miss_reasons: BTreeMap::new(),
+            miss_examples: Vec::new(),
+            track_reuse_diagnostics: track_failure_diagnostics,
             unverifiable: BTreeMap::new(),
             track_stock_diagnostics: false,
             track_failure_diagnostics,
@@ -283,6 +352,52 @@ impl IdentityDigestCache {
         }
     }
 
+    fn note_reuse_miss(
+        &mut self,
+        role: &'static str,
+        reason: &'static str,
+        key: &str,
+        digest_same: Option<bool>,
+    ) {
+        if !self.track_reuse_diagnostics {
+            return;
+        }
+        *self.miss_reasons.entry((role, reason)).or_insert(0) += 1;
+        match digest_same {
+            Some(true) => self.rehash_digest_same += 1,
+            Some(false) => self.rehash_digest_changed += 1,
+            None => {},
+        }
+        if self.miss_examples.len() < 16 {
+            let token = sha256_hex(key.as_bytes());
+            let result = match digest_same {
+                Some(true) => "same",
+                Some(false) => "changed",
+                None => "new-or-unavailable",
+            };
+            self.miss_examples.push(format!("{}:{}:{}:{}", role, reason, result, &token[..16]));
+        }
+    }
+
+    fn miss_reasons_summary(&self) -> String {
+        if self.miss_reasons.is_empty() {
+            return "none".to_string();
+        }
+        self.miss_reasons
+            .iter()
+            .map(|((role, reason), count)| format!("{role}-{reason}:{count}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn miss_examples_summary(&self) -> String {
+        if self.miss_examples.is_empty() {
+            "none".to_string()
+        } else {
+            self.miss_examples.join(",")
+        }
+    }
+
     fn resolve_raw(&mut self, role: &'static str, path: &Path) -> io::Result<(u64, String)> {
         if !self.active {
             if self.track_stock_diagnostics {
@@ -305,7 +420,14 @@ impl IdentityDigestCache {
                     self.complete = false;
                     self.stock_files += 1;
                     self.note_unverifiable("open");
-                    return stock_raw_digest(path);
+                    let result = stock_raw_digest(path);
+                    if self.track_reuse_diagnostics {
+                        if let Ok((size, _)) = &result {
+                            self.strong_bytes = self.strong_bytes.saturating_add(*size);
+                        }
+                        self.note_reuse_miss(role, "protected-open-failed", &key, None);
+                    }
+                    return result;
                 },
             };
             let identity = protected.identity().clone();
@@ -328,12 +450,34 @@ impl IdentityDigestCache {
                         record_from_current(role, path_hex, cached.size, cached.sha256.clone(), &identity, current);
                     self.records.insert(key, record);
                     self.reused_files += 1;
+                    if self.track_reuse_diagnostics {
+                        self.reused_bytes = self.reused_bytes.saturating_add(cached.size);
+                    }
                     return Ok((cached.size, cached.sha256.clone()));
                 }
             }
 
+            let (cached_digest, miss_reason) = if self.track_reuse_diagnostics {
+                let cached_digest = self.cached.get(&key).map(|cached| cached.sha256.clone());
+                let reason = match (self.cached.get(&key), evidence.as_ref()) {
+                    (None, _) => "no-cached-record",
+                    (Some(_), None) => "evidence-query-failed",
+                    (Some(cached), Some(_)) if cached.role != role || cached.path_hex != path_hex => "record-shape-changed",
+                    (Some(cached), Some(_)) if cached.volume_guid != identity.volume_guid => "volume-guid-changed",
+                    (Some(cached), Some(_)) if cached.file_id != identity.file_id => "file-id-changed",
+                    (Some(cached), Some(current)) => evidence_reuse_miss_reason(cached, current).unwrap_or("unclassified"),
+                };
+                (cached_digest, reason)
+            } else {
+                (None, "diagnostics-disabled")
+            };
             self.stock_files += 1;
             let (size, digest) = hash_protected_file(&mut protected)?;
+            if self.track_reuse_diagnostics {
+                self.strong_bytes = self.strong_bytes.saturating_add(size);
+                let digest_same = cached_digest.as_deref().map(|cached| cached == digest);
+                self.note_reuse_miss(role, miss_reason, &key, digest_same);
+            }
             let after = match self.query_file_evidence(&protected) {
                 Ok(evidence) => Some(evidence),
                 Err(error) => {
@@ -359,6 +503,7 @@ impl IdentityDigestCache {
         {
             self.complete = false;
             self.stock_files += 1;
+            self.note_reuse_miss(role, "unsupported-platform", &key, None);
             self.note_unverifiable("unsupported-platform");
             stock_raw_digest(path)
         }
@@ -712,6 +857,23 @@ mod appcds_identity_cache_tests {
     }
 
     #[test]
+    fn reuse_miss_summary_is_opt_in_and_uses_only_opaque_tokens() {
+        let mut disabled = IdentityDigestCache::stock();
+        disabled.note_reuse_miss("mod", "file-usn-changed", "mod\0C:\\private\\secret.jar", Some(true));
+        assert_eq!(disabled.miss_reasons_summary(), "none");
+        assert_eq!(disabled.miss_examples_summary(), "none");
+
+        let mut enabled = IdentityDigestCache::begin_with_diagnostics(Path::new("unused"), true, true);
+        enabled.note_reuse_miss("mod", "file-usn-changed", "mod\0C:\\private\\secret.jar", Some(true));
+        let reason = enabled.miss_reasons_summary();
+        let sample = enabled.miss_examples_summary();
+        assert_eq!(reason, "mod-file-usn-changed:1");
+        assert!(sample.contains("mod:file-usn-changed:same:"));
+        assert!(!sample.contains("C:\\private"));
+        assert_eq!(enabled.rehash_digest_same, 1);
+    }
+
+    #[test]
     fn authority_is_opt_in_gui_only_and_force_stock_wins() {
         assert!(!identity_cache_authorized(false, true, false));
         assert!(!identity_cache_authorized(true, false, false));
@@ -780,6 +942,24 @@ mod appcds_identity_cache_tests {
         let mut value = current();
         value.handle_identity_unchanged = false;
         assert!(!evidence_allows_reuse(&cached, &value));
+    }
+
+    #[test]
+    fn reuse_miss_diagnostics_name_the_exact_usn_guard_without_weakening_it() {
+        let cached = sample_record();
+        assert_eq!(evidence_reuse_miss_reason(&cached, &current()), None);
+
+        let mut value = current();
+        value.file_usn += 1;
+        assert_eq!(evidence_reuse_miss_reason(&cached, &value), Some("file-usn-changed"));
+
+        let mut value = current();
+        value.journal_id += 1;
+        assert_eq!(evidence_reuse_miss_reason(&cached, &value), Some("journal-id-changed"));
+
+        let mut value = current();
+        value.first_usn = 1001;
+        assert_eq!(evidence_reuse_miss_reason(&cached, &value), Some("journal-window-expired"));
     }
 
     #[test]
