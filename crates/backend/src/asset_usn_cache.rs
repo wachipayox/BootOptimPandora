@@ -1,4 +1,4 @@
-//! Default-off NTFS/USN asset verification cache.
+//! Default-on NTFS/USN asset verification cache.
 //!
 //! A SHA-1 may be skipped only after the Windows implementation has produced a
 //! `VerifiedReuse` decision while holding the protected file handle. Every
@@ -6,6 +6,7 @@
 
 use std::{
     collections::HashSet,
+    ffi::OsStr,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -27,6 +28,10 @@ fn cache_layout_eligible(path: &Path) -> bool {
         && path.parent().and_then(Path::file_name).and_then(|name| name.to_str()) == Some("assets")
 }
 
+fn cache_requested(value: Option<&OsStr>) -> bool {
+    value.map_or(true, |value| value == "1")
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AssetUsnCacheRuntime {
     requested: bool,
@@ -35,7 +40,10 @@ pub(crate) struct AssetUsnCacheRuntime {
 impl AssetUsnCacheRuntime {
     pub(crate) fn from_environment() -> Self {
         Self {
-            requested: std::env::var_os(ASSET_USN_CACHE_ENV).is_some_and(|value| value == "1"),
+            // Normal GUI launches use the cache by default. An explicit `0`
+            // remains available as a diagnostic rollback switch; every
+            // uncertain cache/capability decision still falls back to SHA-1.
+            requested: cache_requested(std::env::var_os(ASSET_USN_CACHE_ENV).as_deref()),
         }
     }
 
@@ -485,6 +493,14 @@ mod tests {
     }
 
     #[test]
+    fn asset_cache_is_default_on_and_can_be_explicitly_disabled() {
+        assert!(cache_requested(None));
+        assert!(cache_requested(Some(OsStr::new("1"))));
+        assert!(!cache_requested(Some(OsStr::new("0"))));
+        assert!(!cache_requested(Some(OsStr::new("invalid"))));
+    }
+
+    #[test]
     fn full_verification_cli_and_legacy_authority_never_skip() {
         let mut evidence = evidence();
         evidence.verification_mode = AssetVerificationMode::FullVerification;
@@ -495,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn feature_is_default_fail_closed() {
+    fn feature_disabled_falls_back_to_full_sha1() {
         let mut evidence = evidence();
         evidence.feature_requested = false;
         miss(evidence, MissReason::FeatureDisabled);
