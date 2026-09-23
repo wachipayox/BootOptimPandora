@@ -93,6 +93,25 @@ force-stock/update signal, existing asset USN tests and the restricted-token dir
 
 CI is correctness/packaging evidence only and is not a performance measurement.
 
+## Laptop diagnosis: long USN filename (2026-09-23)
+
+The error-diagnostics candidate reported `eligible=1163 reused=0 strong=1163`,
+with `pre-evidence` and `post-evidence` both failing at `file-query`, raw OS
+error 122, and the same stable input token. The token mapped locally through the
+candidate launch plan to one long mod JAR filename (124 UTF-16 code units).
+Windows error 122 is `ERROR_INSUFFICIENT_BUFFER`; the shared direct USN helper
+was asking `FSCTL_READ_FILE_USN_DATA` to return a `USN_RECORD_V2` including its
+inline filename into a fixed 256-byte buffer. This explains why the same mod
+could not produce evidence before or after hashing, blocking complete-manifest
+publication. The candidate increases that fixed buffer to 1024 bytes and adds
+a Windows regression test with a filename longer than the old capacity.
+
+This was a diagnostic run, not an AppCDS performance result: the candidate
+launcher/helper identity differed from the build that created the existing
+READY archive, so the interposer marked it `STALE / identity-mismatch` and
+`FIRST_OR_MISMATCH`. BootOptim logged `main_menu_reached` at 405829 ms. The run
+does not establish that the archive was consumed or that AppCDS improved startup.
+
 ## Physical protocol after a green artifact
 
 Use the exact checksummed Windows artifact and keep Java->menu separate from launcher

@@ -31,6 +31,10 @@ const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 const VOLUME_NAME_GUID: u32 = 0x1;
 const FSCTL_QUERY_USN_JOURNAL: u32 = 0x0009_00f4;
 const FSCTL_READ_FILE_USN_DATA: u32 = 0x0009_00eb;
+// USN_RECORD_V2 includes the filename after its 60-byte fixed header. A
+// 256-byte output buffer fails for otherwise valid NTFS names longer than 98
+// UTF-16 code units (ERROR_INSUFFICIENT_BUFFER / Win32 122).
+const USN_FILE_RECORD_BUFFER_BYTES: usize = 1024;
 const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
 const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -360,7 +364,7 @@ fn query_journal_handle(handle: Handle, volume_serial: u64) -> io::Result<Journa
 }
 
 fn file_usn_from_handle(handle: Handle) -> io::Result<([u8; 16], i64)> {
-    let mut output = [0u8; 256];
+    let mut output = [0u8; USN_FILE_RECORD_BUFFER_BYTES];
     let mut returned = 0u32;
     if unsafe {
         DeviceIoControl(
@@ -468,6 +472,29 @@ mod tests {
         let file = ProtectedFile::open(&path).unwrap();
         let after = volume.query_file(&file, file.identity().file_id).unwrap();
         assert_ne!(before.file_usn, after.file_usn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn direct_query_handles_long_ntfs_filename() {
+        let dir = temp_dir("long-name");
+        std::fs::create_dir_all(&dir).unwrap();
+        // USN_RECORD_V2 returns the filename inline. 124 UTF-16 units plus
+        // the record header exceed the old 256-byte DeviceIoControl buffer.
+        let path = dir.join(format!("{}.jar", "x".repeat(120)));
+        std::fs::write(&path, b"jar").unwrap();
+        let Ok(file) = ProtectedFile::open(&path) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+        let Ok(volume) = Volume::open(file.identity()) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+
+        let evidence = volume.query_file(&file, file.identity().file_id).unwrap();
+        assert_eq!(evidence.file_id, file.identity().file_id);
+        assert!(evidence.file_usn >= 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
