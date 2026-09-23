@@ -86,6 +86,7 @@ def audit_jar(name, data):
         "mixin_configs": [],
         "mixin_plugins": [],
         "core_transform_metadata": [],
+        "coremods": [],
         "entrypoint_string_hits": {},
         "parse_errors": [],
     }
@@ -113,6 +114,29 @@ def audit_jar(name, data):
                 low = n.lower()
                 if low.endswith("coremods.json") or low.endswith("accesstransformer.cfg"):
                     result["core_transform_metadata"].append(n)
+
+            if "META-INF/coremods.json" in names_set:
+                try:
+                    parsed_coremods = json.loads(
+                        jar.read("META-INF/coremods.json").decode("utf-8")
+                    )
+                    if not isinstance(parsed_coremods, dict):
+                        raise ValueError("coremods root is not an object")
+                    for core_name, script_path in sorted(parsed_coremods.items()):
+                        row = {"name": core_name, "path": script_path, "hits": []}
+                        if not isinstance(script_path, str) or script_path not in names_set:
+                            row["status"] = "script-missing"
+                            result["parse_errors"].append(
+                                "coremod-script-missing:" + str(script_path)
+                            )
+                        else:
+                            row["status"] = "scanned-script"
+                            row["hits"] = suspicious_strings(jar.read(script_path))
+                        result["coremods"].append(row)
+                except (UnicodeDecodeError, json.JSONDecodeError, KeyError, ValueError) as exc:
+                    result["parse_errors"].append(
+                        "META-INF/coremods.json:" + type(exc).__name__
+                    )
 
             if "META-INF/MANIFEST.MF" in names_set:
                 attrs = parse_manifest(jar.read("META-INF/MANIFEST.MF"))
@@ -182,7 +206,7 @@ def audit_jar(name, data):
             result["dynamic_entrypoints"] = sorted(dynamic)
             if result["parse_errors"]:
                 result["audit_status"] = "unresolved-parse-error"
-            elif dynamic:
+            elif dynamic or result["coremods"]:
                 result["audit_status"] = "unresolved-dynamic-hook"
             elif result["mixin_configs"] or result["core_transform_metadata"]:
                 result["audit_status"] = "static-transform-metadata-only"
@@ -254,12 +278,19 @@ def markdown(report):
         )
     lines.extend(["", "## Dynamic hook details", ""])
     for item in report["jars"]:
-        if not item.get("dynamic_entrypoints") and not item.get("parse_errors"):
+        if not item.get("dynamic_entrypoints") and not item.get("coremods") and not item.get("parse_errors"):
             continue
         lines.append("### " + item["jar"])
         lines.append("Status: " + item["audit_status"])
         if item.get("dynamic_entrypoints"):
             lines.append("Entrypoints: " + ", ".join(item["dynamic_entrypoints"]))
+        if item.get("coremods"):
+            for coremod in item["coremods"]:
+                lines.append(
+                    "Coremod " + str(coremod.get("name")) + ": "
+                    + str(coremod.get("status")) + "; suspicious strings="
+                    + str(len(coremod.get("hits", [])))
+                )
         if item.get("parse_errors"):
             lines.append("Parse errors: " + ", ".join(item["parse_errors"]))
         for owner, evidence in item["entrypoint_string_hits"].items():
@@ -293,7 +324,7 @@ def audit(pack):
         "summary": {
             "mod_jar_count": len(jars),
             "dynamic_hook_jar_count": sum(
-                bool(x.get("dynamic_entrypoints")) for x in jars
+                x.get("audit_status") == "unresolved-dynamic-hook" for x in jars
             ),
             "parse_error_jar_count": sum(
                 bool(x.get("parse_errors")) for x in jars
