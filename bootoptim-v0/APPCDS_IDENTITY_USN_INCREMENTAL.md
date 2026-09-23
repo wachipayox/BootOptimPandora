@@ -99,9 +99,10 @@ The error-diagnostics candidate reported `eligible=1163 reused=0 strong=1163`,
 with `pre-evidence` and `post-evidence` both failing at `file-query`, raw OS
 error 122, and the same stable input token. The token mapped locally through the
 candidate launch plan to one long mod JAR filename (124 UTF-16 code units).
-Windows error 122 is `ERROR_INSUFFICIENT_BUFFER`; the shared direct USN helper
-was asking `FSCTL_READ_FILE_USN_DATA` to return a `USN_RECORD_V2` including its
-inline filename into a fixed 256-byte buffer. This explains why the same mod
+Windows error 122 is [`ERROR_INSUFFICIENT_BUFFER`](https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-);
+`FSCTL_READ_FILE_USN_DATA` returns a variable-length `USN_RECORD_V2` with its
+filename inline ([Microsoft structure reference](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/d2a2b53e-bf78-4ef3-90c7-21b918fab304)). The shared direct USN helper
+was asking for that record in a fixed 256-byte buffer. This explains why the same mod
 could not produce evidence before or after hashing, blocking complete-manifest
 publication. The candidate increases that fixed buffer to 1024 bytes and adds
 a Windows regression test with a filename longer than the old capacity.
