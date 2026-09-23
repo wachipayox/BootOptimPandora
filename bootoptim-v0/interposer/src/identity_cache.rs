@@ -235,7 +235,12 @@ struct IdentityDigestCache {
     track_failure_diagnostics: bool,
     failure_details: Vec<String>,
     #[cfg(windows)]
-    volumes: Vec<(String, u64, ntfs_usn_direct::Volume)>,
+    volumes: Vec<(
+        String,
+        u64,
+        ntfs_usn_direct::Volume,
+        Option<ntfs_usn_direct::JournalSnapshot>,
+    )>,
 }
 
 impl IdentityDigestCache {
@@ -530,7 +535,9 @@ impl IdentityDigestCache {
         let index = if let Some(index) = self
             .volumes
             .iter()
-            .position(|(guid, serial, _)| guid == &identity.volume_guid && *serial == identity.volume_serial)
+            .position(|(guid, serial, _, _)| {
+                guid == &identity.volume_guid && *serial == identity.volume_serial
+            })
         {
             index
         } else {
@@ -538,17 +545,32 @@ impl IdentityDigestCache {
                 stage: "volume-open",
                 source,
             })?;
-            self.volumes.push((identity.volume_guid.clone(), identity.volume_serial, volume));
+            self.volumes.push((
+                identity.volume_guid.clone(),
+                identity.volume_serial,
+                volume,
+                None,
+            ));
             self.volumes.len() - 1
         };
-        let evidence =
-            self.volumes[index]
-                .2
-                .query_file(file, identity.file_id)
-                .map_err(|source| EvidenceQueryError {
+        let previous_snapshot = self.volumes[index].3.take();
+        let evidence = match self.volumes[index].2.query_file_with_previous_snapshot(
+            file,
+            identity.file_id,
+            previous_snapshot,
+        ) {
+            Ok(evidence) => {
+                self.volumes[index].3 = Some(evidence.journal);
+                evidence
+            }
+            Err(source) => {
+                self.volumes[index].3 = None;
+                return Err(EvidenceQueryError {
                     stage: "file-query",
                     source,
-                })?;
+                });
+            }
+        };
         Ok(CurrentIdentityEvidence {
             volume_serial: evidence.journal.volume_serial,
             journal_id: evidence.journal.journal_id,

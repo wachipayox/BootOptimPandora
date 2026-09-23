@@ -228,7 +228,27 @@ impl Volume {
     }
 
     pub(crate) fn query_file(&self, file: &ProtectedFile, expected_file_id: [u8; 16]) -> io::Result<FileEvidence> {
-        let before = self.query_journal()?;
+        self.query_file_with_previous_snapshot(file, expected_file_id, None)
+    }
+
+    /// Query a file against a journal boundary already sampled on this volume.
+    ///
+    /// The previous snapshot must be the `after` boundary returned by the
+    /// immediately preceding successful query on this `Volume`. This lets a
+    /// sequential caller share that boundary without weakening the existing
+    /// before/file-USN/after ordering. Any error clears the caller's boundary
+    /// and therefore forces the next query to obtain a fresh `before` sample.
+    pub(crate) fn query_file_with_previous_snapshot(
+        &self,
+        file: &ProtectedFile,
+        expected_file_id: [u8; 16],
+        previous_snapshot: Option<JournalSnapshot>,
+    ) -> io::Result<FileEvidence> {
+        let before = match previous_snapshot {
+            Some(snapshot) if snapshot.volume_serial == self.serial && valid_journal(&snapshot) => snapshot,
+            Some(_) => return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid previous USN journal snapshot")),
+            None => self.query_journal()?,
+        };
         let (file_id, file_usn) = file_usn_from_handle(file.file.as_raw_handle().cast())?;
         let after = self.query_journal()?;
         if before.journal_id != after.journal_id
@@ -472,6 +492,107 @@ mod tests {
         let file = ProtectedFile::open(&path).unwrap();
         let after = volume.query_file(&file, file.identity().file_id).unwrap();
         assert_ne!(before.file_usn, after.file_usn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn query_can_chain_a_previous_stable_journal_boundary() {
+        let dir = temp_dir("chained-boundary");
+        std::fs::create_dir_all(&dir).unwrap();
+        let first_path = dir.join("first");
+        let second_path = dir.join("second");
+        std::fs::write(&first_path, b"first").unwrap();
+        std::fs::write(&second_path, b"second").unwrap();
+        let (Ok(first), Ok(second)) = (
+            ProtectedFile::open(&first_path),
+            ProtectedFile::open(&second_path),
+        ) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+        let Ok(volume) = Volume::open(first.identity()) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+
+        let first_evidence = volume.query_file(&first, first.identity().file_id).unwrap();
+        let second_evidence = volume
+            .query_file_with_previous_snapshot(&second, second.identity().file_id, Some(first_evidence.journal))
+            .unwrap();
+        assert_eq!(second_evidence.file_id, second.identity().file_id);
+        assert_eq!(second_evidence.journal.journal_id, first_evidence.journal.journal_id);
+        assert!(second_evidence.journal.next_usn >= first_evidence.journal.next_usn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn chained_boundary_still_observes_target_file_mutation() {
+        let dir = temp_dir("chained-mutation");
+        std::fs::create_dir_all(&dir).unwrap();
+        let first_path = dir.join("first");
+        let target_path = dir.join("target");
+        std::fs::write(&first_path, b"first").unwrap();
+        std::fs::write(&target_path, b"original").unwrap();
+        let (Ok(first), Ok(target)) = (
+            ProtectedFile::open(&first_path),
+            ProtectedFile::open(&target_path),
+        ) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+        let Ok(volume) = Volume::open(first.identity()) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+
+        let first_evidence = volume.query_file(&first, first.identity().file_id).unwrap();
+        let target_before = volume
+            .query_file_with_previous_snapshot(
+                &target,
+                target.identity().file_id,
+                Some(first_evidence.journal),
+            )
+            .unwrap();
+        drop(target);
+        std::fs::write(&target_path, b"modified").unwrap();
+        let target_after_handle = ProtectedFile::open(&target_path).unwrap();
+        let target_after = volume
+            .query_file_with_previous_snapshot(
+                &target_after_handle,
+                target_after_handle.identity().file_id,
+                Some(target_before.journal),
+            )
+            .unwrap();
+
+        assert_eq!(target_after.file_id, target_before.file_id);
+        assert_ne!(target_after.file_usn, target_before.file_usn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn query_rejects_a_previous_snapshot_from_another_volume_identity() {
+        let dir = temp_dir("wrong-volume-snapshot");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("file");
+        std::fs::write(&path, b"file").unwrap();
+        let Ok(file) = ProtectedFile::open(&path) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+        let Ok(volume) = Volume::open(file.identity()) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+        let wrong = JournalSnapshot {
+            volume_serial: volume.serial.wrapping_add(1),
+            journal_id: 1,
+            first_usn: 0,
+            lowest_valid_usn: 0,
+            next_usn: 0,
+        };
+        assert!(volume
+            .query_file_with_previous_snapshot(&file, file.identity().file_id, Some(wrong))
+            .is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
