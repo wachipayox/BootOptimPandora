@@ -473,9 +473,9 @@ mod tests {
         };
         fs::write(d.join("ready.meta"), metadata_bytes(&md)).unwrap();
 
-        assert_eq!(classify_cache(&d, "plan").unwrap().0, CacheState::Ready);
+        assert_eq!(classify_cache_with_archive_usn(&d, "plan", true).unwrap().0, CacheState::Ready);
         fs::write(&ready, b"tamper!").unwrap();
-        assert_eq!(classify_cache(&d, "plan").unwrap().0, CacheState::Stale);
+        assert_eq!(classify_cache_with_archive_usn(&d, "plan", true).unwrap().0, CacheState::Stale);
         let _ = fs::remove_dir_all(d);
     }
 

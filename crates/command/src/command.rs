@@ -220,6 +220,7 @@ impl PandoraCommand {
             "BOOTOPTIM_APPCDS_IDENTITY_CACHE",
             "BOOTOPTIM_APPCDS_IDENTITY_FORCE_STOCK",
             "BOOTOPTIM_APPCDS_IDENTITY_DIAGNOSTICS",
+            "BOOTOPTIM_APPCDS_READY_ARCHIVE_USN",
         ] {
             if let Some(value) = std::env::var_os(key) {
                 preflight.env(key, value);

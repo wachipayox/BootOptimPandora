@@ -1,3 +1,5 @@
+const APPCDS_READY_ARCHIVE_USN_ENV: &str = "BOOTOPTIM_APPCDS_READY_ARCHIVE_USN";
+
 fn build_launch_plan(parsed: &ParsedArgs) -> io::Result<LaunchPlan> {
     let mut identity_cache = IdentityDigestCache::stock();
     build_launch_plan_with_cache(parsed, &mut identity_cache)
@@ -537,6 +539,18 @@ fn top_level_json_fields(input: &[u8]) -> Option<BTreeMap<String, Vec<u8>>> {
 }
 
 fn classify_cache(cache_dir: &Path, plan_sha: &str) -> io::Result<(CacheState, Option<ReadyMetadata>)> {
+    classify_cache_with_archive_usn(
+        cache_dir,
+        plan_sha,
+        env::var_os(APPCDS_READY_ARCHIVE_USN_ENV).is_some_and(|value| value == "1"),
+    )
+}
+
+fn classify_cache_with_archive_usn(
+    cache_dir: &Path,
+    plan_sha: &str,
+    use_archive_usn: bool,
+) -> io::Result<(CacheState, Option<ReadyMetadata>)> {
     let ready = cache_dir.join("ready.jsa");
     let meta = cache_dir.join("ready.meta");
     if ready.is_file() || meta.is_file() {
@@ -554,7 +568,11 @@ fn classify_cache(cache_dir: &Path, plan_sha: &str) -> io::Result<(CacheState, O
         if size != parsed.archive_size {
             return Ok((CacheState::Stale, Some(parsed)));
         }
-        let current_identity = read_ready_archive_usn_identity(&ready);
+        let current_identity = if use_archive_usn {
+            read_ready_archive_usn_identity(&ready)
+        } else {
+            None
+        };
         if current_identity.as_ref().is_some_and(|current| {
             parsed
                 .archive_usn_identity
