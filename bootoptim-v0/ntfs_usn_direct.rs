@@ -245,15 +245,8 @@ impl Volume {
         previous_snapshot: Option<JournalSnapshot>,
     ) -> io::Result<FileEvidence> {
         let before = match previous_snapshot {
-            Some(snapshot) if snapshot.volume_serial == self.serial && valid_journal(&snapshot) => {
-                snapshot
-            }
-            Some(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid previous USN journal snapshot",
-                ));
-            }
+            Some(snapshot) if snapshot.volume_serial == self.serial && valid_journal(&snapshot) => snapshot,
+            Some(_) => return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid previous USN journal snapshot")),
             None => self.query_journal()?,
         };
         let (file_id, file_usn) = file_usn_from_handle(file.file.as_raw_handle().cast())?;
@@ -520,12 +513,9 @@ mod tests {
         };
 
         let first_evidence = volume.query_file(&first, first.identity().file_id).unwrap();
-        let second_evidence = volume.query_file_with_previous_snapshot(
-            &second,
-            second.identity().file_id,
-            Some(first_evidence.journal),
-        )
-        .unwrap();
+        let second_evidence = volume
+            .query_file_with_previous_snapshot(&second, second.identity().file_id, Some(first_evidence.journal))
+            .unwrap();
         assert_eq!(second_evidence.file_id, second.identity().file_id);
         assert_eq!(second_evidence.journal.journal_id, first_evidence.journal.journal_id);
         assert!(second_evidence.journal.next_usn >= first_evidence.journal.next_usn);
