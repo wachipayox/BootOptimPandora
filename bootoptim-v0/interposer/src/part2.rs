@@ -554,11 +554,30 @@ fn classify_cache(cache_dir: &Path, plan_sha: &str) -> io::Result<(CacheState, O
         if size != parsed.archive_size {
             return Ok((CacheState::Stale, Some(parsed)));
         }
+        let current_identity = read_ready_archive_usn_identity(&ready);
+        if current_identity.as_ref().is_some_and(|current| {
+            parsed
+                .archive_usn_identity
+                .as_ref()
+                .is_some_and(|cached| archive_usn_identity_allows_reuse(cached, current))
+        }) {
+            report_ready_archive_validation("usn-identity");
+            return Ok((CacheState::Ready, Some(parsed)));
+        }
         let actual_hash = hash_file(&ready)?;
         if actual_hash != parsed.archive_sha256 {
+            report_ready_archive_validation("sha256-mismatch");
             return Ok((CacheState::Stale, Some(parsed)));
         }
-        return Ok((CacheState::Ready, Some(parsed)));
+        report_ready_archive_validation("sha256-verified");
+        let mut verified = parsed;
+        if let Some(current) = current_identity {
+            if verified.archive_usn_identity.as_ref() != Some(&current) {
+                verified.archive_usn_identity = Some(current);
+                write_atomic_replace(&meta, metadata_bytes(&verified).as_bytes())?;
+            }
+        }
+        return Ok((CacheState::Ready, Some(verified)));
     }
     if has_staging(cache_dir)? {
         return Ok((CacheState::Failed, None));
@@ -574,23 +593,25 @@ fn promote_archive(cache_dir: &Path, staging: &Path, plan_sha: &str) -> io::Resu
     }
     let archive_size = fs::metadata(staging)?.len();
     let archive_sha256 = hash_file(staging)?;
-    let md = ReadyMetadata {
-        plan_sha256: plan_sha.to_string(),
-        archive_sha256,
-        archive_size,
-        helper_version: HELPER_VERSION.to_string(),
-    };
     let meta_staging = cache_dir.join(format!("staging-{}.meta", unique_suffix()));
-    {
+    fs::rename(staging, &ready)?;
+    let result = (|| {
+        let md = ReadyMetadata {
+            plan_sha256: plan_sha.to_string(),
+            archive_sha256,
+            archive_size,
+            helper_version: HELPER_VERSION.to_string(),
+            archive_usn_identity: read_ready_archive_usn_identity(&ready),
+        };
         let mut f = OpenOptions::new().create_new(true).write(true).open(&meta_staging)?;
         f.write_all(metadata_bytes(&md).as_bytes())?;
         f.sync_all()?;
-    }
-    fs::rename(staging, &ready)?;
-    if let Err(e) = fs::rename(&meta_staging, &meta) {
+        fs::rename(&meta_staging, &meta)
+    })();
+    if let Err(error) = result {
         let _ = fs::remove_file(&ready);
         let _ = fs::remove_file(&meta_staging);
-        return Err(e);
+        return Err(error);
     }
     Ok(())
 }
@@ -630,10 +651,24 @@ fn write_state(cache_dir: &Path, state: CacheState, reason: &str) -> io::Result<
 }
 
 fn metadata_bytes(md: &ReadyMetadata) -> String {
-    format!(
+    let mut out = format!(
         "schema={}\nplan_sha256={}\narchive_sha256={}\narchive_size={}\nhelper_version={}\n",
         SCHEMA_VERSION, md.plan_sha256, md.archive_sha256, md.archive_size, md.helper_version
-    )
+    );
+    if let Some(identity) = md.archive_usn_identity.as_ref() {
+        out.push_str(&format!(
+            "archive_volume_guid_hex={}\narchive_volume_serial={}\narchive_file_id={}\narchive_journal_id={}\narchive_snapshot_first_usn={}\narchive_snapshot_lowest_valid_usn={}\narchive_snapshot_next_usn={}\narchive_file_usn={}\n",
+            hex(identity.volume_guid.as_bytes()),
+            identity.volume_serial,
+            hex(&identity.file_id),
+            identity.journal_id,
+            identity.snapshot_first_usn,
+            identity.snapshot_lowest_valid_usn,
+            identity.snapshot_next_usn,
+            identity.file_usn
+        ));
+    }
+    out
 }
 
 fn read_metadata(path: &Path) -> io::Result<ReadyMetadata> {
@@ -665,7 +700,95 @@ fn read_metadata(path: &Path) -> io::Result<ReadyMetadata> {
             .get("helper_version")
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "helper"))?
             .to_string(),
+        archive_usn_identity: parse_archive_usn_identity(&map),
     })
+}
+
+fn parse_archive_usn_identity(map: &BTreeMap<&str, &str>) -> Option<ArchiveUsnIdentity> {
+    let values = [
+        map.get("archive_volume_guid_hex").copied(),
+        map.get("archive_volume_serial").copied(),
+        map.get("archive_file_id").copied(),
+        map.get("archive_journal_id").copied(),
+        map.get("archive_snapshot_first_usn").copied(),
+        map.get("archive_snapshot_lowest_valid_usn").copied(),
+        map.get("archive_snapshot_next_usn").copied(),
+        map.get("archive_file_usn").copied(),
+    ];
+    let [
+        Some(volume_guid_hex),
+        Some(volume_serial),
+        Some(file_id_hex),
+        Some(journal_id),
+        Some(first_usn),
+        Some(lowest_valid_usn),
+        Some(next_usn),
+        Some(file_usn),
+    ] = values
+    else {
+        return None;
+    };
+    let volume_guid = decode_hex_utf8(volume_guid_hex)?;
+    let file_id = decode_hex(file_id_hex)?.try_into().ok()?;
+    let identity = ArchiveUsnIdentity {
+        volume_guid,
+        volume_serial: volume_serial.parse().ok()?,
+        file_id,
+        journal_id: journal_id.parse().ok()?,
+        snapshot_first_usn: first_usn.parse().ok()?,
+        snapshot_lowest_valid_usn: lowest_valid_usn.parse().ok()?,
+        snapshot_next_usn: next_usn.parse().ok()?,
+        file_usn: file_usn.parse().ok()?,
+    };
+    (identity.journal_id != 0
+        && identity.snapshot_first_usn >= 0
+        && identity.snapshot_lowest_valid_usn >= 0
+        && identity.snapshot_next_usn >= identity.snapshot_first_usn
+        && identity.snapshot_next_usn >= identity.snapshot_lowest_valid_usn
+        && identity.file_usn >= 0)
+        .then_some(identity)
+}
+
+fn archive_usn_identity_allows_reuse(cached: &ArchiveUsnIdentity, current: &ArchiveUsnIdentity) -> bool {
+    cached.volume_guid == current.volume_guid
+        && cached.volume_serial == current.volume_serial
+        && cached.file_id == current.file_id
+        && cached.journal_id == current.journal_id
+        && current.snapshot_next_usn >= cached.snapshot_next_usn
+        && current.snapshot_first_usn.max(current.snapshot_lowest_valid_usn) <= cached.snapshot_next_usn
+        && current.file_usn == cached.file_usn
+}
+
+#[cfg(windows)]
+fn read_ready_archive_usn_identity(path: &Path) -> Option<ArchiveUsnIdentity> {
+    let file = ntfs_usn_direct::ProtectedFile::open(path).ok()?;
+    let identity = file.identity().clone();
+    let volume = ntfs_usn_direct::Volume::open(&identity).ok()?;
+    let evidence = volume.query_file(&file, identity.file_id).ok()?;
+    if evidence.file_id != identity.file_id || !file.identity_unchanged() {
+        return None;
+    }
+    Some(ArchiveUsnIdentity {
+        volume_guid: identity.volume_guid,
+        volume_serial: evidence.journal.volume_serial,
+        file_id: evidence.file_id,
+        journal_id: evidence.journal.journal_id,
+        snapshot_first_usn: evidence.journal.first_usn,
+        snapshot_lowest_valid_usn: evidence.journal.lowest_valid_usn,
+        snapshot_next_usn: evidence.journal.next_usn,
+        file_usn: evidence.file_usn,
+    })
+}
+
+#[cfg(not(windows))]
+fn read_ready_archive_usn_identity(_path: &Path) -> Option<ArchiveUsnIdentity> {
+    None
+}
+
+fn report_ready_archive_validation(method: &str) {
+    if env::var_os(APPCDS_IDENTITY_DIAGNOSTICS_ENV).is_some_and(|value| value == "1") {
+        eprintln!("BOOTOPTIM_APPCDS_READY_ARCHIVE_VALIDATION method={method}");
+    }
 }
 
 #[cfg(test)]

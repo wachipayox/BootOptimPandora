@@ -426,6 +426,60 @@ mod tests {
     }
 
     #[test]
+    fn ready_metadata_supports_legacy_and_round_trips_usn_identity() {
+        let d = temp_dir("ready-metadata-usn");
+        let path = d.join("ready.meta");
+        fs::write(
+            &path,
+            "schema=1\nplan_sha256=plan\narchive_sha256=hash\narchive_size=7\nhelper_version=test\n",
+        )
+        .unwrap();
+        assert_eq!(read_metadata(&path).unwrap().archive_usn_identity, None);
+
+        let expected = ReadyMetadata {
+            plan_sha256: "plan".to_string(),
+            archive_sha256: "hash".to_string(),
+            archive_size: 7,
+            helper_version: "test".to_string(),
+            archive_usn_identity: Some(ArchiveUsnIdentity {
+                volume_guid: r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\".to_string(),
+                volume_serial: 42,
+                file_id: [0xabu8; 16],
+                journal_id: 43,
+                snapshot_first_usn: 10,
+                snapshot_lowest_valid_usn: 12,
+                snapshot_next_usn: 20,
+                file_usn: 18,
+            }),
+        };
+        fs::write(&path, metadata_bytes(&expected)).unwrap();
+        assert_eq!(read_metadata(&path).unwrap().archive_usn_identity, expected.archive_usn_identity);
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ready_archive_usn_reuse_skips_hash_until_file_changes() {
+        let d = temp_dir("ready-archive-usn");
+        let ready = d.join("ready.jsa");
+        fs::write(&ready, b"archive").unwrap();
+        let archive_usn_identity = read_ready_archive_usn_identity(&ready).unwrap();
+        let md = ReadyMetadata {
+            plan_sha256: "plan".to_string(),
+            archive_sha256: hash_file(&ready).unwrap(),
+            archive_size: fs::metadata(&ready).unwrap().len(),
+            helper_version: HELPER_VERSION.to_string(),
+            archive_usn_identity: Some(archive_usn_identity),
+        };
+        fs::write(d.join("ready.meta"), metadata_bytes(&md)).unwrap();
+
+        assert_eq!(classify_cache(&d, "plan").unwrap().0, CacheState::Ready);
+        fs::write(&ready, b"tamper!").unwrap();
+        assert_eq!(classify_cache(&d, "plan").unwrap().0, CacheState::Stale);
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
     fn promotion_and_stale_detection_are_exact() {
         let d = temp_dir("promote");
         let staging = d.join("staging-ok.jsa");

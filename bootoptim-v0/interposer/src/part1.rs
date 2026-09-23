@@ -109,6 +109,19 @@ struct ReadyMetadata {
     archive_sha256: String,
     archive_size: u64,
     helper_version: String,
+    archive_usn_identity: Option<ArchiveUsnIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArchiveUsnIdentity {
+    volume_guid: String,
+    volume_serial: u64,
+    file_id: [u8; 16],
+    journal_id: u64,
+    snapshot_first_usn: i64,
+    snapshot_lowest_valid_usn: i64,
+    snapshot_next_usn: i64,
+    file_usn: i64,
 }
 
 struct LockGuard {
