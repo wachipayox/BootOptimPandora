@@ -245,8 +245,15 @@ impl Volume {
         previous_snapshot: Option<JournalSnapshot>,
     ) -> io::Result<FileEvidence> {
         let before = match previous_snapshot {
-            Some(snapshot) if snapshot.volume_serial == self.serial && valid_journal(&snapshot) => snapshot,
-            Some(_) => return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid previous USN journal snapshot")),
+            Some(snapshot) if snapshot.volume_serial == self.serial && valid_journal(&snapshot) => {
+                snapshot
+            }
+            Some(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid previous USN journal snapshot",
+                ));
+            }
             None => self.query_journal()?,
         };
         let (file_id, file_usn) = file_usn_from_handle(file.file.as_raw_handle().cast())?;
@@ -503,10 +510,7 @@ mod tests {
         let second_path = dir.join("second");
         std::fs::write(&first_path, b"first").unwrap();
         std::fs::write(&second_path, b"second").unwrap();
-        let (Ok(first), Ok(second)) = (
-            ProtectedFile::open(&first_path),
-            ProtectedFile::open(&second_path),
-        ) else {
+        let (Ok(first), Ok(second)) = (ProtectedFile::open(&first_path), ProtectedFile::open(&second_path)) else {
             let _ = std::fs::remove_dir_all(&dir);
             return;
         };
@@ -516,9 +520,12 @@ mod tests {
         };
 
         let first_evidence = volume.query_file(&first, first.identity().file_id).unwrap();
-        let second_evidence = volume
-            .query_file_with_previous_snapshot(&second, second.identity().file_id, Some(first_evidence.journal))
-            .unwrap();
+        let second_evidence = volume.query_file_with_previous_snapshot(
+            &second,
+            second.identity().file_id,
+            Some(first_evidence.journal),
+        )
+        .unwrap();
         assert_eq!(second_evidence.file_id, second.identity().file_id);
         assert_eq!(second_evidence.journal.journal_id, first_evidence.journal.journal_id);
         assert!(second_evidence.journal.next_usn >= first_evidence.journal.next_usn);
@@ -533,10 +540,7 @@ mod tests {
         let target_path = dir.join("target");
         std::fs::write(&first_path, b"first").unwrap();
         std::fs::write(&target_path, b"original").unwrap();
-        let (Ok(first), Ok(target)) = (
-            ProtectedFile::open(&first_path),
-            ProtectedFile::open(&target_path),
-        ) else {
+        let (Ok(first), Ok(target)) = (ProtectedFile::open(&first_path), ProtectedFile::open(&target_path)) else {
             let _ = std::fs::remove_dir_all(&dir);
             return;
         };
@@ -547,11 +551,7 @@ mod tests {
 
         let first_evidence = volume.query_file(&first, first.identity().file_id).unwrap();
         let target_before = volume
-            .query_file_with_previous_snapshot(
-                &target,
-                target.identity().file_id,
-                Some(first_evidence.journal),
-            )
+            .query_file_with_previous_snapshot(&target, target.identity().file_id, Some(first_evidence.journal))
             .unwrap();
         drop(target);
         std::fs::write(&target_path, b"modified").unwrap();
@@ -590,9 +590,11 @@ mod tests {
             lowest_valid_usn: 0,
             next_usn: 0,
         };
-        assert!(volume
-            .query_file_with_previous_snapshot(&file, file.identity().file_id, Some(wrong))
-            .is_err());
+        assert!(
+            volume
+                .query_file_with_previous_snapshot(&file, file.identity().file_id, Some(wrong))
+                .is_err()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
