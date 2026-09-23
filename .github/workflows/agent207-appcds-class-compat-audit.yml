@@ -1,0 +1,51 @@
+name: Agent 207 AppCDS class-compat audit
+
+on:
+  pull_request:
+    branches:
+      - codex/ntfs-usn-long-name-buffer
+    paths:
+      - "bootoptim-v0/tools/audit_class_compat_inputs.py"
+      - "bootoptim-v0/tools/test_audit_class_compat_inputs.py"
+      - "bootoptim-v0/APPCDS_CLASS_COMPAT_IDENTITY_AUDIT.md"
+      - ".github/workflows/agent207-appcds-class-compat-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-pack-transform-audit:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit tests
+        run: python3 bootoptim-v0/tools/test_audit_class_compat_inputs.py
+
+      - name: Download pinned exact-pack fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output exact-pack.zip \
+            https://github.com/wachipayox/BootOptim/releases/download/exact-pack-2026-09-02-v1/bootoptim-exact-pack.zip
+          printf '%s  %s\n' \
+            '7f586ecd90497a4d4aa1d2024af2643dbd64691864edbad9eb2ed40551c55639' \
+            'exact-pack.zip' | sha256sum --check -
+
+      - name: Audit transformation inputs
+        run: |
+          python3 bootoptim-v0/tools/audit_class_compat_inputs.py \
+            --pack-zip exact-pack.zip \
+            --output-dir agent207-audit
+          cat agent207-audit/transformation-input-audit.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload auditable report
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent207-appcds-class-compat-audit
+          path: agent207-audit/
+          if-no-files-found: error
+          retention-days: 14
