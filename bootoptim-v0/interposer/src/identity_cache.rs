@@ -160,13 +160,27 @@ struct EvidenceQueryError {
 }
 
 fn evidence_allows_reuse(cached: &CachedIdentityDigest, current: &CurrentIdentityEvidence) -> bool {
-    evidence_reuse_miss_reason(cached, current).is_none()
+    current.handle_identity_unchanged
+        && current.volume_serial == cached.volume_serial
+        && current.journal_id == cached.journal_id
+        && current.first_usn >= 0
+        && current.lowest_valid_usn >= 0
+        && current.next_usn >= 0
+        && current.file_usn >= 0
+        && current.next_usn >= current.first_usn
+        && current.next_usn >= current.lowest_valid_usn
+        && current.next_usn >= cached.snapshot_next_usn
+        && current.first_usn.max(current.lowest_valid_usn) <= cached.snapshot_next_usn
+        && current.file_id == cached.file_id
+        && current.file_usn == cached.file_usn
 }
 
 fn evidence_reuse_miss_reason(
     cached: &CachedIdentityDigest,
     current: &CurrentIdentityEvidence,
 ) -> Option<&'static str> {
+    // Keep these predicates aligned with evidence_allows_reuse. This classifier is
+    // called only by opt-in diagnostics after the unchanged fast predicate misses.
     if !current.handle_identity_unchanged {
         return Some("handle-identity-changed");
     }
