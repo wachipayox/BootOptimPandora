@@ -476,10 +476,20 @@ impl IdentityDigestCache {
                 let reason = match (self.cached.get(&key), evidence.as_ref()) {
                     (None, _) => "no-cached-record",
                     (Some(_), None) => "evidence-query-failed",
-                    (Some(cached), Some(_)) if cached.role != role || cached.path_hex != path_hex => "record-shape-changed",
-                    (Some(cached), Some(_)) if cached.volume_guid != identity.volume_guid => "volume-guid-changed",
-                    (Some(cached), Some(_)) if cached.file_id != identity.file_id => "file-id-changed",
-                    (Some(cached), Some(current)) => evidence_reuse_miss_reason(cached, current).unwrap_or("unclassified"),
+                    (Some(cached), Some(_))
+                        if cached.role != role || cached.path_hex != path_hex =>
+                    {
+                        "record-shape-changed"
+                    },
+                    (Some(cached), Some(_)) if cached.volume_guid != identity.volume_guid => {
+                        "volume-guid-changed"
+                    },
+                    (Some(cached), Some(_)) if cached.file_id != identity.file_id => {
+                        "file-id-changed"
+                    },
+                    (Some(cached), Some(current)) => {
+                        evidence_reuse_miss_reason(cached, current).unwrap_or("unclassified")
+                    },
                 };
                 (cached_digest, reason)
             } else {
@@ -873,12 +883,23 @@ mod appcds_identity_cache_tests {
     #[test]
     fn reuse_miss_summary_is_opt_in_and_uses_only_opaque_tokens() {
         let mut disabled = IdentityDigestCache::stock();
-        disabled.note_reuse_miss("mod", "file-usn-changed", "mod\0C:\\private\\secret.jar", Some(true));
+        disabled.note_reuse_miss(
+            "mod",
+            "file-usn-changed",
+            "mod\0C:\\private\\secret.jar",
+            Some(true),
+        );
         assert_eq!(disabled.miss_reasons_summary(), "none");
         assert_eq!(disabled.miss_examples_summary(), "none");
 
-        let mut enabled = IdentityDigestCache::begin_with_diagnostics(Path::new("unused"), true, true);
-        enabled.note_reuse_miss("mod", "file-usn-changed", "mod\0C:\\private\\secret.jar", Some(true));
+        let mut enabled =
+            IdentityDigestCache::begin_with_diagnostics(Path::new("unused"), true, true);
+        enabled.note_reuse_miss(
+            "mod",
+            "file-usn-changed",
+            "mod\0C:\\private\\secret.jar",
+            Some(true),
+        );
         let reason = enabled.miss_reasons_summary();
         let sample = enabled.miss_examples_summary();
         assert_eq!(reason, "mod-file-usn-changed:1");

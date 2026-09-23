@@ -674,8 +674,16 @@ mod appcds_plan_diagnostics_tests {
 
     #[test]
     fn plan_diff_reports_only_field_names_and_handles_nested_values() {
-        let old = br#"{"java":{"path":"private-old"},"mods":[{"role":"mod","path":"old"}],"argv":[{"safe_literal":"a,b"}]}"#;
-        let current = br#"{"java":{"path":"private-new"},"mods":[{"role":"mod","path":"new"}],"argv":[{"safe_literal":"a,b"}]}"#;
+        let old = br#"{
+            "java":{"path":"private-old"},
+            "mods":[{"role":"mod","path":"old"}],
+            "argv":[{"safe_literal":"a,b"}]
+        }"#;
+        let current = br#"{
+            "java":{"path":"private-new"},
+            "mods":[{"role":"mod","path":"new"}],
+            "argv":[{"safe_literal":"a,b"}]
+        }"#;
         let diff = changed_plan_fields(old, current).unwrap();
         assert_eq!(diff, "java,mods");
         assert!(!diff.contains("private"));
