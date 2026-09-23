@@ -212,11 +212,7 @@ impl IdentityDigestCache {
         Self::begin_with_diagnostics(cache_dir, active, false)
     }
 
-    fn begin_with_diagnostics(
-        cache_dir: &Path,
-        active: bool,
-        track_failure_diagnostics: bool,
-    ) -> Self {
+    fn begin_with_diagnostics(cache_dir: &Path, active: bool, track_failure_diagnostics: bool) -> Self {
         let manifest_path = cache_dir.join(APPCDS_IDENTITY_MANIFEST);
         let (manifest_state, cached) = if active {
             match fs::metadata(&manifest_path) {
@@ -264,21 +260,13 @@ impl IdentityDigestCache {
             .join(",")
     }
 
-    fn note_evidence_failure(
-        &mut self,
-        reason: &'static str,
-        key: &str,
-        error: EvidenceQueryError,
-    ) {
+    fn note_evidence_failure(&mut self, reason: &'static str, key: &str, error: EvidenceQueryError) {
         self.note_unverifiable(reason);
         if !self.track_failure_diagnostics || self.failure_details.len() >= 8 {
             return;
         }
         let token = sha256_hex(key.as_bytes());
-        let os_error = error
-            .source
-            .raw_os_error()
-            .map_or_else(|| "none".to_string(), |code| code.to_string());
+        let os_error = error.source.raw_os_error().map_or_else(|| "none".to_string(), |code| code.to_string());
         self.failure_details.push(format!(
             "{reason}:stage={}:kind={:?}:os={os_error}:id={}",
             error.stage,
@@ -389,22 +377,21 @@ impl IdentityDigestCache {
         {
             index
         } else {
-            let volume = ntfs_usn_direct::Volume::open(identity).map_err(|source| {
-                EvidenceQueryError {
-                    stage: "volume-open",
-                    source,
-                }
+            let volume = ntfs_usn_direct::Volume::open(identity).map_err(|source| EvidenceQueryError {
+                stage: "volume-open",
+                source,
             })?;
             self.volumes.push((identity.volume_guid.clone(), identity.volume_serial, volume));
             self.volumes.len() - 1
         };
-        let evidence = self.volumes[index]
-            .2
-            .query_file(file, identity.file_id)
-            .map_err(|source| EvidenceQueryError {
-                stage: "file-query",
-                source,
-            })?;
+        let evidence =
+            self.volumes[index]
+                .2
+                .query_file(file, identity.file_id)
+                .map_err(|source| EvidenceQueryError {
+                    stage: "file-query",
+                    source,
+                })?;
         Ok(CurrentIdentityEvidence {
             volume_serial: evidence.journal.volume_serial,
             journal_id: evidence.journal.journal_id,
@@ -702,9 +689,7 @@ mod appcds_identity_cache_tests {
         );
 
         let details = cache.failure_details_summary();
-        assert!(details.contains(&format!(
-            "post-evidence:stage=file-query:kind={expected_kind}:os=5"
-        )));
+        assert!(details.contains(&format!("post-evidence:stage=file-query:kind={expected_kind}:os=5")));
         assert!(details.contains(&format!("id={expected_id}")));
         assert!(!details.contains("C:\\Users"));
         assert_eq!(cache.unverifiable_summary(), "post-evidence:1");

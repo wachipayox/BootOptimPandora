@@ -177,8 +177,7 @@ fn prepare_launch(parsed: &ParsedArgs) -> io::Result<PrepareDecision> {
             return Ok(PrepareDecision::Stock);
         };
         held_lock = Some(lock);
-        let mut identity_cache =
-            IdentityDigestCache::begin_with_diagnostics(&cache_dir, true, identity_diag.enabled);
+        let mut identity_cache = IdentityDigestCache::begin_with_diagnostics(&cache_dir, true, identity_diag.enabled);
         let plan = build_launch_plan_for_namespace_with_cache(parsed, profile_scope.namespace(), &mut identity_cache)?;
         let publication = match identity_cache.finish() {
             Ok(outcome) => outcome,
