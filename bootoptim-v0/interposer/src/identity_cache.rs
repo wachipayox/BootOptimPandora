@@ -65,6 +65,7 @@ struct IdentityPreflightDiagnostics {
     reused: u64,
     strong: u64,
     unverifiable: String,
+    failure_details: String,
     publication: &'static str,
 }
 
@@ -79,6 +80,7 @@ impl IdentityPreflightDiagnostics {
             reused: 0,
             strong: 0,
             unverifiable: "none".to_string(),
+            failure_details: "none".to_string(),
             publication: "not-run",
         }
     }
@@ -97,6 +99,7 @@ impl IdentityPreflightDiagnostics {
         self.reused = cache.reused_files;
         self.strong = cache.stock_files;
         self.unverifiable = cache.unverifiable_summary();
+        self.failure_details = cache.failure_details_summary();
         self.publication = publication;
     }
 }
@@ -107,7 +110,7 @@ impl Drop for IdentityPreflightDiagnostics {
             return;
         }
         eprintln!(
-            "BOOTOPTIM_APPCDS_IDENTITY_DIAG requested={} authority={} authority_reason={} manifest={} eligible={} reused={} strong={} unverifiable={} publication={}",
+            "BOOTOPTIM_APPCDS_IDENTITY_DIAG requested={} authority={} authority_reason={} manifest={} eligible={} reused={} strong={} unverifiable={} failure_details={} publication={}",
             self.request.requested,
             if self.request.authorized {
                 "accepted"
@@ -120,9 +123,16 @@ impl Drop for IdentityPreflightDiagnostics {
             self.reused,
             self.strong,
             self.unverifiable,
+            self.failure_details,
             self.publication
         );
     }
+}
+
+#[derive(Debug)]
+struct EvidenceQueryError {
+    stage: &'static str,
+    source: io::Error,
 }
 
 fn evidence_allows_reuse(cached: &CachedIdentityDigest, current: &CurrentIdentityEvidence) -> bool {
@@ -153,6 +163,8 @@ struct IdentityDigestCache {
     stock_files: u64,
     unverifiable: BTreeMap<&'static str, u64>,
     track_stock_diagnostics: bool,
+    track_failure_diagnostics: bool,
+    failure_details: Vec<String>,
     #[cfg(windows)]
     volumes: Vec<(String, u64, ntfs_usn_direct::Volume)>,
 }
@@ -175,6 +187,8 @@ impl IdentityDigestCache {
             stock_files: 0,
             unverifiable: BTreeMap::new(),
             track_stock_diagnostics,
+            track_failure_diagnostics: track_stock_diagnostics,
+            failure_details: Vec::new(),
             #[cfg(windows)]
             volumes: Vec::new(),
         }
@@ -195,6 +209,14 @@ impl IdentityDigestCache {
     }
 
     fn begin(cache_dir: &Path, active: bool) -> Self {
+        Self::begin_with_diagnostics(cache_dir, active, false)
+    }
+
+    fn begin_with_diagnostics(
+        cache_dir: &Path,
+        active: bool,
+        track_failure_diagnostics: bool,
+    ) -> Self {
         let manifest_path = cache_dir.join(APPCDS_IDENTITY_MANIFEST);
         let (manifest_state, cached) = if active {
             match fs::metadata(&manifest_path) {
@@ -220,6 +242,8 @@ impl IdentityDigestCache {
             stock_files: 0,
             unverifiable: BTreeMap::new(),
             track_stock_diagnostics: false,
+            track_failure_diagnostics,
+            failure_details: Vec::new(),
             #[cfg(windows)]
             volumes: Vec::new(),
         }
@@ -238,6 +262,37 @@ impl IdentityDigestCache {
             .map(|(reason, count)| format!("{reason}:{count}"))
             .collect::<Vec<_>>()
             .join(",")
+    }
+
+    fn note_evidence_failure(
+        &mut self,
+        reason: &'static str,
+        key: &str,
+        error: EvidenceQueryError,
+    ) {
+        self.note_unverifiable(reason);
+        if !self.track_failure_diagnostics || self.failure_details.len() >= 8 {
+            return;
+        }
+        let token = sha256_hex(key.as_bytes());
+        let os_error = error
+            .source
+            .raw_os_error()
+            .map_or_else(|| "none".to_string(), |code| code.to_string());
+        self.failure_details.push(format!(
+            "{reason}:stage={}:kind={:?}:os={os_error}:id={}",
+            error.stage,
+            error.source.kind(),
+            &token[..16]
+        ));
+    }
+
+    fn failure_details_summary(&self) -> String {
+        if self.failure_details.is_empty() {
+            "none".to_string()
+        } else {
+            self.failure_details.join(",")
+        }
     }
 
     fn resolve_raw(&mut self, role: &'static str, path: &Path) -> io::Result<(u64, String)> {
@@ -268,8 +323,8 @@ impl IdentityDigestCache {
             let identity = protected.identity().clone();
             let evidence = match self.query_file_evidence(&protected) {
                 Ok(evidence) => Some(evidence),
-                Err(_) => {
-                    self.note_unverifiable("pre-evidence");
+                Err(error) => {
+                    self.note_evidence_failure("pre-evidence", &key, error);
                     None
                 },
             };
@@ -293,8 +348,8 @@ impl IdentityDigestCache {
             let (size, digest) = hash_protected_file(&mut protected)?;
             let after = match self.query_file_evidence(&protected) {
                 Ok(evidence) => Some(evidence),
-                Err(_) => {
-                    self.note_unverifiable("post-evidence");
+                Err(error) => {
+                    self.note_evidence_failure("post-evidence", &key, error);
                     None
                 },
             };
@@ -322,7 +377,10 @@ impl IdentityDigestCache {
     }
 
     #[cfg(windows)]
-    fn query_file_evidence(&mut self, file: &ntfs_usn_direct::ProtectedFile) -> io::Result<CurrentIdentityEvidence> {
+    fn query_file_evidence(
+        &mut self,
+        file: &ntfs_usn_direct::ProtectedFile,
+    ) -> Result<CurrentIdentityEvidence, EvidenceQueryError> {
         let identity = file.identity();
         let index = if let Some(index) = self
             .volumes
@@ -331,11 +389,22 @@ impl IdentityDigestCache {
         {
             index
         } else {
-            let volume = ntfs_usn_direct::Volume::open(identity)?;
+            let volume = ntfs_usn_direct::Volume::open(identity).map_err(|source| {
+                EvidenceQueryError {
+                    stage: "volume-open",
+                    source,
+                }
+            })?;
             self.volumes.push((identity.volume_guid.clone(), identity.volume_serial, volume));
             self.volumes.len() - 1
         };
-        let evidence = self.volumes[index].2.query_file(file, identity.file_id)?;
+        let evidence = self.volumes[index]
+            .2
+            .query_file(file, identity.file_id)
+            .map_err(|source| EvidenceQueryError {
+                stage: "file-query",
+                source,
+            })?;
         Ok(CurrentIdentityEvidence {
             volume_serial: evidence.journal.volume_serial,
             journal_id: evidence.journal.journal_id,
@@ -614,6 +683,47 @@ mod appcds_identity_cache_tests {
             file_usn: 900,
             handle_identity_unchanged: true,
         }
+    }
+
+    #[test]
+    fn evidence_failure_diagnostic_correlates_opaque_file_id_and_os_error() {
+        let raw_path_key = "classpath\0C:\\Users\\example\\private\\mod.jar";
+        let expected_id = &sha256_hex(raw_path_key.as_bytes())[..16];
+        let error = io::Error::from_raw_os_error(5);
+        let expected_kind = format!("{:?}", error.kind());
+        let mut cache = IdentityDigestCache::stock_with_diagnostics(true);
+        cache.note_evidence_failure(
+            "post-evidence",
+            raw_path_key,
+            EvidenceQueryError {
+                stage: "file-query",
+                source: error,
+            },
+        );
+
+        let details = cache.failure_details_summary();
+        assert!(details.contains(&format!(
+            "post-evidence:stage=file-query:kind={expected_kind}:os=5"
+        )));
+        assert!(details.contains(&format!("id={expected_id}")));
+        assert!(!details.contains("C:\\Users"));
+        assert_eq!(cache.unverifiable_summary(), "post-evidence:1");
+    }
+
+    #[test]
+    fn evidence_failure_details_are_not_collected_when_diagnostics_are_disabled() {
+        let mut cache = IdentityDigestCache::stock();
+        cache.note_evidence_failure(
+            "pre-evidence",
+            "classpath\0C:\\private\\file.jar",
+            EvidenceQueryError {
+                stage: "volume-open",
+                source: io::Error::new(io::ErrorKind::Other, "not logged"),
+            },
+        );
+
+        assert_eq!(cache.failure_details_summary(), "none");
+        assert_eq!(cache.unverifiable_summary(), "pre-evidence:1");
     }
 
     #[test]

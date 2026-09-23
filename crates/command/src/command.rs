@@ -506,10 +506,10 @@ mod appcds_identity_authority_tests {
 
     #[test]
     fn identity_diagnostic_forwarding_is_single_line_and_ignores_other_helper_stderr() {
-        let stderr = b"BOOTOPTIM_INTERPOSER status=ready activation=enabled\nBOOTOPTIM_APPCDS_IDENTITY_DIAG requested=true authority=accepted authority_reason=normal-gui manifest=absent eligible=42 reused=0 strong=42 unverifiable=none publication=published\nBOOTOPTIM_APPCDS_IDENTITY_DIAG duplicate\n";
+        let stderr = b"BOOTOPTIM_INTERPOSER status=ready activation=enabled\nBOOTOPTIM_APPCDS_IDENTITY_DIAG requested=true authority=accepted authority_reason=normal-gui manifest=absent eligible=42 reused=0 strong=42 unverifiable=none failure_details=none publication=published\nBOOTOPTIM_APPCDS_IDENTITY_DIAG duplicate\n";
         assert_eq!(
             bootoptim_identity_diagnostic_line(stderr).as_deref(),
-            Some("BOOTOPTIM_APPCDS_IDENTITY_DIAG requested=true authority=accepted authority_reason=normal-gui manifest=absent eligible=42 reused=0 strong=42 unverifiable=none publication=published")
+            Some("BOOTOPTIM_APPCDS_IDENTITY_DIAG requested=true authority=accepted authority_reason=normal-gui manifest=absent eligible=42 reused=0 strong=42 unverifiable=none failure_details=none publication=published")
         );
     }
 }
