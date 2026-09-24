@@ -274,10 +274,7 @@ impl PandoraCommand {
         ) {
             return;
         }
-        if !self
-            .args
-            .iter()
-            .any(|arg| arg.0 == OsStr::new("com.moulberry.pandora.LaunchWrapper"))
+        if !self.args.iter().any(|arg| arg.0 == OsStr::new("com.moulberry.pandora.LaunchWrapper"))
             || !is_java_executable(&self.executable.0)
         {
             return;
@@ -287,9 +284,7 @@ impl PandoraCommand {
         // preflight has classified the existing plan/archive. This keeps the
         // persisted AppCDS identity byte-for-byte unchanged and lets READY and
         // plan/STOCK runs carry the same logging option without retraining.
-        self.prepend_bootoptim_flags(vec![OsString::from(
-            "-Xlog:cds=info,class+load=info",
-        )]);
+        self.prepend_bootoptim_flags(vec![OsString::from("-Xlog:cds=info,class+load=info")]);
         log::info!("BOOTOPTIM_APPCDS_VM_CONSUMPTION_DIAGNOSTICS status=enabled");
     }
 
