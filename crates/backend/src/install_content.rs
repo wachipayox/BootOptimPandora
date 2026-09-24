@@ -198,7 +198,11 @@ impl BackendState {
         self.mod_metadata_manager.set_content_sources(sources);
 
         let mut dot_minecraft_dir = None;
+        let mut new_instance_root = None;
+        let mut new_instance_generation = None;
+        let mut identity_provision = None;
         let mut instance_running = false;
+        let mut content_copy_failed = false;
 
         let loader = content.loader;
         let minecraft_version = content.minecraft_version;
@@ -211,21 +215,54 @@ impl BackendState {
             let name = name.as_deref().unwrap_or("New Instance");
 
             // todo: use icon of mod/modpack/etc. for icon of instance
-            dot_minecraft_dir = self.create_instance_sanitized(&name, &minecraft_version, loader, None).await
-                .map(|v| v.join(".minecraft").into());
+            if let Some(root) = self
+                .create_instance_sanitized(&name, &minecraft_version, loader, None)
+                .await
+            {
+                dot_minecraft_dir = Some(root.join(".minecraft").into());
+                match crate::library_install_state::incomplete_generation(
+                    &root,
+                    "content-install-in-progress",
+                ) {
+                    Ok(generation) => new_instance_generation = generation,
+                    Err(err) => {
+                        log::warn!("Unable to read new content-install marker generation: {err}");
+                    },
+                }
+                new_instance_root = Some(root);
+            }
         }
 
-        let mut instance_lock_guard = None;
+        {
+            let mut instance_lock_guard = None;
 
-        if let bridge::install::InstallTarget::Instance(instance_id) = content.target {
+            if let bridge::install::InstallTarget::Instance(instance_id) = content.target {
             let mut instance_state = self.instance_state.write();
             if let Some(instance) = instance_state.instances.get_mut(instance_id) {
                 instance_running = !instance.processes.is_empty();
 
-                if instance.configuration.get().loader == Loader::Vanilla {
+                if instance.configuration.get().loader == Loader::Vanilla && loader != Loader::Vanilla {
+                    let marker_generation = match crate::library_install_state::mark_incomplete(
+                        &instance.root_path,
+                        "content-install-loader-changed",
+                    ) {
+                        Ok(generation) => generation,
+                        Err(err) => {
+                            self.send.send_error(format!(
+                                "Unable to install content: game-files state could not be marked incomplete: {err}"
+                            ));
+                            return;
+                        },
+                    };
                     instance.configuration.modify(|config| {
                         config.loader = loader;
                     });
+                    identity_provision = Some((
+                        instance_id,
+                        instance.root_path.clone(),
+                        instance.configuration.get().clone(),
+                        marker_generation,
+                    ));
                 }
 
                 dot_minecraft_dir = Some(instance.dot_minecraft_path.clone());
@@ -242,6 +279,7 @@ impl BackendState {
             for install in files {
                 let Some(install_path) = install.install_path else {
                     self.send.send_warning(format!("Unable to determine install path for {}", install.filename));
+                    content_copy_failed = true;
                     continue;
                 };
 
@@ -268,6 +306,7 @@ impl BackendState {
                         }
                     },
                     Err(err) => {
+                        content_copy_failed = true;
                         log::error!("Failed to install content to {:?}: {err}", target_path);
                         let message = format!("Failed to install content to {}: {err}", target_path.display());
                         modal_action.set_finished_with_error(Arc::from(message.as_str()));
@@ -280,7 +319,92 @@ impl BackendState {
             }
         }
 
-        drop(instance_lock_guard);
+            drop(instance_lock_guard);
+        }
+
+        if !content_copy_failed
+            && !modal_action.has_requested_cancel()
+            && modal_action.get_finished_at().is_none()
+            && let Some((instance_id, root_path, configuration, marker_generation)) = identity_provision
+        {
+            let cancellation_root = root_path.clone();
+            match self
+                .provision_game_files_for_identity_change(
+                    instance_id,
+                    root_path,
+                    configuration,
+                    "content-install-loader-changed",
+                    marker_generation,
+                    &modal_action,
+                )
+                .await
+            {
+                Ok(true) => {
+                    if modal_action.has_requested_cancel() {
+                        let _ = crate::library_install_state::mark_incomplete(
+                            &cancellation_root,
+                            "content-install-cancelled",
+                        );
+                    }
+                },
+                Ok(false) => {
+                    modal_action.set_finished_with_error(
+                        "Content installed, but dependency identity/state changed before publication; use Repair game files"
+                            .into(),
+                    );
+                },
+                Err(err) => {
+                    modal_action.set_finished_with_error(
+                        format!(
+                            "Content installed, but game-file provisioning did not complete ({err}); use Repair game files"
+                        )
+                        .into(),
+                    );
+                },
+            }
+        }
+
+        if let Some(root) = new_instance_root
+            && !content_copy_failed
+            && !modal_action.has_requested_cancel()
+            && modal_action.get_finished_at().is_none()
+        {
+            let Some(marker_generation) = new_instance_generation else {
+                modal_action.set_finished_with_error(
+                    "Content installed, but the installation transaction is incomplete; use Repair game files".into(),
+                );
+                return;
+            };
+            match crate::library_install_state::publish_if_incomplete_generation(
+                &root,
+                "content-install-in-progress",
+                marker_generation,
+                "content-install-complete",
+            ) {
+                Ok(true) => {
+                    if modal_action.has_requested_cancel() {
+                        let _ = crate::library_install_state::mark_incomplete(
+                            &root,
+                            "content-install-cancelled",
+                        );
+                    }
+                },
+                Ok(false) => {
+                    modal_action.set_finished_with_error(
+                        "Content installed, but game-files state changed before publication; use Repair game files"
+                            .into(),
+                    );
+                },
+                Err(err) => {
+                    modal_action.set_finished_with_error(
+                        format!(
+                            "Content installed, but game-files state could not be published ({err}); use Repair game files"
+                        )
+                        .into(),
+                    );
+                },
+            }
+        }
     }
 
     async fn install_into_content_library(

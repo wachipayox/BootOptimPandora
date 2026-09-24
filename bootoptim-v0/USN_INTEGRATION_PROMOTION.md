@@ -6,7 +6,7 @@ This is a clean recomposition, not a merge/rebase of the historical USN stack. T
 
 ## Promotion decision
 
-Candidate is viable as **default-off integration smoke code** only. Activation still requires `BOOTOPTIM_ASSET_USN_CACHE=1`; no default product behavior changes before a physical integration smoke.
+The cache is enabled by default for normal GUI Start. Set `BOOTOPTIM_ASSET_USN_CACHE=0` to disable it for diagnosis or rollback; `=1` explicitly enables it. This switch does not weaken the fail-closed verification contract: every uncertain identity/capability still uses stock SHA-1 verification.
 
 The direct capability performs no UAC, helper, service, named-pipe IPC or privileged per-Start action. GUI `start_instance` is the only caller granted `AssetVerificationMode::Normal`. Default/CLI/legacy/unknown callers remain `FullVerification` and therefore execute stock SHA-1 verification.
 
@@ -48,9 +48,9 @@ Focused hosted gate only:
 
 CI cache/runtime duration is not performance evidence.
 
-## Required physical smoke before enabling by default
+## Physical smoke and release follow-up
 
-Use the exact checksummed Windows artifact and normal GUI Start on the HDD laptop, with `BOOTOPTIM_ASSET_USN_CACHE=1` and a fresh USN probe path per run.
+Use the exact checksummed Windows artifact and normal GUI Start on the HDD laptop, with the asset cache enabled by default (or explicitly `BOOTOPTIM_ASSET_USN_CACHE=1`) and a fresh USN probe path per run.
 
 1. Seed: full SHA-1 baseline, direct capability active, no UAC/helper, manifest published.
 2. Immediate unchanged reuse: 3,911 eligible reuses, zero stock asset SHA-1 reads/bytes and no asset network/downloads.
