@@ -269,10 +269,9 @@ impl PandoraCommand {
     }
 
     fn maybe_bootoptim_enable_vm_consumption_diagnostics(&mut self) {
-        if std::env::var_os("BOOTOPTIM_APPCDS_VM_CONSUMPTION_DIAGNOSTICS")
-            .as_deref()
-            != Some(OsStr::new("1"))
-        {
+        if !bootoptim_vm_consumption_diagnostics_enabled(
+            std::env::var_os("BOOTOPTIM_APPCDS_VM_CONSUMPTION_DIAGNOSTICS").as_deref(),
+        ) {
             return;
         }
         if !self
@@ -350,6 +349,23 @@ impl PandoraCommand {
             }
         }
         std::mem::take(&mut self.env)
+    }
+}
+
+fn bootoptim_vm_consumption_diagnostics_enabled(value: Option<&OsStr>) -> bool {
+    value == Some(OsStr::new("1"))
+}
+
+#[cfg(test)]
+mod bootoptim_vm_consumption_diagnostics_tests {
+    use super::*;
+
+    #[test]
+    fn vm_consumption_probe_is_exact_opt_in() {
+        assert!(bootoptim_vm_consumption_diagnostics_enabled(Some(OsStr::new("1"))));
+        assert!(!bootoptim_vm_consumption_diagnostics_enabled(None));
+        assert!(!bootoptim_vm_consumption_diagnostics_enabled(Some(OsStr::new("0"))));
+        assert!(!bootoptim_vm_consumption_diagnostics_enabled(Some(OsStr::new("true"))));
     }
 }
 
