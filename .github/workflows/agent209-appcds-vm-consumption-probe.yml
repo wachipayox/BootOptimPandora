@@ -1,0 +1,34 @@
+name: Agent 209 AppCDS VM consumption probe
+
+on:
+  pull_request:
+    branches:
+      - agent/integration-current
+    paths:
+      - "crates/command/src/command.rs"
+      - ".github/workflows/agent209-appcds-vm-consumption-probe.yml"
+      - ".github/workflows/build.yml"
+      - ".github/workflows/bootoptim-v0.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  focused-windows:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Command crate type check
+        run: cargo check -p command --tests --frozen --target x86_64-pc-windows-msvc
+
+      - name: Probe opt-in test
+        run: cargo test -p command bootoptim_vm_consumption_diagnostics_tests --frozen --target x86_64-pc-windows-msvc
