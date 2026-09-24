@@ -101,6 +101,7 @@ impl PandoraCommand {
     pub async fn spawn(mut self) -> std::io::Result<PandoraChild> {
         crate::spawner::probe_minecraft_command_ready(&self);
         let training = self.maybe_bootoptim_prepare();
+        self.maybe_bootoptim_enable_vm_consumption_diagnostics();
         let result = crate::spawner::spawn(self, SpawnType::Normal)
             .await
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "spawning thread has shutdown"))
@@ -265,6 +266,32 @@ impl PandoraCommand {
                 None
             }
         }
+    }
+
+    fn maybe_bootoptim_enable_vm_consumption_diagnostics(&mut self) {
+        if std::env::var_os("BOOTOPTIM_APPCDS_VM_CONSUMPTION_DIAGNOSTICS")
+            .as_deref()
+            != Some(OsStr::new("1"))
+        {
+            return;
+        }
+        if !self
+            .args
+            .iter()
+            .any(|arg| arg.0 == OsStr::new("com.moulberry.pandora.LaunchWrapper"))
+            || !is_java_executable(&self.executable.0)
+        {
+            return;
+        }
+
+        // Diagnostic-only: inject HotSpot Unified Logging *after* the AppCDS
+        // preflight has classified the existing plan/archive. This keeps the
+        // persisted AppCDS identity byte-for-byte unchanged and lets READY and
+        // plan/STOCK runs carry the same logging option without retraining.
+        self.prepend_bootoptim_flags(vec![OsString::from(
+            "-Xlog:cds=info,class+load=info",
+        )]);
+        log::info!("BOOTOPTIM_APPCDS_VM_CONSUMPTION_DIAGNOSTICS status=enabled");
     }
 
     fn prepend_bootoptim_flags(&mut self, flags: Vec<OsString>) {
