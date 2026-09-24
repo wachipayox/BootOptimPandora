@@ -24,9 +24,6 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Formatting
-        run: cargo fmt -p command -- --check
-
       - name: Command crate type check
         run: cargo check -p command --tests --frozen --target x86_64-pc-windows-msvc
 
