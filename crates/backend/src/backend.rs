@@ -318,6 +318,73 @@ pub struct BackendState {
     pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
 }
 
+#[derive(Clone, Copy)]
+struct LegacyModsLayoutStatus {
+    had_original_mods: bool,
+    mods_dir_present: bool,
+    original_mods_remaining: bool,
+}
+
+fn persistent_layout_launch_error(layout: Option<LegacyModsLayoutStatus>) -> Option<&'static str> {
+    let layout = layout?;
+    if layout.original_mods_remaining {
+        return Some("the legacy original_mods directory could not be restored; the game was not started");
+    }
+    if layout.had_original_mods && !layout.mods_dir_present {
+        return Some("the legacy mods directory was not restored under .minecraft; the game was not started");
+    }
+    None
+}
+
+#[cfg(test)]
+mod persistent_layout_tests {
+    use super::{LegacyModsLayoutStatus, persistent_layout_launch_error};
+
+    #[test]
+    fn allows_fresh_profiles_without_a_mods_directory() {
+        let status = LegacyModsLayoutStatus {
+            had_original_mods: false,
+            mods_dir_present: false,
+            original_mods_remaining: false,
+        };
+        assert_eq!(persistent_layout_launch_error(Some(status)), None);
+    }
+
+    #[test]
+    fn allows_successful_legacy_restore() {
+        let status = LegacyModsLayoutStatus {
+            had_original_mods: true,
+            mods_dir_present: true,
+            original_mods_remaining: false,
+        };
+        assert_eq!(persistent_layout_launch_error(Some(status)), None);
+    }
+
+    #[test]
+    fn blocks_launch_when_legacy_restore_is_incomplete_or_ambiguous() {
+        for status in [
+            LegacyModsLayoutStatus {
+                had_original_mods: true,
+                mods_dir_present: true,
+                original_mods_remaining: true,
+            },
+            LegacyModsLayoutStatus {
+                had_original_mods: true,
+                mods_dir_present: false,
+                original_mods_remaining: false,
+            },
+            LegacyModsLayoutStatus {
+                had_original_mods: false,
+                mods_dir_present: true,
+                original_mods_remaining: true,
+            },
+        ] {
+            assert!(persistent_layout_launch_error(Some(status)).is_some());
+        }
+        assert!(persistent_layout_launch_error(None).is_some());
+    }
+}
+
 pub struct CachedMinecraftProfile {
     pub profile: MinecraftProfileResponse,
     pub not_before: Instant,
@@ -940,38 +1007,48 @@ impl BackendState {
     /// The private launcher keeps each instance's `.minecraft` live and persistent.
     /// Pack contents are installed into that directory by the updater; Start does not
     /// stage, rotate, or copy the Mods tree.
-    pub async fn prelaunch_setup_mods(self: &Arc<Self>, id: InstanceID, _modal_action: &ModalAction) {
-        if self.restore_legacy_mods_layout(id).is_none() {
-            log::error!("Unable to resolve instance {id:?} before launching its persistent game directory");
+    pub async fn prelaunch_setup_mods(self: &Arc<Self>, id: InstanceID, modal_action: &ModalAction) {
+        let layout = self.restore_legacy_mods_layout(id);
+        if let Some(error) = persistent_layout_launch_error(layout) {
+            log::error!("Unable to launch instance {id:?} with its persistent game directory: {error}");
+            modal_action.set_finished_with_error(error.into());
         }
     }
 
-    fn restore_legacy_mods_layout(&self, id: InstanceID) -> Option<(bool, bool)> {
+    fn restore_legacy_mods_layout(&self, id: InstanceID) -> Option<LegacyModsLayoutStatus> {
         let mut instances = self.instance_state.write();
         let instance = instances.instances.get_mut(id)?;
 
         // One-time migration for instances left in Pandora's former mods/original_mods
         // launch layout. New launches never create original_mods.
+        let had_original_mods = instance.root_path.join("original_mods").exists();
         self.restore_mods_folder_if_stopped(instance);
 
-        let mods_dir_present = instance.dot_minecraft_path.join("mods").is_dir();
-        let original_mods_remaining = instance.root_path.join("original_mods").exists();
-        Some((mods_dir_present, original_mods_remaining))
+        Some(LegacyModsLayoutStatus {
+            had_original_mods,
+            mods_dir_present: instance.dot_minecraft_path.join("mods").is_dir(),
+            original_mods_remaining: instance.root_path.join("original_mods").exists(),
+        })
     }
 
     async fn prelaunch_setup_mods_attributed(
         self: &Arc<Self>,
         id: InstanceID,
-        _modal_action: &ModalAction,
+        modal_action: &ModalAction,
         probe: &crate::prelaunch_attribution::PrelaunchAttribution,
     ) {
         let restore_span = probe.begin("restore_prior", Some("prelaunch"), false);
         let layout = self.restore_legacy_mods_layout(id);
         let mut restore_counters = crate::prelaunch_attribution::SpanCounters::default();
         restore_counters.insert("instance_present", layout.is_some() as u64);
-        if let Some((mods_dir_present, original_mods_remaining)) = layout {
-            restore_counters.insert("mods_dir_present", mods_dir_present as u64);
-            restore_counters.insert("original_mods_remaining", original_mods_remaining as u64);
+        if let Some(status) = layout {
+            restore_counters.insert("had_original_mods", status.had_original_mods as u64);
+            restore_counters.insert("mods_dir_present", status.mods_dir_present as u64);
+            restore_counters.insert("original_mods_remaining", status.original_mods_remaining as u64);
+        }
+        if let Some(error) = persistent_layout_launch_error(layout) {
+            log::error!("Unable to launch instance {id:?} with its persistent game directory: {error}");
+            modal_action.set_finished_with_error(error.into());
         }
         probe.finish(restore_span, restore_counters);
 
