@@ -131,7 +131,7 @@ impl PrelaunchAttribution {
                 limitations: [
                     "Nested spans with inclusive=true are contained by their parent and must not be added to the parent wall time.",
                     "Bytes are emitted only when already exposed by the production operation; telemetry performs no extra filesystem walk or stat pass.",
-                    "restore_prior is unobserved because restore_mods_folder_if_stopped is not invoked inside BackendState::prelaunch.",
+                    "restore_prior records the legacy original_mods recovery check; on the persistent game-directory path it is a no-op.",
                     "Connector restore/merge after game stop is outside the Start-to-Java/prelaunch endpoint and is not converted into prelaunch time.",
                     "This sidecar does not observe Java-to-menu/TTMM and does not read Minecraft output.",
                 ],
