@@ -10,6 +10,7 @@ use std::time::SystemTime;
 
 use bridge::handle::{BackendHandle, FrontendHandle};
 use bridge::message::{MessageToBackend, MessageToFrontend};
+use bridge::modal_action::ModalAction;
 use bridge::quit::QuitCoordinator;
 use clap::Parser;
 #[cfg(windows)]
@@ -38,9 +39,12 @@ impl From<InternalDefenderProcessAction> for command::DefenderProcessAction {
 #[derive(Parser, Debug)]
 #[command()]
 struct Cli {
-    /// Instance to launch, instead of opening the launcher
-    #[arg(long)]
+    /// Open the launcher and launch an instance with full asset verification
+    #[arg(long, conflicts_with = "run_instance_normal")]
     run_instance: Option<String>,
+    /// Open the launcher and launch an instance using the GUI Start asset verification mode
+    #[arg(long, conflicts_with = "run_instance")]
+    run_instance_normal: Option<String>,
     /// Internal function to set traversable ACLs in an elevated context
     #[cfg(windows)]
     #[arg(long, hide = false, num_args = 2..)]
@@ -406,11 +410,70 @@ impl tokio::io::AsyncWrite for PlatformClientStream {
 fn run_cli(cli: Cli, frontend: &FrontendHandle, backend: &BackendHandle) {
     frontend.send(MessageToFrontend::OpenOrFocusMainWindow);
 
-    if let Some(run_instance) = cli.run_instance {
+    if let Some((name, modal_action)) = cli_start_request(&cli) {
         backend.send(bridge::message::MessageToBackend::StartInstanceByName {
-            name: run_instance,
+            name,
             quick_play: None,
+            modal_action,
         });
+    }
+}
+
+fn cli_start_request(cli: &Cli) -> Option<(String, ModalAction)> {
+    cli.run_instance
+        .as_ref()
+        .map(|name| (name.clone(), ModalAction::default()))
+        .or_else(|| {
+            cli.run_instance_normal
+                .as_ref()
+                .map(|name| (name.clone(), ModalAction::normal_launch()))
+        })
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::{cli_start_request, Cli};
+    use bridge::modal_action::AssetVerificationMode;
+    use clap::Parser;
+
+    #[test]
+    fn existing_run_instance_flag_keeps_full_verification() {
+        let cli = Cli::try_parse_from(["pandora", "--run-instance", "Pack"]).unwrap();
+        let (name, action) = cli_start_request(&cli).unwrap();
+        assert_eq!(name, "Pack");
+        assert_eq!(
+            action.asset_verification_mode(),
+            AssetVerificationMode::FullVerification
+        );
+    }
+
+    #[test]
+    fn normal_flag_selects_gui_start_verification_mode() {
+        let cli = Cli::try_parse_from(["pandora", "--run-instance-normal", "Pack"]).unwrap();
+        let (name, action) = cli_start_request(&cli).unwrap();
+        assert_eq!(name, "Pack");
+        assert_eq!(
+            action.asset_verification_mode(),
+            AssetVerificationMode::Normal
+        );
+    }
+
+    #[test]
+    fn run_instance_modes_are_mutually_exclusive() {
+        assert!(Cli::try_parse_from([
+            "pandora",
+            "--run-instance",
+            "Pack",
+            "--run-instance-normal",
+            "Pack",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn no_start_flag_only_opens_launcher() {
+        let cli = Cli::try_parse_from(["pandora"]).unwrap();
+        assert!(cli_start_request(&cli).is_none());
     }
 }
 

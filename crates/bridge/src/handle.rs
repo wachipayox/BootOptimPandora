@@ -57,8 +57,8 @@ fn probe_dispatch(message: &MessageToBackend) {
         MessageToBackend::StartInstance { modal_action, .. } => {
             crate::launch_probe::backend_dispatch(modal_action.probe_key());
         }
-        MessageToBackend::StartInstanceByName { .. } => {
-            crate::launch_probe::backend_dispatch(0);
+        MessageToBackend::StartInstanceByName { modal_action, .. } => {
+            crate::launch_probe::backend_dispatch(modal_action.probe_key());
         }
         _ => {}
     }
@@ -69,10 +69,8 @@ fn probe_request(message: &MessageToBackend) {
         MessageToBackend::StartInstance { modal_action, .. } => {
             crate::launch_probe::request(modal_action.probe_key());
         }
-        MessageToBackend::StartInstanceByName { .. } => {
-            // Name-based launches construct their ModalAction inside the backend. A zero key
-            // is a temporary sentinel adopted by the first modal/tracker callback.
-            crate::launch_probe::request(0);
+        MessageToBackend::StartInstanceByName { modal_action, .. } => {
+            crate::launch_probe::request(modal_action.probe_key());
         }
         _ => {}
     }

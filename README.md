@@ -2,6 +2,15 @@
 
 Work in progress
 
+## Command line
+
+- `pandora --run-instance "Instance name"` opens the launcher and starts the named instance with full asset verification. This remains the behavior used by existing instance shortcuts.
+- `pandora --run-instance-normal "Instance name"` opens the launcher and starts the named instance with the same asset verification mode as the GUI **Start** button. Use this explicit option when automating a normal launcher start.
+
+The two launch options cannot be combined. Without either option, Pandora only opens or focuses its main window.
+
+The private launcher starts from the instance's existing `.minecraft` directory and keeps it writable across runs. Start does not rotate or rebuild `mods/`; the private updater must install pack changes into the instance before launch. The former `original_mods` layout is restored only when migrating an instance left by an older launcher build. Third-party Modrinth/CurseForge modpack expansion is not part of this private Start path.
+
 ## Features
 - (Optional) sandboxing, to prevent mods from harming your system
 - Cross-instance file syncing (options, saves, etc.) (https://youtu.be/wb5EY2VsMKg)

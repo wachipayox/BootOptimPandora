@@ -318,6 +318,73 @@ pub struct BackendState {
     pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
 }
 
+#[derive(Clone, Copy)]
+struct LegacyModsLayoutStatus {
+    had_original_mods: bool,
+    mods_dir_present: bool,
+    original_mods_remaining: bool,
+}
+
+fn persistent_layout_launch_error(layout: Option<LegacyModsLayoutStatus>) -> Option<&'static str> {
+    let layout = layout?;
+    if layout.original_mods_remaining {
+        return Some("the legacy original_mods directory could not be restored; the game was not started");
+    }
+    if layout.had_original_mods && !layout.mods_dir_present {
+        return Some("the legacy mods directory was not restored under .minecraft; the game was not started");
+    }
+    None
+}
+
+#[cfg(test)]
+mod persistent_layout_tests {
+    use super::{LegacyModsLayoutStatus, persistent_layout_launch_error};
+
+    #[test]
+    fn allows_fresh_profiles_without_a_mods_directory() {
+        let status = LegacyModsLayoutStatus {
+            had_original_mods: false,
+            mods_dir_present: false,
+            original_mods_remaining: false,
+        };
+        assert_eq!(persistent_layout_launch_error(Some(status)), None);
+    }
+
+    #[test]
+    fn allows_successful_legacy_restore() {
+        let status = LegacyModsLayoutStatus {
+            had_original_mods: true,
+            mods_dir_present: true,
+            original_mods_remaining: false,
+        };
+        assert_eq!(persistent_layout_launch_error(Some(status)), None);
+    }
+
+    #[test]
+    fn blocks_launch_when_legacy_restore_is_incomplete_or_ambiguous() {
+        for status in [
+            LegacyModsLayoutStatus {
+                had_original_mods: true,
+                mods_dir_present: true,
+                original_mods_remaining: true,
+            },
+            LegacyModsLayoutStatus {
+                had_original_mods: true,
+                mods_dir_present: false,
+                original_mods_remaining: false,
+            },
+            LegacyModsLayoutStatus {
+                had_original_mods: false,
+                mods_dir_present: true,
+                original_mods_remaining: true,
+            },
+        ] {
+            assert!(persistent_layout_launch_error(Some(status)).is_some());
+        }
+        assert!(persistent_layout_launch_error(None).is_some());
+    }
+}
+
 pub struct CachedMinecraftProfile {
     pub profile: MinecraftProfileResponse,
     pub not_before: Instant,
@@ -937,131 +1004,31 @@ impl BackendState {
         instance.set_frozen_mods_folder(false);
     }
 
+    /// The private launcher keeps each instance's `.minecraft` live and persistent.
+    /// Pack contents are installed into that directory by the updater; Start does not
+    /// stage, rotate, or copy the Mods tree.
     pub async fn prelaunch_setup_mods(self: &Arc<Self>, id: InstanceID, modal_action: &ModalAction) {
-        let (loader, minecraft_version, root_dir, dot_minecraft_dir, mods_dir) =
-            if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                if !instance.processes.is_empty() {
-                    return;
-                }
-
-                let configuration = instance.configuration.get();
-                (
-                    configuration.loader,
-                    configuration.minecraft_version,
-                    instance.root_path.clone(),
-                    instance.dot_minecraft_path.clone(),
-                    instance.content_state[ContentFolder::Mods].path.clone(),
-                )
-            } else {
-                return;
-            };
-
-        if !mods_dir.is_dir() {
-            return;
+        let layout = self.restore_legacy_mods_layout(id);
+        if let Some(error) = persistent_layout_launch_error(layout) {
+            log::error!("Unable to launch instance {id:?} with its persistent game directory: {error}");
+            modal_action.set_finished_with_error(error.into());
         }
+    }
 
-        let Some(mods) = Instance::load_content(self.clone(), id, ContentFolder::Mods).await else {
-            return;
-        };
+    fn restore_legacy_mods_layout(&self, id: InstanceID) -> Option<LegacyModsLayoutStatus> {
+        let mut instances = self.instance_state.write();
+        let instance = instances.instances.get_mut(id)?;
 
-        let mut known_files: FxHashSet<Arc<Path>> = FxHashSet::with_capacity_and_hasher(mods.len() * 2, FxBuildHasher);
-        for content in mods.iter() {
-            known_files.insert(content.path.clone());
-            if let Some(aux) = crate::fs::pandora_aux_path_for_content(&content) {
-                known_files.insert(aux.into());
-            }
-        }
+        // One-time migration for instances left in Pandora's former mods/original_mods
+        // launch layout. New launches never create original_mods.
+        let had_original_mods = instance.root_path.join("original_mods").exists();
+        self.restore_mods_folder_if_stopped(instance);
 
-        let mut other_files = Vec::new();
-        if let Ok(read_dir) = std::fs::read_dir(&mods_dir) {
-            for entry in read_dir {
-                let Ok(entry) = entry else {
-                    continue;
-                };
-                let path = entry.path();
-
-                // Remove .pandora.filename mods (todo: get rid of this)
-                if let Some(file_name) = path.file_name() {
-                    let file_name = file_name.as_encoded_bytes();
-                    if file_name.starts_with(b".pandora.") {
-                        log::trace!("Removing temporary mod file {:?}", &file_name);
-                        _ = std::fs::remove_file(entry.path());
-                        continue;
-                    }
-                }
-
-                if !known_files.contains(&*path) {
-                    if let Ok(relative) = path.strip_prefix(&mods_dir) {
-                        other_files.push(relative.to_path_buf());
-                    }
-                }
-            }
-        }
-
-        let mod_copies = self
-            .apply_modpack_and_collect_mods(
-                loader,
-                minecraft_version,
-                &mods,
-                &dot_minecraft_dir,
-                &mods_dir,
-                modal_action,
-            )
-            .await;
-
-        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            instance.set_frozen_mods_folder(true);
-        }
-
-        let original_mods_dir = root_dir.join("original_mods");
-        if let Err(err) = std::fs::rename(&mods_dir, &original_mods_dir) {
-            log::error!("Unable to move mods dir ({:?}) to {:?}:\n{:?}", &mods_dir, &original_mods_dir, err);
-            return;
-        }
-
-        _ = std::fs::create_dir_all(&mods_dir);
-
-        let copy_tracker = modal_action.push_tracker("Copying immutable mods directory".into());
-        self.apply_copies_to_mods_dir(mod_copies, &mods_dir, &copy_tracker);
-        copy_tracker.set_finished(ProgressTrackerFinishType::Normal);
-
-        // Copy any additional files which aren't mods
-        if !other_files.is_empty() {
-            let tracker = modal_action.push_tracker("Copying extra files into mods directory".into());
-            tracker.set_total(other_files.len());
-
-            for other_file in other_files {
-                let from = original_mods_dir.join(&other_file);
-                let to = mods_dir.join(&other_file);
-
-                if from.is_dir() {
-                    let name = other_file.file_name().map(|s| s.to_string_lossy()).unwrap_or_default();
-                    let inner = modal_action.push_tracker(format!("Copying '{}' folder", name).into());
-
-                    _ = std::fs::create_dir_all(&to);
-                    let res = crate::fs::copy_content_recursive(&from, &to, false, &|count, total| {
-                        inner.set_count(count as usize);
-                        inner.set_total(total as usize);
-                    });
-
-                    if let Err(err) = res {
-                        log::error!("Unable to copy folder {:?} to {:?}: {}", from, to, err);
-                        inner.set_finished(ProgressTrackerFinishType::Error);
-                    } else {
-                        inner.set_finished(ProgressTrackerFinishType::Normal);
-                    }
-                } else {
-                    let res = crate::fs::fastcopy(&from, &to, true, false);
-                    if let Err(err) = res {
-                        log::error!("Unable to copy file {:?} to {:?}: {}", from, to, err);
-                    }
-                }
-
-                tracker.add_count(1);
-            }
-
-            tracker.set_finished(ProgressTrackerFinishType::Normal);
-        }
+        Some(LegacyModsLayoutStatus {
+            had_original_mods,
+            mods_dir_present: instance.dot_minecraft_path.join("mods").is_dir(),
+            original_mods_remaining: instance.root_path.join("original_mods").exists(),
+        })
     }
 
     async fn prelaunch_setup_mods_attributed(
@@ -1070,218 +1037,28 @@ impl BackendState {
         modal_action: &ModalAction,
         probe: &crate::prelaunch_attribution::PrelaunchAttribution,
     ) {
-        let (loader, minecraft_version, root_dir, dot_minecraft_dir, mods_dir) =
-            if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                if !instance.processes.is_empty() {
-                    return;
-                }
-
-                let configuration = instance.configuration.get();
-                (
-                    configuration.loader,
-                    configuration.minecraft_version,
-                    instance.root_path.clone(),
-                    instance.dot_minecraft_path.clone(),
-                    instance.content_state[ContentFolder::Mods].path.clone(),
-                )
-            } else {
-                return;
-            };
-
-        if !mods_dir.is_dir() {
-            return;
+        let restore_span = probe.begin("restore_prior", Some("prelaunch"), false);
+        let layout = self.restore_legacy_mods_layout(id);
+        let mut restore_counters = crate::prelaunch_attribution::SpanCounters::default();
+        restore_counters.insert("instance_present", layout.is_some() as u64);
+        if let Some(status) = layout {
+            restore_counters.insert("had_original_mods", status.had_original_mods as u64);
+            restore_counters.insert("mods_dir_present", status.mods_dir_present as u64);
+            restore_counters.insert("original_mods_remaining", status.original_mods_remaining as u64);
         }
-
-        let load_content_span = probe.begin("load_content", Some("prelaunch"), false);
-        let Some(mods) = Instance::load_content(self.clone(), id, ContentFolder::Mods).await else {
-            let mut counters = crate::prelaunch_attribution::SpanCounters::default();
-            counters.insert("result_none", 1);
-            probe.finish(load_content_span, counters);
-            return;
-        };
-        let mut load_counters = crate::prelaunch_attribution::SpanCounters::default();
-        load_counters.insert("mods_loaded", mods.len() as u64);
-        probe.finish(load_content_span, load_counters);
-
-        let scan_span = probe.begin("mods_scan", Some("prelaunch"), false);
-        let mut known_files: FxHashSet<Arc<Path>> = FxHashSet::with_capacity_and_hasher(mods.len() * 2, FxBuildHasher);
-        for content in mods.iter() {
-            known_files.insert(content.path.clone());
-            if let Some(aux) = crate::fs::pandora_aux_path_for_content(&content) {
-                known_files.insert(aux.into());
-            }
+        if let Some(error) = persistent_layout_launch_error(layout) {
+            log::error!("Unable to launch instance {id:?} with its persistent game directory: {error}");
+            modal_action.set_finished_with_error(error.into());
         }
+        probe.finish(restore_span, restore_counters);
 
-        let mut scanned_entries = 0_u64;
-        let mut pandora_temp_removed = 0_u64;
-        let mut read_dir_ok = 0_u64;
-        let mut other_files = Vec::new();
-        if let Ok(read_dir) = std::fs::read_dir(&mods_dir) {
-            read_dir_ok = 1;
-            for entry in read_dir {
-                let Ok(entry) = entry else {
-                    continue;
-                };
-                scanned_entries += 1;
-                let path = entry.path();
-
-                // Remove .pandora.filename mods (todo: get rid of this)
-                if let Some(file_name) = path.file_name() {
-                    let file_name = file_name.as_encoded_bytes();
-                    if file_name.starts_with(b".pandora.") {
-                        log::trace!("Removing temporary mod file {:?}", &file_name);
-                        _ = std::fs::remove_file(entry.path());
-                        pandora_temp_removed += 1;
-                        continue;
-                    }
-                }
-
-                if !known_files.contains(&*path) {
-                    if let Ok(relative) = path.strip_prefix(&mods_dir) {
-                        other_files.push(relative.to_path_buf());
-                    }
-                }
-            }
-        }
-        let mut scan_counters = crate::prelaunch_attribution::SpanCounters::default();
-        scan_counters.insert("known_paths", known_files.len() as u64);
-        scan_counters.insert("scanned_entries", scanned_entries);
-        scan_counters.insert("unknown_top_level_entries", other_files.len() as u64);
-        scan_counters.insert("pandora_temp_removed", pandora_temp_removed);
-        scan_counters.insert("read_dir_ok", read_dir_ok);
-        probe.finish(scan_span, scan_counters);
-
-        let resolve_span = probe.begin("apply_modpack_and_collect_mods", Some("prelaunch"), false);
-        let mod_copies = self
-            .apply_modpack_and_collect_mods(
-                loader,
-                minecraft_version,
-                &mods,
-                &dot_minecraft_dir,
-                &mods_dir,
-                modal_action,
-            )
-            .await;
-        let mut resolve_counters = crate::prelaunch_attribution::SpanCounters::default();
-        resolve_counters.insert("mod_copies", mod_copies.len() as u64);
-        let mut content_library_copies = 0_u64;
-        let mut inline_copies = 0_u64;
-        let mut inline_bytes = 0_u64;
-        for mod_copy in &mod_copies {
-            match &mod_copy.source {
-                PrelaunchModCopySource::FromContentLibrary { .. } => content_library_copies += 1,
-                PrelaunchModCopySource::FromBytes { bytes } => {
-                    inline_copies += 1;
-                    inline_bytes = inline_bytes.saturating_add(bytes.len() as u64);
-                },
-            }
-        }
-        resolve_counters.insert("content_library_copies", content_library_copies);
-        resolve_counters.insert("inline_copies", inline_copies);
-        resolve_counters.insert("inline_bytes_known", inline_bytes);
-        resolve_counters.unobserved("content_library_source_bytes");
-        probe.finish(resolve_span, resolve_counters);
-
-        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            instance.set_frozen_mods_folder(true);
-        }
-
-        let original_mods_dir = root_dir.join("original_mods");
-        let rotate_span = probe.begin("rotate_mods_to_original_mods", Some("prelaunch"), false);
-        let rotate_result = std::fs::rename(&mods_dir, &original_mods_dir);
-        let mut rotate_counters = crate::prelaunch_attribution::SpanCounters::default();
-        rotate_counters.insert("success", rotate_result.is_ok() as u64);
-        probe.finish(rotate_span, rotate_counters);
-        if let Err(err) = rotate_result {
-            log::error!(
-                "Unable to move mods dir ({:?}) to {:?}:
-{:?}",
-                &mods_dir,
-                &original_mods_dir,
-                err
-            );
-            return;
-        }
-
-        let create_span = probe.begin("create_mods_dir", Some("prelaunch"), false);
-        let create_result = std::fs::create_dir_all(&mods_dir);
-        let mut create_counters = crate::prelaunch_attribution::SpanCounters::default();
-        create_counters.insert("success", create_result.is_ok() as u64);
-        probe.finish(create_span, create_counters);
-
-        let mut copy_counters = crate::prelaunch_attribution::SpanCounters::default();
-        copy_counters.insert("mod_copies", mod_copies.len() as u64);
-        copy_counters.insert("content_library_copies", content_library_copies);
-        copy_counters.insert("inline_copies", inline_copies);
-        copy_counters.insert("inline_bytes_known", inline_bytes);
-        copy_counters.unobserved("content_library_source_bytes");
-        let copy_span = probe.begin("apply_copies_to_mods_dir", Some("prelaunch"), false);
-        let copy_tracker = modal_action.push_tracker("Copying immutable mods directory".into());
-        self.apply_copies_to_mods_dir(mod_copies, &mods_dir, &copy_tracker);
-        copy_tracker.set_finished(ProgressTrackerFinishType::Normal);
-        probe.finish(copy_span, copy_counters);
-
-        // Copy any additional files which aren't mods
-        if !other_files.is_empty() {
-            let tracker = modal_action.push_tracker("Copying extra files into mods directory".into());
-            tracker.set_total(other_files.len());
-
-            for other_file in other_files {
-                let from = original_mods_dir.join(&other_file);
-                let to = mods_dir.join(&other_file);
-                let is_connector = other_file.as_path() == Path::new(".connector");
-                let phase = if is_connector {
-                    "connector_cache_copy"
-                } else {
-                    "extras_copy"
-                };
-                let extra_span = probe.begin(phase, Some("prelaunch"), false);
-                let mut extra_counters = crate::prelaunch_attribution::SpanCounters::default();
-                extra_counters.insert("top_level_entries", 1);
-
-                if from.is_dir() {
-                    extra_counters.insert("directories", 1);
-                    let name = other_file.file_name().map(|s| s.to_string_lossy()).unwrap_or_default();
-                    let inner = modal_action.push_tracker(format!("Copying '{}' folder", name).into());
-
-                    let create_ok = std::fs::create_dir_all(&to).is_ok();
-                    extra_counters.insert("create_target_ok", create_ok as u64);
-                    let copied_bytes = std::cell::Cell::new(0_u64);
-                    let total_bytes = std::cell::Cell::new(0_u64);
-                    let res = crate::fs::copy_content_recursive(&from, &to, false, &|count, total| {
-                        copied_bytes.set(count);
-                        total_bytes.set(total);
-                        inner.set_count(count as usize);
-                        inner.set_total(total as usize);
-                    });
-                    extra_counters.insert("copied_bytes", copied_bytes.get());
-                    extra_counters.insert("total_bytes", total_bytes.get());
-                    extra_counters.insert("success", res.is_ok() as u64);
-
-                    if let Err(err) = res {
-                        log::error!("Unable to copy folder {:?} to {:?}: {}", from, to, err);
-                        inner.set_finished(ProgressTrackerFinishType::Error);
-                    } else {
-                        inner.set_finished(ProgressTrackerFinishType::Normal);
-                    }
-                } else {
-                    extra_counters.insert("files", 1);
-                    extra_counters.unobserved("bytes");
-                    let res = crate::fs::fastcopy(&from, &to, true, false);
-                    extra_counters.insert("success", res.is_ok() as u64);
-                    if let Err(err) = res {
-                        log::error!("Unable to copy file {:?} to {:?}: {}", from, to, err);
-                    }
-                }
-
-                probe.finish(extra_span, extra_counters);
-                tracker.add_count(1);
-            }
-
-            tracker.set_finished(ProgressTrackerFinishType::Normal);
-        }
+        let span = probe.begin("persistent_game_dir", Some("prelaunch"), false);
+        let mut counters = crate::prelaunch_attribution::SpanCounters::default();
+        counters.insert("mods_tree_rebuilt", 0);
+        counters.insert("mods_tree_copied", 0);
+        counters.insert("game_dir_is_instance_dot_minecraft", 1);
+        probe.finish(span, counters);
     }
-
     pub async fn apply_modpack_and_collect_mods(
         self: &Arc<Self>,
         loader: Loader,

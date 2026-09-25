@@ -569,7 +569,7 @@ impl BackendState {
                 self.send.send(instance.create_modify_message());
                 self.restore_mods_folder_if_stopped(instance);
             },
-            MessageToBackend::StartInstanceByName { name, quick_play } => {
+            MessageToBackend::StartInstanceByName { name, quick_play, modal_action } => {
                 let mut id = None;
 
                 for instance in self.instance_state.read().instances.iter() {
@@ -582,7 +582,7 @@ impl BackendState {
                 }
 
                 if let Some(id) = id {
-                    self.start_instance(id, quick_play, None, Default::default()).await
+                    self.start_instance(id, quick_play, None, modal_action).await
                 }
             },
             MessageToBackend::StartInstance {

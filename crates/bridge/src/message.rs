@@ -146,7 +146,8 @@ pub enum MessageToBackend {
     },
     StartInstanceByName {
         name: String,
-        quick_play: Option<QuickPlayLaunch>
+        quick_play: Option<QuickPlayLaunch>,
+        modal_action: ModalAction,
     },
     StartInstance {
         id: InstanceID,
