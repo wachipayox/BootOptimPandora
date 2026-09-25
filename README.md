@@ -2,6 +2,13 @@
 
 Work in progress
 
+## Command line
+
+- `pandora --run-instance "Instance name"` opens the launcher and starts the named instance with full asset verification. This remains the behavior used by existing instance shortcuts.
+- `pandora --run-instance-normal "Instance name"` opens the launcher and starts the named instance with the same asset verification mode as the GUI **Start** button. Use this explicit option when automating a normal launcher start.
+
+The two launch options cannot be combined. Without either option, Pandora only opens or focuses its main window.
+
 ## Features
 - (Optional) sandboxing, to prevent mods from harming your system
 - Cross-instance file syncing (options, saves, etc.) (https://youtu.be/wb5EY2VsMKg)
