@@ -207,6 +207,7 @@ pub(crate) fn begin_profile_clone_destination(
             sync_identity: manifest.sync_identity.clone(),
             sandbox_policy: manifest.sandbox_policy.clone(),
             managed_entries: manifest.managed_entries.clone(),
+            branch: manifest.branch.clone(),
             transaction_id: None,
         }),
     };
