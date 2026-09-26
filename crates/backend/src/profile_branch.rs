@@ -120,7 +120,6 @@ impl ProfileLineage {
 
     pub fn can_repair_modpack(&self) -> bool {
         self.global_ancestor.is_some()
-            || matches!(self.parent, Some(ProfileParentRef::GlobalRevision { .. }))
     }
 }
 
