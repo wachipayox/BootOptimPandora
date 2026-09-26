@@ -5,25 +5,94 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct BackendConfig {
-    #[serde(default, skip_serializing_if = "is_default_sync_targets", deserialize_with = "try_deserialize_sync_targets")]
+    #[serde(
+        default,
+        skip_serializing_if = "is_default_sync_targets",
+        deserialize_with = "try_deserialize_sync_targets"
+    )]
     pub sync_targets: SyncTargets,
-    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
     pub proxy: ProxyConfig,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub distribution: DistributionConfig,
+}
+
+/// Trust settings for the private BootOptim Distribution service.
+///
+/// The TLS CA path and Ed25519 release key are public trust anchors, not secrets.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct DistributionConfig {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub base_url: String,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub tls_ca_certificate_path: String,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub release_key_id: String,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub release_public_key_base64url: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ProxyConfig {
-    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
     pub enabled: bool,
-    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
     pub protocol: ProxyProtocol,
-    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
     pub host: String,
-    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
     pub port: u16,
-    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
     pub auth_enabled: bool,
-    #[serde(default, skip_serializing_if = "crate::skip_if_default", deserialize_with = "crate::try_deserialize")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
     pub username: String,
 }
 

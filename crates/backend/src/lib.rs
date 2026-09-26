@@ -13,6 +13,7 @@ mod backend_filesystem;
 mod backend_handler;
 mod curseforge_manual_download;
 mod directories;
+pub mod distribution;
 mod duplicate;
 mod export;
 mod fs;

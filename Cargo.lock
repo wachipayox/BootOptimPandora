@@ -729,6 +729,7 @@ dependencies = [
  "regex",
  "relative-path",
  "reqwest",
+ "ring",
  "runas",
  "rusqlite",
  "rustc-hash 2.1.3",

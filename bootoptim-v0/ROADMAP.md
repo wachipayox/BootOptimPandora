@@ -21,14 +21,16 @@ installation.
   This preserves runtime libraries/caches such as MCEF and Analog Audio.
 - PR #64 promotes the launch-fast library policy and enables the asset USN
   cache by default. Neither feature implements global profile updates.
-- The persistent ownership/recovery implementation described by PRs #32–39 is
-  **not integrated**: those PRs remain open drafts on a stale branch chain.
-  `PERSISTENT_PROFILE_LAYOUT_*` documents are architecture/candidate records,
-  not a shipping reconciler. The current persistent `.minecraft` behavior from
-  #66 does not yet safely reconcile managed files or track inherited ownership.
-- Distribution currently exposes a read-only admin page and no profile
-  publication/download API. Pandora does not yet consume signed global
-  revisions.
+- Pandora PRs #67/#68 integrate persistent profile identity, lineage,
+  ownership tracking, recoverable reconciliation, revision-delta application,
+  and the explicit Repair modpack backend. Old PRs #32–39 are stale historical
+  candidates; do not merge their branches over the integrated implementation.
+- Distribution profile APIs are implemented in its repository and served
+  through configured HTTPS mode. The active Pandora branch
+  `codex/global-profiles-client-20260926-v2` adds verified catalog and revision
+  reads, signed-object downloads, and initial global-instance creation. That
+  client slice is still under review and has not been runtime-validated against
+  the server.
 
 ## Product invariants
 
@@ -61,42 +63,40 @@ installation.
 
 ## Delivery phases
 
-### 1. Finish the persistent layout foundation
+### 1. Persistent layout foundation — integrated
 
-Refresh the stale #32–39 work against current integration and produce one
-reviewable implementation for durable UUID identity, per-profile locks,
-ownership manifests, conflict retention, transaction recovery, cloning, and
-native platform validation. Integrate only after source, recovery, and native
-gates reflect the current #66 persistent game-directory behavior. Keep all
-reconciliation outside Start.
+The integrated #67/#68 implementation provides durable UUID identity,
+per-profile locks, ownership manifests, conflict retention, transaction
+recovery, and persistent `.minecraft` reconciliation outside Start. Preserve
+its invariants while building client-facing update and repair workflows.
 
 ### 2. Build global profile administration and publication
 
-Distribution provides authenticated HTTPS admin access, global-profile CRUD,
-folder-based publication, signed immutable revisions, branch history, and
-effective-tree preview. A separate local signer holds the private signing
-key; neither the browser nor the service receives it. Start with a small
-synthetic test pack. See the Distribution repository's roadmap and protocol
-contract for endpoint and signing details.
+Distribution provides private HTTPS profile APIs, signed immutable revisions,
+and object downloads. The local publishing/signer workflow and polished admin
+management still need completion. Keep the private release key on the
+publishing machine. See Distribution's roadmap and protocol contract for API
+and signing details.
 
 ### 3. Add Pandora global/local branch management
 
-Show available global profiles and revisions. Let a user install a global
-profile or create a local child from a pinned global/local parent. Let admins
-create global child profiles. Show ancestry and inherited/overridden entries
-inside each instance's own Profiles/Updates settings area. No local branch
-publishes its private overlay.
+The active Pandora client branch begins this phase with HTTPS trust settings,
+global catalog browsing, signature/digest verification, and creating a local
+instance pinned to a global revision. Remaining work: update existing global
+instances, create local children from global/local parents, expose branch
+creation and lineage in each instance's Profiles/Updates settings, and let
+admins create global children. Local overlays stay on the user's machine.
 
 ### 4. Add delta update and explicit modpack repair
 
-Resolve the revision delta from the last applied revision to the selected
-revision, then stage and reconcile only changed managed paths through the
-persistent-layout transaction. A stable/no-op update does not do a full
-filesystem scan. Surface progress, policy, and recoverable conflicts. Put
-**Repair modpack** beside update history under instance Settings/Maintenance;
-that explicit action checks full parity and restores managed paths from
-verified content. Preserve local additions unless the user resolves a conflict
-or a policy explicitly enforces the path.
+Resolve revision history from the last applied pin to the selected revision,
+then stage and reconcile only changed managed paths through the existing
+persistent-layout transaction. A no-op update must not download or hash the
+whole profile or scan `.minecraft`. Surface progress, policy, and recoverable
+conflicts. Put **Repair modpack** beside update history under instance
+Settings/Maintenance; that explicit action checks parity and restores managed
+paths from verified content. Preserve local additions unless the user resolves
+a conflict or a policy explicitly enforces the path.
 
 ## Acceptance path
 
