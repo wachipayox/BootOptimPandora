@@ -1731,4 +1731,238 @@ mod tests {
         assert!(PersistentProfileLayout::open(&control_root.0).is_err());
         assert!(!outside_control.0.join(IDENTITY_FILE).exists());
     }
+
+    fn global_pin(revision: &str, digit: char) -> crate::profile_branch::GlobalRevisionPin {
+        crate::profile_branch::GlobalRevisionPin::new(
+            "global-test",
+            revision,
+            digit.to_string().repeat(64),
+        )
+        .unwrap()
+    }
+
+    fn effective_entry(
+        root: &TestRoot,
+        name: &str,
+        bytes: &[u8],
+        pin: crate::profile_branch::GlobalRevisionPin,
+        policy: crate::profile_branch::ProfileFilePolicy,
+    ) -> crate::profile_branch::EffectiveProfileEntry {
+        let source = root.0.join(format!("branch-source-{name}-{}", sha256_bytes(bytes)));
+        fs::write(&source, bytes).unwrap();
+        crate::profile_branch::EffectiveProfileEntry {
+            path: format!("mods/{name}"),
+            source,
+            metadata: crate::profile_branch::ProfileEntryMetadata {
+                logical_identity: format!("identity-{name}"),
+                source_sha256: sha256_bytes(bytes),
+                origin: crate::profile_branch::ProfileEntryOrigin::GlobalRevision { pin },
+                ownership: crate::profile_branch::ProfileEntryOwnership::Inherited,
+                policy,
+            },
+        }
+    }
+
+    fn global_delta(
+        pin: crate::profile_branch::GlobalRevisionPin,
+        changes: Vec<crate::profile_branch::ProfileDeltaChange>,
+    ) -> crate::profile_branch::ProfileRevisionDelta {
+        crate::profile_branch::ProfileRevisionDelta {
+            lineage: crate::profile_branch::ProfileLineage::from_global(pin.clone()).unwrap(),
+            target_revision: Some(pin),
+            changes,
+        }
+    }
+
+    #[test]
+    fn stable_revision_noop_does_not_hash_live_managed_destination() {
+        let root = TestRoot::new("delta-noop");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let r1 = global_pin("r1", 'a');
+        let entry = effective_entry(
+            &root,
+            "managed.jar",
+            b"managed-v1",
+            r1.clone(),
+            crate::profile_branch::ProfileFilePolicy::Enforced,
+        );
+        layout
+            .reconcile_revision_delta(&global_delta(
+                r1.clone(),
+                vec![crate::profile_branch::ProfileDeltaChange::Upsert(entry)],
+            ))
+            .unwrap();
+
+        fs::write(root.0.join(".minecraft/mods/managed.jar"), b"corrupt-but-unchanged").unwrap();
+        let outcome = layout
+            .reconcile_revision_delta(&global_delta(r1, Vec::new()))
+            .unwrap();
+
+        assert!(matches!(outcome, ReconcileOutcome::Ready { generation: 1, .. }));
+        assert_eq!(
+            fs::read(root.0.join(".minecraft/mods/managed.jar")).unwrap(),
+            b"corrupt-but-unchanged"
+        );
+    }
+
+    #[test]
+    fn delta_only_verifies_changed_destinations() {
+        let root = TestRoot::new("delta-only-changed");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let r1 = global_pin("r1", 'a');
+        let a1 = effective_entry(
+            &root,
+            "a.jar",
+            b"a-v1",
+            r1.clone(),
+            crate::profile_branch::ProfileFilePolicy::Enforced,
+        );
+        let b1 = effective_entry(
+            &root,
+            "b.jar",
+            b"b-v1",
+            r1.clone(),
+            crate::profile_branch::ProfileFilePolicy::Enforced,
+        );
+        layout
+            .reconcile_revision_delta(&global_delta(
+                r1,
+                vec![
+                    crate::profile_branch::ProfileDeltaChange::Upsert(a1),
+                    crate::profile_branch::ProfileDeltaChange::Upsert(b1),
+                ],
+            ))
+            .unwrap();
+
+        fs::write(root.0.join(".minecraft/mods/b.jar"), b"local-b").unwrap();
+        let r2 = global_pin("r2", 'b');
+        let a2 = effective_entry(
+            &root,
+            "a.jar",
+            b"a-v2",
+            r2.clone(),
+            crate::profile_branch::ProfileFilePolicy::Enforced,
+        );
+        layout
+            .reconcile_revision_delta(&global_delta(
+                r2,
+                vec![crate::profile_branch::ProfileDeltaChange::Upsert(a2)],
+            ))
+            .unwrap();
+
+        assert_eq!(fs::read(root.0.join(".minecraft/mods/a.jar")).unwrap(), b"a-v2");
+        assert_eq!(fs::read(root.0.join(".minecraft/mods/b.jar")).unwrap(), b"local-b");
+    }
+
+    #[test]
+    fn default_once_becomes_user_owned_after_initial_seed() {
+        let root = TestRoot::new("default-once");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let r1 = global_pin("r1", 'a');
+        let v1 = effective_entry(
+            &root,
+            "defaults.cfg",
+            b"default-v1",
+            r1.clone(),
+            crate::profile_branch::ProfileFilePolicy::DefaultOnce,
+        );
+        layout
+            .reconcile_revision_delta(&global_delta(
+                r1,
+                vec![crate::profile_branch::ProfileDeltaChange::Upsert(v1)],
+            ))
+            .unwrap();
+
+        fs::write(root.0.join(".minecraft/mods/defaults.cfg"), b"local-choice").unwrap();
+        let r2 = global_pin("r2", 'b');
+        let v2 = effective_entry(
+            &root,
+            "defaults.cfg",
+            b"default-v2",
+            r2.clone(),
+            crate::profile_branch::ProfileFilePolicy::DefaultOnce,
+        );
+        layout
+            .reconcile_revision_delta(&global_delta(
+                r2,
+                vec![crate::profile_branch::ProfileDeltaChange::Upsert(v2)],
+            ))
+            .unwrap();
+
+        assert_eq!(
+            fs::read(root.0.join(".minecraft/mods/defaults.cfg")).unwrap(),
+            b"local-choice"
+        );
+        let branch = layout.branch_manifest().unwrap();
+        assert_eq!(
+            branch.entries["mods/defaults.cfg"].ownership,
+            crate::profile_branch::ProfileEntryOwnership::UserOwned
+        );
+    }
+
+    #[test]
+    fn enforced_override_is_applied_and_old_local_bytes_are_recoverable() {
+        let root = TestRoot::new("enforced-conflict-copy");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let r1 = global_pin("r1", 'a');
+        let v1 = effective_entry(
+            &root,
+            "forced.cfg",
+            b"forced-v1",
+            r1.clone(),
+            crate::profile_branch::ProfileFilePolicy::Enforced,
+        );
+        layout
+            .reconcile_revision_delta(&global_delta(
+                r1,
+                vec![crate::profile_branch::ProfileDeltaChange::Upsert(v1)],
+            ))
+            .unwrap();
+
+        fs::write(root.0.join(".minecraft/mods/forced.cfg"), b"local-edit").unwrap();
+        let r2 = global_pin("r2", 'b');
+        let v2 = effective_entry(
+            &root,
+            "forced.cfg",
+            b"forced-v2",
+            r2.clone(),
+            crate::profile_branch::ProfileFilePolicy::Enforced,
+        );
+        layout
+            .reconcile_revision_delta(&global_delta(
+                r2,
+                vec![crate::profile_branch::ProfileDeltaChange::Upsert(v2)],
+            ))
+            .unwrap();
+
+        assert_eq!(
+            fs::read(root.0.join(".minecraft/mods/forced.cfg")).unwrap(),
+            b"forced-v2"
+        );
+        let copies = root.0.join(CONTROL_DIR).join("conflict-copies");
+        let tx_dir = fs::read_dir(&copies)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(
+            fs::read(tx_dir.join("mods/forced.cfg")).unwrap(),
+            b"local-edit"
+        );
+    }
+
+    #[test]
+    fn repair_modpack_is_unavailable_to_pure_local_profile() {
+        let root = TestRoot::new("pure-local-repair");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        layout
+            .configure_branch_lineage(crate::profile_branch::ProfileLineage::pure_local())
+            .unwrap();
+        assert!(matches!(
+            layout.repair_modpack(&[]),
+            Err(ProfileLayoutFlowError::RepairUnavailable)
+        ));
+    }
+
 }
