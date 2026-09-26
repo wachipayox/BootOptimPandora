@@ -18,9 +18,8 @@ use uuid::Uuid;
 
 use crate::{
     profile_branch::{
-        EffectiveProfileEntry, ProfileBranchError, ProfileBranchManifest, ProfileDeltaChange,
-        ProfileEntryOrigin, ProfileEntryOwnership, ProfileEntryTombstone, ProfileFilePolicy, ProfileLineage,
-        ProfileRevisionDelta,
+        EffectiveProfileEntry, ProfileBranchError, ProfileBranchManifest, ProfileDeltaChange, ProfileEntryOrigin,
+        ProfileEntryOwnership, ProfileEntryTombstone, ProfileFilePolicy, ProfileLineage, ProfileRevisionDelta,
     },
     profile_layout_ownership::{
         ConflictReason, LiveEntry, ManagedEntry, PathReconcileInput, ReconcileAction, plan_profile,
@@ -366,7 +365,6 @@ impl PersistentProfileLayout {
         })
     }
 
-
     /// Returns the transactionally committed local branch metadata without walking live files.
     pub fn branch_manifest(&self) -> Result<ProfileBranchManifest, ProfileLayoutFlowError> {
         let manifest = self.read_manifest_optional()?;
@@ -506,10 +504,7 @@ impl PersistentProfileLayout {
             });
         }
 
-        let mut managed_entries = current
-            .as_ref()
-            .map(|m| m.managed_entries.clone())
-            .unwrap_or_default();
+        let mut managed_entries = current.as_ref().map(|m| m.managed_entries.clone()).unwrap_or_default();
         let mut operations = Vec::<JournalOperation>::new();
         let mut desired = BTreeMap::<String, CanonicalDesired>::new();
         let mut blocking_conflicts = Vec::<String>::new();
@@ -564,7 +559,8 @@ impl PersistentProfileLayout {
                                 },
                                 LiveEntry::File { hash } => {
                                     if hash != metadata.source_sha256.to_ascii_lowercase() {
-                                        let previous_hash = managed_entries.get(&path).map(|old| old.applied_hash.as_str());
+                                        let previous_hash =
+                                            managed_entries.get(&path).map(|old| old.applied_hash.as_str());
                                         operations.push(JournalOperation {
                                             path: path.clone(),
                                             kind: JournalOpKind::Replace,
@@ -657,10 +653,7 @@ impl PersistentProfileLayout {
                         }
                         managed_entries.remove(path);
                         branch.entries.remove(path);
-                        branch.tombstones.insert(
-                            path.clone(),
-                            ProfileEntryTombstone { policy: *policy },
-                        );
+                        branch.tombstones.insert(path.clone(), ProfileEntryTombstone { policy: *policy });
                         continue;
                     }
 
@@ -1003,10 +996,7 @@ impl PersistentProfileLayout {
             if !operation.retain_conflict {
                 continue;
             }
-            let expected = operation
-                .old_hash
-                .as_deref()
-                .ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?;
+            let expected = operation.old_hash.as_deref().ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?;
             let backup = self.backup_live_path(journal.transaction_id, &operation.path)?;
             let target_root = self.conflict_copies_root().join(journal.transaction_id.to_string());
             let target = safe_join(&target_root, &operation.path)?;
@@ -1823,12 +1813,7 @@ mod tests {
     }
 
     fn global_pin(revision: &str, digit: char) -> crate::profile_branch::GlobalRevisionPin {
-        crate::profile_branch::GlobalRevisionPin::new(
-            "global-test",
-            revision,
-            digit.to_string().repeat(64),
-        )
-        .unwrap()
+        crate::profile_branch::GlobalRevisionPin::new("global-test", revision, digit.to_string().repeat(64)).unwrap()
     }
 
     fn effective_entry(
@@ -1884,15 +1869,10 @@ mod tests {
             .unwrap();
 
         fs::write(root.0.join(".minecraft/mods/managed.jar"), b"corrupt-but-unchanged").unwrap();
-        let outcome = layout
-            .reconcile_revision_delta(&global_delta(r1, Vec::new()))
-            .unwrap();
+        let outcome = layout.reconcile_revision_delta(&global_delta(r1, Vec::new())).unwrap();
 
         assert!(matches!(outcome, ReconcileOutcome::Ready { generation: 1, .. }));
-        assert_eq!(
-            fs::read(root.0.join(".minecraft/mods/managed.jar")).unwrap(),
-            b"corrupt-but-unchanged"
-        );
+        assert_eq!(fs::read(root.0.join(".minecraft/mods/managed.jar")).unwrap(), b"corrupt-but-unchanged");
     }
 
     #[test]
@@ -1900,20 +1880,10 @@ mod tests {
         let root = TestRoot::new("delta-only-changed");
         let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
         let r1 = global_pin("r1", 'a');
-        let a1 = effective_entry(
-            &root,
-            "a.jar",
-            b"a-v1",
-            r1.clone(),
-            crate::profile_branch::ProfileFilePolicy::Enforced,
-        );
-        let b1 = effective_entry(
-            &root,
-            "b.jar",
-            b"b-v1",
-            r1.clone(),
-            crate::profile_branch::ProfileFilePolicy::Enforced,
-        );
+        let a1 =
+            effective_entry(&root, "a.jar", b"a-v1", r1.clone(), crate::profile_branch::ProfileFilePolicy::Enforced);
+        let b1 =
+            effective_entry(&root, "b.jar", b"b-v1", r1.clone(), crate::profile_branch::ProfileFilePolicy::Enforced);
         layout
             .reconcile_revision_delta(&global_delta(
                 r1,
@@ -1926,18 +1896,10 @@ mod tests {
 
         fs::write(root.0.join(".minecraft/mods/b.jar"), b"local-b").unwrap();
         let r2 = global_pin("r2", 'b');
-        let a2 = effective_entry(
-            &root,
-            "a.jar",
-            b"a-v2",
-            r2.clone(),
-            crate::profile_branch::ProfileFilePolicy::Enforced,
-        );
+        let a2 =
+            effective_entry(&root, "a.jar", b"a-v2", r2.clone(), crate::profile_branch::ProfileFilePolicy::Enforced);
         layout
-            .reconcile_revision_delta(&global_delta(
-                r2,
-                vec![crate::profile_branch::ProfileDeltaChange::Upsert(a2)],
-            ))
+            .reconcile_revision_delta(&global_delta(r2, vec![crate::profile_branch::ProfileDeltaChange::Upsert(a2)]))
             .unwrap();
 
         assert_eq!(fs::read(root.0.join(".minecraft/mods/a.jar")).unwrap(), b"a-v2");
@@ -1957,10 +1919,7 @@ mod tests {
             crate::profile_branch::ProfileFilePolicy::DefaultOnce,
         );
         layout
-            .reconcile_revision_delta(&global_delta(
-                r1,
-                vec![crate::profile_branch::ProfileDeltaChange::Upsert(v1)],
-            ))
+            .reconcile_revision_delta(&global_delta(r1, vec![crate::profile_branch::ProfileDeltaChange::Upsert(v1)]))
             .unwrap();
 
         fs::write(root.0.join(".minecraft/mods/defaults.cfg"), b"local-choice").unwrap();
@@ -1973,16 +1932,10 @@ mod tests {
             crate::profile_branch::ProfileFilePolicy::DefaultOnce,
         );
         layout
-            .reconcile_revision_delta(&global_delta(
-                r2,
-                vec![crate::profile_branch::ProfileDeltaChange::Upsert(v2)],
-            ))
+            .reconcile_revision_delta(&global_delta(r2, vec![crate::profile_branch::ProfileDeltaChange::Upsert(v2)]))
             .unwrap();
 
-        assert_eq!(
-            fs::read(root.0.join(".minecraft/mods/defaults.cfg")).unwrap(),
-            b"local-choice"
-        );
+        assert_eq!(fs::read(root.0.join(".minecraft/mods/defaults.cfg")).unwrap(), b"local-choice");
         let branch = layout.branch_manifest().unwrap();
         assert_eq!(
             branch.entries["mods/defaults.cfg"].ownership,
@@ -2003,10 +1956,7 @@ mod tests {
             crate::profile_branch::ProfileFilePolicy::Enforced,
         );
         layout
-            .reconcile_revision_delta(&global_delta(
-                r1,
-                vec![crate::profile_branch::ProfileDeltaChange::Upsert(v1)],
-            ))
+            .reconcile_revision_delta(&global_delta(r1, vec![crate::profile_branch::ProfileDeltaChange::Upsert(v1)]))
             .unwrap();
 
         fs::write(root.0.join(".minecraft/mods/forced.cfg"), b"local-edit").unwrap();
@@ -2019,27 +1969,13 @@ mod tests {
             crate::profile_branch::ProfileFilePolicy::Enforced,
         );
         layout
-            .reconcile_revision_delta(&global_delta(
-                r2,
-                vec![crate::profile_branch::ProfileDeltaChange::Upsert(v2)],
-            ))
+            .reconcile_revision_delta(&global_delta(r2, vec![crate::profile_branch::ProfileDeltaChange::Upsert(v2)]))
             .unwrap();
 
-        assert_eq!(
-            fs::read(root.0.join(".minecraft/mods/forced.cfg")).unwrap(),
-            b"forced-v2"
-        );
+        assert_eq!(fs::read(root.0.join(".minecraft/mods/forced.cfg")).unwrap(), b"forced-v2");
         let copies = root.0.join(CONTROL_DIR).join("conflict-copies");
-        let tx_dir = fs::read_dir(&copies)
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
-        assert_eq!(
-            fs::read(tx_dir.join("mods/forced.cfg")).unwrap(),
-            b"local-edit"
-        );
+        let tx_dir = fs::read_dir(&copies).unwrap().next().unwrap().unwrap().path();
+        assert_eq!(fs::read(tx_dir.join("mods/forced.cfg")).unwrap(), b"local-edit");
     }
 
     #[test]
@@ -2100,13 +2036,9 @@ mod tests {
         let branch = layout.branch_manifest().unwrap();
         assert!(branch.tombstones.contains_key("mods/removed.jar"));
         assert_eq!(branch.applied_revision.as_ref(), Some(&r2));
-        let resolved = crate::profile_branch::resolve_effective_entries_for_branch(
-            [resolver_parent],
-            profile_uuid,
-            &branch,
-            &[],
-        )
-        .unwrap();
+        let resolved =
+            crate::profile_branch::resolve_effective_entries_for_branch([resolver_parent], profile_uuid, &branch, &[])
+                .unwrap();
         assert!(resolved.is_empty());
     }
 
@@ -2227,11 +2159,7 @@ mod tests {
         };
         let mut legacy_json = serde_json::to_value(&legacy_manifest).unwrap();
         legacy_json.as_object_mut().unwrap().remove("branch");
-        write_new_synced(
-            &layout.manifest_path(),
-            &serde_json::to_vec_pretty(&legacy_json).unwrap(),
-        )
-        .unwrap();
+        write_new_synced(&layout.manifest_path(), &serde_json::to_vec_pretty(&legacy_json).unwrap()).unwrap();
         drop(layout);
 
         let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
@@ -2254,10 +2182,6 @@ mod tests {
         layout
             .configure_branch_lineage(crate::profile_branch::ProfileLineage::pure_local())
             .unwrap();
-        assert!(matches!(
-            layout.repair_modpack(&[]),
-            Err(ProfileLayoutFlowError::RepairUnavailable)
-        ));
+        assert!(matches!(layout.repair_modpack(&[]), Err(ProfileLayoutFlowError::RepairUnavailable)));
     }
-
 }

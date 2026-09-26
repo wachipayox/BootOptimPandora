@@ -41,7 +41,6 @@ pub enum ProfileLayoutServiceError {
     Layout(#[from] ProfileLayoutFlowError),
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfileBranchSnapshot {
     pub profile_uuid: Uuid,
@@ -151,7 +150,6 @@ impl BackendState {
         let mut layout = PersistentProfileLayout::open(&instance.root_path)?;
         Ok(action(&mut layout)?)
     }
-
 }
 
 fn map_lock_error(error: ProfileIdentityError) -> ProfileLayoutServiceError {

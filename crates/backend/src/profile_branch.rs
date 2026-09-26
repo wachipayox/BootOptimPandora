@@ -46,8 +46,12 @@ impl GlobalRevisionPin {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ProfileParentRef {
-    GlobalRevision { pin: GlobalRevisionPin },
-    LocalProfile { profile_uuid: Uuid },
+    GlobalRevision {
+        pin: GlobalRevisionPin,
+    },
+    LocalProfile {
+        profile_uuid: Uuid,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,7 +87,10 @@ impl ProfileLineage {
         })
     }
 
-    pub fn from_local(parent_uuid: Uuid, global_ancestor: Option<GlobalRevisionPin>) -> Result<Self, ProfileBranchError> {
+    pub fn from_local(
+        parent_uuid: Uuid,
+        global_ancestor: Option<GlobalRevisionPin>,
+    ) -> Result<Self, ProfileBranchError> {
         if let Some(pin) = &global_ancestor {
             pin.validate()?;
         }
@@ -144,8 +151,12 @@ pub enum ProfileEntryOwnership {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ProfileEntryOrigin {
-    GlobalRevision { pin: GlobalRevisionPin },
-    LocalProfile { profile_uuid: Uuid },
+    GlobalRevision {
+        pin: GlobalRevisionPin,
+    },
+    LocalProfile {
+        profile_uuid: Uuid,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,7 +306,9 @@ pub enum LocalOverlayChange {
         source_sha256: String,
         policy: ProfileFilePolicy,
     },
-    Remove { path: String },
+    Remove {
+        path: String,
+    },
 }
 
 /// Resolve an already verified parent effective tree plus a private local overlay.
@@ -307,12 +320,7 @@ pub fn resolve_effective_entries(
     local_profile_uuid: Uuid,
     overlay: &[LocalOverlayChange],
 ) -> Result<Vec<EffectiveProfileEntry>, ProfileBranchError> {
-    resolve_effective_entries_for_branch(
-        parent_entries,
-        local_profile_uuid,
-        &ProfileBranchManifest::default(),
-        overlay,
-    )
+    resolve_effective_entries_for_branch(parent_entries, local_profile_uuid, &ProfileBranchManifest::default(), overlay)
 }
 
 /// Resolve parent entries while honoring durable local tombstones from a saved branch.
@@ -376,8 +384,12 @@ pub fn resolve_effective_entries_for_branch(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RevisionDifference {
     PureLocal,
-    Initial { target: GlobalRevisionPin },
-    Unchanged { revision: GlobalRevisionPin },
+    Initial {
+        target: GlobalRevisionPin,
+    },
+    Unchanged {
+        revision: GlobalRevisionPin,
+    },
     Update {
         applied: GlobalRevisionPin,
         target: GlobalRevisionPin,
@@ -393,9 +405,7 @@ pub fn revision_difference(
 ) -> RevisionDifference {
     match (applied, target) {
         (None, None) => RevisionDifference::PureLocal,
-        (None, Some(target)) => RevisionDifference::Initial {
-            target: target.clone(),
-        },
+        (None, Some(target)) => RevisionDifference::Initial { target: target.clone() },
         (Some(applied), Some(target)) if applied == target => RevisionDifference::Unchanged {
             revision: target.clone(),
         },
@@ -415,9 +425,7 @@ pub fn validate_profile_relative_path(relative: &str) -> Result<(), ProfileBranc
         || relative.ends_with('/')
         || relative.contains('\\')
         || relative.contains(':')
-        || relative
-            .split('/')
-            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        || relative.split('/').any(|segment| segment.is_empty() || segment == "." || segment == "..")
     {
         return Err(ProfileBranchError::UnsafeRelativePath(relative.to_owned()));
     }
@@ -463,14 +471,8 @@ mod tests {
     fn revision_difference_is_metadata_only_and_stable() {
         let a = pin("r1", 'a');
         let b = pin("r2", 'b');
-        assert!(matches!(
-            revision_difference(Some(&a), Some(&a)),
-            RevisionDifference::Unchanged { .. }
-        ));
-        assert!(matches!(
-            revision_difference(Some(&a), Some(&b)),
-            RevisionDifference::Update { .. }
-        ));
+        assert!(matches!(revision_difference(Some(&a), Some(&a)), RevisionDifference::Unchanged { .. }));
+        assert!(matches!(revision_difference(Some(&a), Some(&b)), RevisionDifference::Update { .. }));
     }
 
     #[test]
@@ -502,10 +504,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(resolved.len(), 2);
-        let local = resolved
-            .iter()
-            .find(|entry| entry.path == "config/private.json")
-            .unwrap();
+        let local = resolved.iter().find(|entry| entry.path == "config/private.json").unwrap();
         assert_eq!(local.metadata.ownership, ProfileEntryOwnership::Local);
         assert!(matches!(
             local.metadata.origin,
@@ -543,8 +542,6 @@ mod tests {
     #[test]
     fn pure_local_lineage_cannot_repair_modpack() {
         assert!(!ProfileLineage::pure_local().can_repair_modpack());
-        assert!(ProfileLineage::from_global(pin("r1", 'a'))
-            .unwrap()
-            .can_repair_modpack());
+        assert!(ProfileLineage::from_global(pin("r1", 'a')).unwrap().can_repair_modpack());
     }
 }
