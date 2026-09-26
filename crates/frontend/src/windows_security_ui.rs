@@ -7,15 +7,17 @@ use gpui_component::{
 
 pub(crate) fn push_result(window: &mut Window, cx: &mut App, result: DefenderProcessResult) {
     let (kind, message) = match result {
-        DefenderProcessResult::Enabled => {
-            (NotificationType::Success, "Defender optimization enabled for this Wachiland Launcher executable.")
-        },
+        DefenderProcessResult::Enabled => (
+            NotificationType::Success,
+            "Defender optimization enabled for this Wachiland Launcher executable.",
+        ),
         DefenderProcessResult::Removed => {
             (NotificationType::Success, "Wachiland Launcher's Defender process exclusion was removed.")
         },
-        DefenderProcessResult::AlreadyEnabledByPandora => {
-            (NotificationType::Info, "Wachiland Launcher already controls this Defender process exclusion.")
-        },
+        DefenderProcessResult::AlreadyEnabledByPandora => (
+            NotificationType::Info,
+            "Wachiland Launcher already controls this Defender process exclusion.",
+        ),
         DefenderProcessResult::PresentButNotOwned => (
             NotificationType::Info,
             "The same Defender exclusion already exists. Wachiland Launcher did not claim or change it.",
@@ -24,9 +26,10 @@ pub(crate) fn push_result(window: &mut Window, cx: &mut App, result: DefenderPro
             NotificationType::Info,
             "The recorded Wachiland Launcher exclusion was already absent. Its ownership record was cleared.",
         ),
-        DefenderProcessResult::NothingOwned => {
-            (NotificationType::Info, "Wachiland Launcher has no owned Defender process exclusion to remove.")
-        },
+        DefenderProcessResult::NothingOwned => (
+            NotificationType::Info,
+            "Wachiland Launcher has no owned Defender process exclusion to remove.",
+        ),
         DefenderProcessResult::InvalidOwnershipRecord => (
             NotificationType::Warning,
             "Wachiland Launcher refused the change because its exclusion ownership record was not valid for this installation.",
