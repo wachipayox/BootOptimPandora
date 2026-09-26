@@ -20,7 +20,7 @@ cargo install cargo-packager
 env -u CARGO_PACKAGER_SIGN_PRIVATE_KEY cargo packager --config '{'\
 '  "name": "pandora-launcher",'\
 '  "outDir": "./dist",'\
-'  "productName": "Pandora Launcher",'\
+'  "productName": "Wachiland Launcher",'\
 '  "version": "'"$version"'",'\
 '  "identifier": "com.moulberry.pandoralauncher",'\
 '  "resources": [],'\

@@ -524,6 +524,12 @@ impl BackendState {
                 return false;
             };
 
+            // Wachiland Launcher does not use Pandora's per-instance sandbox option. Normalize
+            // older instance configs so hiding the control cannot leave a profile sandboxed.
+            if instance.configuration.get().sandbox {
+                instance.configuration.modify(|configuration| configuration.sandbox = false);
+            }
+
             for existing in instance_state.instances.iter_mut() {
                 if &*existing.root_path != path {
                     continue;

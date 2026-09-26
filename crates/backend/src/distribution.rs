@@ -908,7 +908,7 @@ impl crate::BackendState {
             .create_global_instance_sanitized(name, &resolved.minecraft_version, loader, loader_version)
             .await
         else {
-            return Err("Pandora could not create the local instance".to_owned());
+            return Err("Wachiland Launcher could not create the local instance".to_owned());
         };
 
         // Keep the normal file watcher path, but also load synchronously so the profile transaction
@@ -924,7 +924,7 @@ impl crate::BackendState {
             .iter()
             .find(|instance| instance.root_path.as_ref() == root.as_path())
             .map(|instance| instance.id)
-            .ok_or_else(|| "Pandora created the instance folder but could not load it".to_owned())?;
+            .ok_or_else(|| "Wachiland Launcher created the instance folder but could not load it".to_owned())?;
 
         let lineage = crate::profile_branch::ProfileLineage::from_global(resolved.pin.clone())
             .map_err(|error| error.to_string())?;
