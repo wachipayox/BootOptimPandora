@@ -11,7 +11,13 @@ use uuid::Uuid;
 
 use crate::{
     BackendState,
-    profile_layout_flow::{DesiredManagedFile, PersistentProfileLayout, ProfileLayoutFlowError, ReconcileOutcome},
+    profile_branch::{
+        EffectiveProfileEntry, GlobalRevisionPin, ProfileBranchManifest, ProfileLineage, ProfileRevisionDelta,
+        RevisionDifference,
+    },
+    profile_layout_flow::{
+        DesiredManagedFile, PersistentProfileLayout, ProfileLayoutFlowError, ProfileLayoutState, ReconcileOutcome,
+    },
     profile_layout_identity::{ProfileIdentityError, acquire_or_initialize_profile_lock},
 };
 
@@ -35,18 +41,83 @@ pub enum ProfileLayoutServiceError {
     Layout(#[from] ProfileLayoutFlowError),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileBranchSnapshot {
+    pub profile_uuid: Uuid,
+    pub generation: Option<u64>,
+    pub layout_state: ProfileLayoutState,
+    pub stock_fallback: bool,
+    pub branch: ProfileBranchManifest,
+    pub revision_difference: RevisionDifference,
+    pub repair_modpack_available: bool,
+}
+
 impl BackendState {
-    /// Reconcile and publish a persistent profile while the instance is stopped.
-    ///
-    /// A profile with no persistent control namespace first runs Pandora's existing legacy
-    /// `original_mods` restoration. If a persistent namespace already exists, `original_mods`
-    /// is instead an ambiguous mixed-state signal: nothing live is changed before recovery has
-    /// inspected the durable journal/manifest.
+    /// Returns the local branch state for Settings without walking/hash-verifying the managed tree.
+    /// Recovery, if needed, runs while the per-profile OS lock is held.
+    pub fn persistent_profile_branch_status(
+        &self,
+        id: InstanceID,
+        target_revision: Option<&GlobalRevisionPin>,
+    ) -> Result<ProfileBranchSnapshot, ProfileLayoutServiceError> {
+        self.with_stopped_profile_layout(id, |layout| {
+            let branch = layout.branch_manifest()?;
+            let status = layout.status().clone();
+            Ok(ProfileBranchSnapshot {
+                profile_uuid: layout.profile_uuid(),
+                generation: status.generation,
+                layout_state: status.state,
+                stock_fallback: status.stock_fallback,
+                revision_difference: branch.revision_difference(target_revision),
+                repair_modpack_available: branch.lineage.can_repair_modpack(),
+                branch,
+            })
+        })
+    }
+
+    /// Persist a global-revision pin or local-parent reference without touching .minecraft files.
+    pub fn configure_persistent_profile_lineage(
+        &self,
+        id: InstanceID,
+        lineage: ProfileLineage,
+    ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        self.with_stopped_profile_layout(id, move |layout| layout.configure_branch_lineage(lineage))
+    }
+
+    /// Apply a verified effective revision-history delta. Unchanged destinations are not observed.
+    pub fn apply_persistent_profile_delta(
+        &self,
+        id: InstanceID,
+        delta: &ProfileRevisionDelta,
+    ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        self.with_stopped_profile_layout(id, |layout| layout.reconcile_revision_delta(delta))
+    }
+
+    /// Explicit full managed-tree parity. Purely local profiles are rejected by the layout layer.
+    /// This is intentionally separate from the existing Repair game files backend.
+    pub fn repair_persistent_modpack(
+        &self,
+        id: InstanceID,
+        effective: &[EffectiveProfileEntry],
+    ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        self.with_stopped_profile_layout(id, |layout| layout.repair_modpack(effective))
+    }
+
+    /// Legacy full desired-set seam retained for callers that have not moved to revision deltas.
+    /// It is not a Start hook and should not be used for stable/no-op updates.
     pub fn reconcile_persistent_profile_layout(
         &self,
         id: InstanceID,
         desired: &[DesiredManagedFile],
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        self.with_stopped_profile_layout(id, |layout| layout.reconcile(desired))
+    }
+
+    fn with_stopped_profile_layout<T>(
+        &self,
+        id: InstanceID,
+        action: impl FnOnce(&mut PersistentProfileLayout) -> Result<T, ProfileLayoutFlowError>,
+    ) -> Result<T, ProfileLayoutServiceError> {
         let mut instance_state = self.instance_state.write();
         let instance = instance_state.instances.get_mut(id).ok_or(ProfileLayoutServiceError::MissingInstance)?;
 
@@ -73,13 +144,11 @@ impl BackendState {
             verify_legacy_restore(&instance.root_path, had_original_mods)?;
         }
 
-        // Acquire before PersistentProfileLayout::open: open may perform durable recovery. The
-        // guard then remains live through planning, staging, publication, manifest commit and
-        // cleanup. A second process therefore sees Busy instead of inspecting/recovering a
-        // transaction that belongs to the live owner.
+        // The state write guard prevents Start/state mutation while recovery/reconcile runs.
+        // The OS lock isolates a profile UUID from a second launcher process.
         let _profile_lock = acquire_or_initialize_profile_lock(&instance.root_path).map_err(map_lock_error)?;
         let mut layout = PersistentProfileLayout::open(&instance.root_path)?;
-        Ok(layout.reconcile(desired)?)
+        Ok(action(&mut layout)?)
     }
 }
 

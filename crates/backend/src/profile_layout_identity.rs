@@ -4,7 +4,6 @@
 //! Lock files are intentionally persistent across crashes and are never deleted as "stale".
 
 use std::{
-    collections::BTreeMap,
     fs,
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -17,7 +16,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::profile_layout_flow::{ManagedManifestEntry, ProfileLayoutManifest, ProfileLayoutState};
+use crate::profile_layout_flow::{ProfileLayoutManifest, ProfileLayoutState};
 
 pub(crate) const CONTROL_DIR_NAME: &str = ".pandora-layout-v1";
 const IDENTITY_FILE: &str = "identity.json";
@@ -207,6 +206,7 @@ pub(crate) fn begin_profile_clone_destination(
             sync_identity: manifest.sync_identity.clone(),
             sandbox_policy: manifest.sandbox_policy.clone(),
             managed_entries: manifest.managed_entries.clone(),
+            branch: manifest.branch.clone(),
             transaction_id: None,
         }),
     };
@@ -737,7 +737,8 @@ mod tests {
             managed_input_fingerprint: String::new(),
             sync_identity: String::new(),
             sandbox_policy: String::new(),
-            managed_entries: BTreeMap::<String, ManagedManifestEntry>::new(),
+            managed_entries: std::collections::BTreeMap::new(),
+            branch: Default::default(),
             transaction_id: Some(new_uuid()),
         };
         write_new_synced(
