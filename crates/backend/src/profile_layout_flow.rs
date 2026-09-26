@@ -456,6 +456,7 @@ impl PersistentProfileLayout {
         let mut branch = current.as_ref().map(|m| m.branch.clone()).unwrap_or_default();
 
         if !repair
+            && current.is_some()
             && delta.changes.is_empty()
             && branch.lineage == delta.lineage
             && branch.applied_revision == delta.target_revision
@@ -1020,6 +1021,7 @@ impl PersistentProfileLayout {
         if manifest.schema != SCHEMA_VERSION || manifest.profile_uuid != self.profile_uuid {
             return Err(ProfileLayoutFlowError::IdentityMismatch);
         }
+        manifest.branch.validate(self.profile_uuid)?;
         Ok(())
     }
 
@@ -1234,12 +1236,14 @@ fn build_operations(
                 kind: JournalOpKind::Install,
                 old_hash: None,
                 new_hash: desired.get(&item.path).map(|d| d.source_sha256.clone()),
+                retain_conflict: false,
             }),
             ReconcileAction::ReplaceManaged => Some(JournalOperation {
                 path: item.path.clone(),
                 kind: JournalOpKind::Replace,
                 old_hash: previous.get(&item.path).map(|p| p.applied_hash.clone()),
                 new_hash: desired.get(&item.path).map(|d| d.source_sha256.clone()),
+                retain_conflict: false,
             }),
             ReconcileAction::RemoveManaged => Some(JournalOperation {
                 path: item.path.clone(),
