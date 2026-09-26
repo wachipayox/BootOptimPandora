@@ -694,8 +694,6 @@ impl PersistentProfileLayout {
                                 };
                                 existing.ownership = ProfileEntryOwnership::UserOwned;
                                 branch.entries.insert(path.clone(), existing);
-                            } else {
-                                let _ = origin;
                             }
                             managed_entries.remove(path);
                         },
