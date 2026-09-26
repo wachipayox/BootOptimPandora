@@ -269,6 +269,9 @@ pub enum MessageToBackend {
         sequence: i64,
         manifest_sha256: String,
     },
+    UpdateGlobalProfileInstance {
+        id: InstanceID,
+    },
     SetSyncing {
         target: Arc<str>,
         is_file: bool,

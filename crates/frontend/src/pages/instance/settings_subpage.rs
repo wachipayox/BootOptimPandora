@@ -1101,6 +1101,23 @@ impl Render for InstanceSettingsSubpage {
             .gap_4()
             .size_full()
             .overflow_y_scrollbar()
+            .child(v_flex()
+                .gap_2()
+                .child(div().child("Global profile"))
+                .child(div().child("Update inherited files from the published global profile. Local overrides are preserved."))
+                .child(Button::new("update_global_profile")
+                    .label("Check for updates")
+                    .icon(PandoraIcon::RefreshCcw)
+                    .overflow_x_hidden()
+                    .on_click({
+                        let id = self.instance_id;
+                        let backend_handle = self.backend_handle.clone();
+                        move |_: &ClickEvent, _, _| {
+                            backend_handle.send(MessageToBackend::UpdateGlobalProfileInstance { id });
+                        }
+                    })
+                )
+            )
             .child(crate::labelled(
                 t::instance::folder(),
                 self.instance_root_label.button("relocate").on_click({

@@ -415,6 +415,21 @@ impl DistributionClient {
         revision: &RevisionRef,
         cache_root: &Path,
     ) -> Result<ResolvedGlobalProfile, DistributionError> {
+        self.resolve_profile_with_reuse(profile_id, revision, cache_root, &BTreeMap::new(), &BTreeSet::new())
+            .await
+    }
+
+    /// Resolve a revision while reusing files already tracked by the local profile branch.
+    /// Paths in `skip_paths` must be filtered by the caller because local ownership/tombstones
+    /// keep them from flowing through an inherited update.
+    pub async fn resolve_profile_with_reuse(
+        &self,
+        profile_id: &str,
+        revision: &RevisionRef,
+        cache_root: &Path,
+        reusable_entries: &BTreeMap<String, ProfileEntryMetadata>,
+        skip_paths: &BTreeSet<String>,
+    ) -> Result<ResolvedGlobalProfile, DistributionError> {
         let mut chain = Vec::<VerifiedRevision>::new();
         let mut next = Some((
             profile_id.to_owned(),
@@ -580,6 +595,16 @@ impl DistributionClient {
 
         let mut entries = Vec::with_capacity(files.len());
         for (_, mut entry) in files {
+            if skip_paths.contains(&entry.path)
+                || reusable_entries.get(&entry.path).is_some_and(|existing| {
+                    existing.logical_identity == entry.metadata.logical_identity
+                        && existing.source_sha256 == entry.metadata.source_sha256
+                        && existing.policy == entry.metadata.policy
+                })
+            {
+                entries.push(entry);
+                continue;
+            }
             let object = object_refs
                 .get(&(
                     entry.metadata.logical_identity.clone(),
@@ -941,6 +966,122 @@ impl crate::BackendState {
             return Err("Global profile installation lost its game-files publication guard".into());
         }
         Ok(())
+    }
+
+    pub async fn update_global_profile_instance(&self, id: bridge::instance::InstanceID) -> Result<bool, String> {
+        let snapshot = self.persistent_profile_branch_status(id, None).map_err(|error| error.to_string())?;
+        let Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin: parent_pin }) =
+            snapshot.branch.lineage.parent.as_ref()
+        else {
+            return Err("This instance is not a direct child of a global profile yet".into());
+        };
+        let Some(applied_pin) = snapshot.branch.applied_revision.as_ref() else {
+            return Err("This global profile instance has no applied revision; create or repair it first".into());
+        };
+        if applied_pin.profile_id != parent_pin.profile_id {
+            return Err("The applied global revision does not match this instance's parent profile".into());
+        }
+
+        let config = self.config.lock().get().distribution.clone();
+        let client = DistributionClient::new(&config).map_err(|error| error.to_string())?;
+        let profiles = client.list_profiles().await.map_err(|error| error.to_string())?;
+        let profile = profiles
+            .iter()
+            .find(|profile| profile.profile_id == parent_pin.profile_id)
+            .ok_or_else(|| "The pinned global profile is no longer published".to_owned())?;
+        let target_revision = selected_revision(profile).clone();
+        let target_pin = GlobalRevisionPin::new(
+            profile.profile_id.clone(),
+            target_revision.revision_id.clone(),
+            target_revision.manifest_sha256.clone(),
+        )
+        .map_err(|error| error.to_string())?;
+        if snapshot.branch.applied_revision.as_ref() == Some(&target_pin) {
+            return Ok(false);
+        }
+
+        let mut reusable_entries = BTreeMap::new();
+        let mut skip_paths = BTreeSet::new();
+        for (path, metadata) in &snapshot.branch.entries {
+            if metadata.ownership == ProfileEntryOwnership::Inherited {
+                reusable_entries.insert(path.clone(), metadata.clone());
+            } else {
+                skip_paths.insert(path.clone());
+            }
+        }
+        skip_paths.extend(snapshot.branch.tombstones.keys().cloned());
+
+        let cache_root = self.directories.root_launcher_dir.join("distribution-objects");
+        let resolved = client
+            .resolve_profile_with_reuse(
+                &profile.profile_id,
+                &target_revision,
+                &cache_root,
+                &reusable_entries,
+                &skip_paths,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+
+        let target_entries = resolved
+            .entries
+            .into_iter()
+            .map(|entry| (entry.path.clone(), entry))
+            .collect::<BTreeMap<_, _>>();
+        let mut changes = Vec::new();
+        for (path, entry) in &target_entries {
+            if snapshot.branch.tombstones.contains_key(path) {
+                continue;
+            }
+            let current = snapshot.branch.entries.get(path);
+            if current.is_some_and(|metadata| metadata.ownership != ProfileEntryOwnership::Inherited) {
+                continue;
+            }
+            if current.is_some_and(|metadata| {
+                metadata.logical_identity == entry.metadata.logical_identity
+                    && metadata.source_sha256 == entry.metadata.source_sha256
+                    && metadata.policy == entry.metadata.policy
+            }) {
+                continue;
+            }
+            if entry.source.as_os_str().is_empty() {
+                return Err(format!("The changed global file {path} was not downloaded"));
+            }
+            changes.push(crate::profile_branch::ProfileDeltaChange::Upsert(entry.clone()));
+        }
+        for (path, metadata) in &snapshot.branch.entries {
+            if target_entries.contains_key(path)
+                || metadata.ownership != ProfileEntryOwnership::Inherited
+                || !matches!(&metadata.origin, ProfileEntryOrigin::GlobalRevision { .. })
+            {
+                continue;
+            }
+            changes.push(crate::profile_branch::ProfileDeltaChange::Remove {
+                path: path.clone(),
+                origin: metadata.origin.clone(),
+                ownership: metadata.ownership,
+                policy: metadata.policy,
+            });
+        }
+
+        let lineage = crate::profile_branch::ProfileLineage::from_global(target_pin.clone())
+            .map_err(|error| error.to_string())?;
+        let outcome = self
+            .apply_persistent_profile_delta(
+                id,
+                &crate::profile_branch::ProfileRevisionDelta {
+                    lineage,
+                    target_revision: Some(target_pin),
+                    changes,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        match outcome {
+            crate::profile_layout_flow::ReconcileOutcome::Ready { .. } => Ok(true),
+            crate::profile_layout_flow::ReconcileOutcome::NeedsReconcile { conflicts, .. } => {
+                Err(format!("Global update found files that need attention: {}", conflicts.join(", ")))
+            },
+        }
     }
 }
 

@@ -1633,6 +1633,17 @@ impl BackendState {
                     }
                 });
             },
+            MessageToBackend::UpdateGlobalProfileInstance { id } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    backend.send.send_info("Checking for global profile updates".to_owned());
+                    match backend.update_global_profile_instance(id).await {
+                        Ok(true) => backend.send.send_success("Global profile updated".to_owned()),
+                        Ok(false) => backend.send.send_success("Global profile is already up to date".to_owned()),
+                        Err(error) => backend.send.send_error(format!("Global profile update failed: {error}")),
+                    }
+                });
+            },
             MessageToBackend::CleanupOldLogFiles { instance: id } => {
                 let mut deleted = 0;
 
