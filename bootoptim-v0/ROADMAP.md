@@ -1,107 +1,127 @@
 # BootOptim launcher roadmap
 
-These are product requirements for a later launcher phase. They are not part
-of the v0 AppCDS measurement prototype and must not silently expand its scope.
+The launcher owns local instances and their live game directories. The private
+Distribution service owns only published global profiles and immutable
+revisions. A global profile can have many child profiles. Children pin one
+parent revision; inheritance can continue through any number of ancestors.
+The client may create global-to-local and local-to-local branches. Local
+overlays and locally created profiles stay on the user's machine and are never
+uploaded to Distribution.
 
-## Self-contained prerequisite installation
+This roadmap describes the private BootOptim launcher and pack updater. It does
+not target Modrinth/CurseForge pack expansion or general third-party modpack
+installation.
 
-- The production installer must detect and, with clear user consent, install
-  launcher prerequisites such as the supported Microsoft Visual C++ Redistributable.
-- A clean Windows installation must not fail silently because a required native
-  runtime DLL is absent. The installer must report a prerequisite failure and
-  offer a documented recovery path before the launcher is first run.
-- Bundled prerequisite installers must be versioned, architecture-appropriate,
-  and independently updatable; the launcher itself must not depend on a random
-  system-wide DLL already happening to be present.
+## Integrated baseline (2026-09-26)
 
-## Optional Windows security integration
+- Pandora PR #66 is merged into `agent/integration-current` at
+  `a4aae071d6062adae9bcffe592ca81c541650a82`. Each private instance keeps its
+  existing `.minecraft` live and writable across launches; Start no longer
+  rotates/rebuilds `mods/`, expands a third-party pack, or recopies extras.
+  This preserves runtime libraries/caches such as MCEF and Analog Audio.
+- PR #64 promotes the launch-fast library policy and enables the asset USN
+  cache by default. Neither feature implements global profile updates.
+- The persistent ownership/recovery implementation described by PRs #32–39 is
+  **not integrated**: those PRs remain open drafts on a stale branch chain.
+  `PERSISTENT_PROFILE_LAYOUT_*` documents are architecture/candidate records,
+  not a shipping reconciler. The current persistent `.minecraft` behavior from
+  #66 does not yet safely reconcile managed files or track inherited ownership.
+- Distribution currently exposes a read-only admin page and no profile
+  publication/download API. Pandora does not yet consume signed global
+  revisions.
 
-- On first launch, the installed launcher may explain that real-time scanning
-  can make a large modpack materially slower on older storage. It must offer a
-  **clearly optional**, administrator-approved and reversible action; never
-  disable Defender or alter protection globally.
-- Any exclusion must be as narrow as technically possible: the installed,
-  versioned launcher executable and launcher-owned generated cache only. Do
-  not broadly exclude the game directory, arbitrary user files, downloaded
-  mods or an entire drive.
-- The UI must state exactly which Windows setting/path will change, record the
-  installed rule/exclusion, provide a one-click removal path, and treat denied
-  elevation/tamper protection as a normal non-fatal outcome.
-- Do not add a firewall exception by default. First establish that a concrete
-  launcher feature requires inbound traffic; normal outbound update/login
-  traffic should use Windows' default outbound policy. Any later firewall rule
-  follows the same explicit-consent, narrow-path and reversible contract.
+## Product invariants
 
-## Profiles and AppCDS
+- Start uses the instance's persistent `.minecraft`. Profile install/update
+  applies only the private pack's files; no generic Modrinth/CurseForge
+  expansion or per-launch staging copy is needed.
+- Local-only files and edits are preserved by default. Global and derived
+  instances can offer a separate **Repair modpack** action that performs a full
+  parity check against the resolved managed tree. It is unavailable to a
+  wholly local instance with no global ancestor.
+- The existing **Repair game files** action is distinct from modpack repair
+  and belongs under instance Settings/Maintenance, away from the frequent Start
+  action.
+- Updates use immutable revision history and a per-profile ownership manifest.
+  A no-op update and Start must not walk/hash all of `.minecraft`; verify only
+  changed destinations and use explicit full parity only for Repair modpack.
+- Inherited entries track their source revision and current ownership. A child
+  can add, replace, change, or remove a mod, config, resource pack, shader pack,
+  or other supported file. Ancestor updates flow to descendants only where
+  the child still inherits that entry.
+- Per-file policy includes enforced, default-on-first-install, and user-owned
+  modes. Supported config formats may add option-level selectors. A conflict
+  where a user changed an enforced file applies the new enforced value while
+  retaining the user's prior copy in recoverable conflict storage.
+- Reconcile/install/update is transactional per profile, crash recoverable,
+  and isolated from other profiles. Global content blobs may be deduplicated,
+  but mutable destination files and recovery state are never shared.
+- Distribution stores and publishes global data only. Local branch metadata,
+  private overlays, user saves, and player filesystem inventories stay local.
 
-- The launcher will offer named configuration profiles for the modpack.
-- Every profile owns an independent AppCDS identity/cache namespace. Switching
-  profiles must never consume another profile's archive.
-- Switching away and back to an unchanged profile must reuse its valid archive;
-  it must not retrain merely because another profile was selected in between.
-- Pack, Java, launch argument, resource selection and profile-local
-  launch-affecting configuration changes continue to invalidate only that
-  profile's archive. Shared/global inputs must be represented explicitly rather
-  than guessed.
-- A first-seen or changed identity may begin **training immediately**. It must
-  never be consumed until a later independently rebuilt identity matches it
-  exactly; a mismatch discards the untrusted training result and falls back to
-  stock. This deliberately removes a wasted proof-only game launch without
-  weakening the consumption gate.
-- Rebuilding identity on every Start must be incremental. The launcher must
-  reuse a versioned, per-profile local manifest/fingerprint for unchanged files
-  and fall back to full hashing on uncertainty (identity-cache corruption,
-  volume/journal/file-id discontinuity, reparse ambiguity, managed update,
-  repair/download or unsupported filesystem). Rehashing the whole modpack on
-  every launch is not acceptable on HDD hardware.
+## Delivery phases
 
-## Persistent per-profile game layout
+### 1. Finish the persistent layout foundation
 
-- Every profile owns a persistent prepared `.minecraft` layout and its own
-  managed-layout manifest/state; installing, updating or switching profile
-  identity publishes changes for that profile rather than rebuilding at Start.
-- Managed pack files and user-local files are separate ownership layers. Normal
-  managed updates must preserve local additions/edits and must never silently
-  overwrite or delete them.
-- Managed/local destination conflicts require explicit resolution state (for
-  example preserve local plus quarantine, user resolution, or stock fallback),
-  with recoverable staging/promotion and rollback after interruption or crash.
-- Profile A updates must not mutate Profile B's layout, manifest, recovery state
-  or caches, even when immutable content-library sources are shared globally.
+Refresh the stale #32–39 work against current integration and produce one
+reviewable implementation for durable UUID identity, per-profile locks,
+ownership manifests, conflict retention, transaction recovery, cloning, and
+native platform validation. Integrate only after source, recovery, and native
+gates reflect the current #66 persistent game-directory behavior. Keep all
+reconciliation outside Start.
 
-## Deferred training
+### 2. Build global profile administration and publication
 
-- When a profile has no valid archive, the launcher must let the user choose
-  **Train now** or **Start normally**.
-- **Start normally** launches stock without deleting a valid prior archive or
-  forcing a long archive-generation wait. The launcher should preserve a clear
-  pending-training state and offer the choice again later.
-- The launcher must accurately say that training can take minutes and that it
-  happens after normal game closure; it must not present it as startup time.
-- Training/promotion stays opt-in, fail-open and per-profile. A delayed or
-  cancelled training attempt must never make the game unlaunchable.
+Distribution provides authenticated HTTPS admin access, global-profile CRUD,
+folder-based publication, signed immutable revisions, branch history, and
+effective-tree preview. A separate local signer holds the private signing
+key; neither the browser nor the service receives it. Start with a small
+synthetic test pack. See the Distribution repository's roadmap and protocol
+contract for endpoint and signing details.
 
-## Offline / non-premium development mode
+### 3. Add Pandora global/local branch management
 
-- The launcher UI must expose an obvious **Add offline account** path, rather
-  than requiring a Microsoft-login browser flow or hidden account screens.
-- It must clearly label this as a development/local-server mode and let the
-  user choose its username and select it per instance. It must not imply that
-  offline accounts can join authenticated servers.
+Show available global profiles and revisions. Let a user install a global
+profile or create a local child from a pinned global/local parent. Let admins
+create global child profiles. Show ancestry and inherited/overridden entries
+inside each instance's own Profiles/Updates settings area. No local branch
+publishes its private overlay.
 
-## Instance-launch preparation
+### 4. Add delta update and explicit modpack repair
 
-- Profile launch preparation must be measured as its own boundary: user click
-  to Java process creation, separately from Java process creation to usable
-  main menu.
-- Investigate and remove avoidable subprocesses, repeated metadata reads,
-  hashing, filesystem walks, extraction and synchronous network/update checks
-  in the instance-launch path. A roughly 20-second fast-PC preparation cost is
-  not acceptable when it can scale much worse on an old HDD laptop.
-- Reuse fingerprinted, invalidatable launch metadata where it is semantically
-  safe; report progress honestly rather than presenting unexplained silent work.
-- **High-priority physical finding:** Pandora can spend up to roughly ten
-  minutes at “Verifying game assets integrity” on the old HDD laptop. Replace
-  unconditional full verification with an incremental, fingerprinted manifest
-  that reuses a validated result and invalidates only affected assets. Preserve
-  a user-invoked full repair/verification path and fail safely on uncertainty.
+Resolve the revision delta from the last applied revision to the selected
+revision, then stage and reconcile only changed managed paths through the
+persistent-layout transaction. A stable/no-op update does not do a full
+filesystem scan. Surface progress, policy, and recoverable conflicts. Put
+**Repair modpack** beside update history under instance Settings/Maintenance;
+that explicit action checks full parity and restores managed paths from
+verified content. Preserve local additions unless the user resolves a conflict
+or a policy explicitly enforces the path.
+
+## Acceptance path
+
+1. Install a synthetic global root containing one mod, one config, one
+   resource pack, and one removable file.
+2. Create a local child; change the config, replace a mod, add a shader pack,
+   and keep an unrelated local file. Confirm local state stays client-only.
+3. Publish an ancestor update. Verify only still-inherited changed paths apply;
+   child overrides/removals and unrelated files remain as configured.
+4. Edit a forced local file, publish a new forced value, and verify the new
+   value applies while the old local copy remains recoverable.
+5. Interrupt a reconciliation and prove the next maintenance open recovers
+   safely. A separate Repair modpack detects/restores deliberate corruption.
+6. Compare a no-op update and Start with the historical full walk: no full
+   `.minecraft` scan/hash is allowed on either path. Validate launch to menu
+   and representative in-world behavior after updates.
+
+## Other launcher work
+
+The following roadmap items remain separate from profile distribution:
+
+- self-contained prerequisite installation with consent and clear recovery;
+- optional narrow and reversible Windows security integration;
+- offline/non-premium development accounts with clear labeling;
+- incremental game-asset verification and explicit repair;
+- honest separation of launcher preparation and Java-to-menu timings.
+
+Do not let these independent items block the distribution/profile architecture.
