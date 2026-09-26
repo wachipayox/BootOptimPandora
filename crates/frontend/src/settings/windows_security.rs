@@ -17,26 +17,26 @@ pub(super) fn create_page() -> SettingPage {
             title: None,
             items: vec![SettingItem {
                 title: || "Microsoft Defender",
-                description: || "Optional process exclusion for the canonical Pandora executable.",
+                description: || "Optional process exclusion for the canonical Wachiland Launcher executable.",
                 widget: SettingItemWidget::Any(Rc::new(|window, cx| {
                     let (status, action, label) = match command::defender_process_local_state() {
                         DefenderProcessLocalState::NotManaged => (
-                            "Not enabled. Defender scans files opened by Pandora normally.",
+                            "Not enabled. Defender scans files opened by Wachiland Launcher normally.",
                             Some(DefenderProcessAction::Enable),
                             "Enable optimization",
                         ),
                         DefenderProcessLocalState::ManagedCurrent => (
-                            "Enabled and owned by Pandora for this executable.",
+                            "Enabled and owned by Wachiland Launcher for this executable.",
                             Some(DefenderProcessAction::Remove),
                             "Remove optimization",
                         ),
                         DefenderProcessLocalState::ManagedPrevious => (
-                            "A previous Pandora executable in this installation still has an owned exclusion.",
+                            "A previous Wachiland Launcher executable in this installation still has an owned exclusion.",
                             Some(DefenderProcessAction::Remove),
                             "Remove previous exclusion",
                         ),
                         DefenderProcessLocalState::InvalidOwnershipRecord => (
-                            "Pandora cannot validate its local exclusion ownership record, so automatic removal is disabled.",
+                            "Wachiland Launcher cannot validate its local exclusion ownership record, so automatic removal is disabled.",
                             None,
                             "",
                         ),
@@ -73,7 +73,7 @@ pub(super) fn create_page() -> SettingPage {
                         .gap_1()
                         .max_w(px(560.0))
                         .child(div().text_sm().child(
-                            "Defender will not scan files opened by this Pandora executable. Java, Minecraft and game folders are not added as exclusions.",
+                            "Defender will not scan files opened by this Wachiland Launcher executable. Java, Minecraft and game folders are not added as exclusions.",
                         ))
                         .child(div().text_sm().text_color(cx.theme().muted_foreground).child(status))
                         .child(controls)

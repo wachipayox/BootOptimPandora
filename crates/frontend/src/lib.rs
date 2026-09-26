@@ -208,7 +208,7 @@ pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {
             app_id: Some("PandoraLauncher".into()),
             window_min_size: Some(size(px(480.0), px(270.0))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Pandora Launcher".into()),
+                title: Some("Wachiland Launcher".into()),
                 appears_transparent: use_custom_titlebar,
                 ..Default::default()
             }),

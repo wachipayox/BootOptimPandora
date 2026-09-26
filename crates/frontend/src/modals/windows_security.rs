@@ -34,13 +34,13 @@ pub fn open(window: &mut Window, cx: &mut App) {
             );
 
         dialog
-            .title("Optimize Defender scanning for Pandora")
+            .title("Optimize Defender scanning for Wachiland Launcher")
             .overlay_closable(true)
             .child(
                 v_flex()
                     .gap_2()
                     .child(
-                        "Defender will not scan files opened by this Pandora executable. Enabling requires administrator approval.",
+                        "Defender will not scan files opened by this Wachiland Launcher executable. Enabling requires administrator approval.",
                     )
                     .child(
                         div()
