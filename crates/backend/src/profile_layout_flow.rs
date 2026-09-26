@@ -1148,7 +1148,6 @@ impl PersistentProfileLayout {
     }
 }
 
-#[derive(Clone, Debug)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LiveEntryKind {
     Missing,
