@@ -170,12 +170,23 @@ impl ProfileEntryMetadata {
     }
 }
 
+/// Durable local override representing an explicit child-profile deletion.
+///
+/// The marker is local by construction. It is intentionally separate from file policy: deleting an
+/// enforced parent entry remains a local tombstone rather than being reclassified as default-once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileEntryTombstone {
+    pub policy: ProfileFilePolicy,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileBranchManifest {
     pub lineage: ProfileLineage,
     pub applied_revision: Option<GlobalRevisionPin>,
     #[serde(default)]
     pub entries: BTreeMap<String, ProfileEntryMetadata>,
+    #[serde(default)]
+    pub tombstones: BTreeMap<String, ProfileEntryTombstone>,
 }
 
 impl ProfileBranchManifest {
@@ -187,6 +198,12 @@ impl ProfileBranchManifest {
         for (path, entry) in &self.entries {
             validate_profile_relative_path(path)?;
             entry.validate()?;
+        }
+        for path in self.tombstones.keys() {
+            validate_profile_relative_path(path)?;
+            if self.entries.contains_key(path) {
+                return Err(ProfileBranchError::DuplicatePath(path.clone()));
+            }
         }
         Ok(())
     }
@@ -281,17 +298,41 @@ pub enum LocalOverlayChange {
     Remove { path: String },
 }
 
-/// Resolve an already verified parent effective tree plus a private local overlay. Parent origins
-/// are preserved, inherited ownership is explicit, and local overlay data never leaves this value.
+/// Resolve an already verified parent effective tree plus a private local overlay.
+///
+/// This compatibility entry point has no persisted local tombstones. Call
+/// `resolve_effective_entries_for_branch` when resolving a previously saved local branch.
 pub fn resolve_effective_entries(
     parent_entries: impl IntoIterator<Item = EffectiveProfileEntry>,
     local_profile_uuid: Uuid,
     overlay: &[LocalOverlayChange],
 ) -> Result<Vec<EffectiveProfileEntry>, ProfileBranchError> {
+    resolve_effective_entries_for_branch(
+        parent_entries,
+        local_profile_uuid,
+        &ProfileBranchManifest::default(),
+        overlay,
+    )
+}
+
+/// Resolve parent entries while honoring durable local tombstones from a saved branch.
+///
+/// Parent origins are preserved, inherited ownership is explicit, and local overlay bytes stay
+/// local. A later explicit local upsert may still replace a tombstoned path in the returned view.
+pub fn resolve_effective_entries_for_branch(
+    parent_entries: impl IntoIterator<Item = EffectiveProfileEntry>,
+    local_profile_uuid: Uuid,
+    branch: &ProfileBranchManifest,
+    overlay: &[LocalOverlayChange],
+) -> Result<Vec<EffectiveProfileEntry>, ProfileBranchError> {
+    branch.validate(local_profile_uuid)?;
     let mut resolved = BTreeMap::<String, EffectiveProfileEntry>::new();
     for mut entry in parent_entries {
         entry.validate()?;
         entry.metadata.ownership = ProfileEntryOwnership::Inherited;
+        if branch.tombstones.contains_key(&entry.path) {
+            continue;
+        }
         if resolved.insert(entry.path.clone(), entry).is_some() {
             return Err(ProfileBranchError::DuplicatePath("parent effective tree".to_owned()));
         }
@@ -470,6 +511,33 @@ mod tests {
             local.metadata.origin,
             ProfileEntryOrigin::LocalProfile { profile_uuid } if profile_uuid == local_uuid
         ));
+    }
+
+    #[test]
+    fn persisted_local_tombstone_masks_parent_entry_during_resolution() {
+        let local_uuid = Uuid::from_bytes([9; 16]);
+        let global = pin("r2", 'b');
+        let parent = EffectiveProfileEntry {
+            path: "mods/removed.jar".to_owned(),
+            source: PathBuf::from("removed"),
+            metadata: ProfileEntryMetadata {
+                logical_identity: "removed".to_owned(),
+                source_sha256: "3".repeat(64),
+                origin: ProfileEntryOrigin::GlobalRevision { pin: global },
+                ownership: ProfileEntryOwnership::Inherited,
+                policy: ProfileFilePolicy::Enforced,
+            },
+        };
+        let mut branch = ProfileBranchManifest::default();
+        branch.tombstones.insert(
+            "mods/removed.jar".to_owned(),
+            ProfileEntryTombstone {
+                policy: ProfileFilePolicy::Enforced,
+            },
+        );
+
+        let resolved = resolve_effective_entries_for_branch([parent], local_uuid, &branch, &[]).unwrap();
+        assert!(resolved.is_empty());
     }
 
     #[test]

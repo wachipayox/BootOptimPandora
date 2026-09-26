@@ -19,7 +19,8 @@ use uuid::Uuid;
 use crate::{
     profile_branch::{
         EffectiveProfileEntry, ProfileBranchError, ProfileBranchManifest, ProfileDeltaChange,
-        ProfileEntryOrigin, ProfileEntryOwnership, ProfileFilePolicy, ProfileLineage, ProfileRevisionDelta,
+        ProfileEntryOrigin, ProfileEntryOwnership, ProfileEntryTombstone, ProfileFilePolicy, ProfileLineage,
+        ProfileRevisionDelta,
     },
     profile_layout_ownership::{
         ConflictReason, LiveEntry, ManagedEntry, PathReconcileInput, ReconcileAction, plan_profile,
@@ -430,6 +431,41 @@ impl PersistentProfileLayout {
                 });
             }
         }
+
+        // Schema-v1 manifests created before branch metadata was added can still contain valid
+        // destructive ownership proof in managed_entries. Repair is the explicit full-parity path,
+        // so complete removals from that persisted manifest state without enumerating .minecraft.
+        if let Some(manifest) = &current {
+            let legacy_origin = branch
+                .applied_revision
+                .clone()
+                .or_else(|| branch.lineage.global_ancestor.clone())
+                .ok_or(ProfileLayoutFlowError::RepairUnavailable)?;
+            let already_removed = changes
+                .iter()
+                .filter_map(|change| match change {
+                    ProfileDeltaChange::Remove { path, .. } => Some(path.clone()),
+                    ProfileDeltaChange::Upsert(_) => None,
+                })
+                .collect::<BTreeSet<_>>();
+            for path in manifest.managed_entries.keys() {
+                if target_paths.contains(path)
+                    || already_removed.contains(path)
+                    || branch.entries.contains_key(path)
+                    || branch.tombstones.contains_key(path)
+                {
+                    continue;
+                }
+                changes.push(ProfileDeltaChange::Remove {
+                    path: path.clone(),
+                    origin: ProfileEntryOrigin::GlobalRevision {
+                        pin: legacy_origin.clone(),
+                    },
+                    ownership: ProfileEntryOwnership::Inherited,
+                    policy: ProfileFilePolicy::Enforced,
+                });
+            }
+        }
         let delta = ProfileRevisionDelta {
             lineage: branch.lineage.clone(),
             target_revision: branch.applied_revision.clone(),
@@ -481,18 +517,20 @@ impl PersistentProfileLayout {
         for change in &delta.changes {
             let path = change.path().to_owned();
             let current_metadata = branch.entries.get(&path).cloned();
+            let has_local_tombstone = branch.tombstones.contains_key(&path);
 
             let incoming_is_inherited = match change {
                 ProfileDeltaChange::Upsert(entry) => entry.metadata.ownership == ProfileEntryOwnership::Inherited,
                 ProfileDeltaChange::Remove { ownership, .. } => *ownership == ProfileEntryOwnership::Inherited,
             };
             if incoming_is_inherited
-                && current_metadata
-                    .as_ref()
-                    .is_some_and(|metadata| metadata.ownership != ProfileEntryOwnership::Inherited)
+                && (has_local_tombstone
+                    || current_metadata
+                        .as_ref()
+                        .is_some_and(|metadata| metadata.ownership != ProfileEntryOwnership::Inherited))
             {
-                // A local override/removal owns this destination; ancestor history no longer flows
-                // through it.
+                // A local override/tombstone owns this destination; ancestor history no longer
+                // flows through it.
                 continue;
             }
 
@@ -500,6 +538,9 @@ impl PersistentProfileLayout {
                 ProfileDeltaChange::Upsert(entry) => {
                     let mut metadata = entry.metadata.clone();
                     metadata.validate()?;
+                    if metadata.ownership != ProfileEntryOwnership::Inherited {
+                        branch.tombstones.remove(&path);
+                    }
                     match metadata.policy {
                         ProfileFilePolicy::Enforced => {
                             let live = observe_live(&self.live_root(), &path)?;
@@ -593,10 +634,36 @@ impl PersistentProfileLayout {
                 },
                 ProfileDeltaChange::Remove {
                     path,
-                    origin,
-                    ownership: _,
+                    origin: _,
+                    ownership,
                     policy,
                 } => {
+                    if *ownership != ProfileEntryOwnership::Inherited {
+                        match observe_live(&self.live_root(), path)? {
+                            LiveEntry::Missing => {},
+                            LiveEntry::File { hash } => {
+                                operations.push(JournalOperation {
+                                    path: path.clone(),
+                                    kind: JournalOpKind::Remove,
+                                    old_hash: Some(hash),
+                                    new_hash: None,
+                                    retain_conflict: false,
+                                });
+                            },
+                            LiveEntry::Directory | LiveEntry::ReparsePoint | LiveEntry::OtherType => {
+                                blocking_conflicts.push(format!("{path}:unexpected_type"));
+                                continue;
+                            },
+                        }
+                        managed_entries.remove(path);
+                        branch.entries.remove(path);
+                        branch.tombstones.insert(
+                            path.clone(),
+                            ProfileEntryTombstone { policy: *policy },
+                        );
+                        continue;
+                    }
+
                     match policy {
                         ProfileFilePolicy::Enforced => {
                             if let Some(previous) = managed_entries.get(path) {
@@ -938,18 +1005,33 @@ impl PersistentProfileLayout {
             if !operation.retain_conflict {
                 continue;
             }
+            let expected = operation
+                .old_hash
+                .as_deref()
+                .ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?;
             let backup = self.backup_live_path(journal.transaction_id, &operation.path)?;
-            if !backup.exists() {
-                continue;
-            }
             let target_root = self.conflict_copies_root().join(journal.transaction_id.to_string());
             let target = safe_join(&target_root, &operation.path)?;
-            create_plain_parent(&target)?;
-            if target.exists() {
-                return Err(ProfileLayoutFlowError::AmbiguousTransaction);
+
+            let backup_present = verified_regular_file_presence(&backup, expected)?;
+            let target_present = verified_regular_file_presence(&target, expected)?;
+            match (backup_present, target_present) {
+                (true, false) => {
+                    create_plain_parent(&target)?;
+                    fs::rename(&backup, &target)?;
+                    sync_parent(&target)?;
+                    verify_hash(&target, expected)?;
+                },
+                (false, true) => {
+                    // Idempotent retry after the rename was already durable but before journal /
+                    // transaction cleanup completed.
+                },
+                (false, false) | (true, true) => {
+                    // Missing both copies can hide loss; two copies is an ambiguous transaction.
+                    // Keep journal/transaction state intact for explicit recovery/inspection.
+                    return Err(ProfileLayoutFlowError::AmbiguousTransaction);
+                },
             }
-            fs::rename(&backup, &target)?;
-            sync_parent(&target)?;
         }
         Ok(())
     }
@@ -1505,6 +1587,17 @@ fn verify_hash(path: &Path, expected: &str) -> Result<(), ProfileLayoutFlowError
     Ok(())
 }
 
+fn verified_regular_file_presence(path: &Path, expected: &str) -> Result<bool, ProfileLayoutFlowError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {
+            verify_hash(path, expected)?;
+            Ok(true)
+        },
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
 fn file_hash_matches(path: &Path, expected: &str) -> Result<bool, ProfileLayoutFlowError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -1949,6 +2042,211 @@ mod tests {
             fs::read(tx_dir.join("mods/forced.cfg")).unwrap(),
             b"local-edit"
         );
+    }
+
+    #[test]
+    fn local_tombstone_survives_parent_revision_and_masks_resolver() {
+        let root = TestRoot::new("local-tombstone");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let profile_uuid = layout.profile_uuid();
+        let r1 = global_pin("r1", 'a');
+        let v1 = effective_entry(
+            &root,
+            "removed.jar",
+            b"parent-v1",
+            r1.clone(),
+            crate::profile_branch::ProfileFilePolicy::Enforced,
+        );
+        layout
+            .reconcile_revision_delta(&global_delta(
+                r1.clone(),
+                vec![crate::profile_branch::ProfileDeltaChange::Upsert(v1)],
+            ))
+            .unwrap();
+
+        layout
+            .reconcile_revision_delta(&crate::profile_branch::ProfileRevisionDelta {
+                lineage: crate::profile_branch::ProfileLineage::from_global(r1.clone()).unwrap(),
+                target_revision: Some(r1),
+                changes: vec![crate::profile_branch::ProfileDeltaChange::Remove {
+                    path: "mods/removed.jar".to_owned(),
+                    origin: crate::profile_branch::ProfileEntryOrigin::LocalProfile { profile_uuid },
+                    ownership: crate::profile_branch::ProfileEntryOwnership::Local,
+                    policy: crate::profile_branch::ProfileFilePolicy::Enforced,
+                }],
+            })
+            .unwrap();
+        assert!(!root.0.join(".minecraft/mods/removed.jar").exists());
+        drop(layout);
+
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        assert!(layout.branch_manifest().unwrap().tombstones.contains_key("mods/removed.jar"));
+
+        let r2 = global_pin("r2", 'b');
+        let v2 = effective_entry(
+            &root,
+            "removed.jar",
+            b"parent-v2",
+            r2.clone(),
+            crate::profile_branch::ProfileFilePolicy::Enforced,
+        );
+        let resolver_parent = v2.clone();
+        layout
+            .reconcile_revision_delta(&global_delta(
+                r2.clone(),
+                vec![crate::profile_branch::ProfileDeltaChange::Upsert(v2)],
+            ))
+            .unwrap();
+
+        assert!(!root.0.join(".minecraft/mods/removed.jar").exists());
+        let branch = layout.branch_manifest().unwrap();
+        assert!(branch.tombstones.contains_key("mods/removed.jar"));
+        assert_eq!(branch.applied_revision.as_ref(), Some(&r2));
+        let resolved = crate::profile_branch::resolve_effective_entries_for_branch(
+            [resolver_parent],
+            profile_uuid,
+            &branch,
+            &[],
+        )
+        .unwrap();
+        assert!(resolved.is_empty());
+    }
+
+    #[test]
+    fn retained_conflict_cleanup_is_idempotent_after_archive() {
+        let root = TestRoot::new("conflict-cleanup-idempotent");
+        let layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let tx = new_uuid();
+        let old = b"local-overwrite";
+        let old_hash = sha256_bytes(old);
+        let backup = layout.backup_live_path(tx, "mods/forced.cfg").unwrap();
+        write_new_synced(&backup, old).unwrap();
+        let journal = PublicationJournal {
+            schema: SCHEMA_VERSION,
+            profile_uuid: layout.profile_uuid(),
+            transaction_id: tx,
+            from_generation: Some(1),
+            target_generation: 2,
+            previous_manifest_sha256: None,
+            target_manifest_sha256: "0".repeat(64),
+            state: ProfileLayoutState::Prepared,
+            operations: vec![JournalOperation {
+                path: "mods/forced.cfg".to_owned(),
+                kind: JournalOpKind::Replace,
+                old_hash: Some(old_hash),
+                new_hash: Some("1".repeat(64)),
+                retain_conflict: true,
+            }],
+        };
+        write_new_synced(&layout.journal_path(), &serde_json::to_vec_pretty(&journal).unwrap()).unwrap();
+
+        layout.archive_retained_conflicts(&journal).unwrap();
+        let archived = layout.conflict_copies_root().join(tx.to_string()).join("mods/forced.cfg");
+        assert_eq!(fs::read(&archived).unwrap(), old);
+        assert!(!backup.exists());
+
+        layout.cleanup_committed(&journal).unwrap();
+        layout.cleanup_committed(&journal).unwrap();
+        assert_eq!(fs::read(&archived).unwrap(), old);
+        assert!(!layout.journal_path().exists());
+    }
+
+    #[test]
+    fn retained_conflict_cleanup_blocks_when_recoverable_copy_is_missing_or_corrupt() {
+        let root = TestRoot::new("conflict-cleanup-fail-closed");
+        let layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let tx = new_uuid();
+        ensure_plain_directory(&layout.staging_dir(tx)).unwrap();
+        ensure_plain_directory(&layout.backup_dir(tx)).unwrap();
+        let expected = sha256_bytes(b"expected-local");
+        let journal = PublicationJournal {
+            schema: SCHEMA_VERSION,
+            profile_uuid: layout.profile_uuid(),
+            transaction_id: tx,
+            from_generation: Some(1),
+            target_generation: 2,
+            previous_manifest_sha256: None,
+            target_manifest_sha256: "0".repeat(64),
+            state: ProfileLayoutState::Prepared,
+            operations: vec![JournalOperation {
+                path: "mods/forced.cfg".to_owned(),
+                kind: JournalOpKind::Replace,
+                old_hash: Some(expected),
+                new_hash: Some("1".repeat(64)),
+                retain_conflict: true,
+            }],
+        };
+        write_new_synced(&layout.journal_path(), &serde_json::to_vec_pretty(&journal).unwrap()).unwrap();
+
+        assert!(matches!(
+            layout.cleanup_committed(&journal),
+            Err(ProfileLayoutFlowError::AmbiguousTransaction)
+        ));
+        assert!(layout.journal_path().exists());
+        assert!(layout.staging_dir(tx).exists());
+        assert!(layout.backup_dir(tx).exists());
+
+        let archived = layout.conflict_copies_root().join(tx.to_string()).join("mods/forced.cfg");
+        write_new_synced(&archived, b"corrupt-local").unwrap();
+        assert!(matches!(
+            layout.cleanup_committed(&journal),
+            Err(ProfileLayoutFlowError::OwnershipChanged(_))
+        ));
+        assert!(layout.journal_path().exists());
+        assert!(layout.staging_dir(tx).exists());
+        assert!(layout.backup_dir(tx).exists());
+    }
+
+    #[test]
+    fn repair_uses_legacy_managed_entries_without_touching_unmanaged_local_files() {
+        let root = TestRoot::new("legacy-repair");
+        let layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let legacy_path = root.0.join(".minecraft/mods/legacy.jar");
+        fs::write(&legacy_path, b"legacy-managed").unwrap();
+        let unrelated = root.0.join(".minecraft/mods/local.jar");
+        fs::write(&unrelated, b"local-only").unwrap();
+        let legacy_hash = sha256_bytes(b"legacy-managed");
+        let mut managed_entries = BTreeMap::new();
+        managed_entries.insert(
+            "mods/legacy.jar".to_owned(),
+            ManagedManifestEntry {
+                logical_identity: "legacy-managed".to_owned(),
+                source_hash: legacy_hash.clone(),
+                applied_hash: legacy_hash,
+            },
+        );
+        let legacy_manifest = ProfileLayoutManifest {
+            schema: SCHEMA_VERSION,
+            profile_uuid: layout.profile_uuid(),
+            generation: 1,
+            state: ProfileLayoutState::Ready,
+            managed_input_fingerprint: "legacy-v1".to_owned(),
+            sync_identity: String::new(),
+            sandbox_policy: String::new(),
+            managed_entries,
+            branch: ProfileBranchManifest::default(),
+            transaction_id: None,
+        };
+        let mut legacy_json = serde_json::to_value(&legacy_manifest).unwrap();
+        legacy_json.as_object_mut().unwrap().remove("branch");
+        write_new_synced(
+            &layout.manifest_path(),
+            &serde_json::to_vec_pretty(&legacy_json).unwrap(),
+        )
+        .unwrap();
+        drop(layout);
+
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        assert!(layout.branch_manifest().unwrap().entries.is_empty());
+        let r1 = global_pin("r1", 'c');
+        layout
+            .configure_branch_lineage(crate::profile_branch::ProfileLineage::from_global(r1).unwrap())
+            .unwrap();
+        layout.repair_modpack(&[]).unwrap();
+
+        assert!(!legacy_path.exists());
+        assert_eq!(fs::read(&unrelated).unwrap(), b"local-only");
+        assert!(layout.read_manifest_optional().unwrap().unwrap().managed_entries.is_empty());
     }
 
     #[test]
