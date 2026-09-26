@@ -31,10 +31,12 @@ mod persistent;
 mod prelaunch_attribution;
 #[cfg(test)]
 mod prelaunch_mods_probe;
+pub mod profile_branch;
 pub mod profile_layout_flow;
 mod profile_layout_identity;
 mod profile_layout_ownership;
 mod profile_layout_service;
+pub use profile_layout_service::ProfileLayoutServiceError;
 mod server_list_pinger;
 mod shortcut;
 mod skin_manager;
