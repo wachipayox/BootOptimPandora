@@ -1,12 +1,24 @@
 use bridge::handle::BackendHandle;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    IndexPath, button::{Button, ButtonVariants}, h_flex, select::{Select, SelectDelegate, SelectEvent, SelectItem, SelectState}, table::{DataTable, TableDelegate, TableState}
+    IndexPath,
+    button::{Button, ButtonVariants},
+    h_flex,
+    select::{Select, SelectDelegate, SelectEvent, SelectItem, SelectState},
+    table::{DataTable, TableDelegate, TableState},
 };
 use strum::IntoEnumIterator;
 
 use crate::{
-    component::{instance_list::InstanceList, named_dropdown::{NamedDropdown, NamedDropdownItem}, responsive_grid::ResponsiveGrid}, entity::{DataEntities, instance::InstanceEntries, metadata::FrontendMetadata}, icon::PandoraIcon, interface_config::{InstancesViewMode, InterfaceConfig}, pages::page::Page,
+    component::{
+        instance_list::InstanceList,
+        named_dropdown::{NamedDropdown, NamedDropdownItem},
+        responsive_grid::ResponsiveGrid,
+    },
+    entity::{DataEntities, instance::InstanceEntries, metadata::FrontendMetadata},
+    icon::PandoraIcon,
+    interface_config::{InstancesViewMode, InterfaceConfig},
+    pages::page::Page,
 };
 
 pub struct InstancesPage {
@@ -23,9 +35,12 @@ impl InstancesPage {
     pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let instance_table = InstanceList::create_table(data, window, cx);
         let view_dropdown = cx.new(|cx| {
-            let items = InstancesViewMode::iter().map(|view| {
-                NamedDropdownItem { name: view.name(), item: view }
-            }).collect::<Vec<_>>();
+            let items = InstancesViewMode::iter()
+                .map(|view| NamedDropdownItem {
+                    name: view.name(),
+                    item: view,
+                })
+                .collect::<Vec<_>>();
             let current_view = InterfaceConfig::get(cx).instances_view_mode;
             let row = items.iter().position(|v| v.item == current_view).unwrap_or(0);
             let delegate = NamedDropdown::new(items);
@@ -36,7 +51,8 @@ impl InstancesPage {
                 return;
             };
             InterfaceConfig::get_mut(cx).instances_view_mode = *view;
-        }).detach();
+        })
+        .detach();
 
         Self {
             instance_table,
@@ -55,14 +71,25 @@ impl Page for InstancesPage {
             .icon(PandoraIcon::Plus)
             .label(t::instance::create())
             .on_click(cx.listener(|this, _, window, cx| {
-                crate::modals::create_instance::open_create_instance(this.metadata.clone(), this.instances.clone(),
-                    this.backend_handle.clone(), window, cx);
+                crate::modals::create_instance::open_create_instance(
+                    this.metadata.clone(),
+                    this.instances.clone(),
+                    this.backend_handle.clone(),
+                    window,
+                    cx,
+                );
+            }));
+        let global_profiles = Button::new("global_profiles")
+            .icon(PandoraIcon::Globe)
+            .label("Global profiles")
+            .on_click(cx.listener(|this, _, window, cx| {
+                crate::modals::global_profiles::open_global_profiles(this.backend_handle.clone(), window, cx);
             }));
         // wrapping in div makes it not take up the full space of the titlebar
-        let select_view = div()
-            .child(Select::new(&self.view_dropdown).title_prefix(format!("{}: ", t::instance::view_mode())));
+        let select_view =
+            div().child(Select::new(&self.view_dropdown).title_prefix(format!("{}: ", t::instance::view_mode())));
 
-        h_flex().gap_3().child(create_instance).child(select_view)
+        h_flex().gap_3().child(create_instance).child(global_profiles).child(select_view)
     }
 
     fn scrollable(&self, cx: &App) -> bool {
@@ -82,16 +109,14 @@ impl Render for InstancesPage {
                     (0..rows).map(|i| table.delegate().render_card(i, cx)).collect::<Vec<_>>()
                 });
 
-                let size = Size::new(
-                    gpui::AvailableSpace::MinContent,
-                    gpui::AvailableSpace::MinContent
-                );
+                let size = Size::new(gpui::AvailableSpace::MinContent, gpui::AvailableSpace::MinContent);
 
-                div().p_4().child(ResponsiveGrid::new(size).size_full().gap_4().children(cards)).into_any_element()
+                div()
+                    .p_4()
+                    .child(ResponsiveGrid::new(size).size_full().gap_4().children(cards))
+                    .into_any_element()
             },
-            InstancesViewMode::List => {
-                DataTable::new(&self.instance_table).bordered(false).into_any_element()
-            },
+            InstancesViewMode::List => DataTable::new(&self.instance_table).bordered(false).into_any_element(),
         }
     }
 }

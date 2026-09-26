@@ -1516,7 +1516,10 @@ impl BackendState {
             }
         }
 
-        return self.create_instance_impl(&name, version, loader, icon, false).await;
+        return self
+            .create_instance_impl(&name, version, loader, icon, false, None)
+            .await
+            .map(|(path, _)| path);
     }
 
     pub async fn create_instance(
@@ -1526,7 +1529,36 @@ impl BackendState {
         loader: Loader,
         icon: Option<EmbeddedOrRaw>,
     ) -> Option<PathBuf> {
-        self.create_instance_impl(name, version, loader, icon, true).await
+        self.create_instance_impl(name, version, loader, icon, true, None)
+            .await
+            .map(|(path, _)| path)
+    }
+
+    pub async fn create_global_instance_sanitized(
+        &self,
+        name: &str,
+        version: &str,
+        loader: Loader,
+        loader_version: Option<&str>,
+    ) -> Option<(PathBuf, bool)> {
+        let mut name = sanitize_filename::sanitize_with_options(
+            name,
+            sanitize_filename::Options {
+                windows: true,
+                ..Default::default()
+            },
+        );
+        if self.instance_state.read().instances.iter().any(|instance| instance.name == name) {
+            let original_name = name.clone();
+            for index in 1..32 {
+                let candidate = format!("{original_name} ({index})");
+                if !self.instance_state.read().instances.iter().any(|instance| instance.name == candidate) {
+                    name = candidate;
+                    break;
+                }
+            }
+        }
+        self.create_instance_impl(&name, version, loader, None, false, loader_version).await
     }
 
     async fn create_instance_impl(
@@ -1536,7 +1568,8 @@ impl BackendState {
         loader: Loader,
         icon: Option<EmbeddedOrRaw>,
         publish_after_provision: bool,
-    ) -> Option<PathBuf> {
+        loader_version: Option<&str>,
+    ) -> Option<(PathBuf, bool)> {
         log::info!("Creating instance {name}");
         if !crate::fs::is_single_component_path_str(&name) {
             self.send
@@ -1565,16 +1598,16 @@ impl BackendState {
         let instance_dir = self.directories.instances_dir.join(name);
 
         _ = std::fs::create_dir_all(&instance_dir);
-        let install_generation =
-            match crate::library_install_state::mark_incomplete(&instance_dir, "new-install") {
-                Ok(generation) => generation,
-                Err(err) => {
-                    self.send.send_error(format!("Unable to create instance game-files state: {err}"));
-                    return None;
-                },
-            };
+        let install_generation = match crate::library_install_state::mark_incomplete(&instance_dir, "new-install") {
+            Ok(generation) => generation,
+            Err(err) => {
+                self.send.send_error(format!("Unable to create instance game-files state: {err}"));
+                return None;
+            },
+        };
 
         let mut instance_info = InstanceConfiguration::new(version.into(), loader);
+        instance_info.preferred_loader_version = loader_version.map(Into::into);
 
         match icon {
             Some(EmbeddedOrRaw::Embedded(e)) => {
@@ -1603,7 +1636,7 @@ impl BackendState {
         // explicit Repair action remains the only full integrity authority.
         let install_modal = ModalAction::default();
         let http_client = self.http_client_provider.redirecting();
-        match self
+        let provisioned = match self
             .launcher
             .provision_game_files(&http_client, instance_info.clone(), &install_modal)
             .await
@@ -1625,25 +1658,26 @@ impl BackendState {
                             "Instance created, but game-files state could not be published ({err}); use Repair game files"
                         )),
                     }
-                } else if let Err(err) = crate::library_install_state::mark_incomplete(
-                    &instance_dir,
-                    "content-install-in-progress",
-                ) {
+                } else if let Err(err) =
+                    crate::library_install_state::mark_incomplete(&instance_dir, "content-install-in-progress")
+                {
                     self.send.send_warning(format!(
                         "Game files were provisioned, but content-install state could not be recorded ({err}); use Repair game files"
                     ));
                 }
+                true
             },
             Err(err) => {
                 log::warn!("Initial game-file provisioning failed: {err:?}");
                 self.send.send_warning(format!(
                     "Instance created with incomplete game files ({err}); use Repair game files"
                 ));
+                false
             },
-        }
+        };
         install_modal.set_finished();
 
-        Some(instance_dir.clone())
+        Some((instance_dir.clone(), provisioned))
     }
 
     pub async fn rename_instance(self: &Arc<Self>, id: InstanceID, name: &str) {

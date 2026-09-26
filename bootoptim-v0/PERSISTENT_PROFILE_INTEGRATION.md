@@ -1,10 +1,10 @@
 # Persistent profile layout — implementation status
 
-Last checked: 2026-09-26 against GitHub `agent/integration-current`.
+Last checked: 2026-09-26 against `agent/integration-current` (`19352e57`) and the active global-profile client branch.
 
 ## Integrated behavior
 
-Pandora PR #66 (`a4aae071d6062adae9bcffe592ca81c541650a82`) is merged into
+Pandora PR #66 is merged into
 `agent/integration-current`. It keeps each private instance's existing
 `.minecraft` directory live and writable across runs. Start no longer loads
 Mods metadata, scans/rebuilds `mods/`, expands third-party modpacks, rotates the
@@ -21,10 +21,22 @@ PR #64 is also integrated and enables the existing launch-fast library policy
 and asset USN cache by default. It is independent of profile ancestry/update
 reconciliation.
 
-## Not integrated: draft architecture and implementation chain
+Pandora PRs #67/#68 are also integrated. They add the persistent branch lineage,
+ownership/recovery transaction, revision delta application, and explicit
+Repair modpack backend. These are the current source of truth; the older PR
+chain below is historical input, not outstanding work to merge.
 
-The following PRs are still open drafts and do not form the production
-integration tree as of this check:
+The active branch `codex/global-profiles-client-20260926-v2` adds the first
+Distribution-to-Pandora client slice: HTTPS catalog access, signed revision and
+SHA-256 object verification, content-addressed download cache, and creation of
+a local instance pinned to a verified global revision. It is not integrated or
+runtime-validated yet. It does not yet provide existing-instance updates,
+local child creation, local overlay editing, ancestry UI, or Repair modpack UI.
+
+## Historical implementation chain
+
+The following older PRs were candidate drafts before the work was recomposed
+and integrated through #67/#68:
 
 - #32 ownership/recovery architecture;
 - #33 ownership reconciliation candidate;
@@ -34,16 +46,13 @@ integration tree as of this check:
 - #37 cloned-profile identity and per-profile lock;
 - #38/#39 native lock validation.
 
-Their branch ancestry is based on older candidate heads. Do not describe them
-as integrated, and do not merge the stale chain as-is. Rebase/recompose the
-needed ownership, transaction, identity, and recovery work on the current
-integration branch, then review and validate it as one coherent foundation.
+Their old branch ancestry is stale. Do not merge that chain over the current
+implementation or report it as a second pending foundation.
 
 The design documents `PERSISTENT_PROFILE_LAYOUT_ARCHITECTURE.md`,
 `PERSISTENT_PROFILE_LAYOUT_CLIENT_FLOW.md`, and
-`PERSISTENT_PROFILE_LAYOUT_IDENTITY_LOCK.md` describe intended behavior and
-candidate APIs. They are not evidence that this reconciler is present in the
-integrated source. The actual source tree and merged PRs remain authoritative.
+`PERSISTENT_PROFILE_LAYOUT_IDENTITY_LOCK.md` remain useful architecture
+references. The actual source tree and merged PRs remain authoritative.
 
 ## Product boundary
 
@@ -52,11 +61,12 @@ do not reintroduce per-Start copying or generic Modrinth/CurseForge pack
 expansion. The missing layer is a safe, transactional updater that tracks
 managed ownership and reconciles global/local profile revisions outside Start.
 
-Future reconciliation must preserve local changes by default, retain forced
-conflicts recoverably, isolate state per profile, and avoid full-tree scans for
-Start or a no-op update. A separate explicit **Repair modpack** action may run
-full parity for global or globally derived profiles. Keep it separate from
-**Repair game files**, which belongs in instance maintenance settings.
+The integrated reconciler preserves local changes by default, retains enforced
+conflicts recoverably, isolates state per profile, and avoids full-tree scans
+for Start or a no-op revision delta. A separate explicit **Repair modpack**
+backend action can run managed-file parity for global or globally derived
+profiles. Keep it separate from **Repair game files**, which belongs in
+instance maintenance settings. The new client must preserve these boundaries.
 
 ## Historical laptop smoke boundary (2026-09-20)
 

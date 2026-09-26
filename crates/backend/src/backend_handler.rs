@@ -45,8 +45,7 @@ use crate::{
     fs::FolderChanges,
     instance::Instance,
     launch::{ArgumentExpansionKey, LaunchError},
-    library_install_state,
-    log_reader,
+    library_install_state, log_reader,
     metadata::{
         items::{
             AssetsIndexMetadataItem, CurseforgeChangelogMetadataItem, CurseforgeGetModFilesMetadataItem,
@@ -83,17 +82,12 @@ impl BackendState {
             .await
             .map_err(|err| format!("Game-file provisioning failed: {err}"))?;
 
-        let identity_is_current = self
-            .instance_state
-            .write()
-            .instances
-            .get_mut(id)
-            .is_some_and(|instance| {
-                let current = instance.configuration.get();
-                current.minecraft_version == expected_minecraft_version
-                    && current.loader == expected_loader
-                    && current.preferred_loader_version == expected_loader_version
-            });
+        let identity_is_current = self.instance_state.write().instances.get_mut(id).is_some_and(|instance| {
+            let current = instance.configuration.get();
+            current.minecraft_version == expected_minecraft_version
+                && current.loader == expected_loader
+                && current.preferred_loader_version == expected_loader_version
+        });
         if !identity_is_current {
             return Ok(false);
         }
@@ -134,9 +128,7 @@ impl BackendState {
             {
                 Ok(true) => {},
                 Ok(false) => {
-                    log::debug!(
-                        "Skipping stale game-files publication for marker reason {marker_reason}"
-                    );
+                    log::debug!("Skipping stale game-files publication for marker reason {marker_reason}");
                 },
                 Err(err) => {
                     log::warn!("{err}");
@@ -302,11 +294,7 @@ impl BackendState {
                     instance.configuration.modify(|configuration| {
                         configuration.minecraft_version = version;
                     });
-                    Some((
-                        instance.root_path.clone(),
-                        instance.configuration.get().clone(),
-                        marker_generation,
-                    ))
+                    Some((instance.root_path.clone(), instance.configuration.get().clone(), marker_generation))
                 };
                 if let Some((root_path, configuration, marker_generation)) = provision {
                     self.schedule_game_files_after_identity_change(
@@ -341,11 +329,7 @@ impl BackendState {
                         configuration.loader = loader;
                         configuration.preferred_loader_version = None;
                     });
-                    Some((
-                        instance.root_path.clone(),
-                        instance.configuration.get().clone(),
-                        marker_generation,
-                    ))
+                    Some((instance.root_path.clone(), instance.configuration.get().clone(), marker_generation))
                 };
                 if let Some((root_path, configuration, marker_generation)) = provision {
                     self.schedule_game_files_after_identity_change(
@@ -389,11 +373,7 @@ impl BackendState {
                     instance.configuration.modify(|configuration| {
                         configuration.preferred_loader_version = loader_version;
                     });
-                    Some((
-                        instance.root_path.clone(),
-                        instance.configuration.get().clone(),
-                        marker_generation,
-                    ))
+                    Some((instance.root_path.clone(), instance.configuration.get().clone(), marker_generation))
                 };
                 if let Some((root_path, configuration, marker_generation)) = provision {
                     self.schedule_game_files_after_identity_change(
@@ -569,7 +549,11 @@ impl BackendState {
                 self.send.send(instance.create_modify_message());
                 self.restore_mods_folder_if_stopped(instance);
             },
-            MessageToBackend::StartInstanceByName { name, quick_play, modal_action } => {
+            MessageToBackend::StartInstanceByName {
+                name,
+                quick_play,
+                modal_action,
+            } => {
                 let mut id = None;
 
                 for instance in self.instance_state.read().instances.iter() {
@@ -598,30 +582,28 @@ impl BackendState {
                         modal_action.set_finished_with_error("Can't repair game files, unknown instance".into());
                         return;
                     };
-                    if instance.launch_keepalive.as_ref().is_some_and(|keepalive| keepalive.is_alive()) || !instance.processes.is_empty() {
-                        modal_action.set_finished_with_error("Can't repair game files while the instance is running or launching".into());
+                    if instance.launch_keepalive.as_ref().is_some_and(|keepalive| keepalive.is_alive())
+                        || !instance.processes.is_empty()
+                    {
+                        modal_action.set_finished_with_error(
+                            "Can't repair game files while the instance is running or launching".into(),
+                        );
                         return;
                     }
                     (instance.root_path.clone(), instance.configuration.get().clone())
                 };
 
-                let repair_generation =
-                    match library_install_state::mark_incomplete(&root_path, "repair-in-progress") {
-                        Ok(generation) => generation,
-                        Err(err) => {
-                            modal_action.set_finished_with_error(
-                                format!("Unable to start Repair game files: {err}").into(),
-                            );
-                            return;
-                        },
-                    };
+                let repair_generation = match library_install_state::mark_incomplete(&root_path, "repair-in-progress") {
+                    Ok(generation) => generation,
+                    Err(err) => {
+                        modal_action
+                            .set_finished_with_error(format!("Unable to start Repair game files: {err}").into());
+                        return;
+                    },
+                };
 
                 let http_client = self.http_client_provider.redirecting();
-                let repair = self.launcher.repair_game_files(
-                    &http_client,
-                    configuration,
-                    &modal_action,
-                );
+                let repair = self.launcher.repair_game_files(&http_client, configuration, &modal_action);
                 let result = tokio::select! {
                     result = repair => result,
                     _ = modal_action.request_cancel.cancelled() => Err(LaunchError::CancelledByUser),
@@ -645,10 +627,7 @@ impl BackendState {
                                 // raced the final compare-and-set back to incomplete.
                                 modal_action.set_finished();
                                 if modal_action.has_requested_cancel() {
-                                    let _ = library_install_state::mark_incomplete(
-                                        &root_path,
-                                        "repair-cancelled",
-                                    );
+                                    let _ = library_install_state::mark_incomplete(&root_path, "repair-cancelled");
                                 }
                                 return;
                             },
@@ -661,7 +640,8 @@ impl BackendState {
                             },
                             Err(err) => {
                                 modal_action.set_finished_with_error(
-                                    format!("Repair completed but installation state could not be published: {err}").into(),
+                                    format!("Repair completed but installation state could not be published: {err}")
+                                        .into(),
                                 );
                                 return;
                             },
@@ -1593,6 +1573,66 @@ impl BackendState {
             MessageToBackend::GetBackendConfiguration { channel } => {
                 _ = channel.send(self.config.lock().get().clone());
             },
+            MessageToBackend::GetGlobalProfiles { channel } => {
+                let config = self.config.lock().get().distribution.clone();
+                let result = async {
+                    let client =
+                        crate::distribution::DistributionClient::new(&config).map_err(|error| error.to_string())?;
+                    let profiles = client.list_profiles().await.map_err(|error| error.to_string())?;
+                    Ok(profiles
+                        .into_iter()
+                        .map(|profile| {
+                            let stable = profile.channels.iter().find(|channel| channel.name == "stable");
+                            bridge::message::GlobalProfileSummary {
+                                profile_id: profile.profile_id,
+                                name: profile.name,
+                                latest_revision_id: profile.latest_revision.revision_id,
+                                latest_sequence: profile.latest_revision.sequence,
+                                latest_manifest_sha256: profile.latest_revision.manifest_sha256,
+                                stable_revision_id: stable.map(|channel| channel.revision.revision_id.clone()),
+                                stable_sequence: stable.map(|channel| channel.revision.sequence),
+                                stable_manifest_sha256: stable.map(|channel| channel.revision.manifest_sha256.clone()),
+                            }
+                        })
+                        .collect())
+                }
+                .await;
+                let _ = channel.send(result);
+            },
+            MessageToBackend::CheckDistributionConnection => {
+                let config = self.config.lock().get().distribution.clone();
+                match crate::distribution::DistributionClient::new(&config) {
+                    Ok(client) => match client.list_profiles().await {
+                        Ok(profiles) => self.send.send_success(format!(
+                            "Distribution connected; {} global profiles available",
+                            profiles.len()
+                        )),
+                        Err(error) => self.send.send_error(format!("Distribution connection failed: {error}")),
+                    },
+                    Err(error) => self.send.send_error(format!("Distribution configuration is invalid: {error}")),
+                }
+            },
+            MessageToBackend::CreateGlobalProfileInstance {
+                name,
+                profile_id,
+                revision_id,
+                sequence,
+                manifest_sha256,
+            } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    backend.send.send_info(format!("Creating global profile instance '{name}'"));
+                    let revision = crate::distribution::RevisionRef {
+                        revision_id,
+                        sequence,
+                        manifest_sha256,
+                    };
+                    match backend.create_global_profile_instance(&name, &profile_id, &revision).await {
+                        Ok(()) => backend.send.send_success(format!("Global profile instance '{name}' is ready")),
+                        Err(error) => backend.send.send_error(format!("Global profile installation failed: {error}")),
+                    }
+                });
+            },
             MessageToBackend::CleanupOldLogFiles { instance: id } => {
                 let mut deleted = 0;
 
@@ -1808,6 +1848,11 @@ impl BackendState {
                 });
 
                 self.update_http_clients().await;
+            },
+            MessageToBackend::SetDistributionConfiguration { config } => {
+                self.config.lock().modify(|backend_config| {
+                    backend_config.distribution = config;
+                });
             },
             MessageToBackend::SetProxyPassword { password } => {
                 match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
@@ -2363,13 +2408,19 @@ impl BackendState {
         let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
             let root_path = instance.root_path.clone();
             match library_install_state::start_status(&root_path) {
-                Ok(library_install_state::StartStatus::Published | library_install_state::StartStatus::LegacyPublished) => {},
+                Ok(
+                    library_install_state::StartStatus::Published | library_install_state::StartStatus::LegacyPublished,
+                ) => {},
                 Ok(library_install_state::StartStatus::Incomplete(reason)) => {
-                    modal_action.set_finished_with_error(format!("Installation incomplete ({reason}); use Repair game files").into());
+                    modal_action.set_finished_with_error(
+                        format!("Installation incomplete ({reason}); use Repair game files").into(),
+                    );
                     return;
                 },
                 Err(err) => {
-                    modal_action.set_finished_with_error(format!("Installation state is unreadable ({err}); use Repair game files").into());
+                    modal_action.set_finished_with_error(
+                        format!("Installation state is unreadable ({err}); use Repair game files").into(),
+                    );
                     return;
                 },
             }
