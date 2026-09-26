@@ -1,54 +1,73 @@
-# Persistent profile layout — integration record
+# Persistent profile layout — implementation status
 
-`agent/integration-current` is the integration authority for this Pandora
-feature. It was created at commit
-`bb942ec71fd0ecd964b55f346901989f9b1ae774` on 2026-09-17.
+Last checked: 2026-09-26 against GitHub `agent/integration-current`.
 
-## Included, in order
+## Integrated behavior
 
-1. PR #32 — persistent layout ownership/recovery architecture.
-2. PR #36 — recoverable client flow: `Legacy/Unknown → Planning → Staging →
-   Prepared → Publishing → Ready`.
-3. PR #37 — fresh identity for cloned profiles and one cross-process lock per
-   profile UUID.
-4. PR #39 — native Windows/macOS validation plus the Windows directory-sync
-   correction. Gate `35155936282` passed on both operating systems.
+Pandora PR #66 (`a4aae071d6062adae9bcffe592ca81c541650a82`) is merged into
+`agent/integration-current`. It keeps each private instance's existing
+`.minecraft` directory live and writable across runs. Start no longer loads
+Mods metadata, scans/rebuilds `mods/`, expands third-party modpacks, rotates the
+folder to `original_mods`, or recopies extras. A one-time legacy restoration
+remains for instances left in the former `mods` / `original_mods` shape.
 
-The source branch is intentionally the exact #39 head, not a reconstruction
-from patch summaries. A smoke-only descendant may add packaging tooling, but
-must never be treated as the integration or deploy branch.
+This protects runtime data written under `.minecraft`, including MCEF's
+`mods/mcef-libraries` and `mods/mcef-cache`, and Analog Audio's
+`.analogaudio/internal` library cache. PR #66 leaves explicit cross-instance
+syncing as an existing launcher feature; the private updater is responsible for
+applying private-pack changes before Start.
 
-## What this establishes
+PR #64 is also integrated and enables the existing launch-fast library policy
+and asset USN cache by default. It is independent of profile ancestry/update
+reconciliation.
 
-- durable identity, ownership/reconciliation, staging/recovery and lock
-  semantics for a persistent local profile layout;
-- cloned profiles cannot accidentally share their UUID lock namespace;
-- the Windows lock path has native coverage for exclusivity, release after
-  process death and reparse-point rejection.
+## Not integrated: draft architecture and implementation chain
 
-## What it does not establish
+The following PRs are still open drafts and do not form the production
+integration tree as of this check:
 
-- remote profiles, content download, signed revisions, automatic updates or
-  server authentication;
-- a production promotion to `master`;
-- a release artifact or performance claim.
+- #32 ownership/recovery architecture;
+- #33 ownership reconciliation candidate;
+- #34 persistent layout backend state;
+- #35 signed private distribution service design;
+- #36 recoverable persistent-profile client flow;
+- #37 cloned-profile identity and per-profile lock;
+- #38/#39 native lock validation.
 
-## Laptop smoke boundary (2026-09-20)
+Their branch ancestry is based on older candidate heads. Do not describe them
+as integrated, and do not merge the stale chain as-is. Rebase/recompose the
+needed ownership, transaction, identity, and recovery work on the current
+integration branch, then review and validate it as one coherent foundation.
 
-The portable executable used for the first visual laptop smoke test was built
-from this layout-only integration branch. It deliberately contained neither
-the USN asset-verification cache candidates nor the AppCDS launch-authority
-candidate: their branches have an older, divergent base and were not composed
-into this branch. The run therefore validates only that the persistent-layout
-path can launch the existing instance; it is **not** an AppCDS/cache benchmark
-and must not be compared with prior cache-enabled timings.
+The design documents `PERSISTENT_PROFILE_LAYOUT_ARCHITECTURE.md`,
+`PERSISTENT_PROFILE_LAYOUT_CLIENT_FLOW.md`, and
+`PERSISTENT_PROFILE_LAYOUT_IDENTITY_LOCK.md` describe intended behavior and
+candidate APIs. They are not evidence that this reconciler is present in the
+integrated source. The actual source tree and merged PRs remain authoritative.
 
-Its launcher log nevertheless recorded an actionable baseline for the next
-composed build: 98 s to scan/display mod content, 58 s before launch setup,
-then 229 s in Java/assets/libraries/log-configuration preparation before the
-game process. A later composition must add phase-attribution probes and an
-explicit cache decision record before claiming a pre-Java improvement.
+## Product boundary
 
-The distribution-service repository owns the remote revision/CAS work. Any
-future Pandora integration must reference a reviewed service protocol revision,
-preserve local overlays and avoid a full `.minecraft` scan in the Start path.
+The persistent `.minecraft` behavior already merged in #66 is the correct base:
+do not reintroduce per-Start copying or generic Modrinth/CurseForge pack
+expansion. The missing layer is a safe, transactional updater that tracks
+managed ownership and reconciles global/local profile revisions outside Start.
+
+Future reconciliation must preserve local changes by default, retain forced
+conflicts recoverably, isolate state per profile, and avoid full-tree scans for
+Start or a no-op update. A separate explicit **Repair modpack** action may run
+full parity for global or globally derived profiles. Keep it separate from
+**Repair game files**, which belongs in instance maintenance settings.
+
+## Historical laptop smoke boundary (2026-09-20)
+
+An earlier layout-only portable executable validated launching an existing
+instance with a persistent game directory; it did not validate global profiles,
+ownership reconciliation, or a full update flow. The run was not a performance
+A/B. Its log recorded 98 s to scan/display mod content, 58 s before launch
+setup, then 229 s in Java/assets/libraries/log-configuration preparation
+before the game process. These fields belong to different launch boundaries and
+must not be combined into a single startup comparison.
+
+Any new performance claim must use matching Start-to-Java origin/endpoint
+markers and the current measurement rules. Runtime profile-update validation
+must separately cover menu and representative in-world behavior.
