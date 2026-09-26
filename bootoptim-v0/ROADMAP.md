@@ -26,11 +26,11 @@ installation.
   and the explicit Repair modpack backend. Old PRs #32–39 are stale historical
   candidates; do not merge their branches over the integrated implementation.
 - Distribution profile APIs are implemented in its repository and served
-  through configured HTTPS mode. The active Pandora branch
-  `codex/global-profiles-client-20260926-v2` adds verified catalog and revision
-  reads, signed-object downloads, and initial global-instance creation. That
-  client slice is still under review and has not been runtime-validated against
-  the server.
+  through configured HTTPS mode. Pandora PR #69 adds verified catalog and
+  revision reads, signed-object downloads, and initial global-instance
+  creation. The follow-up branch `codex/global-profile-updates-20260926` adds
+  incremental updates for direct global instances. These client slices have
+  not been runtime-validated against the configured server.
 
 ## Product invariants
 
@@ -78,25 +78,30 @@ management still need completion. Keep the private release key on the
 publishing machine. See Distribution's roadmap and protocol contract for API
 and signing details.
 
-### 3. Add Pandora global/local branch management
+### 3. Add Pandora global/local branch management — in progress
 
-The active Pandora client branch begins this phase with HTTPS trust settings,
-global catalog browsing, signature/digest verification, and creating a local
-instance pinned to a global revision. Remaining work: update existing global
-instances, create local children from global/local parents, expose branch
-creation and lineage in each instance's Profiles/Updates settings, and let
-admins create global children. Local overlays stay on the user's machine.
+The client covers HTTPS trust settings, global catalog browsing,
+signature/digest verification, initial global-instance creation, and
+incremental updates for direct global instances. Updates resolve the newly
+selected signed revision and reuse locally tracked unchanged entries; changed
+objects alone are fetched and passed into the existing delta reconciler.
+Remaining work: create local children from global/local parents, expose branch
+creation and applied/available lineage state in each instance's
+Profiles/Updates settings, support descendants of local parents, and let admins
+create global children. Local overlays stay on the user's machine.
 
-### 4. Add delta update and explicit modpack repair
+### 4. Complete delta updates and explicit modpack repair — in progress
 
-Resolve revision history from the last applied pin to the selected revision,
-then stage and reconcile only changed managed paths through the existing
-persistent-layout transaction. A no-op update must not download or hash the
-whole profile or scan `.minecraft`. Surface progress, policy, and recoverable
-conflicts. Put **Repair modpack** beside update history under instance
-Settings/Maintenance; that explicit action checks parity and restores managed
-paths from verified content. Preserve local additions unless the user resolves
-a conflict or a policy explicitly enforces the path.
+For direct global instances, the first update action resolves the selected
+revision history and stages/reconciles only changed managed paths through the
+existing persistent-layout transaction. A no-op update avoids object downloads
+and does not scan `.minecraft`; it still reads and verifies signed revision
+metadata. Remaining work: show update availability/history before applying,
+surface per-file policy and progress, support local-descendant delta
+propagation, and provide **Repair modpack** beside update history under
+instance Settings/Maintenance. Repair explicitly checks parity and restores
+managed paths from verified content. Preserve local additions unless the user
+resolves a conflict or a policy explicitly enforces the path.
 
 ## Acceptance path
 
