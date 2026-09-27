@@ -83,7 +83,7 @@ fn main() {
         base_dirs.data_dir().into()
     };
 
-    let launcher_dir = data_dir.join("PandoraLauncher");
+    let launcher_dir = data_dir.join("WachilandLauncher");
     _ = std::fs::create_dir_all(&launcher_dir);
     _ = std::env::set_current_dir(&launcher_dir);
 
@@ -93,7 +93,7 @@ fn main() {
     let lockfile = match OpenOptions::new().read(true).write(true).create(true).open(&lockfile_path) {
         Ok(lockfile) => lockfile,
         Err(err) => {
-            show_error_eprintln(format!("Unable open launcher.lock file: {err}"));
+            show_error_eprintln(format!("Unable to open launcher.lock file: {err}"));
             return;
         },
     };

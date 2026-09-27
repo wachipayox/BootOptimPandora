@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <!--Created with jdAppStreamEdit 9.2-->
   <id>com.moulberry.PandoraLauncher</id>
-  <name>Pandora Launcher</name>
+  <name>Wachiland Launcher</name>
   <summary>A balanced, easy to use, and powerful modern Minecraft launcher</summary>
   <developer id="com.moulberry">
     <name>Moulberry</name>
@@ -10,11 +10,11 @@
   <metadata_license>FSFAP</metadata_license>
   <project_license>MIT</project_license>
   <description>
-    <p>Pandora is a modern Minecraft launcher that balances ease-of-use with powerful instance management features.</p>
+    <p>Wachiland Launcher is a private Minecraft launcher with instance management features.</p>
   </description>
   <screenshots>
     <screenshot type="default">
-      <caption>Pandora launcher with the instance settings open</caption>
+      <caption>Wachiland Launcher with the instance settings open</caption>
       <image type="source">https://raw.githubusercontent.com/Moulberry/PandoraLauncher/refs/heads/master/screenshots/instance.png</image>
     </screenshot>
     <screenshot>
@@ -22,11 +22,11 @@
       <image type="source">https://raw.githubusercontent.com/Moulberry/PandoraLauncher/refs/heads/master/screenshots/gameoutput.png</image>
     </screenshot>
     <screenshot>
-      <caption>Pandora has built in capability to browse and download content from modrinth</caption>
+      <caption>Browse and download Minecraft content from Modrinth</caption>
       <image type="source">https://raw.githubusercontent.com/Moulberry/PandoraLauncher/refs/heads/master/screenshots/modrinth.png</image>
     </screenshot>
     <screenshot>
-      <caption>Pandora supports syncing it's settings across multiple game instances</caption>
+      <caption>Manage shared settings across game instances</caption>
       <image type="source">https://github.com/Moulberry/PandoraLauncher/blob/master/screenshots/syncing.png?raw=true</image>
     </screenshot>
   </screenshots>

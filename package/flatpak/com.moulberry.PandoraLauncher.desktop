@@ -2,7 +2,7 @@
 Categories=Game;LauncherStore;GameTool
 Exec=pandora_launcher
 Icon=com.moulberry.PandoraLauncher
-Name=Pandora Launcher
+Name=Wachiland Launcher
 Terminal=false
 Type=Application
 X-Desktop-File-Install-Version=0.28

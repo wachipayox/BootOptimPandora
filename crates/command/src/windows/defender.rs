@@ -466,10 +466,7 @@ mod tests {
             map_exit_result(DefenderProcessAction::Enable, EXIT_BLOCKED),
             DefenderProcessResult::DefenderBlockedOrUnavailable
         );
-        assert_eq!(
-            map_exit_result(DefenderProcessAction::Enable, EXIT_FAILED),
-            DefenderProcessResult::Failed
-        );
+        assert_eq!(map_exit_result(DefenderProcessAction::Enable, EXIT_FAILED), DefenderProcessResult::Failed);
     }
 
     #[test]

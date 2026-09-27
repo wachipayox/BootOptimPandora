@@ -38,10 +38,6 @@ pub struct InstanceSettingsSubpage {
     loader_version_select_state: Entity<SelectState<SearchableVec<&'static str>>>,
     loader_version_latest_string: &'static str,
     update_channel_select_state: Entity<SelectState<NamedDropdown<UpdateChannel>>>,
-    disable_file_syncing: bool,
-    sandbox_available: bool,
-    sandbox: bool,
-
     memory_override_enabled: bool,
     memory_min_input_state: Entity<InputState>,
     memory_max_input_state: Entity<InputState>,
@@ -97,15 +93,6 @@ impl InstanceSettingsSubpage {
         let preferred_loader_version = entry.configuration.preferred_loader_version.map(|s| s.as_str()).unwrap_or(loader_version_latest_string);
         let update_channel = entry.configuration.update_channel;
         let account = entry.configuration.preferred_account;
-        let disable_file_syncing = entry.configuration.disable_file_syncing;
-        let sandbox = entry.configuration.sandbox;
-
-        let sandbox_available = if cfg!(target_os = "linux") {
-            command::is_command_available("bwrap") && command::is_command_available("xdg-dbus-proxy")
-        } else {
-            true
-        };
-
         let memory = entry.configuration.memory.unwrap_or_default();
         let wrapper_command = entry.configuration.wrapper_command.clone().unwrap_or_default();
         let jvm_flags = entry.configuration.jvm_flags.clone().unwrap_or_default();
@@ -235,9 +222,6 @@ impl InstanceSettingsSubpage {
             loader_version_select_state,
             loader_version_latest_string,
             update_channel_select_state,
-            disable_file_syncing,
-            sandbox_available,
-            sandbox,
             memory_override_enabled: memory.enabled,
             memory_min_input_state,
             memory_max_input_state,
@@ -882,35 +866,6 @@ impl Render for InstanceSettingsSubpage {
                 h_flex()
                 .gap_2()
                 .child(Select::new(&self.account_items).placeholder(t::common::no_override()).search_placeholder(t::common::search()).cleanable(true))
-            ))
-            .child(crate::labelled(
-                t::instance::sync::label(),
-                Checkbox::new("syncing").label(t::instance::sync::disable_syncing()).checked(self.disable_file_syncing).on_click(cx.listener(|page, value, _, _| {
-                    page.disable_file_syncing = *value;
-                    page.backend_handle.send(MessageToBackend::SetInstanceDisableFileSyncing {
-                        id: page.instance_id,
-                        disable_file_syncing: *value
-                    });
-                }))
-            ))
-            .child(crate::labelled(
-                t::instance::security::label(),
-                Checkbox::new("sandbox")
-                    .label(t::instance::security::sandbox())
-                    .disabled(!self.sandbox && !self.sandbox_available)
-                    .tooltip(if self.sandbox_available {
-                        t::instance::security::sandbox::tooltip()
-                    } else {
-                        t::instance::security::sandbox::not_available()
-                    })
-                    .checked(self.sandbox)
-                    .on_click(cx.listener(|page, value, _, _| {
-                    page.sandbox = *value;
-                    page.backend_handle.send(MessageToBackend::SetInstanceSandboxing {
-                        id: page.instance_id,
-                        sandbox: *value
-                    });
-                }))
             ));
 
         let runtime_content = v_flex()
