@@ -83,6 +83,34 @@ struct ProfilesResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct DistributionServiceInfo {
+    pub service: String,
+    pub version: String,
+    pub commit: String,
+    pub protocol_schema: u32,
+    pub capabilities: Vec<String>,
+    pub server_time_utc: String,
+}
+
+/// Check HTTPS reachability and the service protocol without requiring the release-signing key.
+/// This lets the settings page diagnose URL, TLS, and server-version problems before the
+/// administrator has completed the separate profile-signing trust setup.
+pub async fn probe_distribution_service(
+    config: &DistributionConfig,
+) -> Result<DistributionServiceInfo, DistributionError> {
+    let base_url = parse_base_url(&config.base_url)?;
+    let client = build_http_client(config)?;
+    let response = client.get(join_url(&base_url, "/v1/meta/version")?).send().await?;
+    let info: DistributionServiceInfo = decode_json_response(response).await?;
+    if info.service != "bootoptim-distribution" || info.protocol_schema != 1 {
+        return Err(DistributionError::InvalidResponse(
+            "endpoint is not a compatible BootOptim Distribution service".into(),
+        ));
+    }
+    Ok(info)
+}
+
+#[derive(Debug, Deserialize)]
 struct RevisionResponse {
     schema_version: u32,
     protocol_version: u32,
@@ -259,16 +287,7 @@ pub struct DistributionClient {
 
 impl DistributionClient {
     pub fn new(config: &DistributionConfig) -> Result<Self, DistributionError> {
-        let base_url = Url::parse(config.base_url.trim()).map_err(|_| DistributionError::InvalidBaseUrl)?;
-        if base_url.scheme() != "https"
-            || base_url.host_str().is_none()
-            || base_url.username() != ""
-            || base_url.password().is_some()
-            || base_url.query().is_some()
-            || base_url.fragment().is_some()
-        {
-            return Err(DistributionError::InvalidBaseUrl);
-        }
+        let base_url = parse_base_url(&config.base_url)?;
 
         let key_bytes = URL_SAFE_NO_PAD
             .decode(config.release_public_key_base64url.trim())
@@ -279,18 +298,7 @@ impl DistributionClient {
             return Err(DistributionError::InvalidSigningKey);
         }
 
-        let mut builder = Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(5 * 60))
-            .redirect(reqwest::redirect::Policy::none());
-        if !config.tls_ca_certificate_path.trim().is_empty() {
-            let pem = fs::read(&config.tls_ca_certificate_path)
-                .map_err(|error| DistributionError::TlsTrust(error.to_string()))?;
-            let certificate =
-                Certificate::from_pem(&pem).map_err(|error| DistributionError::TlsTrust(error.to_string()))?;
-            builder = builder.add_root_certificate(certificate);
-        }
-        let client = builder.build()?;
+        let client = build_http_client(config)?;
 
         Ok(Self {
             client,
@@ -690,23 +698,7 @@ impl DistributionClient {
     }
 
     async fn get_json<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, DistributionError> {
-        let url = self.join(path)?;
-        let response = self.client.get(url).send().await?;
-        if !response.status().is_success() {
-            return Err(DistributionError::HttpStatus(response.status()));
-        }
-        if response.content_length().is_some_and(|length| length > MAX_JSON_BYTES as u64) {
-            return Err(DistributionError::ResponseTooLarge);
-        }
-        let mut response = response;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            if bytes.len().saturating_add(chunk.len()) > MAX_JSON_BYTES {
-                return Err(DistributionError::ResponseTooLarge);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&bytes).map_err(|error| DistributionError::InvalidResponse(error.to_string()))
+        decode_json_response(self.client.get(self.join(path)?).send().await?).await
     }
 
     fn object_url(&self, digest: &str) -> Result<Url, DistributionError> {
@@ -717,11 +709,64 @@ impl DistributionClient {
     }
 
     fn join(&self, path: &str) -> Result<Url, DistributionError> {
-        let base = format!("{}/", self.base_url.as_str().trim_end_matches('/'));
-        let base = Url::parse(&base).map_err(|_| DistributionError::InvalidBaseUrl)?;
-        let relative = path.trim_start_matches('/');
-        base.join(relative).map_err(|_| DistributionError::InvalidBaseUrl)
+        join_url(&self.base_url, path)
     }
+}
+
+fn parse_base_url(value: &str) -> Result<Url, DistributionError> {
+    let url = Url::parse(value.trim()).map_err(|_| DistributionError::InvalidBaseUrl)?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || url.username() != ""
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(DistributionError::InvalidBaseUrl);
+    }
+    Ok(url)
+}
+
+fn build_http_client(config: &DistributionConfig) -> Result<Client, DistributionError> {
+    let mut builder = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(5 * 60))
+        .redirect(reqwest::redirect::Policy::none());
+    if !config.tls_ca_certificate_path.trim().is_empty() {
+        let pem = fs::read(&config.tls_ca_certificate_path)
+            .map_err(|error| DistributionError::TlsTrust(error.to_string()))?;
+        let certificate =
+            Certificate::from_pem(&pem).map_err(|error| DistributionError::TlsTrust(error.to_string()))?;
+        builder = builder.add_root_certificate(certificate);
+    }
+    builder.build().map_err(DistributionError::Request)
+}
+
+fn join_url(base_url: &Url, path: &str) -> Result<Url, DistributionError> {
+    let base = format!("{}/", base_url.as_str().trim_end_matches('/'));
+    let base = Url::parse(&base).map_err(|_| DistributionError::InvalidBaseUrl)?;
+    base.join(path.trim_start_matches('/'))
+        .map_err(|_| DistributionError::InvalidBaseUrl)
+}
+
+async fn decode_json_response<T: for<'de> Deserialize<'de>>(
+    response: reqwest::Response,
+) -> Result<T, DistributionError> {
+    if !response.status().is_success() {
+        return Err(DistributionError::HttpStatus(response.status()));
+    }
+    if response.content_length().is_some_and(|length| length > MAX_JSON_BYTES as u64) {
+        return Err(DistributionError::ResponseTooLarge);
+    }
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if bytes.len().saturating_add(chunk.len()) > MAX_JSON_BYTES {
+            return Err(DistributionError::ResponseTooLarge);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error| DistributionError::InvalidResponse(error.to_string()))
 }
 
 fn valid_identifier(value: &str, prefix: &str) -> bool {

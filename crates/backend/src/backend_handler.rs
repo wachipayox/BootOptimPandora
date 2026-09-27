@@ -1601,15 +1601,23 @@ impl BackendState {
             },
             MessageToBackend::CheckDistributionConnection => {
                 let config = self.config.lock().get().distribution.clone();
-                match crate::distribution::DistributionClient::new(&config) {
-                    Ok(client) => match client.list_profiles().await {
-                        Ok(profiles) => self.send.send_success(format!(
-                            "Distribution connected; {} global profiles available",
-                            profiles.len()
-                        )),
-                        Err(error) => self.send.send_error(format!("Distribution connection failed: {error}")),
+                match crate::distribution::probe_distribution_service(&config).await {
+                    Ok(service) => {
+                        let profiles_ready = service
+                            .capabilities
+                            .iter()
+                            .any(|capability| capability == "signed-global-profiles");
+                        let capability_status = if profiles_ready {
+                            "signed global profiles are available"
+                        } else {
+                            "signed global profiles are not enabled yet"
+                        };
+                        self.send.send_success(format!(
+                            "Connected to Distribution {} ({}); {capability_status}",
+                            service.version, service.commit
+                        ));
                     },
-                    Err(error) => self.send.send_error(format!("Distribution configuration is invalid: {error}")),
+                    Err(error) => self.send.send_error(format!("Distribution connection failed: {error}")),
                 }
             },
             MessageToBackend::CreateGlobalProfileInstance {

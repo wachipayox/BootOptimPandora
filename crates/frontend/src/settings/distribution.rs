@@ -30,11 +30,11 @@ pub(super) fn create_page() -> SettingPage {
                 item(Field::KeyId),
                 item(Field::PublicKey),
                 SettingItem {
-                    title: || "Check connection",
-                    description: || "Connect over HTTPS and list the signed global profile catalog.",
+                    title: || "Test HTTPS connection",
+                    description: || "Checks the server certificate and protocol version. Release signing keys are only needed to browse profiles.",
                     widget: SettingItemWidget::Any(Rc::new(|_, cx| {
                         Button::new("check-distribution-connection")
-                            .label("Check connection")
+                            .label("Test HTTPS connection")
                             .on_click(cx.listener(|root, _, _, _| {
                                 root.backend_handle.send(MessageToBackend::CheckDistributionConnection);
                             }))
