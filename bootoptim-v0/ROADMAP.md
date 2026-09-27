@@ -12,7 +12,7 @@ This roadmap describes the private BootOptim launcher and pack updater. It does
 not target Modrinth/CurseForge pack expansion or general third-party modpack
 installation.
 
-## Integrated baseline (2026-09-26)
+## Integrated baseline (2026-09-28)
 
 - Pandora PR #66 is merged into `agent/integration-current` at
   `a4aae071d6062adae9bcffe592ca81c541650a82`. Each private instance keeps its
@@ -23,14 +23,17 @@ installation.
   cache by default. Neither feature implements global profile updates.
 - Pandora PRs #67/#68 integrate persistent profile identity, lineage,
   ownership tracking, recoverable reconciliation, revision-delta application,
-  and the explicit Repair modpack backend. Old PRs #32–39 are stale historical
-  candidates; do not merge their branches over the integrated implementation.
-- Distribution profile APIs are implemented in its repository and served
-  through configured HTTPS mode. Pandora PR #69 adds verified catalog and
-  revision reads, signed-object downloads, and initial global-instance
-  creation. The follow-up branch `codex/global-profile-updates-20260926` adds
-  incremental updates for direct global instances. These client slices have
-  not been runtime-validated against the configured server.
+  and the explicit Repair modpack backend. PRs #32–39 are superseded historical
+  candidates; their code branches must not be merged over the integrated
+  implementation. The current disposition and evidence are recorded in
+  `BRANCH_CLEANUP_AND_CURRENT_STATUS.md`.
+- Pandora PR #69 adds verified catalog and revision reads, signed-object
+  downloads, and initial global-instance creation. PR #70 adds incremental
+  updates for direct global instances. PRs #71/#72 add the Wachiland Launcher
+  identity/data path, remove unused sandbox/file-sync settings, and make the
+  HTTPS connection probe independent of local signing-key setup. All four are
+  merged into `agent/integration-current`. The end-to-end client flow has not
+  yet been runtime-validated against the configured server.
 
 ## Product invariants
 
@@ -80,28 +83,30 @@ and signing details.
 
 ### 3. Add Pandora global/local branch management — in progress
 
-The client covers HTTPS trust settings, global catalog browsing,
-signature/digest verification, initial global-instance creation, and
-incremental updates for direct global instances. Updates resolve the newly
-selected signed revision and reuse locally tracked unchanged entries; changed
-objects alone are fetched and passed into the existing delta reconciler.
-Remaining work: create local children from global/local parents, expose branch
-creation and applied/available lineage state in each instance's
-Profiles/Updates settings, support descendants of local parents, and let admins
-create global children. Local overlays stay on the user's machine.
+The client implementation is integrated through PRs #69–#72: HTTPS trust and
+connection setup, global catalog browsing, signature/digest verification,
+initial global-instance creation, and incremental updates for direct global
+instances. Updates resolve the newly selected signed revision and reuse
+locally tracked unchanged entries; changed objects alone are fetched and
+passed into the existing delta reconciler. The flow still needs runtime
+validation against the configured server. Remaining work: create local
+children from global/local parents, expose branch creation and
+applied/available lineage state in each instance's Profiles/Updates settings,
+support descendants of local parents, and let admins create global children.
+Local overlays stay on the user's machine.
 
 ### 4. Complete delta updates and explicit modpack repair — in progress
 
-For direct global instances, the first update action resolves the selected
-revision history and stages/reconciles only changed managed paths through the
-existing persistent-layout transaction. A no-op update avoids object downloads
-and does not scan `.minecraft`; it still reads and verifies signed revision
-metadata. Remaining work: show update availability/history before applying,
-surface per-file policy and progress, support local-descendant delta
-propagation, and provide **Repair modpack** beside update history under
-instance Settings/Maintenance. Repair explicitly checks parity and restores
-managed paths from verified content. Preserve local additions unless the user
-resolves a conflict or a policy explicitly enforces the path.
+For direct global instances, the update action resolves the selected revision
+history and stages/reconciles only changed managed paths through the existing
+persistent-layout transaction. A no-op update avoids object downloads and does
+not scan `.minecraft`; it still reads and verifies signed revision metadata.
+Remaining work: show update availability/history before applying, surface
+per-file policy and progress, support local-descendant delta propagation, and
+provide **Repair modpack** beside update history under instance
+Settings/Maintenance. Repair explicitly checks parity and restores managed
+paths from verified content. Preserve local additions unless the user resolves
+a conflict or a policy explicitly enforces the path.
 
 ## Acceptance path
 

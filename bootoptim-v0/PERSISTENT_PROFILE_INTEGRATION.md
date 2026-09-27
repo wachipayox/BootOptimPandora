@@ -1,6 +1,6 @@
 # Persistent profile layout — implementation status
 
-Last checked: 2026-09-26 against `agent/integration-current` (`19352e57`) and the active global-profile client branch.
+Last checked: 2026-09-28 against `agent/integration-current` (`f81be6f`).
 
 ## Integrated behavior
 
@@ -26,17 +26,28 @@ ownership/recovery transaction, revision delta application, and explicit
 Repair modpack backend. These are the current source of truth; the older PR
 chain below is historical input, not outstanding work to merge.
 
-The active branch `codex/global-profiles-client-20260926-v2` adds the first
-Distribution-to-Pandora client slice: HTTPS catalog access, signed revision and
-SHA-256 object verification, content-addressed download cache, and creation of
-a local instance pinned to a verified global revision. It is not integrated or
-runtime-validated yet. It does not yet provide existing-instance updates,
-local child creation, local overlay editing, ancestry UI, or Repair modpack UI.
+Pandora PRs #69–#72 are integrated. Together they add verified catalog and
+revision reads, signed-object downloads, initial global-instance creation,
+incremental updates for direct global instances, the Wachiland Launcher
+name/data path, removal of unused sandbox/file-sync settings, and a connection
+probe that can run before local signing-key setup. End-to-end behavior has not
+yet been runtime-validated against the configured Distribution server.
+Local-child creation, local overlay editing, ancestry UI, update
+history/progress, and Repair modpack UI remain future client work.
+
+The branch `codex/toml-config-rules` is an intentionally incomplete work in
+progress. It contains TOML, `.properties`, and `.txt` line/key merge helpers
+plus inherited per-setting policy resolution, but this merge path is not yet
+connected to the persistent install/update transaction, conflict retention, or
+recovery journal. Do not treat it as a usable profile feature until that
+transaction wiring and correctness review are complete. See
+`BRANCH_CLEANUP_AND_CURRENT_STATUS.md` for its current commit and disposition.
 
 ## Historical implementation chain
 
 The following older PRs were candidate drafts before the work was recomposed
-and integrated through #67/#68:
+and integrated through #67/#68. They are superseded historical input, not
+pending work to merge:
 
 - #32 ownership/recovery architecture;
 - #33 ownership reconciliation candidate;
@@ -44,7 +55,11 @@ and integrated through #67/#68:
 - #35 signed private distribution service design;
 - #36 recoverable persistent-profile client flow;
 - #37 cloned-profile identity and per-profile lock;
-- #38/#39 native lock validation.
+- #38/#39 native lock validation. The old candidate chain exposed a Windows
+  directory-handle durability failure and later focused native lock probes.
+  Those results are historical evidence for the old implementation, not a
+  reason to reuse its branches; the current integrated implementation and its
+  own checks are authoritative.
 
 Their old branch ancestry is stale. Do not merge that chain over the current
 implementation or report it as a second pending foundation.
