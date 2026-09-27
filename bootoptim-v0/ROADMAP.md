@@ -12,7 +12,7 @@ This roadmap describes the private BootOptim launcher and pack updater. It does
 not target Modrinth/CurseForge pack expansion or general third-party modpack
 installation.
 
-## Integrated baseline (2026-09-28)
+## Integrated baseline (2026-09-28; `agent/integration-current` at `46836ec`)
 
 - Pandora PR #66 is merged into `agent/integration-current` at
   `a4aae071d6062adae9bcffe592ca81c541650a82`. Each private instance keeps its

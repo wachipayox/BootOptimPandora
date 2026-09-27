@@ -192,6 +192,8 @@ pub enum ProfileLayoutFlowError {
     OwnershipChanged(String),
     #[error(transparent)]
     Branch(#[from] ProfileBranchError),
+    #[error("config rule could not be applied: {0}")]
+    ConfigSetting(#[from] crate::config_settings::ConfigSettingError),
     #[error("Repair modpack is unavailable for a purely local profile")]
     RepairUnavailable,
 }
@@ -382,6 +384,7 @@ impl PersistentProfileLayout {
         let delta = ProfileRevisionDelta {
             lineage,
             target_revision: branch.applied_revision,
+            config_settings: Vec::new(),
             changes: Vec::new(),
         };
         self.reconcile_revision_delta(&delta)
@@ -404,6 +407,7 @@ impl PersistentProfileLayout {
     pub fn repair_modpack(
         &mut self,
         effective: &[EffectiveProfileEntry],
+        config_settings: &[crate::distribution::ManifestConfigSetting],
     ) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
         let current = self.read_manifest_optional()?;
         let branch = current.as_ref().map(|m| m.branch.clone()).unwrap_or_default();
@@ -467,6 +471,7 @@ impl PersistentProfileLayout {
         let delta = ProfileRevisionDelta {
             lineage: branch.lineage.clone(),
             target_revision: branch.applied_revision.clone(),
+            config_settings: config_settings.to_vec(),
             changes,
         };
         self.reconcile_revision_delta_inner(&delta, true)
@@ -479,6 +484,7 @@ impl PersistentProfileLayout {
     ) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
         self.recover_if_needed()?;
         delta.validate(self.profile_uuid)?;
+        let target_config_setting_signatures = crate::config_settings::config_setting_signatures(&delta.config_settings)?;
         self.status.state = ProfileLayoutState::Planning;
 
         let current = self.read_manifest_optional()?;
@@ -494,6 +500,7 @@ impl PersistentProfileLayout {
             && delta.changes.is_empty()
             && branch.lineage == delta.lineage
             && branch.applied_revision == delta.target_revision
+            && branch.config_setting_signatures == target_config_setting_signatures
         {
             self.status.state = ProfileLayoutState::Ready;
             self.status.generation = current_generation;
@@ -513,6 +520,7 @@ impl PersistentProfileLayout {
             let path = change.path().to_owned();
             let current_metadata = branch.entries.get(&path).cloned();
             let has_local_tombstone = branch.tombstones.contains_key(&path);
+            let path_has_config_rules = delta.config_settings.iter().any(|setting| setting.path == path);
 
             let incoming_is_inherited = match change {
                 ProfileDeltaChange::Upsert(entry) => entry.metadata.ownership == ProfileEntryOwnership::Inherited,
@@ -522,7 +530,12 @@ impl PersistentProfileLayout {
                 && (has_local_tombstone
                     || current_metadata
                         .as_ref()
-                        .is_some_and(|metadata| metadata.ownership != ProfileEntryOwnership::Inherited))
+                        .is_some_and(|metadata| metadata.ownership != ProfileEntryOwnership::Inherited)
+                        && !current_metadata.as_ref().is_some_and(|metadata| {
+                            path_has_config_rules
+                                && metadata.logical_identity.starts_with("config:")
+                                && matches!(&metadata.origin, ProfileEntryOrigin::GlobalRevision { .. })
+                        }))
             {
                 // A local override/tombstone owns this destination; ancestor history no longer
                 // flows through it.
@@ -535,6 +548,92 @@ impl PersistentProfileLayout {
                     metadata.validate()?;
                     if metadata.ownership != ProfileEntryOwnership::Inherited {
                         branch.tombstones.remove(&path);
+                    }
+                    if metadata.logical_identity.starts_with("config:") && path_has_config_rules {
+                        let published_bytes = read_regular_file_bounded(
+                            &entry.source,
+                            crate::config_settings::MAX_CONFIG_SETTING_BYTES,
+                        )?;
+                        if sha256_bytes(&published_bytes) != metadata.source_sha256.to_ascii_lowercase() {
+                            return Err(ProfileLayoutFlowError::SourceHashMismatch(path));
+                        }
+
+                        let live = observe_live(&self.live_root(), &path)?;
+                        let live_bytes = match &live {
+                            LiveEntry::Missing => None,
+                            LiveEntry::File { hash } => {
+                                let live_path = self.live_path(&path)?;
+                                let bytes = read_regular_file_bounded(
+                                    &live_path,
+                                    crate::config_settings::MAX_CONFIG_SETTING_BYTES,
+                                )?;
+                                if sha256_bytes(&bytes) != *hash {
+                                    return Err(ProfileLayoutFlowError::OwnershipChanged(path));
+                                }
+                                Some(bytes)
+                            },
+                            LiveEntry::Directory | LiveEntry::ReparsePoint | LiveEntry::OtherType => {
+                                blocking_conflicts.push(format!("{path}:unexpected_type"));
+                                continue;
+                            },
+                        };
+                        let merged = crate::config_settings::merge_config_settings(
+                            &path,
+                            &published_bytes,
+                            live_bytes.as_deref(),
+                            &branch.initialized_config_settings,
+                            &delta.config_settings,
+                        )?;
+                        branch.initialized_config_settings = merged.initialized_default_once;
+                        let applied_hash = sha256_bytes(&merged.bytes);
+                        match live {
+                            LiveEntry::Missing => operations.push(JournalOperation {
+                                path: path.clone(),
+                                kind: JournalOpKind::Install,
+                                old_hash: None,
+                                new_hash: Some(applied_hash.clone()),
+                                retain_conflict: false,
+                            }),
+                            LiveEntry::File { hash } if hash != applied_hash => {
+                                operations.push(JournalOperation {
+                                    path: path.clone(),
+                                    kind: JournalOpKind::Replace,
+                                    old_hash: Some(hash.clone()),
+                                    new_hash: Some(applied_hash.clone()),
+                                    retain_conflict: !merged.changed_enforced.is_empty(),
+                                });
+                            },
+                            LiveEntry::File { .. } => {},
+                            LiveEntry::Directory | LiveEntry::ReparsePoint | LiveEntry::OtherType => {
+                                unreachable!("unexpected types are handled above")
+                            },
+                        }
+                        desired.insert(
+                            path.clone(),
+                            CanonicalDesired {
+                                source: entry.source.clone(),
+                                logical_identity: metadata.logical_identity.clone(),
+                                source_sha256: metadata.source_sha256.to_ascii_lowercase(),
+                                applied_sha256: Some(applied_hash.clone()),
+                                staged_bytes: Some(merged.bytes),
+                            },
+                        );
+                        managed_entries.insert(
+                            path.clone(),
+                            ManagedManifestEntry {
+                                logical_identity: metadata.logical_identity.clone(),
+                                source_hash: metadata.source_sha256.to_ascii_lowercase(),
+                                applied_hash,
+                            },
+                        );
+                        if current_metadata.as_ref().is_some_and(|existing| {
+                            existing.ownership == ProfileEntryOwnership::UserOwned
+                                && matches!(&existing.origin, ProfileEntryOrigin::GlobalRevision { .. })
+                        }) {
+                            metadata.ownership = ProfileEntryOwnership::UserOwned;
+                        }
+                        branch.entries.insert(path, metadata);
+                        continue;
                     }
                     match metadata.policy {
                         ProfileFilePolicy::Enforced => {
@@ -554,6 +653,8 @@ impl PersistentProfileLayout {
                                             source: entry.source.clone(),
                                             logical_identity: metadata.logical_identity.clone(),
                                             source_sha256: metadata.source_sha256.to_ascii_lowercase(),
+                                            applied_sha256: None,
+                                            staged_bytes: None,
                                         },
                                     );
                                 },
@@ -574,6 +675,8 @@ impl PersistentProfileLayout {
                                                 source: entry.source.clone(),
                                                 logical_identity: metadata.logical_identity.clone(),
                                                 source_sha256: metadata.source_sha256.to_ascii_lowercase(),
+                                                applied_sha256: None,
+                                                staged_bytes: None,
                                             },
                                         );
                                     }
@@ -610,6 +713,8 @@ impl PersistentProfileLayout {
                                                 source: entry.source.clone(),
                                                 logical_identity: metadata.logical_identity.clone(),
                                                 source_sha256: metadata.source_sha256.to_ascii_lowercase(),
+                                                applied_sha256: None,
+                                                staged_bytes: None,
                                             },
                                         );
                                     },
@@ -711,6 +816,7 @@ impl PersistentProfileLayout {
 
         branch.lineage = delta.lineage.clone();
         branch.applied_revision = delta.target_revision.clone();
+        branch.config_setting_signatures = target_config_setting_signatures;
         branch.validate(self.profile_uuid)?;
 
         let tx = new_uuid();
@@ -756,11 +862,13 @@ impl PersistentProfileLayout {
         for operation in operations {
             if matches!(operation.kind, JournalOpKind::Install | JournalOpKind::Replace) {
                 let desired_entry = desired.get(&operation.path).ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?;
-                stage_source(
-                    &desired_entry.source,
-                    &self.staging_live_path(tx, &operation.path)?,
-                    &desired_entry.source_sha256,
-                )?;
+                let staged_path = self.staging_live_path(tx, &operation.path)?;
+                if let Some(bytes) = &desired_entry.staged_bytes {
+                    write_new_synced(&staged_path, bytes)?;
+                    verify_hash(&staged_path, desired_entry.target_sha256())?;
+                } else {
+                    stage_source(&desired_entry.source, &staged_path, desired_entry.target_sha256())?;
+                }
             }
         }
 
@@ -814,6 +922,7 @@ impl PersistentProfileLayout {
                 if live.exists() {
                     return Err(ProfileLayoutFlowError::OwnershipChanged(operation.path.clone()));
                 }
+                create_plain_parent(&live)?;
                 let staged = self.staging_live_path(tx, &operation.path)?;
                 verify_hash(
                     &staged,
@@ -1251,6 +1360,16 @@ struct CanonicalDesired {
     source: PathBuf,
     logical_identity: String,
     source_sha256: String,
+    /// Hash of the transaction payload when it differs from the immutable source object.
+    applied_sha256: Option<String>,
+    /// Generated config bytes staged by the transaction while the profile lock is held.
+    staged_bytes: Option<Vec<u8>>,
+}
+
+impl CanonicalDesired {
+    fn target_sha256(&self) -> &str {
+        self.applied_sha256.as_deref().unwrap_or(&self.source_sha256)
+    }
 }
 
 fn canonical_desired(
@@ -1269,6 +1388,8 @@ fn canonical_desired(
                     source: entry.source.clone(),
                     logical_identity: entry.logical_identity.clone(),
                     source_sha256: entry.source_sha256.to_ascii_lowercase(),
+                    applied_sha256: None,
+                    staged_bytes: None,
                 },
             )
             .is_some()
@@ -1277,6 +1398,20 @@ fn canonical_desired(
         }
     }
     Ok(map)
+}
+
+fn read_regular_file_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, ProfileLayoutFlowError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() || metadata.len() > limit as u64 {
+        return Err(ProfileLayoutFlowError::UnsafeFilesystem(path.to_path_buf()));
+    }
+    let mut file = fs::File::open(path)?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    std::io::Read::by_ref(&mut file).take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(ProfileLayoutFlowError::UnsafeFilesystem(path.to_path_buf()));
+    }
+    Ok(bytes)
 }
 
 fn managed_fingerprint(desired: &BTreeMap<String, CanonicalDesired>) -> String {
@@ -1445,7 +1580,17 @@ fn ensure_plain_live_parent(root: &Path, relative: &str) -> Result<(), ProfileLa
     let segments: Vec<_> = relative.split('/').collect();
     for segment in &segments[..segments.len().saturating_sub(1)] {
         current.push(segment);
-        ensure_plain_existing_directory(&current)?;
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                #[cfg(windows)]
+                if junction::exists(&current).unwrap_or(false) {
+                    return Err(ProfileLayoutFlowError::UnsafeFilesystem(current));
+                }
+            },
+            Ok(_) => return Err(ProfileLayoutFlowError::UnsafeFilesystem(current)),
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(err.into()),
+        }
     }
     Ok(())
 }
@@ -1541,11 +1686,24 @@ fn remove_regular_file(path: &Path) -> Result<(), ProfileLayoutFlowError> {
 }
 
 fn sync_parent(path: &Path) -> Result<(), ProfileLayoutFlowError> {
-    if let Some(parent) = path.parent() {
-        let dir = fs::File::open(parent)?;
-        dir.sync_all()?;
+    // The standard library cannot open and flush directory handles on Windows.
+    // File payloads and transaction journals are still flushed before commit;
+    // process-crash recovery remains journal-backed, while directory-entry
+    // durability across sudden power loss is weaker than on Unix filesystems.
+    #[cfg(windows)]
+    {
+        let _ = path;
+        return Ok(());
     }
-    Ok(())
+
+    #[cfg(not(windows))]
+    {
+        if let Some(parent) = path.parent() {
+            let dir = fs::File::open(parent)?;
+            dir.sync_all()?;
+        }
+        Ok(())
+    }
 }
 
 fn hash_regular_file(path: &Path) -> Result<String, ProfileLayoutFlowError> {
@@ -1838,6 +1996,27 @@ mod tests {
         }
     }
 
+    fn effective_config_entry(
+        root: &TestRoot,
+        path: &str,
+        bytes: &[u8],
+        pin: crate::profile_branch::GlobalRevisionPin,
+    ) -> crate::profile_branch::EffectiveProfileEntry {
+        let source = root.0.join(format!("config-source-{}", sha256_bytes(bytes)));
+        fs::write(&source, bytes).unwrap();
+        crate::profile_branch::EffectiveProfileEntry {
+            path: path.to_owned(),
+            source,
+            metadata: crate::profile_branch::ProfileEntryMetadata {
+                logical_identity: format!("config:{path}"),
+                source_sha256: sha256_bytes(bytes),
+                origin: crate::profile_branch::ProfileEntryOrigin::GlobalRevision { pin },
+                ownership: crate::profile_branch::ProfileEntryOwnership::Inherited,
+                policy: crate::profile_branch::ProfileFilePolicy::DefaultOnce,
+            },
+        }
+    }
+
     fn global_delta(
         pin: crate::profile_branch::GlobalRevisionPin,
         changes: Vec<crate::profile_branch::ProfileDeltaChange>,
@@ -1845,6 +2024,7 @@ mod tests {
         crate::profile_branch::ProfileRevisionDelta {
             lineage: crate::profile_branch::ProfileLineage::from_global(pin.clone()).unwrap(),
             target_revision: Some(pin),
+            config_settings: Vec::new(),
             changes,
         }
     }
@@ -1873,6 +2053,69 @@ mod tests {
 
         assert!(matches!(outcome, ReconcileOutcome::Ready { generation: 1, .. }));
         assert_eq!(fs::read(root.0.join(".minecraft/mods/managed.jar")).unwrap(), b"corrupt-but-unchanged");
+    }
+
+    #[test]
+    fn config_setting_update_is_transactional_and_keeps_unselected_local_values() {
+        let root = TestRoot::new("config-setting-transaction");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let path = "config/example.toml";
+        let published = b"[video]\nrender_distance = 8\nsmooth_lighting = true\nquality = \"high\"\n";
+        let r1 = global_pin("r1", 'a');
+        let rules_v1 = vec![
+            crate::distribution::ManifestConfigSetting {
+                path: path.to_owned(), format: "toml".to_owned(), key: "video.render_distance".to_owned(),
+                value: serde_json::Value::from(12), policy: "enforced".to_owned(),
+            },
+            crate::distribution::ManifestConfigSetting {
+                path: path.to_owned(), format: "toml".to_owned(), key: "video.smooth_lighting".to_owned(),
+                value: serde_json::Value::from(false), policy: "default_once".to_owned(),
+            },
+        ];
+        let entry_v1 = effective_config_entry(&root, path, published, r1.clone());
+        layout
+            .reconcile_revision_delta(&crate::profile_branch::ProfileRevisionDelta {
+                lineage: crate::profile_branch::ProfileLineage::from_global(r1.clone()).unwrap(),
+                target_revision: Some(r1),
+                config_settings: rules_v1,
+                changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(entry_v1)],
+            })
+            .unwrap();
+        let live_path = root.0.join(".minecraft/config/example.toml");
+        let initial = fs::read_to_string(&live_path).unwrap();
+        assert!(initial.contains("render_distance = 12"));
+        assert!(initial.contains("smooth_lighting = false"));
+        assert_eq!(layout.branch_manifest().unwrap().initialized_config_settings.len(), 1);
+
+        let local_before_update = b"[video]\nrender_distance = 9\nsmooth_lighting = true\nquality = \"custom\"\n";
+        fs::write(&live_path, local_before_update).unwrap();
+        let r2 = global_pin("r2", 'b');
+        let entry_v2 = effective_config_entry(&root, path, published, r2.clone());
+        let rules_v2 = vec![
+            crate::distribution::ManifestConfigSetting {
+                path: path.to_owned(), format: "toml".to_owned(), key: "video.render_distance".to_owned(),
+                value: serde_json::Value::from(16), policy: "enforced".to_owned(),
+            },
+            crate::distribution::ManifestConfigSetting {
+                path: path.to_owned(), format: "toml".to_owned(), key: "video.smooth_lighting".to_owned(),
+                value: serde_json::Value::from(false), policy: "default_once".to_owned(),
+            },
+        ];
+        layout
+            .reconcile_revision_delta(&crate::profile_branch::ProfileRevisionDelta {
+                lineage: crate::profile_branch::ProfileLineage::from_global(r2.clone()).unwrap(),
+                target_revision: Some(r2.clone()),
+                config_settings: rules_v2,
+                changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(entry_v2)],
+            })
+            .unwrap();
+
+        let updated = fs::read_to_string(&live_path).unwrap();
+        assert!(updated.contains("render_distance = 16"));
+        assert!(updated.contains("smooth_lighting = true"));
+        assert!(updated.contains("quality = \"custom\""));
+        assert_eq!(layout.branch_manifest().unwrap().applied_revision, Some(r2));
+        assert!(fs::read_dir(layout.conflict_copies_root()).unwrap().next().is_some());
     }
 
     #[test]
@@ -2002,6 +2245,7 @@ mod tests {
             .reconcile_revision_delta(&crate::profile_branch::ProfileRevisionDelta {
                 lineage: crate::profile_branch::ProfileLineage::from_global(r1.clone()).unwrap(),
                 target_revision: Some(r1),
+                config_settings: Vec::new(),
                 changes: vec![crate::profile_branch::ProfileDeltaChange::Remove {
                     path: "mods/removed.jar".to_owned(),
                     origin: crate::profile_branch::ProfileEntryOrigin::LocalProfile { profile_uuid },
@@ -2168,7 +2412,7 @@ mod tests {
         layout
             .configure_branch_lineage(crate::profile_branch::ProfileLineage::from_global(r1).unwrap())
             .unwrap();
-        layout.repair_modpack(&[]).unwrap();
+        layout.repair_modpack(&[], &[]).unwrap();
 
         assert!(!legacy_path.exists());
         assert_eq!(fs::read(&unrelated).unwrap(), b"local-only");
@@ -2182,6 +2426,6 @@ mod tests {
         layout
             .configure_branch_lineage(crate::profile_branch::ProfileLineage::pure_local())
             .unwrap();
-        assert!(matches!(layout.repair_modpack(&[]), Err(ProfileLayoutFlowError::RepairUnavailable)));
+        assert!(matches!(layout.repair_modpack(&[], &[]), Err(ProfileLayoutFlowError::RepairUnavailable)));
     }
 }

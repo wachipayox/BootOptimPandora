@@ -1,6 +1,6 @@
 # Persistent profile layout — implementation status
 
-Last checked: 2026-09-28 against `agent/integration-current` (`f81be6f`).
+Last checked: 2026-09-28 against `agent/integration-current` (`46836ec`).
 
 ## Integrated behavior
 
@@ -35,13 +35,17 @@ yet been runtime-validated against the configured Distribution server.
 Local-child creation, local overlay editing, ancestry UI, update
 history/progress, and Repair modpack UI remain future client work.
 
-The branch `codex/toml-config-rules` is an intentionally incomplete work in
-progress. It contains TOML, `.properties`, and `.txt` line/key merge helpers
-plus inherited per-setting policy resolution, but this merge path is not yet
-connected to the persistent install/update transaction, conflict retention, or
-recovery journal. Do not treat it as a usable profile feature until that
-transaction wiring and correctness review are complete. See
-`BRANCH_CLEANUP_AND_CURRENT_STATUS.md` for its current commit and disposition.
+The earlier `codex/toml-config-rules` branch is stale and its implementation is
+being continued on `codex/config-rules-e2e`, based on the latest integration
+HEAD. That work connects schema-v2 TOML, `.properties`, and `.txt` setting
+rules to revision resolution and the persistent install/update transaction,
+including recoverable conflicts and first-install markers. Format merge tests
+pass; the transaction test and live server/client validation are still in
+progress. It is not integrated into `agent/integration-current` yet. On
+Windows, file payloads and journals are flushed, but directory-entry flush is
+not available through the standard library; abrupt power-loss durability is
+therefore weaker than on Unix. See the branch cleanup/status record for its
+disposition.
 
 ## Historical implementation chain
 

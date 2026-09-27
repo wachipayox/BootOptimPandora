@@ -99,8 +99,9 @@ impl BackendState {
         &self,
         id: InstanceID,
         effective: &[EffectiveProfileEntry],
+        config_settings: &[crate::distribution::ManifestConfigSetting],
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
-        self.with_stopped_profile_layout(id, |layout| layout.repair_modpack(effective))
+        self.with_stopped_profile_layout(id, |layout| layout.repair_modpack(effective, config_settings))
     }
 
     /// Legacy full desired-set seam retained for callers that have not moved to revision deltas.

@@ -14,6 +14,7 @@ mod backend_handler;
 mod curseforge_manual_download;
 mod directories;
 pub mod distribution;
+pub mod config_settings;
 mod duplicate;
 mod export;
 mod fs;
