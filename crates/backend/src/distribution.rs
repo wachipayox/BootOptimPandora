@@ -152,6 +152,8 @@ pub struct GlobalRevisionManifest {
     #[serde(default)]
     pub configs: Vec<ManifestConfig>,
     #[serde(default)]
+    pub config_settings: Vec<ManifestConfigSetting>,
+    #[serde(default)]
     pub remove_configs: Vec<ManifestRemoveConfig>,
     #[serde(default)]
     pub objects: Vec<ManifestObject>,
@@ -246,6 +248,24 @@ pub struct ManifestConfig {
     pub expect_base_object_sha256: Option<String>,
 }
 
+/// A stable-key config override. Child revisions replace the rule with the same
+/// path/key pair while resolving oldest ancestor to newest descendant.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestConfigSetting {
+    pub path: String,
+    pub format: String,
+    pub key: String,
+    pub value: serde_json::Value,
+    pub policy: String,
+}
+
+impl ManifestConfigSetting {
+    pub fn identity(&self) -> String {
+        format!("{}\0{}", self.path, self.key)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestRemoveConfig {
@@ -275,6 +295,41 @@ pub struct ResolvedGlobalProfile {
     pub minecraft_version: String,
     pub neoforge_version: String,
     pub entries: Vec<EffectiveProfileEntry>,
+    /// Effective per-setting rules after applying ancestor-to-descendant overrides.
+    pub config_settings: Vec<ManifestConfigSetting>,
+}
+
+impl ResolvedGlobalProfile {
+    /// Merge the profile's effective format-specific rules into one config file and update
+    /// the local first-install markers that belong in the persistent branch state.
+    pub fn merge_config_file(
+        &self,
+        path: &str,
+        published_contents: &[u8],
+        live_contents: Option<&[u8]>,
+        branch: &mut crate::profile_branch::ProfileBranchManifest,
+    ) -> Result<crate::config_settings::ConfigMergeResult, crate::config_settings::ConfigSettingError> {
+        let result = crate::config_settings::merge_config_settings(
+            path,
+            published_contents,
+            live_contents,
+            &branch.initialized_config_settings,
+            &self.config_settings,
+        )?;
+        branch.initialized_config_settings = result.initialized_default_once.clone();
+        Ok(result)
+    }
+
+    /// Backwards-compatible TOML entry point.
+    pub fn merge_toml_config(
+        &self,
+        path: &str,
+        published_contents: &[u8],
+        live_contents: Option<&[u8]>,
+        branch: &mut crate::profile_branch::ProfileBranchManifest,
+    ) -> Result<crate::config_settings::ConfigMergeResult, crate::config_settings::ConfigSettingError> {
+        self.merge_config_file(path, published_contents, live_contents, branch)
+    }
 }
 
 #[derive(Clone)]
@@ -399,7 +454,7 @@ impl DistributionClient {
         ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &self.verifying_key)
             .verify(&canonical, &signature_bytes)
             .map_err(|_| DistributionError::InvalidSignature)?;
-        if manifest.schema_version != 1
+        if !(manifest.schema_version == 1 || manifest.schema_version == 2)
             || manifest.profile.id != profile_id
             || manifest.revision.id != revision_id
             || manifest.revision.sequence <= 0
@@ -490,6 +545,8 @@ impl DistributionClient {
         let mut mod_paths = BTreeMap::<String, String>::new();
         let mut object_paths = BTreeMap::<String, String>::new();
         let mut object_refs = BTreeMap::<(String, String, String), &ManifestObjectRef>::new();
+        let mut config_settings = BTreeMap::<(String, String), ManifestConfigSetting>::new();
+        let mut parent_config_permissions: Option<ManifestConfigPermissions> = None;
         for revision in chain.iter().rev() {
             let pin = GlobalRevisionPin::new(
                 revision.manifest.profile.id.clone(),
@@ -498,6 +555,12 @@ impl DistributionClient {
             )
             .map_err(|error| DistributionError::InvalidResponse(error.to_string()))?;
             let manifest = &revision.manifest;
+            if manifest.schema_version == 1 && !manifest.config_settings.is_empty() {
+                return Err(DistributionError::InvalidResponse(
+                    "per-setting config rules require manifest schema 2".into(),
+                ));
+            }
+            let mut seen_settings = BTreeSet::new();
             for item in &manifest.mods {
                 object_refs
                     .insert((format!("mod:{}", item.id), item.path.clone(), item.object.sha256.clone()), &item.object);
@@ -507,6 +570,35 @@ impl DistributionClient {
                     (format!("config:{}", item.path), item.path.clone(), item.object.sha256.clone()),
                     &item.object,
                 );
+            }
+            for item in &manifest.config_settings {
+                check_manifest_path(&item.path)?;
+                if manifest.schema_version < 2
+                    || !valid_config_setting(item)
+                    || (item.policy != "enforced" && item.policy != "default_once")
+                {
+                    return Err(DistributionError::InvalidResponse("invalid per-setting config rule".into()));
+                }
+                let key = (item.path.clone(), item.key.clone());
+                if !seen_settings.insert(key.clone()) {
+                    return Err(DistributionError::InvalidResponse("duplicate per-setting config rule".into()));
+                }
+                if let Some(previous) = config_settings.get(&key) {
+                    let permissions = parent_config_permissions.as_ref().ok_or_else(|| {
+                        DistributionError::InvalidResponse("config-setting lineage is inconsistent".into())
+                    })?;
+                    let allowed = if previous.policy == "enforced" {
+                        permissions.override_enforced
+                    } else {
+                        permissions.override_default_once
+                    };
+                    if !allowed {
+                        return Err(DistributionError::InvalidResponse(
+                            "parent permissions prohibit overriding this config setting".into(),
+                        ));
+                    }
+                }
+                config_settings.insert(key, item.clone());
             }
             for item in &manifest.objects {
                 object_refs.insert(
@@ -577,6 +669,7 @@ impl DistributionClient {
                     ));
                 }
                 files.remove(&item.path);
+                config_settings.retain(|(path, _), _| path != &item.path);
             }
             for item in &manifest.objects {
                 check_manifest_path(&item.path)?;
@@ -598,6 +691,15 @@ impl DistributionClient {
                     &pin,
                     ProfileFilePolicy::Enforced,
                 )?;
+            }
+            parent_config_permissions = Some(manifest.permissions.configs.clone());
+        }
+
+        for ((path, _), _) in &config_settings {
+            if !files.get(path).is_some_and(|entry| entry.metadata.logical_identity.starts_with("config:")) {
+                return Err(DistributionError::InvalidResponse(
+                    "per-setting config rule refers to a TOML config absent from the effective profile".into(),
+                ));
             }
         }
 
@@ -631,6 +733,7 @@ impl DistributionClient {
             minecraft_version,
             neoforge_version,
             entries,
+            config_settings: config_settings.into_values().collect(),
         })
     }
 
@@ -781,6 +884,51 @@ fn valid_identifier(value: &str, prefix: &str) -> bool {
 
 fn valid_digest(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn valid_toml_dotted_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        })
+}
+
+fn valid_toml_json_value(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null | serde_json::Value::Object(_) => false,
+        serde_json::Value::Array(values) => values.iter().all(|value| {
+            matches!(value, serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_))
+        }),
+        serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => true,
+    }
+}
+
+fn valid_config_setting(setting: &ManifestConfigSetting) -> bool {
+    if setting.key.len() > 256 {
+        return false;
+    }
+    let path = setting.path.to_ascii_lowercase();
+    match setting.format.as_str() {
+        "toml" => path.ends_with(".toml") && valid_toml_dotted_key(&setting.key) && valid_toml_json_value(&setting.value),
+        "properties" => {
+            path.ends_with(".properties")
+                && !setting.key.is_empty()
+                && setting.key.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+                && setting.value.is_string()
+        }
+        "text_lines" => {
+            path.ends_with(".txt")
+                && setting.value.is_string()
+                && setting.key.strip_prefix("line:").is_some_and(|line| {
+                    !line.is_empty() && line.len() <= 9 && !line.starts_with('0') && line.bytes().all(|byte| byte.is_ascii_digit())
+                })
+        }
+        _ => false,
+    }
 }
 
 fn verify_file(path: &Path, expected_digest: &str, expected_size: u64) -> Result<bool, io::Error> {

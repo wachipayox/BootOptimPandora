@@ -12,7 +12,7 @@ This roadmap describes the private BootOptim launcher and pack updater. It does
 not target Modrinth/CurseForge pack expansion or general third-party modpack
 installation.
 
-## Integrated baseline (2026-09-26)
+## Integrated baseline (2026-09-28)
 
 - Pandora PR #66 is merged into `agent/integration-current` at
   `a4aae071d6062adae9bcffe592ca81c541650a82`. Each private instance keeps its
@@ -29,8 +29,15 @@ installation.
   through configured HTTPS mode. Pandora PR #69 adds verified catalog and
   revision reads, signed-object downloads, and initial global-instance
   creation. The follow-up branch `codex/global-profile-updates-20260926` adds
-  incremental updates for direct global instances. These client slices have
-  not been runtime-validated against the configured server.
+  incremental updates for direct global instances. Both are integrated.
+- PR #71 gives the launcher the Wachiland Launcher name and a separate
+  `WachilandLauncher` data directory. Existing `PandoraLauncher` data is left
+  in place; new instances use the new directory. The sandbox and file-sync
+  controls are removed from instance settings.
+- PR #72 adds a separate HTTPS/protocol connection probe that does not require
+  release-signing keys.
+- The integrated launcher builds and opens locally on Windows. Profile
+  publication/install/update against the user's server remains to be validated.
 
 ## Product invariants
 
@@ -55,6 +62,9 @@ installation.
   modes. Supported config formats may add option-level selectors. A conflict
   where a user changed an enforced file applies the new enforced value while
   retaining the user's prior copy in recoverable conflict storage.
+- Per-setting TOML, `.properties`, and `.txt` rules are in a client work branch;
+  they are not yet wired into the install/update transaction and must not be
+  represented as working product behavior.
 - Reconcile/install/update is transactional per profile, crash recoverable,
   and isolated from other profiles. Global content blobs may be deduplicated,
   but mutable destination files and recovery state are never shared.

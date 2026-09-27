@@ -5,7 +5,7 @@
 //! lineage pins, local overlays, effective-entry ownership, and the applied-vs-target revision
 //! comparison. No API here uploads private overlay data.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::{BTreeMap, BTreeSet}, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -198,6 +198,10 @@ pub struct ProfileBranchManifest {
     pub entries: BTreeMap<String, ProfileEntryMetadata>,
     #[serde(default)]
     pub tombstones: BTreeMap<String, ProfileEntryTombstone>,
+    /// Per-setting first-install markers; unlike file ownership these do not
+    /// claim the surrounding config file or its unselected keys.
+    #[serde(default)]
+    pub initialized_config_settings: BTreeSet<String>,
 }
 
 impl ProfileBranchManifest {

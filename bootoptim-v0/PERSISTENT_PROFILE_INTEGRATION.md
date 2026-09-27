@@ -1,6 +1,6 @@
 # Persistent profile layout — implementation status
 
-Last checked: 2026-09-26 against `agent/integration-current` (`19352e57`) and the active global-profile client branch.
+Last checked: 2026-09-28 against `agent/integration-current` (`f81be6f`).
 
 ## Integrated behavior
 
@@ -21,17 +21,44 @@ PR #64 is also integrated and enables the existing launch-fast library policy
 and asset USN cache by default. It is independent of profile ancestry/update
 reconciliation.
 
-Pandora PRs #67/#68 are also integrated. They add the persistent branch lineage,
-ownership/recovery transaction, revision delta application, and explicit
-Repair modpack backend. These are the current source of truth; the older PR
-chain below is historical input, not outstanding work to merge.
+Pandora PRs #67/#68 integrate persistent branch lineage, ownership/recovery,
+revision-delta application, and the explicit Repair modpack backend. PR #69
+adds HTTPS catalog access, signed revision and SHA-256 object verification,
+content-addressed downloads, and creation of a local instance pinned to a
+verified global revision. PR #70 adds incremental updates for direct global
+instances. PR #71 changes the product-facing name and data directory to
+Wachiland Launcher, removes the sandbox and file-sync controls, and leaves
+existing PandoraLauncher data untouched. PR #72 adds an HTTPS/protocol probe
+that can run before signing-key setup.
 
-The active branch `codex/global-profiles-client-20260926-v2` adds the first
-Distribution-to-Pandora client slice: HTTPS catalog access, signed revision and
-SHA-256 object verification, content-addressed download cache, and creation of
-a local instance pinned to a verified global revision. It is not integrated or
-runtime-validated yet. It does not yet provide existing-instance updates,
-local child creation, local overlay editing, ancestry UI, or Repair modpack UI.
+The current integration builds and opens locally on Windows. This confirms the
+launcher starts with the WachilandLauncher data directory, but does not validate
+global profile publication, install, or update against the user's service.
+Local child creation, local overlay editing, full ancestry UI, and Repair
+modpack UI remain unfinished.
+
+## Structured config rules (schema v2, work in progress)
+
+Branch `codex/toml-config-rules` starts from current
+`agent/integration-current` (`f81be6f`). It adds strict reading and
+parent-to-child resolution for signed `config_settings` rules, plus
+format-aware merge helpers in `crates/backend/src/config_settings.rs`. TOML
+uses dotted keys, `.properties` uses simple property keys, and `.txt` uses
+one-based physical line identities. A descendant replaces the same path/key
+rule from its parent, and a grandchild may replace the descendant's value
+again. The parent permission bit gates each override. `enforced` changes only
+the selected setting and reports it for conflict retention; `default_once`
+markers are stored per setting in local branch metadata. Unselected content
+and comments stay local.
+
+This is not yet connected to the launcher install/update transaction or
+recoverable conflict-copy path. Do not describe schema-v2 rules as usable in a
+release until those are wired and a synthetic three-level profile is
+published/resolved/applied. Initial value support is TOML scalars/flat lists
+and string-valued `.properties`/`.txt` rules. `.txt` line numbers shift when
+lines above are inserted or removed; TOML tables/objects, `null`, escaped
+properties keys, Java properties continuations, non-UTF-8 properties files,
+and multiline text values are unsupported.
 
 ## Historical implementation chain
 
