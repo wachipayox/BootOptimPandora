@@ -1,7 +1,7 @@
 # Launcher branch cleanup and current status
 
 Checked on 2026-09-28 against `agent/integration-current` at
-`49f3bcc3d4cff450ec85508ed216c220d085dc43`.
+`bb8273aabd8c743dc0b4081e28a02ce58752450c`.
 
 ## Integrated launcher work
 
@@ -29,9 +29,9 @@ update history/progress, and Repair modpack UI remain future work; see
 
 PRs #32–#39 form an old stacked candidate chain. They target obsolete draft
 branches rather than `agent/integration-current`; PRs #67/#68 recomposed and
-integrated the production implementation. The old PRs and their topic branches
-are being closed/removed to prevent accidental merges. Their source and CI
-history remain available in GitHub PR records.
+integrated the production implementation. PRs #32–#39 are now closed and their
+exact remote head refs have been deleted to prevent accidental merges. Their
+source and CI history remain available in GitHub PR records.
 
 | PR | Useful evidence retained | Why its branch is obsolete |
 | --- | --- | --- |
@@ -56,8 +56,9 @@ Two valuable launcher work branches are intentionally kept separate:
   integrated PR #68. It adds a Settings-facing lineage/status API, effective
   parent-plus-overlay resolution, per-file ownership/policy handling, delta
   application and a no-op fast path, recoverable enforced-conflict copies,
-  Repair modpack eligibility, and focused backend coverage. It is two commits
-  behind current integration and has not been reviewed/rebased as a promotion.
+  Repair modpack eligibility, and focused backend coverage. It predates recent
+  integration documentation commits and has not been reviewed/rebased as a
+  promotion.
   Its candidate contract is preserved in
   `PROFILE_BRANCH_BACKEND_CANDIDATE.md`. Keep the branch until it receives a
   fresh integration review; do not mislabel it as the already merged PR #68.
@@ -77,10 +78,10 @@ They are outside the branch diff and were left untouched during this cleanup.
 
 - `agent/integration-current` is the shared production/documentation branch;
   do not modify `main`.
-- Close stale PRs #32–#39 with this disposition and delete only their exact
-  obsolete remote heads after verifying the corresponding PR head names.
-- Delete local branches only after they are no longer checked out in a
-  worktree. Remove clean, superseded worktrees after checking their status.
+- PRs #32–#39 are closed and their exact obsolete remote heads are deleted;
+  their GitHub records remain available for detailed history.
+- Clean superseded local branches and worktrees were removed after verifying
+  their status and confirming their work was integrated or documented.
 - Keep historical AppCDS/USN research branches and PR records: they contain
   evidence and are outside this launcher-profile cleanup.
 - Keep `codex/toml-config-rules` isolated until its transactional integration
