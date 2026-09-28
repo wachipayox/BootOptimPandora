@@ -17,6 +17,7 @@ enum Field {
     CaPath,
     KeyId,
     PublicKey,
+    AdditionalKeys,
 }
 
 pub(super) fn create_page() -> SettingPage {
@@ -29,6 +30,7 @@ pub(super) fn create_page() -> SettingPage {
                 item(Field::CaPath),
                 item(Field::KeyId),
                 item(Field::PublicKey),
+                item(Field::AdditionalKeys),
                 SettingItem {
                     title: || "Test HTTPS connection",
                     description: || "Checks the server certificate and protocol version. Release signing keys are only needed to browse profiles.",
@@ -58,6 +60,7 @@ fn item(field: Field) -> SettingItem {
             Field::CaPath => || "TLS CA certificate path",
             Field::KeyId => || "Release signing key ID",
             Field::PublicKey => || "Release public key",
+            Field::AdditionalKeys => || "Additional trusted release keys (JSON)",
         },
         description: match field {
             Field::Url => || "Use the private Distribution HTTPS address, including its port.",
@@ -66,6 +69,9 @@ fn item(field: Field) -> SettingItem {
             },
             Field::KeyId => || "The trusted Ed25519 release key ID configured on Distribution.",
             Field::PublicKey => || "The matching 32-byte Ed25519 public key in unpadded base64url.",
+            Field::AdditionalKeys => {
+                || "Optional JSON array of additional trusted signers. Keep old keys when rotating. Example: [{\"key_id\":\"next-key\",\"public_key_base64url\":\"BASE64URL\"}]."
+            },
         },
         widget: text_field(field),
         ..Default::default()
@@ -78,6 +84,7 @@ fn value(config: &DistributionConfig, field: Field) -> &str {
         Field::CaPath => &config.tls_ca_certificate_path,
         Field::KeyId => &config.release_key_id,
         Field::PublicKey => &config.release_public_key_base64url,
+        Field::AdditionalKeys => &config.additional_release_keys_json,
     }
 }
 
@@ -87,6 +94,7 @@ fn set_value(config: &mut DistributionConfig, field: Field, value: String) {
         Field::CaPath => config.tls_ca_certificate_path = value,
         Field::KeyId => config.release_key_id = value,
         Field::PublicKey => config.release_public_key_base64url = value,
+        Field::AdditionalKeys => config.additional_release_keys_json = value,
     }
 }
 
@@ -100,6 +108,7 @@ fn text_field(field: Field) -> SettingItemWidget {
                 Field::CaPath => "distribution-ca-path",
                 Field::KeyId => "distribution-key-id",
                 Field::PublicKey => "distribution-public-key",
+                Field::AdditionalKeys => "distribution-additional-release-keys",
             },
             cx,
             |window, cx| {

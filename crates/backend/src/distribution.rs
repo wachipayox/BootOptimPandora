@@ -32,7 +32,7 @@ pub enum DistributionError {
     InvalidBaseUrl,
     #[error("Distribution TLS trust file could not be loaded: {0}")]
     TlsTrust(String),
-    #[error("Distribution release signing key is missing or invalid")]
+    #[error("Distribution trusted release signing keys are missing or invalid")]
     InvalidSigningKey,
     #[error("Distribution request failed: {0}")]
     Request(#[from] reqwest::Error),
@@ -281,30 +281,28 @@ pub struct ResolvedGlobalProfile {
 pub struct DistributionClient {
     client: Client,
     base_url: Url,
+    trusted_keys: BTreeMap<String, [u8; 32]>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdditionalReleaseKey {
     key_id: String,
-    verifying_key: [u8; 32],
+    public_key_base64url: String,
 }
 
 impl DistributionClient {
     pub fn new(config: &DistributionConfig) -> Result<Self, DistributionError> {
         let base_url = parse_base_url(&config.base_url)?;
 
-        let key_bytes = URL_SAFE_NO_PAD
-            .decode(config.release_public_key_base64url.trim())
-            .map_err(|_| DistributionError::InvalidSigningKey)?;
-        let key_bytes: [u8; 32] = key_bytes.try_into().map_err(|_| DistributionError::InvalidSigningKey)?;
-        let verifying_key = key_bytes;
-        if config.release_key_id.trim().is_empty() {
-            return Err(DistributionError::InvalidSigningKey);
-        }
+        let trusted_keys = trusted_release_keys(config)?;
 
         let client = build_http_client(config)?;
 
         Ok(Self {
             client,
             base_url,
-            key_id: config.release_key_id.trim().to_owned(),
-            verifying_key,
+            trusted_keys,
         })
     }
 
@@ -373,7 +371,6 @@ impl DistributionClient {
         if envelope.canonicalization != "RFC8785-JCS"
             || envelope.manifest_sha256 != expected_digest
             || envelope.signature.algorithm != "Ed25519"
-            || envelope.signature.key_id != self.key_id
         {
             return Err(DistributionError::InvalidSignature);
         }
@@ -393,12 +390,12 @@ impl DistributionClient {
         if digest != envelope.manifest_sha256 {
             return Err(DistributionError::InvalidSignature);
         }
-        let signature_bytes = URL_SAFE_NO_PAD
-            .decode(envelope.signature.value)
-            .map_err(|_| DistributionError::InvalidSignature)?;
-        ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &self.verifying_key)
-            .verify(&canonical, &signature_bytes)
-            .map_err(|_| DistributionError::InvalidSignature)?;
+        verify_release_signature(
+            &self.trusted_keys,
+            &envelope.signature.key_id,
+            &canonical,
+            &envelope.signature.value,
+        )?;
         if manifest.schema_version != 1
             || manifest.profile.id != profile_id
             || manifest.revision.id != revision_id
@@ -711,6 +708,62 @@ impl DistributionClient {
     fn join(&self, path: &str) -> Result<Url, DistributionError> {
         join_url(&self.base_url, path)
     }
+}
+
+fn trusted_release_keys(config: &DistributionConfig) -> Result<BTreeMap<String, [u8; 32]>, DistributionError> {
+    let mut keys = BTreeMap::new();
+    let primary_id = config.release_key_id.trim();
+    let primary_public = config.release_public_key_base64url.trim();
+    match (primary_id.is_empty(), primary_public.is_empty()) {
+        (true, true) => {},
+        (false, false) => insert_trusted_release_key(&mut keys, primary_id, primary_public)?,
+        _ => return Err(DistributionError::InvalidSigningKey),
+    }
+
+    if !config.additional_release_keys_json.trim().is_empty() {
+        let additional: Vec<AdditionalReleaseKey> = serde_json::from_str(&config.additional_release_keys_json)
+            .map_err(|_| DistributionError::InvalidSigningKey)?;
+        for key in additional {
+            insert_trusted_release_key(&mut keys, &key.key_id, &key.public_key_base64url)?;
+        }
+    }
+    if keys.is_empty() {
+        return Err(DistributionError::InvalidSigningKey);
+    }
+    Ok(keys)
+}
+
+fn insert_trusted_release_key(
+    keys: &mut BTreeMap<String, [u8; 32]>,
+    key_id: &str,
+    encoded_public: &str,
+) -> Result<(), DistributionError> {
+    if key_id.is_empty() || key_id.len() > 128 || key_id.trim() != key_id {
+        return Err(DistributionError::InvalidSigningKey);
+    }
+    let key_bytes = URL_SAFE_NO_PAD
+        .decode(encoded_public.trim())
+        .map_err(|_| DistributionError::InvalidSigningKey)?;
+    let key_bytes: [u8; 32] = key_bytes.try_into().map_err(|_| DistributionError::InvalidSigningKey)?;
+    if keys.insert(key_id.to_owned(), key_bytes).is_some() {
+        return Err(DistributionError::InvalidSigningKey);
+    }
+    Ok(())
+}
+
+fn verify_release_signature(
+    keys: &BTreeMap<String, [u8; 32]>,
+    key_id: &str,
+    message: &[u8],
+    encoded_signature: &str,
+) -> Result<(), DistributionError> {
+    let verifying_key = keys.get(key_id).ok_or(DistributionError::InvalidSignature)?;
+    let signature = URL_SAFE_NO_PAD
+        .decode(encoded_signature)
+        .map_err(|_| DistributionError::InvalidSignature)?;
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, verifying_key)
+        .verify(message, &signature)
+        .map_err(|_| DistributionError::InvalidSignature)
 }
 
 fn parse_base_url(value: &str) -> Result<Url, DistributionError> {
@@ -1142,6 +1195,86 @@ fn validate_game_identity(minecraft: &str, neoforge: &str) -> Result<(), String>
         return Err("The signed profile has an invalid Minecraft or NeoForge version".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod trusted_release_key_tests {
+    use super::*;
+
+    fn encoded_key(byte: u8) -> String {
+        URL_SAFE_NO_PAD.encode([byte; 32])
+    }
+
+    #[test]
+    fn legacy_single_key_remains_trusted() {
+        let config = DistributionConfig {
+            release_key_id: "release-2026".into(),
+            release_public_key_base64url: encoded_key(1),
+            ..DistributionConfig::default()
+        };
+        let keys = trusted_release_keys(&config).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys["release-2026"], [1; 32]);
+    }
+
+    #[test]
+    fn additional_keys_allow_rotation_without_dropping_history_trust() {
+        let config = DistributionConfig {
+            release_key_id: "release-2026".into(),
+            release_public_key_base64url: encoded_key(1),
+            additional_release_keys_json: format!(
+                r#"[{{"key_id":"release-2027","public_key_base64url":"{}"}}]"#,
+                encoded_key(2)
+            ),
+            ..DistributionConfig::default()
+        };
+        let keys = trusted_release_keys(&config).unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys["release-2026"], [1; 32]);
+        assert_eq!(keys["release-2027"], [2; 32]);
+    }
+
+    #[test]
+    fn duplicate_ids_or_malformed_additional_keys_fail_closed() {
+        let duplicate = DistributionConfig {
+            release_key_id: "same-key".into(),
+            release_public_key_base64url: encoded_key(1),
+            additional_release_keys_json: format!(
+                r#"[{{"key_id":"same-key","public_key_base64url":"{}"}}]"#,
+                encoded_key(2)
+            ),
+            ..DistributionConfig::default()
+        };
+        assert!(matches!(trusted_release_keys(&duplicate), Err(DistributionError::InvalidSigningKey)));
+
+        let malformed = DistributionConfig {
+            additional_release_keys_json: "not-json".into(),
+            ..DistributionConfig::default()
+        };
+        assert!(matches!(trusted_release_keys(&malformed), Err(DistributionError::InvalidSigningKey)));
+    }
+
+    #[test]
+    fn old_and_replacement_signers_both_verify_while_trusted() {
+        use ring::signature::KeyPair;
+
+        let old = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[1; 32]).unwrap();
+        let replacement = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[2; 32]).unwrap();
+        let keys = BTreeMap::from([
+            ("old-key".into(), old.public_key().as_ref().try_into().unwrap()),
+            ("replacement-key".into(), replacement.public_key().as_ref().try_into().unwrap()),
+        ]);
+        let message = b"same profile history, next revision";
+        let old_signature = URL_SAFE_NO_PAD.encode(old.sign(message).as_ref());
+        let replacement_signature = URL_SAFE_NO_PAD.encode(replacement.sign(message).as_ref());
+
+        verify_release_signature(&keys, "old-key", message, &old_signature).unwrap();
+        verify_release_signature(&keys, "replacement-key", message, &replacement_signature).unwrap();
+        assert!(matches!(
+            verify_release_signature(&keys, "untrusted-key", message, &replacement_signature),
+            Err(DistributionError::InvalidSignature)
+        ));
+    }
 }
 
 pub fn profile_names_by_id(profiles: &[GlobalProfileSummary]) -> BTreeMap<String, String> {

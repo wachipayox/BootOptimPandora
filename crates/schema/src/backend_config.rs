@@ -54,6 +54,12 @@ pub struct DistributionConfig {
         deserialize_with = "crate::try_deserialize"
     )]
     pub release_public_key_base64url: String,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub additional_release_keys_json: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]
