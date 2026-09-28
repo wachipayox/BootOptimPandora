@@ -5,7 +5,10 @@
 //! lineage pins, local overlays, effective-entry ownership, and the applied-vs-target revision
 //! comparison. No API here uploads private overlay data.
 
-use std::{collections::{BTreeMap, BTreeSet}, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

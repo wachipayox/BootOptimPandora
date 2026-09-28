@@ -484,7 +484,8 @@ impl PersistentProfileLayout {
     ) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
         self.recover_if_needed()?;
         delta.validate(self.profile_uuid)?;
-        let target_config_setting_signatures = crate::config_settings::config_setting_signatures(&delta.config_settings)?;
+        let target_config_setting_signatures =
+            crate::config_settings::config_setting_signatures(&delta.config_settings)?;
         self.status.state = ProfileLayoutState::Planning;
 
         let current = self.read_manifest_optional()?;
@@ -550,10 +551,8 @@ impl PersistentProfileLayout {
                         branch.tombstones.remove(&path);
                     }
                     if metadata.logical_identity.starts_with("config:") && path_has_config_rules {
-                        let published_bytes = read_regular_file_bounded(
-                            &entry.source,
-                            crate::config_settings::MAX_CONFIG_SETTING_BYTES,
-                        )?;
+                        let published_bytes =
+                            read_regular_file_bounded(&entry.source, crate::config_settings::MAX_CONFIG_SETTING_BYTES)?;
                         if sha256_bytes(&published_bytes) != metadata.source_sha256.to_ascii_lowercase() {
                             return Err(ProfileLayoutFlowError::SourceHashMismatch(path));
                         }
@@ -2064,12 +2063,18 @@ mod tests {
         let r1 = global_pin("r1", 'a');
         let rules_v1 = vec![
             crate::distribution::ManifestConfigSetting {
-                path: path.to_owned(), format: "toml".to_owned(), key: "video.render_distance".to_owned(),
-                value: serde_json::Value::from(12), policy: "enforced".to_owned(),
+                path: path.to_owned(),
+                format: "toml".to_owned(),
+                key: "video.render_distance".to_owned(),
+                value: serde_json::Value::from(12),
+                policy: "enforced".to_owned(),
             },
             crate::distribution::ManifestConfigSetting {
-                path: path.to_owned(), format: "toml".to_owned(), key: "video.smooth_lighting".to_owned(),
-                value: serde_json::Value::from(false), policy: "default_once".to_owned(),
+                path: path.to_owned(),
+                format: "toml".to_owned(),
+                key: "video.smooth_lighting".to_owned(),
+                value: serde_json::Value::from(false),
+                policy: "default_once".to_owned(),
             },
         ];
         let entry_v1 = effective_config_entry(&root, path, published, r1.clone());
@@ -2093,12 +2098,18 @@ mod tests {
         let entry_v2 = effective_config_entry(&root, path, published, r2.clone());
         let rules_v2 = vec![
             crate::distribution::ManifestConfigSetting {
-                path: path.to_owned(), format: "toml".to_owned(), key: "video.render_distance".to_owned(),
-                value: serde_json::Value::from(16), policy: "enforced".to_owned(),
+                path: path.to_owned(),
+                format: "toml".to_owned(),
+                key: "video.render_distance".to_owned(),
+                value: serde_json::Value::from(16),
+                policy: "enforced".to_owned(),
             },
             crate::distribution::ManifestConfigSetting {
-                path: path.to_owned(), format: "toml".to_owned(), key: "video.smooth_lighting".to_owned(),
-                value: serde_json::Value::from(false), policy: "default_once".to_owned(),
+                path: path.to_owned(),
+                format: "toml".to_owned(),
+                key: "video.smooth_lighting".to_owned(),
+                value: serde_json::Value::from(false),
+                policy: "default_once".to_owned(),
             },
         ];
         layout
