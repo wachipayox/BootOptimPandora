@@ -1,7 +1,7 @@
 # Launcher branch cleanup and current status
 
 Checked on 2026-09-28 against `agent/integration-current` at
-`bb8273aabd8c743dc0b4081e28a02ce58752450c`.
+`46836ecae0a5f1295fb054fdb15b7fd0c10495e`.
 
 ## Integrated launcher work
 
@@ -48,31 +48,26 @@ No old PR branch is a source of pending production work. The linked PRs retain
 their detailed bodies, commits, review discussion, and CI results; cleanup does
 not erase that GitHub history.
 
-## Kept separate: profile branch delta and config policy WIPs
+## Remaining profile work
 
-Two valuable launcher work branches are intentionally kept separate:
+The old local branch `codex/profile-branch-delta-wip` is not an integration
+candidate. Its backend code predates the integrated PRs #69–#72 and would
+remove the public Distribution module if merged as a branch. Its profile
+reconciliation implementation is already represented by the current source
+tree. The focused backend CI workflow is already present on the integration
+branch and remains in place.
 
-- `codex/profile-branch-delta-wip` at `15d6be621` is a local follow-up to
-  integrated PR #68. It adds a Settings-facing lineage/status API, effective
-  parent-plus-overlay resolution, per-file ownership/policy handling, delta
-  application and a no-op fast path, recoverable enforced-conflict copies,
-  Repair modpack eligibility, and focused backend coverage. It predates recent
-  integration documentation commits and has not been reviewed/rebased as a
-  promotion.
-  Its candidate contract is preserved in
-  `PROFILE_BRANCH_BACKEND_CANDIDATE.md`. Keep the branch until it receives a
-  fresh integration review; do not mislabel it as the already merged PR #68.
-- `codex/toml-config-rules` at `7617d322f` adds TOML, `.properties`, and `.txt`
-  merge helpers plus per-setting inherited policy resolution.
-  `cargo check -p pandora_launcher --locked` passed and the launcher compiled
-  and launched locally. However, `merge_config_file` is not yet wired into the
-  persistent install/update transaction, conflict-copy handling, or recovery
-  journal. It is not ready for `agent/integration-current`; preserve this
-  branch/worktree for direct continuation.
+The local branch `codex/toml-config-rules` at `7617d322f` adds TOML,
+`.properties`, and `.txt` merge helpers and inherited per-setting rule
+resolution. It compiles, but `merge_config_file` is not called by the
+persistent install/update transaction; the result therefore does not affect a
+live instance. The Distribution publisher also does not yet produce these
+schema-v2 rules. Keep this branch as the sole active config-rules work until
+the publisher contract and transactional client application are both ready.
 
-The `codex/profile-branch-delta-wip` worktree also contains untracked
-`artifacts-agent198/` and `artifacts-current-agent198/` Windows build outputs.
-They are outside the branch diff and were left untouched during this cleanup.
+The old profile-delta worktree contains untracked Windows build artifacts
+under `artifacts-agent198/` and `artifacts-current-agent198/`. They were kept
+as historical evidence and are not part of the integration branch.
 
 ## Cleanup policy
 
@@ -84,7 +79,8 @@ They are outside the branch diff and were left untouched during this cleanup.
   their status and confirming their work was integrated or documented.
 - Keep historical AppCDS/USN research branches and PR records: they contain
   evidence and are outside this launcher-profile cleanup.
-- Keep `codex/toml-config-rules` isolated until its transactional integration
-  is complete and reviewed.
-- Keep `codex/profile-branch-delta-wip` until its delta/repair follow-up has
-  been compared with integrated PR #68 and explicitly promoted or rejected.
+- Keep `codex/toml-config-rules` isolated until server publication and
+  transactional application are complete and reviewed.
+- Do not recreate `codex/profile-branch-delta-wip`; its applicable backend is
+  integrated and its remaining artifacts are preserved in its detached
+  worktree.

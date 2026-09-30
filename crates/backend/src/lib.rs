@@ -11,6 +11,7 @@ mod asset_probe_context;
 mod asset_usn_cache;
 mod backend_filesystem;
 mod backend_handler;
+pub mod config_settings;
 mod curseforge_manual_download;
 mod directories;
 pub mod distribution;

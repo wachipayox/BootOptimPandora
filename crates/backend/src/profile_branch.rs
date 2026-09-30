@@ -5,7 +5,10 @@
 //! lineage pins, local overlays, effective-entry ownership, and the applied-vs-target revision
 //! comparison. No API here uploads private overlay data.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -198,6 +201,14 @@ pub struct ProfileBranchManifest {
     pub entries: BTreeMap<String, ProfileEntryMetadata>,
     #[serde(default)]
     pub tombstones: BTreeMap<String, ProfileEntryTombstone>,
+    /// Per-setting first-install markers; unlike file ownership these do not
+    /// claim the surrounding config file or its unselected keys.
+    #[serde(default)]
+    pub initialized_config_settings: BTreeSet<String>,
+    /// Digest per effective signed config rule, used to detect rule-only updates without reading
+    /// live files or downloading unchanged config objects.
+    #[serde(default)]
+    pub config_setting_signatures: BTreeMap<String, String>,
 }
 
 impl ProfileBranchManifest {
@@ -215,6 +226,16 @@ impl ProfileBranchManifest {
             if self.entries.contains_key(path) {
                 return Err(ProfileBranchError::DuplicatePath(path.clone()));
             }
+        }
+        for (identity, digest) in &self.config_setting_signatures {
+            let Some((path, key)) = identity.split_once('\0') else {
+                return Err(ProfileBranchError::InvalidLogicalIdentity);
+            };
+            validate_profile_relative_path(path)?;
+            if key.is_empty() {
+                return Err(ProfileBranchError::InvalidLogicalIdentity);
+            }
+            validate_sha256(digest)?;
         }
         Ok(())
     }
@@ -276,6 +297,7 @@ impl ProfileDeltaChange {
 pub struct ProfileRevisionDelta {
     pub lineage: ProfileLineage,
     pub target_revision: Option<GlobalRevisionPin>,
+    pub config_settings: Vec<crate::distribution::ManifestConfigSetting>,
     /// Revision-history delta only. Unchanged destinations must not be listed or verified.
     pub changes: Vec<ProfileDeltaChange>,
 }
@@ -285,6 +307,15 @@ impl ProfileRevisionDelta {
         self.lineage.validate(profile_uuid)?;
         if let Some(pin) = &self.target_revision {
             pin.validate()?;
+        }
+        let mut seen_settings = BTreeMap::<String, ()>::new();
+        for setting in &self.config_settings {
+            if setting.path.trim().is_empty() || setting.key.trim().is_empty() {
+                return Err(ProfileBranchError::InvalidLogicalIdentity);
+            }
+            if seen_settings.insert(setting.identity(), ()).is_some() {
+                return Err(ProfileBranchError::DuplicatePath(setting.path.clone()));
+            }
         }
         let mut seen = BTreeMap::<&str, ()>::new();
         for change in &self.changes {
