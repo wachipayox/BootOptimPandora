@@ -185,20 +185,25 @@ pub fn start(
     });
 }
 
-pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {
+pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: &mut App) -> AnyWindowHandle {
     let config = InterfaceConfig::get(cx);
 
-    let window_bounds = match config.main_window_bounds {
-        interface_config::WindowBounds::Inherit => None,
-        interface_config::WindowBounds::Windowed { x, y, w, h } => {
-            Some(WindowBounds::Windowed(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
-        },
-        interface_config::WindowBounds::Maximized { x, y, w, h } => {
-            Some(WindowBounds::Maximized(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
-        },
-        interface_config::WindowBounds::Fullscreen { x, y, w, h } => {
-            Some(WindowBounds::Fullscreen(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
-        },
+    // A display override should use that display's default placement, not coordinates saved for another screen.
+    let window_bounds = if display_id.is_some() {
+        None
+    } else {
+        match config.main_window_bounds {
+            interface_config::WindowBounds::Inherit => None,
+            interface_config::WindowBounds::Windowed { x, y, w, h } => {
+                Some(WindowBounds::Windowed(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
+            },
+            interface_config::WindowBounds::Maximized { x, y, w, h } => {
+                Some(WindowBounds::Maximized(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
+            },
+            interface_config::WindowBounds::Fullscreen { x, y, w, h } => {
+                Some(WindowBounds::Fullscreen(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
+            },
+        }
     };
 
     let use_custom_titlebar = !config.use_os_titlebar;
@@ -215,6 +220,7 @@ pub fn open_main_window(data: &DataEntities, cx: &mut App) -> AnyWindowHandle {
             app_owns_titlebar_drag: use_custom_titlebar,
             window_bounds,
             window_decorations: Some(if use_custom_titlebar { WindowDecorations::Client } else { WindowDecorations::Server }),
+            display_id,
             ..Default::default()
         },
         |window, cx| {

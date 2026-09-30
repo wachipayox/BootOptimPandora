@@ -430,7 +430,10 @@ pub enum MessageToFrontend {
     UpdateAvailable {
         update: UpdatePrompt,
     },
-    OpenOrFocusMainWindow,
+    OpenOrFocusMainWindow {
+        /// One-based display number from the platform's active display list.
+        monitor: Option<usize>,
+    },
     ManualCurseforgeDownloadsRequired {
         request: ManualCurseforgeDownloadRequest,
     },

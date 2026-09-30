@@ -45,6 +45,9 @@ struct Cli {
     /// Open the launcher and launch an instance using the GUI Start asset verification mode
     #[arg(long, conflicts_with = "run_instance")]
     run_instance_normal: Option<String>,
+    /// Open or move the launcher to a one-based display number (for example, --monitor 3)
+    #[arg(long, value_name = "NUMBER", value_parser = parse_monitor_number)]
+    monitor: Option<usize>,
     /// Internal function to set traversable ACLs in an elevated context
     #[cfg(windows)]
     #[arg(long, hide = false, num_args = 2..)]
@@ -408,7 +411,7 @@ impl tokio::io::AsyncWrite for PlatformClientStream {
 }
 
 fn run_cli(cli: Cli, frontend: &FrontendHandle, backend: &BackendHandle) {
-    frontend.send(MessageToFrontend::OpenOrFocusMainWindow);
+    frontend.send(MessageToFrontend::OpenOrFocusMainWindow { monitor: cli.monitor });
 
     if let Some((name, modal_action)) = cli_start_request(&cli) {
         backend.send(bridge::message::MessageToBackend::StartInstanceByName {
@@ -417,6 +420,14 @@ fn run_cli(cli: Cli, frontend: &FrontendHandle, backend: &BackendHandle) {
             modal_action,
         });
     }
+}
+
+fn parse_monitor_number(value: &str) -> Result<usize, String> {
+    let monitor = value.parse::<usize>().map_err(|_| format!("invalid monitor number: {value}"))?;
+    if monitor == 0 {
+        return Err("monitor numbers start at 1".into());
+    }
+    Ok(monitor)
 }
 
 fn cli_start_request(cli: &Cli) -> Option<(String, ModalAction)> {
