@@ -1,7 +1,7 @@
 use std::sync::{Arc, atomic::AtomicBool};
 
 use bridge::{instance::InstanceStatus, message::{BridgeNotificationType, MessageToFrontend}, quit::QuitCoordinator};
-use gpui::{AnyWindowHandle, App, SharedString, Window};
+use gpui::{AnyWindowHandle, App, DisplayId, SharedString, Window};
 use gpui_component::{notification::{Notification, NotificationType}, Root, WindowExt};
 
 use crate::{entity::{DataEntities, account::AccountEntries, instance::{ContentStates, InstanceEntries}, metadata::FrontendMetadata}, interface_config::InterfaceConfig, root::LauncherRoot};
@@ -12,6 +12,7 @@ pub struct Processor {
     main_window_hidden: Arc<AtomicBool>,
     waiting_for_window: Vec<MessageToFrontend>,
     quit_coordinator: QuitCoordinator,
+    requested_display_id: Option<DisplayId>,
 }
 
 impl Processor {
@@ -22,6 +23,7 @@ impl Processor {
             main_window_hidden,
             waiting_for_window: Vec::new(),
             quit_coordinator,
+            requested_display_id: None,
         }
     }
 
@@ -108,7 +110,7 @@ impl Processor {
                 } else if status == InstanceStatus::NotRunning {
                     if self.main_window_handle.is_none() && self.main_window_hidden.load(std::sync::atomic::Ordering::SeqCst) {
                         self.quit_coordinator.set_can_quit(false);
-                        self.main_window_handle = Some(crate::open_main_window(&self.data, cx));
+                        self.main_window_handle = Some(crate::open_main_window(&self.data, self.requested_display_id, cx));
                         self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
                         self.process_messages_waiting_for_window(cx);
                     }
@@ -210,10 +212,30 @@ impl Processor {
                     crate::modals::manual_curseforge_downloads::open(request, window, cx);
                 });
             },
-            MessageToFrontend::OpenOrFocusMainWindow => {
+            MessageToFrontend::OpenOrFocusMainWindow { monitor } => {
                 self.quit_coordinator.set_can_quit(false);
 
+                if let Some(monitor) = monitor {
+                    let displays = cx.displays();
+                    self.requested_display_id = displays.get(monitor - 1).map(|display| display.id());
+                    if self.requested_display_id.is_none() {
+                        log::error!("Requested monitor {monitor}, but only {} display(s) are available", displays.len());
+                    }
+                }
+
                 if let Some(handle) = self.main_window_handle {
+                    let already_on_requested_display = self.requested_display_id.is_none()
+                        || handle.update(cx, |_, window, cx| {
+                            window.display(cx).map(|display| display.id()) == self.requested_display_id
+                        }).unwrap_or(false);
+                    if !already_on_requested_display {
+                        let new_handle = crate::open_main_window(&self.data, self.requested_display_id, cx);
+                        self.main_window_handle = Some(new_handle);
+                        _ = handle.update(cx, |_, window, _| window.remove_window());
+                        self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
+                        self.process_messages_waiting_for_window(cx);
+                        return;
+                    }
                     let res = handle.update(cx, |_, window, _| {
                         window.activate_window();
                     });
@@ -227,7 +249,7 @@ impl Processor {
                     && command::defender_process_local_state()
                         == command::DefenderProcessLocalState::NotManaged;
 
-                self.main_window_handle = Some(crate::open_main_window(&self.data, cx));
+                self.main_window_handle = Some(crate::open_main_window(&self.data, self.requested_display_id, cx));
                 self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
                 self.process_messages_waiting_for_window(cx);
 
