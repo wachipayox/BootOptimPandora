@@ -229,7 +229,12 @@ impl BackendState {
             chain.push((current, snapshot));
             match parent {
                 Some(crate::profile_branch::ProfileParentRef::LocalProfile { profile_uuid }) => {
-                    current = self.find_instance_id_for_profile_uuid(profile_uuid).ok_or("The local parent is no longer available")?;
+                    // The installed child remains usable after deleting its parent.
+                    // Keep checking descendants below that missing ancestor.
+                    let Some(parent_id) = self.find_instance_id_for_profile_uuid(profile_uuid) else {
+                        return Ok(chain);
+                    };
+                    current = parent_id;
                 },
                 _ => return Ok(chain),
             }
@@ -251,24 +256,47 @@ impl BackendState {
         if let Some((_, root)) = chain.last()
             && let Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin }) = &root.branch.lineage.parent
         {
-            let config = self.config.lock().get().distribution.clone();
-            let client = crate::distribution::DistributionClient::new(&config).map_err(|e| e.to_string())?;
-            let profiles = client.list_profiles().await.map_err(|e| e.to_string())?;
-            let profile = profiles.iter().find(|profile| profile.profile_id == pin.profile_id).ok_or("Global profile is no longer published")?;
-            let target = crate::distribution::selected_revision(profile);
-            if pin.revision_id != target.revision_id || pin.manifest_sha256 != target.manifest_sha256 {
-                updates.push(profile.name.clone());
+            match tokio::time::timeout(std::time::Duration::from_secs(2), self.available_global_update(pin)).await {
+                Ok(Ok(Some(name))) => updates.push(name),
+                Ok(Ok(None)) => {},
+                Ok(Err(error)) => log::warn!("Global update check skipped: {error}"),
+                Err(_) => log::warn!("Global update check timed out"),
             }
         }
         Ok(updates)
+    }
+    async fn available_global_update(&self, pin: &crate::profile_branch::GlobalRevisionPin) -> Result<Option<String>, String> {
+        let config = self.config.lock().get().distribution.clone();
+        let client = crate::distribution::DistributionClient::new(&config).map_err(|e| e.to_string())?;
+        let profiles = client.list_profiles().await.map_err(|e| e.to_string())?;
+        let Some(profile) = profiles.iter().find(|profile| profile.profile_id == pin.profile_id) else {
+            // Catalog withdrawal does not invalidate an already installed revision.
+            return Ok(None);
+        };
+        let target = crate::distribution::selected_revision(profile);
+        Ok((pin.revision_id != target.revision_id || pin.manifest_sha256 != target.manifest_sha256)
+            .then(|| profile.name.clone()))
     }
     pub async fn update_inherited_chain(&self, id: InstanceID) -> Result<(), String> {
         let chain = self.inherited_local_chain(id)?;
         // Update ancestors first, then carry each resulting snapshot down to its children.
         for (instance, snapshot) in chain.into_iter().rev() {
             match snapshot.branch.lineage.parent {
-                Some(crate::profile_branch::ProfileParentRef::GlobalRevision { .. }) => { self.update_global_profile_instance(instance).await?; },
-                Some(crate::profile_branch::ProfileParentRef::LocalProfile { .. }) => { self.update_local_profile_branch(instance).await?; },
+                Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin }) => {
+                    // Only update a published ancestor with a newer revision. Missing
+                    // catalog entries must not block surviving local descendants.
+                    match tokio::time::timeout(std::time::Duration::from_secs(2), self.available_global_update(&pin)).await {
+                        Ok(Ok(Some(_))) => { self.update_global_profile_instance(instance).await?; },
+                        Ok(Ok(None)) => {},
+                        Ok(Err(error)) => return Err(error),
+                        Err(_) => return Err("Global ancestor update check timed out".into()),
+                    }
+                },
+                Some(crate::profile_branch::ProfileParentRef::LocalProfile { profile_uuid }) => {
+                    if self.find_instance_id_for_profile_uuid(profile_uuid).is_some() {
+                        self.update_local_profile_branch(instance).await?;
+                    }
+                },
                 None => {},
             }
         }
