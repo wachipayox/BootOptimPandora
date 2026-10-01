@@ -77,6 +77,25 @@ pub struct ProfileLayoutManifest {
     pub transaction_id: Option<Uuid>,
 }
 
+/// Read committed lineage for catalog presentation without taking a game/layout lock,
+/// creating an identity, recovering transactions, or inspecting live modpack files.
+pub(crate) fn read_committed_branch(instance_root: &Path) -> Result<Option<ProfileBranchManifest>, ProfileLayoutFlowError> {
+    let control = instance_root.join(CONTROL_DIR);
+    let path = control.join(MANIFEST_FILE);
+    if !path.exists() { return Ok(None); }
+    ensure_plain_existing_directory(&control)?;
+    ensure_regular_file(&path)?;
+    let identity_path = control.join(IDENTITY_FILE);
+    ensure_regular_file(&identity_path)?;
+    let identity: ProfileIdentity = serde_json::from_slice(&fs::read(identity_path)?)?;
+    let manifest: ProfileLayoutManifest = serde_json::from_slice(&fs::read(path)?)?;
+    if identity.schema != SCHEMA_VERSION || manifest.schema != SCHEMA_VERSION || identity.profile_uuid != manifest.profile_uuid {
+        return Err(ProfileLayoutFlowError::IdentityMismatch);
+    }
+    manifest.branch.validate(identity.profile_uuid)?;
+    Ok(Some(manifest.branch))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct ProfileIdentity {
     schema: u32,
@@ -2019,6 +2038,22 @@ mod tests {
         let reopened_b = PersistentProfileLayout::open(&b.0).unwrap();
         assert_eq!(reopened_b.status().generation, Some(1));
         assert_eq!(fs::read(b.0.join(".minecraft/mods/example.jar")).unwrap(), b_bytes);
+    }
+
+    #[test]
+    fn read_committed_lineage_requires_no_lock_or_live_file_mutation() {
+        let root = TestRoot::new("read-committed-lineage");
+        assert!(read_committed_branch(&root.0).unwrap().is_none());
+        assert!(!root.0.join(CONTROL_DIR).exists());
+        fs::write(root.0.join(".minecraft/mods/local.jar"), b"user-data").unwrap();
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let lineage = ProfileLineage::from_global(crate::profile_branch::GlobalRevisionPin::new("root", "r1", "a".repeat(64)).unwrap()).unwrap();
+        layout.configure_branch_lineage(lineage.clone()).unwrap();
+        // Keep the layout lock held: catalog lookup must be independently read-only.
+        let manifest_before = fs::read(layout.manifest_path()).unwrap();
+        assert_eq!(read_committed_branch(&root.0).unwrap().unwrap().lineage, lineage);
+        assert_eq!(fs::read(layout.manifest_path()).unwrap(), manifest_before);
+        assert_eq!(fs::read(root.0.join(".minecraft/mods/local.jar")).unwrap(), b"user-data");
     }
 
     #[test]

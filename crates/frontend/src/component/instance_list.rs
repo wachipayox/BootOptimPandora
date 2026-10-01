@@ -111,14 +111,22 @@ impl InstanceList {
             .border_color(theme.border)
             .rounded(theme.radius_lg)
             .when_some(item.save_group_id, |this, group_id| {
+                let id = item.id;
+                let backend = self.data.backend_handle.clone();
                 this.child(
                     div()
+                        .id(("instance-save-group", index))
                         .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_2()
-                        .rounded_sm()
-                        .bg(group_indicator_color(group_id)),
+                        .top(px(8.0))
+                        .right(px(8.0))
+                        .size(px(12.0))
+                        .rounded(px(3.0))
+                        .cursor_pointer()
+                        .bg(group_indicator_color(group_id))
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            crate::modals::save_groups::open_save_groups(id, backend.clone(), window, cx);
+                        }),
                 )
             })
             .child(
@@ -126,7 +134,7 @@ impl InstanceList {
                     .w_full()
                     .gap_2()
                     .child(icon)
-                    .child(v_flex().truncate().w_full().child(item.name.clone()).child(loader_and_version)),
+                    .child(v_flex().truncate().w_full().pr_5().child(item.name.clone()).child(loader_and_version)),
             )
             .child(h_flex().gap_2().child(play_button.flex_1().small()).child(
                 Button::new(("view", index)).flex_1().small().info().label(t::instance::view()).on_click({

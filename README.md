@@ -50,6 +50,14 @@ Unlikely, for a few reasons:
 ![Instance Page](https://raw.githubusercontent.com/Moulberry/PandoraLauncher/refs/heads/master/screenshots/instance.png)
 
 ## Private launcher interaction (2026-10-01)
+Global profiles are grouped by ancestry in the carousel. Root cards open an
+expandable family tree with description previews. New direct global-profile
+instances share worlds with installed ancestors/descendants automatically; when
+several existing groups are available, the user chooses one before installation.
+The group marker at the top-right of an instance card opens group management,
+which supports renaming without moving worlds. See
+[profile families and save groups](docs/features/profile-families-save-groups.md).
+
 Repair game files is an instance Settings action. Duplicate and Create derived
 instance have separate controls. Derived instances reuse an existing managed
 save-group link; when the parent is ungrouped, creation asks whether to create a

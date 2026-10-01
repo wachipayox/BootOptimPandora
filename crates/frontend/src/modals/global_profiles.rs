@@ -1,242 +1,420 @@
 use bridge::{
     handle::BackendHandle,
-    message::{GlobalProfileSummary, MessageToBackend},
+    instance::InstanceID,
+    message::{GlobalProfileSaveGroupTarget, GlobalProfileSummary, MessageToBackend},
     modal_action::ModalAction,
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, StyledExt, WindowExt,
+    ActiveTheme, Disableable, Selectable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     dialog::Dialog,
     h_flex,
     input::{Input, InputState},
+    tooltip::Tooltip,
     v_flex,
 };
+use std::collections::BTreeSet;
 
-struct GlobalProfilesModal {
-    backend_handle: BackendHandle,
-    name_input: Entity<InputState>,
-    profiles: Option<Result<Vec<GlobalProfileSummary>, String>>,
-    _load_task: Option<Task<()>>,
+pub fn family_roots(profiles: &[GlobalProfileSummary]) -> Vec<GlobalProfileSummary> {
+    let parents = profiles
+        .iter()
+        .map(|p| (p.profile_id.clone(), p.parent_profile_id.clone()))
+        .collect::<bridge::profile_family::Parents>();
+    let roots = parents
+        .keys()
+        .map(|id| bridge::profile_family::root_id(id, &parents))
+        .collect::<BTreeSet<_>>();
+    profiles.iter().filter(|p| roots.contains(&p.profile_id)).cloned().collect()
 }
 
-impl GlobalProfilesModal {
-    fn render(&mut self, modal: Dialog, window: &mut Window, cx: &mut Context<Self>) -> Dialog {
-        let body = match &self.profiles {
-            None => v_flex()
-                .gap_3()
-                .child("Connecting to the private Distribution service…")
-                .into_any_element(),
-            Some(Err(error)) => v_flex()
-                .gap_3()
-                .child("Unable to load global profiles")
-                .child(div().text_sm().child(error.clone()))
-                .into_any_element(),
-            Some(Ok(profiles)) if profiles.is_empty() => {
-                v_flex().gap_3().child("No global profiles have been published yet.").into_any_element()
-            },
-            Some(Ok(profiles)) => {
-                let name = self.name_input.read(cx).value().to_string();
-                let rows = profiles
-                    .iter()
-                    .cloned()
-                    .map(|profile| {
-                        let profile_id = profile.profile_id.clone();
-                        let (revision_id, sequence, digest) = match (
-                            profile.stable_revision_id.as_ref(),
-                            profile.stable_sequence,
-                            profile.stable_manifest_sha256.as_ref(),
-                        ) {
-                            (Some(id), Some(sequence), Some(digest)) => (id.clone(), sequence, digest.clone()),
-                            _ => (
-                                profile.latest_revision_id.clone(),
-                                profile.latest_sequence,
-                                profile.latest_manifest_sha256.clone(),
-                            ),
-                        };
-                        let display_name = if name.trim().is_empty() {
-                            profile.name.clone()
-                        } else {
-                            name.clone()
-                        };
-                        let valid_name = crate::is_valid_instance_name(display_name.trim());
-                        let title = profile.name.clone();
-                        let id_label = profile_id.clone();
-                        let backend = self.backend_handle.clone();
-                        h_flex()
-                            .w_full()
-                            .gap_3()
-                            .justify_between()
-                            .items_center()
-                            .p_3()
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .rounded_md()
-                            .child(
-                                v_flex()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .gap_1()
-                                    .child(div().truncate().font_semibold().child(title))
-                                    .child(div().text_sm().child(profile.description.clone()))
-                                    .child(div().text_sm().child(format!("Minecraft {} · NeoForge {}", profile.minecraft, profile.neoforge)))
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .text_xs()
-                                            .child(format!("{} · revision {} · {}", id_label, sequence, &revision_id)),
-                                    ),
-                            )
-                            .child(
-                                Button::new(format!("create-global-{}", profile.profile_id))
-                                    .success()
-                                    .label("Create instance")
-                                    .disabled(!valid_name)
-                                    .on_click(cx.listener(move |_, _, window, cx| {
-                                        let modal_action = ModalAction::default();
-                                        crate::modals::generic::show_modal(
-                                            window,
-                                            cx,
-                                            "Preparing modpack download…".into(),
-                                            "Global profile installation failed".into(),
-                                            modal_action.clone(),
-                                        );
-                                        backend.send(MessageToBackend::CreateGlobalProfileInstance {
-                                            name: display_name.clone(),
-                                            profile_id: profile.profile_id.clone(),
-                                            revision_id: revision_id.clone(),
-                                            sequence,
-                                            manifest_sha256: digest.clone(),
-                                            modal_action,
-                                        });
-                                        window.close_dialog(cx);
-                                    })),
-                            )
-                    })
-                    .collect::<Vec<_>>();
-                v_flex()
-                    .gap_3()
-                    .child("Name for the new instance")
-                    .child(Input::new(&self.name_input))
-                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(
-                        "Leave blank to use the global profile name. Choose a different name if you already have an instance with that name.",
-                    ))
-                    .children(rows)
-                    .into_any_element()
-            },
-        };
-
-        modal.title("Global profiles").width(px(720.0)).child(body).footer(
-            h_flex().w_full().justify_end().child(
-                Button::new("close-global-profiles")
-                    .label("Close")
-                    .on_click(|_, window, cx| window.close_dialog(cx)),
-            ),
-        )
+fn profile_icon(profile: &GlobalProfileSummary, size: f32) -> AnyElement {
+    match &profile.icon_path {
+        Some(path) => img(path.clone()).size(px(size)).flex_shrink_0().rounded_md().into_any_element(),
+        None => img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))
+            .size(px(size))
+            .flex_shrink_0()
+            .rounded_md()
+            .into_any_element(),
     }
 }
 
-pub fn open_global_profiles(backend_handle: BackendHandle, window: &mut Window, cx: &mut App) {
-    let state = cx.new(|cx| GlobalProfilesModal {
-        backend_handle: backend_handle.clone(),
-        name_input: cx.new(|cx| InputState::new(window, cx).placeholder("Optional instance name")),
-        profiles: None,
-        _load_task: None,
-    });
-    let (send, receive) = tokio::sync::oneshot::channel();
-    backend_handle.send(MessageToBackend::GetGlobalProfiles { channel: send });
-    let task_state = state.clone();
-    let task = cx.spawn(async move |cx| {
-        let result = receive
-            .await
-            .unwrap_or_else(|_| Err("The launcher backend stopped before the request completed".into()));
-        _ = cx.update_entity(&task_state, |modal, cx| {
-            modal.profiles = Some(result);
-            cx.notify();
-        });
-    });
-    state.update(cx, |modal, _| modal._load_task = Some(task));
+struct ProfileFamilyModal {
+    profiles: Vec<GlobalProfileSummary>,
+    root: String,
+    expanded: BTreeSet<String>,
+    backend: BackendHandle,
+}
 
-    window.open_dialog(cx, move |modal, window, cx| {
-        cx.update_entity(&state, |state, cx| state.render(modal, window, cx))
+impl ProfileFamilyModal {
+    fn visible_rows(
+        &self,
+        id: &str,
+        depth: usize,
+        seen: &mut BTreeSet<String>,
+        rows: &mut Vec<(GlobalProfileSummary, usize)>,
+    ) {
+        if !seen.insert(id.to_owned()) {
+            return;
+        }
+        let Some(profile) = self.profiles.iter().find(|p| p.profile_id == id) else {
+            return;
+        };
+        rows.push((profile.clone(), depth));
+        if self.expanded.contains(id) {
+            let mut children = self
+                .profiles
+                .iter()
+                .filter(|p| p.parent_profile_id.as_deref() == Some(id))
+                .collect::<Vec<_>>();
+            children.sort_by_key(|p| p.name.to_lowercase());
+            for child in children {
+                self.visible_rows(&child.profile_id, depth + 1, seen, rows);
+            }
+        }
+    }
+
+    fn render(&mut self, dialog: Dialog, window: &mut Window, cx: &mut Context<Self>) -> Dialog {
+        let mut rows = Vec::new();
+        self.visible_rows(&self.root, 0, &mut BTreeSet::new(), &mut rows);
+        let rows = rows
+            .into_iter()
+            .map(|(profile, depth)| {
+                let id = profile.profile_id.clone();
+                let has_children = self.profiles.iter().any(|p| p.parent_profile_id.as_deref() == Some(&id));
+                let expanded = self.expanded.contains(&id);
+                let tooltip_profile = profile.clone();
+                let backend = self.backend.clone();
+                let mut row = h_flex().w_full().items_center().gap_2().pl(px(depth as f32 * 24.0));
+                if depth > 0 {
+                    row = row.child(
+                        div()
+                            .w(px(16.0))
+                            .h(px(20.0))
+                            .flex_shrink_0()
+                            .border_l_1()
+                            .border_b_1()
+                            .border_color(cx.theme().border),
+                    );
+                }
+                row.child(
+                    Button::new(format!("expand-{id}"))
+                        .label(if has_children {
+                            if expanded { "▾" } else { "▸" }
+                        } else {
+                            "·"
+                        })
+                        .disabled(!has_children)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !this.expanded.remove(&id) {
+                                this.expanded.insert(id.clone());
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    h_flex()
+                        .id(format!("choose-profile-{}", profile.profile_id))
+                        .flex_1()
+                        .min_w_0()
+                        .gap_3()
+                        .p_2()
+                        .items_center()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(cx.theme().secondary))
+                        .child(profile_icon(&profile, 36.0))
+                        .child(div().font_semibold().truncate().child(profile.name.clone()))
+                        .tooltip(move |window, cx| {
+                            let p = tooltip_profile.clone();
+                            Tooltip::element(move |_, _| {
+                                v_flex()
+                                    .w(px(380.0))
+                                    .p_3()
+                                    .gap_3()
+                                    .child(
+                                        h_flex()
+                                            .gap_3()
+                                            .items_center()
+                                            .child(profile_icon(&p, 56.0))
+                                            .child(div().font_semibold().child(p.name.clone())),
+                                    )
+                                    .child(div().text_base().child(if p.description.is_empty() {
+                                        "No description available".to_owned()
+                                    } else {
+                                        p.description.clone()
+                                    }))
+                            })
+                            .build(window, cx)
+                        })
+                        .on_click(move |_, window, cx| {
+                            window.close_dialog(cx);
+                            open_global_profile_details(profile.clone(), backend.clone(), window, cx);
+                        }),
+                )
+            })
+            .collect::<Vec<_>>();
+        dialog
+            .title("Choose a global profile")
+            .width(px((window.viewport_size().width.as_f32() - 48.0).min(760.0)))
+            .child(
+                v_flex()
+                    .gap_3()
+                    .child("Expand branches to browse derived profiles. Hover over a profile to read its description.")
+                    .child(
+                        v_flex()
+                            .id("profile-family-tree")
+                            .gap_1()
+                            .max_h(px((window.viewport_size().height.as_f32() - 220.0).clamp(180.0, 480.0)))
+                            .overflow_y_scroll()
+                            .children(rows),
+                    ),
+            )
+            .footer(
+                h_flex().w_full().justify_end().child(
+                    Button::new("close-profile-family")
+                        .label("Close")
+                        .on_click(|_, window, cx| window.close_dialog(cx)),
+                ),
+            )
+    }
+}
+
+pub fn open_global_profile_family(
+    root: String,
+    profiles: Vec<GlobalProfileSummary>,
+    backend: BackendHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let state = cx.new(|_| ProfileFamilyModal {
+        expanded: BTreeSet::from([root.clone()]),
+        root,
+        profiles,
+        backend,
+    });
+    window.open_dialog(cx, move |dialog, window, cx| {
+        cx.update_entity(&state, |state, cx| state.render(dialog, window, cx))
     });
 }
 
-pub fn open_global_profile_details(profile: GlobalProfileSummary, backend_handle: BackendHandle, window: &mut Window, cx: &mut App) {
-    let input = cx.new(|cx| InputState::new(window, cx).placeholder(profile.name.clone()));
-    window.open_dialog(cx, move |dialog, _, _| {
-        let name_input = input.clone();
-        let create_profile = profile.clone();
-        let backend = backend_handle.clone();
-        let enter_name_input = input.clone();
-        let enter_profile = profile.clone();
-        let enter_backend = backend_handle.clone();
-        let dialog = dialog.on_ok(move |_, window, cx| {
-            let name = enter_name_input.read(cx).value();
-            let name = if name.trim().is_empty() { enter_profile.name.clone() } else { name.trim().to_owned() };
-            if !crate::is_valid_instance_name(&name) { return false; }
-            let (revision_id, sequence, manifest_sha256) = match (
-                &enter_profile.stable_revision_id,
-                enter_profile.stable_sequence,
-                &enter_profile.stable_manifest_sha256,
-            ) {
-                (Some(id), Some(sequence), Some(digest)) => (id.clone(), sequence, digest.clone()),
-                _ => (
-                    enter_profile.latest_revision_id.clone(),
-                    enter_profile.latest_sequence,
-                    enter_profile.latest_manifest_sha256.clone(),
-                ),
-            };
-            let modal_action = ModalAction::default();
-            crate::modals::generic::show_modal(
-                window,
-                cx,
-                "Preparing modpack download…".into(),
-                "Global profile installation failed".into(),
-                modal_action.clone(),
-            );
-            enter_backend.send(MessageToBackend::CreateGlobalProfileInstance {
-                name,
-                profile_id: enter_profile.profile_id.clone(),
-                revision_id,
-                sequence,
-                manifest_sha256,
-                modal_action,
-            });
-            true
+pub fn open_global_profiles(backend: BackendHandle, window: &mut Window, cx: &mut App) {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    backend.send(MessageToBackend::GetGlobalProfiles { channel: send });
+    let handle = window.window_handle();
+    cx.spawn(async move |cx| {
+        let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
+        _ = cx.update_window(handle, |_, window, cx| match result {
+            Ok(profiles) => {
+                let roots = family_roots(&profiles);
+                window.open_dialog(cx, move |dialog, _, _| {
+                    dialog.title("Global profile families").width(px(680.0)).child(v_flex().gap_2().children(
+                        roots.iter().map(|root| {
+                            let profiles = profiles.clone();
+                            let root_id = root.profile_id.clone();
+                            let backend = backend.clone();
+                            Button::new(root_id.clone()).label(root.name.clone()).on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                open_global_profile_family(
+                                    root_id.clone(),
+                                    profiles.clone(),
+                                    backend.clone(),
+                                    window,
+                                    cx,
+                                );
+                            })
+                        }),
+                    ))
+                });
+            },
+            Err(error) => {
+                window.open_dialog(cx, move |dialog, _, _| dialog.title("Unable to load profiles").child(error.clone()))
+            },
         });
-        let icon = match &profile.icon_path {
-            Some(path) => gpui::img(path.clone()).size_24().rounded_lg().into_any_element(),
-            None => gpui::img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into()))).size_24().into_any_element(),
+    })
+    .detach();
+}
+
+struct ProfileDetailsModal {
+    profile: GlobalProfileSummary,
+    backend: BackendHandle,
+    name: Entity<InputState>,
+    targets: Option<Result<Vec<GlobalProfileSaveGroupTarget>, String>>,
+    selected_group: Option<InstanceID>,
+    submitted: bool,
+}
+
+impl ProfileDetailsModal {
+    fn load_groups(&mut self, cx: &mut Context<Self>) {
+        self.targets = None;
+        let (send, receive) = tokio::sync::oneshot::channel();
+        self.backend.send(MessageToBackend::GetGlobalProfileSaveGroupTargets {
+            profile_id: self.profile.profile_id.clone(),
+            channel: send,
+        });
+        cx.spawn(async move |entity, cx| {
+            let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
+            _ = entity.update(cx, |this, cx| {
+                this.targets = Some(result);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+    fn can_submit(&self, cx: &App) -> bool {
+        !self.submitted
+            && crate::is_valid_instance_name(self.instance_name(cx).trim())
+            && self.targets.as_ref().is_some_and(|result| {
+                result.as_ref().is_ok_and(|targets| targets.len() <= 1 || self.selected_group.is_some())
+            })
+    }
+    fn instance_name(&self, cx: &App) -> String {
+        let name = self.name.read(cx).value();
+        if name.trim().is_empty() {
+            self.profile.name.clone()
+        } else {
+            name.trim().to_owned()
+        }
+    }
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_submit(cx) {
+            return;
+        }
+        let name = self.instance_name(cx);
+        self.submitted = true;
+        let targets = self.targets.as_ref().and_then(|r| r.as_ref().ok()).unwrap();
+        let save_group_target = if targets.len() == 1 {
+            Some(targets[0].clone())
+        } else {
+            targets.iter().find(|target| Some(target.anchor_id) == self.selected_group).cloned()
         };
-        dialog.title(profile.name.clone()).width(px(760.0))
-            .child(v_flex().gap_5()
-                .child(h_flex().gap_4().items_center().child(icon).child(v_flex().gap_2()
-                    .child(format!("Minecraft {}", profile.minecraft))
-                    .child(format!("NeoForge {}", profile.neoforge))
-                    .child(format!("Version {}", profile.stable_sequence.unwrap_or(profile.latest_sequence)))))
-                .child(div().child(if profile.description.is_empty() { "No description available".to_owned() } else { profile.description.clone() }))
-                .child(crate::labelled("Instance name", Input::new(&input))))
-            .footer(h_flex().gap_3().w_full().justify_end()
-                .child(Button::new("close").label("Close").on_click(|_, window, cx| window.close_dialog(cx)))
-                .child(Button::new("create-global").success().label("Create instance").on_click(move |_, window, cx| {
-                    let name = name_input.read(cx).value();
-                    let name = if name.trim().is_empty() { create_profile.name.clone() } else { name.trim().to_owned() };
-                    if !crate::is_valid_instance_name(&name) { return; }
-                    let (revision_id, sequence, manifest_sha256) = match (&create_profile.stable_revision_id, create_profile.stable_sequence, &create_profile.stable_manifest_sha256) {
-                        (Some(id), Some(sequence), Some(digest)) => (id.clone(), sequence, digest.clone()),
-                        _ => (create_profile.latest_revision_id.clone(), create_profile.latest_sequence, create_profile.latest_manifest_sha256.clone()),
-                    };
-                    let modal_action = ModalAction::default();
-                    crate::modals::generic::show_modal(
-                        window,
-                        cx,
-                        "Preparing modpack download…".into(),
-                        "Global profile installation failed".into(),
-                        modal_action.clone(),
-                    );
-                    backend.send(MessageToBackend::CreateGlobalProfileInstance { name, profile_id: create_profile.profile_id.clone(), revision_id, sequence, manifest_sha256, modal_action });
-                    window.close_dialog(cx);
-                })))
+        let p = &self.profile;
+        let (revision_id, sequence, manifest_sha256) =
+            match (&p.stable_revision_id, p.stable_sequence, &p.stable_manifest_sha256) {
+                (Some(id), Some(seq), Some(digest)) => (id.clone(), seq, digest.clone()),
+                _ => (p.latest_revision_id.clone(), p.latest_sequence, p.latest_manifest_sha256.clone()),
+            };
+        let modal_action = ModalAction::default();
+        window.close_dialog(cx);
+        crate::modals::generic::show_modal(
+            window,
+            cx,
+            "Preparing modpack download…".into(),
+            "Global profile installation failed".into(),
+            modal_action.clone(),
+        );
+        self.backend.send(MessageToBackend::CreateGlobalProfileInstance {
+            name,
+            profile_id: p.profile_id.clone(),
+            revision_id,
+            sequence,
+            manifest_sha256,
+            modal_action,
+            save_group_target,
+        });
+    }
+    fn render(&mut self, dialog: Dialog, window: &mut Window, cx: &mut Context<Self>) -> Dialog {
+        let p = &self.profile;
+        let mut body = v_flex()
+            .id("profile-details-body")
+            .max_h(px((window.viewport_size().height.as_f32() - 220.0).clamp(180.0, 520.0)))
+            .overflow_y_scroll()
+            .gap_4()
+            .child(
+                h_flex().gap_4().items_center().child(profile_icon(p, 80.0)).child(
+                    v_flex()
+                        .gap_2()
+                        .child(format!("Minecraft {} · NeoForge {}", p.minecraft, p.neoforge))
+                        .child(format!("Version {}", p.stable_sequence.unwrap_or(p.latest_sequence))),
+                ),
+            )
+            .child(div().child(if p.description.is_empty() {
+                "No description available".to_owned()
+            } else {
+                p.description.clone()
+            }))
+            .child(crate::labelled("Instance name", Input::new(&self.name)));
+        body = body.child(match &self.targets {
+            None => div().text_sm().child("Checking related instances’ save groups…").into_any_element(),
+            Some(Err(error)) => v_flex()
+                .gap_2()
+                .child(div().text_color(cx.theme().danger).child(error.clone()))
+                .child(
+                    Button::new("retry-profile-groups")
+                        .label("Retry")
+                        .on_click(cx.listener(|this, _, _, cx| this.load_groups(cx))),
+                )
+                .into_any_element(),
+            Some(Ok(targets)) if targets.len() > 1 => v_flex()
+                .gap_2()
+                .child("Related instances use different save groups. Choose which worlds to share:")
+                .children(targets.iter().map(|target| {
+                    let id = target.anchor_id;
+                    Button::new(format!("select-family-group-{id:?}"))
+                        .label(target.name.clone())
+                        .selected(self.selected_group == Some(id))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.selected_group = Some(id);
+                            cx.notify();
+                        }))
+                }))
+                .into_any_element(),
+            Some(Ok(targets)) => div()
+                .text_sm()
+                .child(
+                    targets
+                        .first()
+                        .map(|target| format!("Shared worlds: {}", target.name))
+                        .unwrap_or_else(|| "This instance will start with its own saves folder.".into()),
+                )
+                .into_any_element(),
+        });
+        let state = cx.entity();
+        dialog
+            .title(p.name.clone())
+            .width(px((window.viewport_size().width.as_f32() - 48.0).min(760.0)))
+            .on_ok(move |_, window, cx| {
+                state.update(cx, |this, cx| this.submit(window, cx));
+                false
+            })
+            .child(body)
+            .footer(
+                h_flex()
+                    .gap_3()
+                    .w_full()
+                    .justify_end()
+                    .child(
+                        Button::new("close-profile-details")
+                            .label("Close")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("create-global-instance")
+                            .success()
+                            .label("Create instance")
+                            .disabled(!self.can_submit(cx))
+                            .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
+                    ),
+            )
+    }
+}
+
+pub fn open_global_profile_details(
+    profile: GlobalProfileSummary,
+    backend: BackendHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let state = cx.new(|cx| ProfileDetailsModal {
+        name: cx.new(|cx| InputState::new(window, cx).placeholder(profile.name.clone())),
+        profile,
+        backend,
+        targets: None,
+        selected_group: None,
+        submitted: false,
+    });
+    state.update(cx, |this, cx| this.load_groups(cx));
+    window.open_dialog(cx, move |dialog, window, cx| {
+        cx.update_entity(&state, |state, cx| state.render(dialog, window, cx))
     });
 }

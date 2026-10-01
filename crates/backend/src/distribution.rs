@@ -1371,6 +1371,7 @@ impl crate::BackendState {
         revision: &RevisionRef,
         modal_action: &ModalAction,
         progress: &ProgressTracker,
+        save_group_target: Option<bridge::message::GlobalProfileSaveGroupTarget>,
     ) -> Result<(), String> {
         progress.set_title("Preparing modpack assets".into());
         progress.set_count(0);
@@ -1474,7 +1475,12 @@ impl crate::BackendState {
         if !published {
             return Err("Global profile installation lost its game-files publication guard".into());
         }
-        progress.set_count(1);
+        if let Some(target) = save_group_target {
+            progress.set_title("Connecting shared worlds".into());
+            if let Err(error) = self.attach_global_profile_save_group(id, profile_id, &target).await {
+                self.send.send_warning(format!("Instance created, but automatic save grouping failed: {error}. Use Manage save group to retry."));
+            }
+        }
         Ok(())
     }
 
@@ -1770,6 +1776,74 @@ pub fn profile_names_by_id(profiles: &[GlobalProfileSummary]) -> BTreeMap<String
 }
 
 impl crate::BackendState {
+    pub async fn global_profile_save_group_targets(
+        &self,
+        profile_id: &str,
+    ) -> Result<Vec<bridge::message::GlobalProfileSaveGroupTarget>, String> {
+        let catalog = self.load_global_catalog().await?;
+        let parents = catalog.iter().map(|p| (p.profile_id.clone(), p.parent_profile_id.clone()))
+            .collect::<bridge::profile_family::Parents>();
+        if !parents.contains_key(profile_id) { return Err("Global profile is no longer published".into()); }
+        let instances = self.instance_state.read().instances.iter()
+            .map(|instance| (instance.id, instance.name.to_string(), instance.root_path.to_path_buf())).collect::<Vec<_>>();
+        let mut targets = BTreeMap::new();
+        for (id, name, root) in instances {
+            let branch = match crate::profile_layout_flow::read_committed_branch(&root) {
+                Ok(Some(branch)) => branch,
+                Ok(None) => continue,
+                Err(error) => { log::warn!("Ignoring unavailable lineage at {root:?} during family lookup: {error}"); continue; },
+            };
+            let Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin }) = branch.lineage.parent.as_ref() else { continue; };
+            if !bridge::profile_family::related(profile_id, &pin.profile_id, &parents) { continue; }
+            let groups = self.list_save_groups(id)?;
+            let selected = groups.iter().find(|group| group.selected);
+            let group_id = selected.map(|group| group.id);
+            targets.entry(group_id).or_insert(bridge::message::GlobalProfileSaveGroupTarget {
+                anchor_id: id,
+                group_id,
+                name: selected.map(|group| group.name.clone()).unwrap_or_else(|| format!("Create shared group with {name}")),
+            });
+        }
+        // Prefer an existing group; an ungrouped relative need not introduce an extra choice.
+        if targets.keys().any(Option::is_some) { targets.remove(&None); }
+        Ok(targets.into_values().collect())
+    }
+
+    async fn attach_global_profile_save_group(
+        self: &Arc<Self>,
+        id: bridge::instance::InstanceID,
+        profile_id: &str,
+        chosen: &bridge::message::GlobalProfileSaveGroupTarget,
+    ) -> Result<(), String> {
+        let targets = self.global_profile_save_group_targets(profile_id).await?;
+        let target = targets.iter().find(|target| match chosen.group_id {
+            Some(group_id) => target.group_id == Some(group_id),
+            None => target.anchor_id == chosen.anchor_id && target.group_id.is_none(),
+        })
+            .ok_or("The selected related instance or group changed during installation")?;
+        let anchor = target.anchor_id;
+        let mut created = false;
+        let group_id = match target.group_id {
+            Some(group_id) => group_id,
+            None => {
+                let name = self.instance_state.read().instances.get(anchor).ok_or("Related instance no longer exists")?.name.to_string();
+                self.create_save_group(anchor, format!("Worlds of {name}").chars().take(80).collect())?;
+                created = true;
+                self.list_save_groups(anchor)?.into_iter().find(|group| group.selected)
+                    .ok_or("New shared group could not be found")?.id
+            },
+        };
+        let result = self.join_save_group(id, group_id);
+        if result.is_err() && created {
+            if let Err(error) = self.leave_save_group(anchor) {
+                self.send.send_warning(format!("Shared worlds remain in their group after grouping failed: {error}"));
+            }
+        }
+        crate::backend_handler::refresh_instance_saves(self, anchor, true);
+        crate::backend_handler::refresh_instance_saves(self, id, true);
+        result
+    }
+
     pub async fn load_global_catalog(&self) -> Result<Vec<bridge::message::GlobalProfileSummary>, String> {
         let config = self.config.lock().get().distribution.clone();
         let client = DistributionClient::new(&config).map_err(|e| e.to_string())?;
@@ -1786,6 +1860,7 @@ impl crate::BackendState {
                 Some(client.fetch_verified_icon(icon, &self.directories.root_launcher_dir.join("distribution-objects")).await.map_err(|e| e.to_string())?)
             } else { None };
             summaries.push(bridge::message::GlobalProfileSummary {
+                parent_profile_id: verified.manifest.base.as_ref().map(|base| base.profile_id.clone()),
                 profile_id: profile.profile_id.clone(), name: presentation.map(|p| p.name.clone()).unwrap_or_else(|| metadata.name.clone()),
                 description: presentation.map(|p| p.description.clone()).unwrap_or_else(|| if metadata.description.is_empty() { verified.manifest.revision.release_notes.clone().unwrap_or_default() } else { metadata.description.clone() }),
                 minecraft: verified.manifest.game.minecraft.clone(), neoforge: verified.manifest.game.neoforge.clone(), icon_path,

@@ -146,6 +146,9 @@ impl BackendState {
             MessageToBackend::GetSaveGroups { id, channel } => {
                 let _ = channel.send(crate::BackendState::list_save_groups(self, id));
             },
+            MessageToBackend::RenameSaveGroup { group_id, name, channel } => {
+                let _ = channel.send(self.rename_save_group(group_id, name));
+            },
             MessageToBackend::CreateSaveGroup { id, name, channel } => {
                 let result = crate::BackendState::create_save_group(self, id, name);
                 refresh_instance_saves(self, id, result.is_ok());
@@ -1649,6 +1652,7 @@ impl BackendState {
                 }
             },
             MessageToBackend::CreateGlobalProfileInstance {
+                save_group_target,
                 name,
                 profile_id,
                 revision_id,
@@ -1665,7 +1669,7 @@ impl BackendState {
                         sequence,
                         manifest_sha256,
                     };
-                    match backend.create_global_profile_instance(&name, &profile_id, &revision, &modal_action, &progress).await {
+                    match backend.create_global_profile_instance(&name, &profile_id, &revision, &modal_action, &progress, save_group_target).await {
                         Ok(()) => {
                             progress.set_title("Finishing modpack installation".into());
                             progress.set_finished(ProgressTrackerFinishType::Normal);
@@ -1677,6 +1681,12 @@ impl BackendState {
                             modal_action.set_finished_with_error(error.into());
                         },
                     }
+                });
+            },
+            MessageToBackend::GetGlobalProfileSaveGroupTargets { profile_id, channel } => {
+                let backend = self.clone();
+                tokio::spawn(async move {
+                    let _ = channel.send(backend.global_profile_save_group_targets(&profile_id).await);
                 });
             },
             MessageToBackend::UpdateGlobalProfileInstance { id } => {
@@ -2931,7 +2941,7 @@ impl BackendState {
     }
 }
 
-fn refresh_instance_saves(state: &Arc<BackendState>, id: InstanceID, changed: bool) {
+pub(crate) fn refresh_instance_saves(state: &Arc<BackendState>, id: InstanceID, changed: bool) {
     if !changed {
         return;
     }

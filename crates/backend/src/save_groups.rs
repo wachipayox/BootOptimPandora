@@ -327,6 +327,10 @@ fn join_contents(source: &Path, target: &Path, instance_name: &str) -> Result<()
 }
 
 impl BackendState {
+    pub fn rename_save_group(&self, group_id: Uuid, name: String) -> Result<(), String> {
+        rename_group_record(&self.directories.save_groups_dir, group_id, &name)
+    }
+
     pub fn list_save_groups(&self, id: InstanceID) -> Result<Vec<SaveGroupSummary>, String> {
         let saves = self
             .instance_state
@@ -362,7 +366,7 @@ impl BackendState {
 
     pub fn create_save_group(&self, id: InstanceID, name: String) -> Result<(), String> {
         let name = name.trim();
-        if name.is_empty() || name.len() > 80 {
+        if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
             return Err("Group name must contain 1 to 80 characters".into());
         }
         let (saves, _) = instance_paths(self, id)?;
@@ -425,7 +429,11 @@ impl BackendState {
             .find(|(record, _)| record.id == group_id)
             .ok_or("Save group not found")?;
         let _ = record;
-        current_members(self, &root, None)?; // membership changes must not move worlds while another member is playing
+        // An empty/new instance only links to the existing directory. Moving worlds
+        // still requires stopped members; merely linking does not touch shared worlds.
+        if saves.exists() && fs::read_dir(&saves).map_err(|e| e.to_string())?.next().is_some() {
+            current_members(self, &root, None)?;
+        }
         let target = group_saves(&root);
         fs::create_dir_all(&target).map_err(|e| e.to_string())?;
         let existed = saves.exists();
@@ -477,5 +485,41 @@ fn remove_dir_if_empty(path: &Path) -> Result<(), String> {
     match fs::remove_dir(path) {
         Ok(()) => Ok(()),
         Err(error) => Err(format!("Unable to replace local saves folder: {error}")),
+    }
+}
+
+fn rename_group_record(base: &Path, group_id: Uuid, name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
+        return Err("Group name must contain 1 to 80 characters".into());
+    }
+    let (mut record, root) = load_records(base)?.into_iter()
+        .find(|(record, _)| record.id == group_id).ok_or("Save group not found")?;
+    record.name = name.to_owned();
+    let bytes = serde_json::to_vec_pretty(&record).map_err(|e| e.to_string())?;
+    crate::fs::write_safe(&record_path(&root), &bytes).map_err(|e| format!("Unable to rename save group: {e}"))
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+    #[test]
+    fn rename_preserves_identity_storage_and_worlds_and_rejects_invalid_names() {
+        let base = std::env::temp_dir().join(format!("save-group-rename-{}", Uuid::new_v4()));
+        let id = Uuid::new_v4();
+        let root = base.join(id.to_string());
+        fs::create_dir_all(group_saves(&root).join("world")).unwrap();
+        fs::write(group_saves(&root).join("world/level.dat"), b"unchanged-world").unwrap();
+        fs::write(record_path(&root), serde_json::to_vec(&SaveGroupRecord { id, name: "Old".into() }).unwrap()).unwrap();
+        rename_group_record(&base, id, "  New group  ").unwrap();
+        let record = &load_records(&base).unwrap()[0].0;
+        assert_eq!(record.id, id);
+        assert_eq!(record.name, "New group");
+        assert_eq!(fs::read(group_saves(&root).join("world/level.dat")).unwrap(), b"unchanged-world");
+        for name in ["", " ", "bad\nname", &"x".repeat(81)] {
+            assert!(rename_group_record(&base, id, name).is_err());
+        }
+        assert_eq!(load_records(&base).unwrap()[0].0.name, "New group");
+        fs::remove_dir_all(base).unwrap();
     }
 }

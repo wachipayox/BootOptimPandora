@@ -92,6 +92,11 @@ pub enum MessageToBackend {
         id: InstanceID,
         channel: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
+    RenameSaveGroup {
+        group_id: uuid::Uuid,
+        name: String,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     RequestMetadata {
         request: MetadataRequest,
         force_reload: bool,
@@ -297,12 +302,17 @@ pub enum MessageToBackend {
     },
     CheckDistributionConnection,
     CreateGlobalProfileInstance {
+        save_group_target: Option<GlobalProfileSaveGroupTarget>,
         name: String,
         profile_id: String,
         revision_id: String,
         sequence: i64,
         manifest_sha256: String,
         modal_action: ModalAction,
+    },
+    GetGlobalProfileSaveGroupTargets {
+        profile_id: String,
+        channel: tokio::sync::oneshot::Sender<Result<Vec<GlobalProfileSaveGroupTarget>, String>>,
     },
     UpdateGlobalProfileInstance {
         id: InstanceID,
@@ -489,6 +499,7 @@ pub enum MessageToFrontend {
 
 #[derive(Debug, Clone)]
 pub struct GlobalProfileSummary {
+    pub parent_profile_id: Option<String>,
     pub description: String,
     pub minecraft: String,
     pub neoforge: String,
@@ -501,6 +512,13 @@ pub struct GlobalProfileSummary {
     pub stable_revision_id: Option<String>,
     pub stable_sequence: Option<i64>,
     pub stable_manifest_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GlobalProfileSaveGroupTarget {
+    pub anchor_id: InstanceID,
+    pub group_id: Option<uuid::Uuid>,
+    pub name: String,
 }
 
 #[derive(Debug, Default)]
