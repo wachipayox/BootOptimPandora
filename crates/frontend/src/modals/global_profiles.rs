@@ -158,6 +158,34 @@ pub fn open_global_profile_details(profile: GlobalProfileSummary, backend_handle
         let name_input = input.clone();
         let create_profile = profile.clone();
         let backend = backend_handle.clone();
+        let enter_name_input = input.clone();
+        let enter_profile = profile.clone();
+        let enter_backend = backend_handle.clone();
+        let dialog = dialog.on_ok(move |_, _, cx| {
+            let name = enter_name_input.read(cx).value();
+            let name = if name.trim().is_empty() { enter_profile.name.clone() } else { name.trim().to_owned() };
+            if !crate::is_valid_instance_name(&name) { return false; }
+            let (revision_id, sequence, manifest_sha256) = match (
+                &enter_profile.stable_revision_id,
+                enter_profile.stable_sequence,
+                &enter_profile.stable_manifest_sha256,
+            ) {
+                (Some(id), Some(sequence), Some(digest)) => (id.clone(), sequence, digest.clone()),
+                _ => (
+                    enter_profile.latest_revision_id.clone(),
+                    enter_profile.latest_sequence,
+                    enter_profile.latest_manifest_sha256.clone(),
+                ),
+            };
+            enter_backend.send(MessageToBackend::CreateGlobalProfileInstance {
+                name,
+                profile_id: enter_profile.profile_id.clone(),
+                revision_id,
+                sequence,
+                manifest_sha256,
+            });
+            true
+        });
         let icon = match &profile.icon_path {
             Some(path) => gpui::img(path.clone()).size_24().rounded_lg().into_any_element(),
             None => gpui::img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into()))).size_24().into_any_element(),

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBackend, modal_action::ModalAction};
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, Disableable, Sizable, WindowExt, button::Button, checkbox::Checkbox, dialog::Dialog, h_flex, input::{Input, InputState}, slider::{Slider, SliderEvent, SliderState}, v_flex};
@@ -21,6 +23,43 @@ impl DuplicateInstanceModalState {
         let name = if name.trim().is_empty() { self.default_name.to_string() } else { name.trim().to_owned() };
         let valid = crate::is_valid_instance_name(&name) && !self.instances.read(cx).entries.values().any(|i| i.read(cx).name.as_str() == name);
         let ready = !self.as_branch || matches!(self.group, Some(Ok(_)));
+        let enter_backend = self.backend.clone();
+        let enter_id = self.instance_id;
+        let enter_name = name.clone();
+        let enter_as_branch = self.as_branch;
+        let enter_create_group = self.create_group;
+        let enter_reuse_icon = self.reuse_icon;
+        let enter_hue_degrees = match self.hue.read(cx).value() {
+            gpui_component::slider::SliderValue::Single(value) => value.round() as i32 - 180,
+            gpui_component::slider::SliderValue::Range(value, _) => value.round() as i32 - 180,
+        };
+        let dialog = dialog.on_ok(move |_, window, cx| {
+            if !valid || !ready { return false; }
+            let modal_action = ModalAction::default();
+            window.close_dialog(cx);
+            generic::show_modal(
+                window,
+                cx,
+                if enter_as_branch { "Creating derived instance…".into() } else { t::instance::duplicate::progress().into() },
+                if enter_as_branch { "Unable to create derived instance".into() } else { t::instance::duplicate::error().into() },
+                modal_action.clone(),
+            );
+            if enter_as_branch {
+                enter_backend.send(MessageToBackend::CreateLocalBranch {
+                    id: enter_id,
+                    name: enter_name.as_str().into(),
+                    create_save_group: enter_create_group,
+                    reuse_parent_icon: enter_reuse_icon,
+                    icon_hue_degrees: enter_hue_degrees,
+                    modal_action,
+                });
+            } else {
+                enter_backend.send(MessageToBackend::DuplicateInstance { id: enter_id, name: enter_name.as_str().into(), modal_action });
+            }
+            // Close this dialog before opening the progress dialog; leave it to the explicit
+            // close above instead of letting the default confirmation close the new dialog.
+            false
+        });
         let mut content = v_flex().gap_3().child(crate::labelled(t::instance::name(), Input::new(&self.name)));
         if self.as_branch {
             content = content.child(match &self.group {
@@ -37,7 +76,21 @@ impl DuplicateInstanceModalState {
                 .on_click(cx.listener(|this, value, _, cx| { this.reuse_icon = *value; cx.notify(); })));
             if self.reuse_icon {
                 let hue_value = match self.hue.read(cx).value() { gpui_component::slider::SliderValue::Single(v) => v, gpui_component::slider::SliderValue::Range(v, _) => v };
+                let hue_degrees = hue_value.round() as i32 - 180;
+                let parent_icon = self.instances.read(cx).entries.get(&self.instance_id)
+                    .and_then(|instance| instance.read(cx).icon.clone());
+                let icon_preview = parent_icon.and_then(|bytes| {
+                    let image = image::load_from_memory(&bytes).ok()?.huerotate(hue_degrees);
+                    let mut encoded = std::io::Cursor::new(Vec::new());
+                    image.write_to(&mut encoded, image::ImageFormat::Png).ok()?;
+                    Some(Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, encoded.into_inner())))
+                });
+                let preview = match icon_preview {
+                    Some(image) => gpui::img(image).size_8().rounded_md().into_any_element(),
+                    None => div().size_8().rounded_md().bg(cx.theme().muted).into_any_element(),
+                };
                 let hue_row = h_flex().gap_2().items_center()
+                    .child(preview)
                     .child(Slider::new(&self.hue).flex_1())
                     .child(div().w(px(36.0)).child(format!("{}°", hue_value.round() as i32)))
                     .child(Button::new("randomize-parent-icon-hue").label("↻").small()

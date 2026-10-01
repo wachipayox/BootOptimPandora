@@ -1187,6 +1187,18 @@ impl crate::BackendState {
             .resolve_profile(profile_id, revision, &cache_root)
             .await
             .map_err(|error| error.to_string())?;
+        // The profile's presentation is unversioned and can have a newer icon than the selected
+        // immutable revision. Use the current verified catalog icon, matching the carousel.
+        let catalog = client.list_profiles().await.map_err(|error| error.to_string())?;
+        let published_profile = catalog.iter().find(|profile| profile.profile_id == profile_id)
+            .ok_or_else(|| "The selected global profile is no longer published".to_owned())?;
+        let profile_icon = match &published_profile.presentation {
+            Some(presentation) => match &presentation.icon {
+                Some(icon) => Some(client.fetch_verified_icon(icon, &cache_root).await.map_err(|error| error.to_string())?),
+                None => None,
+            },
+            None => resolved.icon_path.clone(),
+        };
         validate_game_identity(&resolved.minecraft_version, &resolved.neoforge_version)?;
 
         let (loader, loader_version) = if resolved.neoforge_version.is_empty() {
@@ -1210,7 +1222,7 @@ impl crate::BackendState {
 
         // Keep the normal file watcher path, but also load synchronously so the profile transaction
         // can acquire the new instance ID before the game-files publication guard is released.
-        if let Some(icon) = &resolved.icon_path {
+        if let Some(icon) = &profile_icon {
             crate::fs::write_safe(&root.join("icon.png"), &std::fs::read(icon).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         }
         self.load_instance_from_path(&root, false, false);
