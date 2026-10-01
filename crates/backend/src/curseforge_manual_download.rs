@@ -1,6 +1,16 @@
-use std::{path::Path, sync::{Arc, atomic::{AtomicUsize, Ordering}}};
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
-use bridge::{manual_download::{ManualCurseforgeDownload, ManualCurseforgeDownloadRequest}, message::MessageToFrontend, notify_signal::{KeepAliveNotifySignal, KeepAliveNotifySignalHandle}};
+use bridge::{
+    manual_download::{ManualCurseforgeDownload, ManualCurseforgeDownloadRequest},
+    message::MessageToFrontend,
+    notify_signal::{KeepAliveNotifySignal, KeepAliveNotifySignalHandle},
+};
 use parking_lot::RwLock;
 use rustc_hash::{FxHashMap, FxHashSet};
 use sha1::Sha1;
@@ -32,11 +42,17 @@ pub struct ManualCurseforgeDownloadSessionInner {
 #[derive(PartialEq, Eq)]
 pub enum SessionState {
     StillActive,
-    Inactive
+    Inactive,
 }
 
 impl ManualCurseforgeDownloadSession {
-    pub fn process_candidate(&self, source: &Path, metadata: std::fs::Metadata, id: usize, remove: bool) -> SessionState {
+    pub fn process_candidate(
+        &self,
+        source: &Path,
+        metadata: std::fs::Metadata,
+        id: usize,
+        remove: bool,
+    ) -> SessionState {
         if !metadata.is_file() {
             return SessionState::StillActive;
         }
@@ -217,7 +233,10 @@ impl ManualCurseforgeDownloadSession {
             }
 
             // Start watching downloads directory for changes
-            inner.file_watching.write().watch_filesystem(download_dir.clone(), WatchTarget::ManualCurseForgeDownloadDirectory { session_id: id });
+            inner.file_watching.write().watch_filesystem(
+                download_dir.clone(),
+                WatchTarget::ManualCurseForgeDownloadDirectory { session_id: id },
+            );
             inner.watching_directory = Some(download_dir.clone());
 
             // Check files already in downloads directory
@@ -263,7 +282,9 @@ impl ManualCurseforgeDownloadSessionInner {
     pub fn stop(&mut self) {
         if let Some(watch) = self.watching_directory.take() {
             let mut file_watching = self.file_watching.write();
-            if let Some(WatchTarget::ManualCurseForgeDownloadDirectory { session_id }) = file_watching.get_target(&watch) {
+            if let Some(WatchTarget::ManualCurseForgeDownloadDirectory { session_id }) =
+                file_watching.get_target(&watch)
+            {
                 if *session_id == self.id {
                     file_watching.remove(&watch);
                 }

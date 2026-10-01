@@ -98,6 +98,15 @@ applied/available lineage state in each instance's Profiles/Updates settings,
 support descendants of local parents, and let admins create global children.
 Local overlays stay on the user's machine.
 
+The launcher also has an initial local save-group implementation under
+instance Settings. Members share one managed saves directory through a
+directory link; creating, joining, and leaving groups are stopped-instance
+operations. Local profile snapshots exclude `saves`, while local branches
+inherit a group by retaining the copied link. On join collisions, the incoming
+world folder is renamed and the group copy is preserved. Runtime validation and
+crash-recovery hardening remain open before treating this feature as production
+ready.
+
 ### 4. Complete delta updates and explicit modpack repair — in progress
 
 For direct global instances, the update action resolves the selected revision

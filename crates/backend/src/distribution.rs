@@ -52,11 +52,20 @@ pub enum DistributionError {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GlobalProfileSummary {
+    #[serde(default)]
+    pub presentation: Option<ProfilePresentation>,
     pub profile_id: String,
     pub name: String,
     pub latest_revision: RevisionRef,
     #[serde(default)]
     pub channels: Vec<ChannelRef>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ProfilePresentation {
+    pub name: String,
+    pub description: String,
+    pub icon: Option<ManifestObjectRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -171,6 +180,9 @@ pub struct ManifestRevision {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestProfile {
+    #[serde(default)]
+    pub description: String,
+    pub icon: Option<ManifestObjectRef>,
     pub id: String,
     pub name: String,
     pub official: bool,
@@ -214,7 +226,7 @@ pub struct ManifestConfigPermissions {
     pub override_default_once: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestObjectRef {
     pub sha256: String,
@@ -290,6 +302,7 @@ pub struct VerifiedRevision {
 
 #[derive(Clone, Debug)]
 pub struct ResolvedGlobalProfile {
+    pub icon_path: Option<PathBuf>,
     pub pin: GlobalRevisionPin,
     pub name: String,
     pub minecraft_version: String,
@@ -535,6 +548,10 @@ impl DistributionClient {
         )
         .map_err(|error| DistributionError::InvalidResponse(error.to_string()))?;
         let target_name = target.manifest.profile.name.clone();
+        let icon_path = match &target.manifest.profile.icon {
+            Some(icon) => Some(self.fetch_verified_icon(icon, cache_root).await?),
+            None => None,
+        };
         let minecraft_version = target.manifest.game.minecraft.clone();
         let neoforge_version = target.manifest.game.neoforge.clone();
 
@@ -693,7 +710,10 @@ impl DistributionClient {
         }
 
         for ((path, _), _) in &config_settings {
-            if !files.get(path).is_some_and(|entry| entry.metadata.logical_identity.starts_with("config:")) {
+            if !files
+                .get(path)
+                .is_some_and(|entry| entry.metadata.logical_identity.starts_with("config:"))
+            {
                 return Err(DistributionError::InvalidResponse(
                     "per-setting config rule refers to a TOML config absent from the effective profile".into(),
                 ));
@@ -704,11 +724,12 @@ impl DistributionClient {
         for (_, mut entry) in files {
             let has_config_settings = config_settings.iter().any(|((path, _), _)| path == &entry.path);
             if skip_paths.contains(&entry.path)
-                || (!has_config_settings && reusable_entries.get(&entry.path).is_some_and(|existing| {
-                    existing.logical_identity == entry.metadata.logical_identity
-                        && existing.source_sha256 == entry.metadata.source_sha256
-                        && existing.policy == entry.metadata.policy
-                }))
+                || (!has_config_settings
+                    && reusable_entries.get(&entry.path).is_some_and(|existing| {
+                        existing.logical_identity == entry.metadata.logical_identity
+                            && existing.source_sha256 == entry.metadata.source_sha256
+                            && existing.policy == entry.metadata.policy
+                    }))
             {
                 entries.push(entry);
                 continue;
@@ -726,6 +747,7 @@ impl DistributionClient {
             entries.push(entry);
         }
         Ok(ResolvedGlobalProfile {
+            icon_path,
             pin: target_pin,
             name: target_name,
             minecraft_version,
@@ -733,6 +755,18 @@ impl DistributionClient {
             entries,
             config_settings: config_settings.into_values().collect(),
         })
+    }
+
+    async fn fetch_verified_icon(&self, icon: &ManifestObjectRef, cache_root: &Path) -> Result<PathBuf, DistributionError> {
+        if !valid_digest(&icon.sha256) || icon.size > 2 * 1024 * 1024 || icon.media_type != "image/png" {
+            return Err(DistributionError::InvalidResponse("invalid signed profile icon".into()));
+        }
+        let path = self.fetch_verified_object(icon, cache_root).await?;
+        let reader = image::ImageReader::open(&path)?.with_guessed_format()?;
+        if reader.format() != Some(image::ImageFormat::Png) { return Err(DistributionError::InvalidResponse("profile icon is not PNG".into())); }
+        let dimensions = reader.into_dimensions().map_err(|e| DistributionError::InvalidResponse(e.to_string()))?;
+        if dimensions.0 == 0 || dimensions.1 == 0 || dimensions.0 > 1024 || dimensions.1 > 1024 { return Err(DistributionError::InvalidResponse("profile icon exceeds 1024 × 1024 pixels".into())); }
+        Ok(path)
     }
 
     pub async fn fetch_verified_object(
@@ -902,8 +936,7 @@ fn build_http_client(config: &DistributionConfig) -> Result<Client, Distribution
 fn join_url(base_url: &Url, path: &str) -> Result<Url, DistributionError> {
     let base = format!("{}/", base_url.as_str().trim_end_matches('/'));
     let base = Url::parse(&base).map_err(|_| DistributionError::InvalidBaseUrl)?;
-    base.join(path.trim_start_matches('/'))
-        .map_err(|_| DistributionError::InvalidBaseUrl)
+    base.join(path.trim_start_matches('/')).map_err(|_| DistributionError::InvalidBaseUrl)
 }
 
 async fn decode_json_response<T: for<'de> Deserialize<'de>>(
@@ -944,10 +977,7 @@ fn valid_toml_dotted_key(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 256
         && value.split('.').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
         })
 }
 
@@ -955,7 +985,10 @@ fn valid_toml_json_value(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Null | serde_json::Value::Object(_) => false,
         serde_json::Value::Array(values) => values.iter().all(|value| {
-            matches!(value, serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_))
+            matches!(
+                value,
+                serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_)
+            )
         }),
         serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => true,
     }
@@ -967,20 +1000,28 @@ fn valid_config_setting(setting: &ManifestConfigSetting) -> bool {
     }
     let path = setting.path.to_ascii_lowercase();
     match setting.format.as_str() {
-        "toml" => path.ends_with(".toml") && valid_toml_dotted_key(&setting.key) && valid_toml_json_value(&setting.value),
+        "toml" => {
+            path.ends_with(".toml") && valid_toml_dotted_key(&setting.key) && valid_toml_json_value(&setting.value)
+        },
         "properties" => {
             path.ends_with(".properties")
                 && !setting.key.is_empty()
-                && setting.key.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+                && setting
+                    .key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
                 && setting.value.is_string()
-        }
+        },
         "text_lines" => {
             path.ends_with(".txt")
                 && setting.value.is_string()
                 && setting.key.strip_prefix("line:").is_some_and(|line| {
-                    !line.is_empty() && line.len() <= 9 && !line.starts_with('0') && line.bytes().all(|byte| byte.is_ascii_digit())
+                    !line.is_empty()
+                        && line.len() <= 9
+                        && !line.starts_with('0')
+                        && line.bytes().all(|byte| byte.is_ascii_digit())
                 })
-        }
+        },
         _ => false,
     }
 }
@@ -1105,6 +1146,8 @@ fn insert_manifest_entry(
             metadata: ProfileEntryMetadata {
                 logical_identity,
                 source_sha256: object.sha256.clone(),
+                source_size_bytes: object.size,
+                source_modified_unix_nanos: 0,
                 origin: ProfileEntryOrigin::GlobalRevision { pin: pin.clone() },
                 ownership: ProfileEntryOwnership::Inherited,
                 policy,
@@ -1158,8 +1201,18 @@ impl crate::BackendState {
             return Err("Wachiland Launcher could not create the local instance".to_owned());
         };
 
+        // A newly provisioned instance may not have been launched yet, so Pandora has not
+        // necessarily created its .minecraft directory. The profile layout reconciler applies
+        // files relative to that directory and expects it to exist before it starts its transaction.
+        std::fs::create_dir_all(root.join(".minecraft")).map_err(|error| {
+            format!("Could not prepare the .minecraft directory for the global profile instance: {error}")
+        })?;
+
         // Keep the normal file watcher path, but also load synchronously so the profile transaction
         // can acquire the new instance ID before the game-files publication guard is released.
+        if let Some(icon) = &resolved.icon_path {
+            crate::fs::write_safe(&root.join("icon.png"), &std::fs::read(icon).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        }
         self.load_instance_from_path(&root, false, false);
         if !libraries_ready {
             return Err("The instance was created but game-file provisioning failed; it remains blocked from Start. Use Repair game files, then create the global profile again.".into());
@@ -1459,4 +1512,34 @@ pub fn profile_names_by_id(profiles: &[GlobalProfileSummary]) -> BTreeMap<String
         .iter()
         .map(|profile| (profile.profile_id.clone(), profile.name.clone()))
         .collect()
+}
+
+impl crate::BackendState {
+    pub async fn load_global_catalog(&self) -> Result<Vec<bridge::message::GlobalProfileSummary>, String> {
+        let config = self.config.lock().get().distribution.clone();
+        let client = DistributionClient::new(&config).map_err(|e| e.to_string())?;
+        let profiles = client.list_profiles().await.map_err(|e| e.to_string())?;
+        let mut summaries = Vec::new();
+        for profile in profiles {
+            let stable = profile.channels.iter().find(|channel| channel.name == "stable");
+            let revision = selected_revision(&profile);
+            let verified = client.fetch_verified_revision(&profile.profile_id, revision).await.map_err(|e| e.to_string())?;
+            let metadata = &verified.manifest.profile;
+            let presentation = profile.presentation.as_ref();
+            let display_icon = presentation.map(|p| &p.icon).unwrap_or(&metadata.icon);
+            let icon_path = if let Some(icon) = display_icon {
+                Some(client.fetch_verified_icon(icon, &self.directories.root_launcher_dir.join("distribution-objects")).await.map_err(|e| e.to_string())?)
+            } else { None };
+            summaries.push(bridge::message::GlobalProfileSummary {
+                profile_id: profile.profile_id.clone(), name: presentation.map(|p| p.name.clone()).unwrap_or_else(|| metadata.name.clone()),
+                description: presentation.map(|p| p.description.clone()).unwrap_or_else(|| if metadata.description.is_empty() { verified.manifest.revision.release_notes.clone().unwrap_or_default() } else { metadata.description.clone() }),
+                minecraft: verified.manifest.game.minecraft.clone(), neoforge: verified.manifest.game.neoforge.clone(), icon_path,
+                latest_revision_id: profile.latest_revision.revision_id, latest_sequence: profile.latest_revision.sequence,
+                latest_manifest_sha256: profile.latest_revision.manifest_sha256,
+                stable_revision_id: stable.map(|c| c.revision.revision_id.clone()), stable_sequence: stable.map(|c| c.revision.sequence),
+                stable_manifest_sha256: stable.map(|c| c.revision.manifest_sha256.clone()),
+            });
+        }
+        Ok(summaries)
+    }
 }

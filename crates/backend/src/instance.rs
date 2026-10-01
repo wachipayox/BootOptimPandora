@@ -1,25 +1,47 @@
 use std::{
-    collections::HashSet, hash::{DefaultHasher, Hash, Hasher}, io::Read, path::Path, sync::Arc, time::{Instant, SystemTime, UNIX_EPOCH}
+    collections::HashSet,
+    hash::{DefaultHasher, Hash, Hasher},
+    io::Read,
+    path::Path,
+    sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Context;
 use base64::Engine;
 use bridge::{
     instance::{
-        ContentFolder, ContentSummary, ContentUpdateContext, ContentUpdateStatus, InstanceContentID, InstanceContentSummary, InstanceID, InstancePlaytime, InstanceServerSummary, InstanceStatus, InstanceWorldSummary
-    }, keep_alive::KeepAliveHandle, message::{BridgeDataLoadState, MessageToFrontend}, notify_signal::{KeepAliveNotifySignal, KeepAliveNotifySignalHandle},
+        ContentFolder, ContentSummary, ContentUpdateContext, ContentUpdateStatus, InstanceContentID,
+        InstanceContentSummary, InstanceID, InstancePlaytime, InstanceServerSummary, InstanceStatus,
+        InstanceWorldSummary,
+    },
+    keep_alive::KeepAliveHandle,
+    message::{BridgeDataLoadState, MessageToFrontend},
+    notify_signal::{KeepAliveNotifySignal, KeepAliveNotifySignalHandle},
 };
 use command::PandoraProcess;
 use futures::FutureExt;
 use rustc_hash::FxHashSet;
-use schema::{auxiliary::{AuxDisabledChildren, AuxiliaryContentMeta}, instance::InstanceConfiguration, loader::Loader, unique_bytes::UniqueBytes};
+use schema::{
+    auxiliary::{AuxDisabledChildren, AuxiliaryContentMeta},
+    instance::InstanceConfiguration,
+    loader::Loader,
+    unique_bytes::UniqueBytes,
+};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use thiserror::Error;
 
 use ustr::Ustr;
 
-use crate::{BackendState, BackendStateFileWatching, WatchTarget, fs::{FolderChanges, IoOrSerializationError}, id_slab::{GetId, Id}, launcher_import, mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager}, persistent::Persistent};
+use crate::{
+    BackendState, BackendStateFileWatching, WatchTarget,
+    fs::{FolderChanges, IoOrSerializationError},
+    id_slab::{GetId, Id},
+    launcher_import,
+    mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager},
+    persistent::Persistent,
+};
 
 #[derive(Debug)]
 pub struct Instance {
@@ -131,9 +153,7 @@ impl QuickplayBackgroundMode {
                 GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN,
             };
 
-            let active = unsafe {
-                SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN).is_ok()
-            };
+            let active = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN).is_ok() };
             if !active {
                 log::warn!("Unable to enter Windows background mode for Quickplay worker");
             }
@@ -151,9 +171,7 @@ impl Drop for QuickplayBackgroundMode {
     fn drop(&mut self) {
         #[cfg(target_os = "windows")]
         if self.active {
-            use windows::Win32::System::Threading::{
-                GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_END,
-            };
+            use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_END};
 
             if unsafe { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END) }.is_err() {
                 log::warn!("Unable to leave Windows background mode for Quickplay worker");
@@ -166,11 +184,7 @@ fn quickplay_work_cancelled(state: &BridgeDataLoadState, generation: u64) -> boo
     state.is_cancelled_by_launch() || !state.is_generation_current(generation)
 }
 
-fn read_quickplay_file(
-    path: &Path,
-    state: &BridgeDataLoadState,
-    generation: u64,
-) -> std::io::Result<Option<Vec<u8>>> {
+fn read_quickplay_file(path: &Path, state: &BridgeDataLoadState, generation: u64) -> std::io::Result<Option<Vec<u8>>> {
     if quickplay_work_cancelled(state, generation) {
         return Ok(None);
     }
@@ -269,13 +283,19 @@ impl Instance {
 
         for folder in ContentFolder::iter() {
             if self.content_state[folder].load_state.is_not_unloaded() {
-                file_watching.watch_filesystem(self.content_state[folder].path.clone(), WatchTarget::InstanceContentDir { id: self.id, folder });
+                file_watching.watch_filesystem(
+                    self.content_state[folder].path.clone(),
+                    WatchTarget::InstanceContentDir { id: self.id, folder },
+                );
                 watch_dot_minecraft = true;
             }
         }
 
         if watch_dot_minecraft {
-            file_watching.watch_filesystem(self.dot_minecraft_path.clone(), WatchTarget::InstanceDotMinecraftDir { id: self.id });
+            file_watching.watch_filesystem(
+                self.dot_minecraft_path.clone(),
+                WatchTarget::InstanceDotMinecraftDir { id: self.id },
+            );
         }
     }
 
@@ -312,10 +332,7 @@ impl Instance {
         None
     }
 
-    pub async fn load_worlds(
-        backend: Arc<BackendState>,
-        id: InstanceID,
-    ) -> Option<Arc<[InstanceWorldSummary]>> {
+    pub async fn load_worlds(backend: Arc<BackendState>, id: InstanceID) -> Option<Arc<[InstanceWorldSummary]>> {
         Self::load_worlds_inner(backend, id).await
     }
 
@@ -341,36 +358,40 @@ impl Instance {
                     return this.worlds.clone();
                 }
 
-                if let Some(pending) = &this.pending_worlds_load && !pending.is_notified() {
+                if let Some(pending) = &this.pending_worlds_load
+                    && !pending.is_notified()
+                {
                     await_pending = Some(pending.clone());
                     continue;
                 }
 
                 let mut file_watching = backend.file_watching.write();
-                file_watching.watch_filesystem(this.dot_minecraft_path.clone(), WatchTarget::InstanceDotMinecraftDir {
-                    id: this.id,
-                });
-                file_watching.watch_filesystem(this.saves_path.clone(), WatchTarget::InstanceSavesDir {
-                    id: this.id,
-                });
+                file_watching.watch_filesystem(
+                    this.dot_minecraft_path.clone(),
+                    WatchTarget::InstanceDotMinecraftDir { id: this.id },
+                );
+                file_watching.watch_filesystem(this.saves_path.clone(), WatchTarget::InstanceSavesDir { id: this.id });
 
                 let (all_dirty, dirty_paths) = this.dirty_worlds.take();
-                if let Some(last) = &this.worlds && !all_dirty && dirty_paths.is_empty() {
+                if let Some(last) = &this.worlds
+                    && !all_dirty
+                    && dirty_paths.is_empty()
+                {
                     return Some(last.clone());
                 }
 
                 let generation = this.worlds_state.load_started();
                 let load_state = this.worlds_state.clone();
-                let future = if let Some(last) = &this.worlds && !all_dirty {
+                let future = if let Some(last) = &this.worlds
+                    && !all_dirty
+                {
                     let last = last.clone();
                     tokio::task::spawn_blocking(move || {
                         Self::load_worlds_dirty(dirty_paths, last, &load_state, generation)
                     })
                 } else {
                     let saves_path = this.saves_path.clone();
-                    tokio::task::spawn_blocking(move || {
-                        Self::load_worlds_all(&saves_path, &load_state, generation)
-                    })
+                    tokio::task::spawn_blocking(move || Self::load_worlds_all(&saves_path, &load_state, generation))
                 };
 
                 let keep_alive = KeepAliveNotifySignal::new();
@@ -403,14 +424,12 @@ impl Instance {
 
             backend.send.send(MessageToFrontend::InstanceWorldsUpdated {
                 id,
-                worlds: Arc::clone(&worlds)
+                worlds: Arc::clone(&worlds),
             });
 
             let mut file_watching = backend.file_watching.write();
             for summary in worlds.iter() {
-                file_watching.watch_filesystem(summary.level_path.clone(), WatchTarget::InstanceWorldDir {
-                    id,
-                });
+                file_watching.watch_filesystem(summary.level_path.clone(), WatchTarget::InstanceWorldDir { id });
             }
             drop(file_watching);
 
@@ -419,7 +438,8 @@ impl Instance {
                 tokio::task::spawn(Self::load_worlds_inner(backend.clone(), id));
             }
             Some(worlds)
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn load_worlds_all(saves_path: &Path, state: &BridgeDataLoadState, generation: u64) -> Arc<[InstanceWorldSummary]> {
@@ -470,7 +490,12 @@ impl Instance {
         summaries.into()
     }
 
-    fn load_worlds_dirty(dirty: FxHashSet<Arc<Path>>, last: Arc<[InstanceWorldSummary]>, state: &BridgeDataLoadState, generation: u64) -> Arc<[InstanceWorldSummary]> {
+    fn load_worlds_dirty(
+        dirty: FxHashSet<Arc<Path>>,
+        last: Arc<[InstanceWorldSummary]>,
+        state: &BridgeDataLoadState,
+        generation: u64,
+    ) -> Arc<[InstanceWorldSummary]> {
         let _background_mode = QuickplayBackgroundMode::enter();
         log::debug!("Loading changed worlds");
         log::trace!("Changed worlds: {:?}", dirty);
@@ -524,19 +549,11 @@ impl Instance {
         summaries.into()
     }
 
-    pub async fn load_servers(
-        backend: Arc<BackendState>,
-        id: InstanceID,
-    ) -> Option<Arc<[InstanceServerSummary]>> {
+    pub async fn load_servers(backend: Arc<BackendState>, id: InstanceID) -> Option<Arc<[InstanceServerSummary]>> {
         Self::load_servers_inner(backend, id).await
     }
 
-    pub async fn reorder_servers(
-        backend: Arc<BackendState>,
-        id: InstanceID,
-        from_index: usize,
-        to_index: usize,
-    ) {
+    pub async fn reorder_servers(backend: Arc<BackendState>, id: InstanceID, from_index: usize, to_index: usize) {
         let server_dat_path = {
             let guard = backend.instance_state.read();
             let Some(instance) = guard.instances.get(id) else {
@@ -608,17 +625,22 @@ impl Instance {
                     return this.servers.clone();
                 }
 
-                if let Some(pending) = &this.pending_servers_load && !pending.is_notified() {
+                if let Some(pending) = &this.pending_servers_load
+                    && !pending.is_notified()
+                {
                     await_pending = Some(pending.clone());
                     continue;
                 }
 
                 let mut file_watching = backend.file_watching.write();
-                file_watching.watch_filesystem(this.dot_minecraft_path.clone(), WatchTarget::InstanceDotMinecraftDir {
-                    id: this.id,
-                });
+                file_watching.watch_filesystem(
+                    this.dot_minecraft_path.clone(),
+                    WatchTarget::InstanceDotMinecraftDir { id: this.id },
+                );
 
-                if let Some(last) = &this.servers && !this.dirty_servers {
+                if let Some(last) = &this.servers
+                    && !this.dirty_servers
+                {
                     return Some(last.clone());
                 }
 
@@ -660,7 +682,7 @@ impl Instance {
 
             backend.send.send(MessageToFrontend::InstanceServersUpdated {
                 id,
-                servers: Arc::clone(&servers)
+                servers: Arc::clone(&servers),
             });
 
             keep_alive.notify();
@@ -668,10 +690,15 @@ impl Instance {
                 tokio::task::spawn(Self::load_servers_inner(backend, id));
             }
             Some(servers)
-        }.boxed()
+        }
+        .boxed()
     }
 
-    fn load_servers_all(server_dat_path: &Path, state: &BridgeDataLoadState, generation: u64) -> Arc<[InstanceServerSummary]> {
+    fn load_servers_all(
+        server_dat_path: &Path,
+        state: &BridgeDataLoadState,
+        generation: u64,
+    ) -> Arc<[InstanceServerSummary]> {
         let _background_mode = QuickplayBackgroundMode::enter();
         log::info!("Loading servers from {:?}", server_dat_path);
 
@@ -715,26 +742,37 @@ impl Instance {
                 let this = guard.instances.get_mut(id)?;
                 let state = &mut this.content_state[content_folder];
 
-                if let Some(pending) = &state.pending_load && !pending.is_notified() {
+                if let Some(pending) = &state.pending_load
+                    && !pending.is_notified()
+                {
                     await_pending = Some(pending.clone());
                     continue;
                 }
 
                 let mut file_watching = backend.file_watching.write();
-                file_watching.watch_filesystem(this.dot_minecraft_path.clone(), WatchTarget::InstanceDotMinecraftDir {
-                    id: this.id,
-                });
-                file_watching.watch_filesystem(state.path.clone(), WatchTarget::InstanceContentDir {
-                    id: this.id,
-                    folder: content_folder
-                });
+                file_watching.watch_filesystem(
+                    this.dot_minecraft_path.clone(),
+                    WatchTarget::InstanceDotMinecraftDir { id: this.id },
+                );
+                file_watching.watch_filesystem(
+                    state.path.clone(),
+                    WatchTarget::InstanceContentDir {
+                        id: this.id,
+                        folder: content_folder,
+                    },
+                );
 
-                if this.frozen_mods_folder && content_folder == ContentFolder::Mods && let Some(last) = &state.summaries {
+                if this.frozen_mods_folder
+                    && content_folder == ContentFolder::Mods
+                    && let Some(last) = &state.summaries
+                {
                     return Some(last.clone());
                 }
 
                 let (all_dirty, dirty_paths) = state.dirty_paths.take();
-                let future = if let Some(last) = &state.summaries && !all_dirty {
+                let future = if let Some(last) = &state.summaries
+                    && !all_dirty
+                {
                     if !dirty_paths.is_empty() {
                         let mod_metadata_manager = backend.mod_metadata_manager.clone();
                         let last = last.clone();
@@ -780,7 +818,10 @@ impl Instance {
                 };
             }
 
-            if content_folder == ContentFolder::Shaders && !result.is_empty() && !this.configuration.get().show_shader_tab {
+            if content_folder == ContentFolder::Shaders
+                && !result.is_empty()
+                && !this.configuration.get().show_shader_tab
+            {
                 this.configuration.modify(|config| {
                     config.show_shader_tab = true;
                 });
@@ -823,7 +864,7 @@ impl Instance {
             backend.send.send(MessageToFrontend::InstanceContentUpdated {
                 id,
                 content_folder,
-                content: Arc::clone(&result)
+                content: Arc::clone(&result),
             });
 
             keep_alive.notify();
@@ -831,14 +872,15 @@ impl Instance {
                 tokio::task::spawn(Self::load_content_inner(backend, id, content_folder));
             }
             Some(result)
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn load_content_all(
         path: &Path,
         mod_metadata_manager: Arc<ModMetadataManager>,
         for_loader: Loader,
-        for_version: Ustr
+        for_version: Ustr,
     ) -> Vec<InstanceContentSummary> {
         log::info!("Loading all content from {:?}", path);
 
@@ -856,13 +898,17 @@ impl Instance {
                 continue;
             };
 
-            if let Some(summary) = create_instance_content_summary(&entry.path(), &mod_metadata_manager, for_loader, for_version) {
+            if let Some(summary) =
+                create_instance_content_summary(&entry.path(), &mod_metadata_manager, for_loader, for_version)
+            {
                 summaries.push(summary);
             }
         }
 
         summaries.sort_by(|a, b| {
-            a.content_summary.id.cmp(&b.content_summary.id)
+            a.content_summary
+                .id
+                .cmp(&b.content_summary.id)
                 .then_with(|| lexical_sort::natural_lexical_cmp(&a.filename, &b.filename))
         });
 
@@ -885,7 +931,9 @@ impl Instance {
 
         for path in dirty.iter() {
             let mut alternate_path = path.to_path_buf();
-            if let Some(extension) = path.extension() && extension == "disabled" {
+            if let Some(extension) = path.extension()
+                && extension == "disabled"
+            {
                 alternate_path.set_extension("");
             } else {
                 alternate_path.add_extension("disabled");
@@ -893,10 +941,14 @@ impl Instance {
 
             let check_alternative = !dirty.contains(&*alternate_path);
 
-            if let Some(summary) = create_instance_content_summary(&path, &mod_metadata_manager, for_loader, for_version) {
+            if let Some(summary) =
+                create_instance_content_summary(&path, &mod_metadata_manager, for_loader, for_version)
+            {
                 summaries.push(summary);
             } else if check_alternative {
-                if let Some(summary) = create_instance_content_summary(&alternate_path, &mod_metadata_manager, for_loader, for_version) {
+                if let Some(summary) =
+                    create_instance_content_summary(&alternate_path, &mod_metadata_manager, for_loader, for_version)
+                {
                     summaries.push(summary);
                 }
             }
@@ -913,7 +965,9 @@ impl Instance {
         }
 
         summaries.sort_by(|a, b| {
-            a.content_summary.id.cmp(&b.content_summary.id)
+            a.content_summary
+                .id
+                .cmp(&b.content_summary.id)
                 .then_with(|| lexical_sort::natural_lexical_cmp(&a.filename, &b.filename))
         });
 
@@ -930,7 +984,9 @@ impl Instance {
 
         let info_path: Arc<Path> = path.join("info_v1.json").into();
 
-        let instance_info = if !info_path.exists() && let Some(fallback) = launcher_import::try_load_from_other_launcher_formats(&path) {
+        let instance_info = if !info_path.exists()
+            && let Some(fallback) = launcher_import::try_load_from_other_launcher_formats(&path)
+        {
             Persistent::load_or(info_path.clone(), fallback)
         } else {
             Persistent::try_load(info_path.clone())?
@@ -1008,7 +1064,13 @@ impl Instance {
         }
     }
 
-    pub fn mark_content_dirty(&mut self, backend: &Arc<BackendState>, content_folder: ContentFolder, mut changes: FolderChanges, reload: bool) {
+    pub fn mark_content_dirty(
+        &mut self,
+        backend: &Arc<BackendState>,
+        content_folder: ContentFolder,
+        mut changes: FolderChanges,
+        reload: bool,
+    ) {
         if changes.is_empty() {
             return;
         }
@@ -1091,9 +1153,8 @@ impl Instance {
 
     pub fn playtime(&mut self) -> InstancePlaytime {
         let stats = self.stats.get().clone();
-        let current_session_secs = self.session_started_at
-            .map(|started_at| started_at.elapsed().as_secs())
-            .unwrap_or(0);
+        let current_session_secs =
+            self.session_started_at.map(|started_at| started_at.elapsed().as_secs()).unwrap_or(0);
 
         InstancePlaytime {
             total_secs: stats.total_playtime_secs.saturating_add(current_session_secs),
@@ -1111,7 +1172,9 @@ impl Instance {
             InstanceStatus::Running
         } else if !self.closing_processes.is_empty() {
             InstanceStatus::Stopping
-        } else if let Some(keepalive) = &self.launch_keepalive && keepalive.is_alive() {
+        } else if let Some(keepalive) = &self.launch_keepalive
+            && keepalive.is_alive()
+        {
             InstanceStatus::Launching
         } else {
             InstanceStatus::NotRunning
@@ -1154,7 +1217,12 @@ fn unix_time_ms_now() -> Option<i64> {
     i64::try_from(duration.as_millis()).ok()
 }
 
-fn create_instance_content_summary(path: &Path, mod_metadata_manager: &Arc<ModMetadataManager>, for_loader: Loader, for_version: Ustr) -> Option<InstanceContentSummary> {
+fn create_instance_content_summary(
+    path: &Path,
+    mod_metadata_manager: &Arc<ModMetadataManager>,
+    for_loader: Loader,
+    for_version: Ustr,
+) -> Option<InstanceContentSummary> {
     if !path.is_file() {
         // Special case for loading a resourcepack folder
         if let Ok(pack_mcmeta_bytes) = std::fs::read(path.join("pack.mcmeta")) {
@@ -1170,7 +1238,10 @@ fn create_instance_content_summary(path: &Path, mod_metadata_manager: &Arc<ModMe
     if filename.starts_with(".pandora.") {
         return None;
     }
-    let enabled = if filename.ends_with(".jar.disabled") || filename.ends_with(".mrpack.disabled") || filename.ends_with(".zip.disabled") {
+    let enabled = if filename.ends_with(".jar.disabled")
+        || filename.ends_with(".mrpack.disabled")
+        || filename.ends_with(".zip.disabled")
+    {
         false
     } else if filename.ends_with(".jar") || filename.ends_with(".mrpack") || filename.ends_with(".zip") {
         true
@@ -1191,7 +1262,10 @@ fn create_instance_content_summary(path: &Path, mod_metadata_manager: &Arc<ModMe
         if let Ok(modified) = metadata.modified() {
             time = time.max(modified);
         }
-        time.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis().min(u64::MAX as u128) as u64
+        time.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u64::MAX as u128) as u64
     } else {
         0
     };
@@ -1199,7 +1273,7 @@ fn create_instance_content_summary(path: &Path, mod_metadata_manager: &Arc<ModMe
     let summary = mod_metadata_manager.get_file(&mut file, metadata, path.extension());
 
     let filename_without_disabled = if !enabled {
-        &filename[..filename.len()-".disabled".len()]
+        &filename[..filename.len() - ".disabled".len()]
     } else {
         filename
     };
@@ -1212,18 +1286,27 @@ fn create_instance_content_summary(path: &Path, mod_metadata_manager: &Arc<ModMe
 
     let content_source = mod_metadata_manager.read_content_sources().get(&summary.hash).unwrap_or_default();
 
-    let lowercase_search_keys = summary.id.as_ref().map(lowercase_arc).into_iter()
+    let lowercase_search_keys = summary
+        .id
+        .as_ref()
+        .map(lowercase_arc)
+        .into_iter()
         .chain(summary.name.as_ref().map(lowercase_arc).into_iter())
         .chain(std::iter::once(lowercase_arc(&filename)))
         .collect();
 
     let disabled_children = read_disabled_children_for(&summary, path).unwrap_or_default();
 
-    let update_status = mod_metadata_manager.updates.read().get(&ContentUpdateKey {
-        hash: summary.hash,
-        loader: for_loader,
-        version: for_version,
-    }).map(ContentUpdateAction::to_status).unwrap_or(ContentUpdateStatus::Unknown);
+    let update_status = mod_metadata_manager
+        .updates
+        .read()
+        .get(&ContentUpdateKey {
+            hash: summary.hash,
+            loader: for_loader,
+            version: for_version,
+        })
+        .map(ContentUpdateAction::to_status)
+        .unwrap_or(ContentUpdateStatus::Unknown);
 
     Some(InstanceContentSummary {
         content_summary: summary,
@@ -1250,7 +1333,11 @@ fn lowercase_arc(s: &Arc<str>) -> Arc<str> {
     }
 }
 
-fn try_load_resourcepack_folder(pack_mcmeta_bytes: &[u8], pack_png_bytes: Option<&[u8]>, path: &Path) -> Option<InstanceContentSummary> {
+fn try_load_resourcepack_folder(
+    pack_mcmeta_bytes: &[u8],
+    pack_png_bytes: Option<&[u8]>,
+    path: &Path,
+) -> Option<InstanceContentSummary> {
     let Some(filename) = path.file_name().and_then(|s| s.to_str()) else {
         return None;
     };
@@ -1263,7 +1350,11 @@ fn try_load_resourcepack_folder(pack_mcmeta_bytes: &[u8], pack_png_bytes: Option
 
     let filename: Arc<str> = filename.into();
 
-    let lowercase_search_keys = summary.id.as_ref().map(lowercase_arc).into_iter()
+    let lowercase_search_keys = summary
+        .id
+        .as_ref()
+        .map(lowercase_arc)
+        .into_iter()
         .chain(summary.name.as_ref().map(lowercase_arc).into_iter())
         .chain(std::iter::once(lowercase_arc(&filename)))
         .collect();
@@ -1284,16 +1375,17 @@ fn try_load_resourcepack_folder(pack_mcmeta_bytes: &[u8], pack_png_bytes: Option
     });
 }
 
-fn read_disabled_children_for(
-    summary: &ContentSummary,
-    path: &Path,
-) -> Option<AuxDisabledChildren> {
+fn read_disabled_children_for(summary: &ContentSummary, path: &Path) -> Option<AuxDisabledChildren> {
     let aux_path = crate::fs::pandora_aux_path(&summary.id, &summary.name, path)?;
     let aux: AuxiliaryContentMeta = crate::fs::read_json(&aux_path).ok()?;
     Some(aux.disabled_children)
 }
 
-fn load_world_summary(path: &Path, state: &BridgeDataLoadState, generation: u64) -> anyhow::Result<Option<InstanceWorldSummary>> {
+fn load_world_summary(
+    path: &Path,
+    state: &BridgeDataLoadState,
+    generation: u64,
+) -> anyhow::Result<Option<InstanceWorldSummary>> {
     if quickplay_work_cancelled(state, generation) {
         return Ok(None);
     }
@@ -1328,7 +1420,9 @@ fn load_world_summary(path: &Path, state: &BridgeDataLoadState, generation: u64)
 
     let folder = path.file_name().context("Unable to get filename")?.to_string_lossy();
 
-    let subtitle = if let Some(date_time) = chrono::DateTime::from_timestamp_millis(last_played) && last_played > 0 {
+    let subtitle = if let Some(date_time) = chrono::DateTime::from_timestamp_millis(last_played)
+        && last_played > 0
+    {
         let date_time = date_time.with_timezone(&chrono::Local);
         format!("{} ({})", folder, date_time.format("%d/%m/%Y %H:%M")).into()
     } else {
@@ -1430,7 +1524,6 @@ fn load_servers_summary(
     Ok(summaries)
 }
 
-
 #[cfg(test)]
 mod quickplay_tests {
     use super::*;
@@ -1441,9 +1534,11 @@ mod quickplay_tests {
         state.cancel_for_launch();
 
         let missing = Path::new("quickplay-cancelled-read-must-not-open");
-        assert!(read_quickplay_file(missing, &state, state.generation())
-            .expect("cancelled read should not touch the filesystem")
-            .is_none());
+        assert!(
+            read_quickplay_file(missing, &state, state.generation())
+                .expect("cancelled read should not touch the filesystem")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1453,12 +1548,7 @@ mod quickplay_tests {
         let mut dirty_worlds = FolderChanges::no_changes();
         let mut dirty_servers = false;
 
-        cancel_quickplay_loads_for_launch(
-            &worlds_state,
-            &servers_state,
-            &mut dirty_worlds,
-            &mut dirty_servers,
-        );
+        cancel_quickplay_loads_for_launch(&worlds_state, &servers_state, &mut dirty_worlds, &mut dirty_servers);
 
         let (all_dirty, paths) = dirty_worlds.take();
         assert!(all_dirty);

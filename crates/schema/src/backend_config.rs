@@ -28,12 +28,12 @@ pub struct BackendConfig {
 /// Trust settings for the private BootOptim Distribution service.
 ///
 /// The TLS CA path and Ed25519 release key are public trust anchors, not secrets.
-#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct DistributionConfig {
     #[serde(
-        default,
+        default = "default_distribution_base_url",
         skip_serializing_if = "crate::skip_if_default",
-        deserialize_with = "crate::try_deserialize"
+        deserialize_with = "deserialize_distribution_base_url"
     )]
     pub base_url: String,
     #[serde(
@@ -43,15 +43,15 @@ pub struct DistributionConfig {
     )]
     pub tls_ca_certificate_path: String,
     #[serde(
-        default,
+        default = "default_distribution_release_key_id",
         skip_serializing_if = "crate::skip_if_default",
-        deserialize_with = "crate::try_deserialize"
+        deserialize_with = "deserialize_distribution_release_key_id"
     )]
     pub release_key_id: String,
     #[serde(
-        default,
+        default = "default_distribution_release_public_key",
         skip_serializing_if = "crate::skip_if_default",
-        deserialize_with = "crate::try_deserialize"
+        deserialize_with = "deserialize_distribution_release_public_key"
     )]
     pub release_public_key_base64url: String,
     #[serde(
@@ -60,6 +60,86 @@ pub struct DistributionConfig {
         deserialize_with = "crate::try_deserialize"
     )]
     pub additional_release_keys_json: String,
+}
+
+impl Default for DistributionConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_distribution_base_url(),
+            tls_ca_certificate_path: String::new(),
+            release_key_id: default_distribution_release_key_id(),
+            release_public_key_base64url: default_distribution_release_public_key(),
+            additional_release_keys_json: String::new(),
+        }
+    }
+}
+
+fn default_distribution_base_url() -> String {
+    "https://welite.ddns.net:8444".into()
+}
+
+fn default_distribution_release_key_id() -> String {
+    "wachiland-release-2026-09".into()
+}
+
+fn default_distribution_release_public_key() -> String {
+    "q8uG8c8IBO-N7tnRWeKKqpl7pSj6G7FvKuRiCycpYwk".into()
+}
+
+fn deserialize_distribution_base_url<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let value = value.as_str().unwrap_or_default();
+    Ok(if value.trim().is_empty() {
+        default_distribution_base_url()
+    } else {
+        value.into()
+    })
+}
+
+fn deserialize_distribution_release_key_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let value = value.as_str().unwrap_or_default();
+    Ok(if value.trim().is_empty() {
+        default_distribution_release_key_id()
+    } else {
+        value.into()
+    })
+}
+
+fn deserialize_distribution_release_public_key<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let value = value.as_str().unwrap_or_default();
+    Ok(if value.trim().is_empty() {
+        default_distribution_release_public_key()
+    } else {
+        value.into()
+    })
+}
+
+#[cfg(test)]
+mod distribution_defaults_tests {
+    use super::*;
+
+    #[test]
+    fn empty_or_missing_private_distribution_settings_use_the_wachiland_defaults() {
+        let defaults = DistributionConfig::default();
+        let missing: DistributionConfig = serde_json::from_str("{}").unwrap();
+        let explicitly_empty: DistributionConfig =
+            serde_json::from_str(r#"{"base_url":"","release_key_id":"","release_public_key_base64url":""}"#).unwrap();
+
+        assert_eq!(missing, defaults);
+        assert_eq!(explicitly_empty, defaults);
+        assert_eq!(defaults.base_url, "https://welite.ddns.net:8444");
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]

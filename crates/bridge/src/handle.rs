@@ -5,7 +5,10 @@ use tokio::sync::mpsc::{Receiver, Sender};
 #[cfg(not(debug_assertions))]
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::{message::{BridgeNotificationType, MessageToBackend, MessageToFrontend}, serial::{AtomicOptionSerial, AtomicSerialProvider, AtomicSetSerial, Serial}};
+use crate::{
+    message::{BridgeNotificationType, MessageToBackend, MessageToFrontend},
+    serial::{AtomicOptionSerial, AtomicSerialProvider, AtomicSetSerial, Serial},
+};
 
 pub fn create_pair() -> (BackendReceiver, BackendHandle, FrontendReceiver, FrontendHandle) {
     #[cfg(debug_assertions)]
@@ -39,7 +42,7 @@ pub fn create_pair() -> (BackendReceiver, BackendHandle, FrontendReceiver, Front
             sender: frontend_send,
             processed_serial: frontend_serial.clone(),
             next_serial: Default::default(),
-        }
+        },
     )
 }
 
@@ -56,11 +59,11 @@ fn probe_dispatch(message: &MessageToBackend) {
     match message {
         MessageToBackend::StartInstance { modal_action, .. } => {
             crate::launch_probe::backend_dispatch(modal_action.probe_key());
-        }
+        },
         MessageToBackend::StartInstanceByName { modal_action, .. } => {
             crate::launch_probe::backend_dispatch(modal_action.probe_key());
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -68,11 +71,11 @@ fn probe_request(message: &MessageToBackend) {
     match message {
         MessageToBackend::StartInstance { modal_action, .. } => {
             crate::launch_probe::request(modal_action.probe_key());
-        }
+        },
         MessageToBackend::StartInstanceByName { modal_action, .. } => {
             crate::launch_probe::request(modal_action.probe_key());
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -146,7 +149,9 @@ impl BackendHandle {
     }
 
     pub fn send_with_serial(&self, message: MessageToBackend, serial: &AtomicOptionSerial) {
-        if let Some(serial) = serial.get() && self.processed_serial.get() < serial {
+        if let Some(serial) = serial.get()
+            && self.processed_serial.get() < serial
+        {
             return;
         }
 
@@ -189,7 +194,9 @@ impl FrontendHandle {
     }
 
     pub fn send_with_serial(&self, message: MessageToFrontend, serial: &AtomicOptionSerial) {
-        if let Some(serial) = serial.get() && self.processed_serial.get() < serial {
+        if let Some(serial) = serial.get()
+            && self.processed_serial.get() < serial
+        {
             return;
         }
 
@@ -197,7 +204,8 @@ impl FrontendHandle {
         serial.set(next_serial);
 
         #[cfg(debug_assertions)]
-        if let Err(tokio::sync::mpsc::error::TrySendError::Full(v)) = self.sender.try_send((message, Some(next_serial))) {
+        if let Err(tokio::sync::mpsc::error::TrySendError::Full(v)) = self.sender.try_send((message, Some(next_serial)))
+        {
             panic!("Sender is full, unable to send message: {v:?}");
         };
         #[cfg(not(debug_assertions))]
@@ -207,28 +215,28 @@ impl FrontendHandle {
     pub fn send_info(&self, info: impl Into<Arc<str>>) {
         self.send(MessageToFrontend::AddNotification {
             notification_type: BridgeNotificationType::Info,
-            message: info.into()
+            message: info.into(),
         })
     }
 
     pub fn send_success(&self, success: impl Into<Arc<str>>) {
         self.send(MessageToFrontend::AddNotification {
             notification_type: BridgeNotificationType::Success,
-            message: success.into()
+            message: success.into(),
         })
     }
 
     pub fn send_warning(&self, warning: impl Into<Arc<str>>) {
         self.send(MessageToFrontend::AddNotification {
             notification_type: BridgeNotificationType::Warning,
-            message: warning.into()
+            message: warning.into(),
         })
     }
 
     pub fn send_error(&self, error: impl Into<Arc<str>>) {
         self.send(MessageToFrontend::AddNotification {
             notification_type: BridgeNotificationType::Error,
-            message: error.into()
+            message: error.into(),
         })
     }
 
