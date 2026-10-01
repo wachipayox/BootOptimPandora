@@ -1,7 +1,8 @@
 //! Secure read-side client for the private BootOptim Distribution service.
 //!
-//! The service is an untrusted transport from the launcher's point of view: manifests and
-//! content objects are independently verified here before any caller can use them.
+//! Publication identity follows the configured, certificate-verified HTTPS origin.
+//! Manifests and content objects still undergo signature, digest and schema validation.
+//! Previously pinned signing keys cannot be silently replaced by discovery.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -350,6 +351,29 @@ pub struct DistributionClient {
     client: Client,
     base_url: Url,
     trusted_keys: BTreeMap<String, [u8; 32]>,
+    server_keys: Arc<tokio::sync::OnceCell<BTreeMap<String, [u8; 32]>>>,
+}
+
+#[derive(Deserialize)]
+struct ServerSigningKeys {
+    schema_version: u32,
+    keys: BTreeMap<String, String>,
+}
+
+impl ServerSigningKeys {
+    fn validated(self, pinned: &BTreeMap<String, [u8; 32]>) -> Result<BTreeMap<String, [u8; 32]>, DistributionError> {
+        if self.schema_version != 1 || self.keys.is_empty() || self.keys.len() > 128 {
+            return Err(DistributionError::InvalidSigningKey);
+        }
+        let mut keys = BTreeMap::new();
+        for (id, encoded) in self.keys {
+            insert_trusted_release_key(&mut keys, &id, &encoded)?;
+            if pinned.get(&id).is_some_and(|expected| keys.get(&id) != Some(expected)) {
+                return Err(DistributionError::InvalidSigningKey);
+            }
+        }
+        Ok(keys)
+    }
 }
 
 #[derive(Deserialize)]
@@ -363,7 +387,13 @@ impl DistributionClient {
     pub fn new(config: &DistributionConfig) -> Result<Self, DistributionError> {
         let base_url = parse_base_url(&config.base_url)?;
 
-        let trusted_keys = trusted_release_keys(config)?;
+        let trusted_keys = if config.release_key_id.trim().is_empty()
+            && config.release_public_key_base64url.trim().is_empty()
+            && config.additional_release_keys_json.trim().is_empty() {
+            BTreeMap::new()
+        } else {
+            trusted_release_keys(config)?
+        };
 
         let client = build_http_client(config)?;
 
@@ -371,6 +401,7 @@ impl DistributionClient {
             client,
             base_url,
             trusted_keys,
+            server_keys: Arc::new(tokio::sync::OnceCell::new()),
         })
     }
 
@@ -458,8 +489,17 @@ impl DistributionClient {
         if digest != envelope.manifest_sha256 {
             return Err(DistributionError::InvalidSignature);
         }
+        // Resolve unknown signing identities only through the configured HTTPS origin.
+        let keys = if self.trusted_keys.contains_key(&envelope.signature.key_id) {
+            &self.trusted_keys
+        } else {
+            self.server_keys.get_or_try_init(|| async {
+                let response: ServerSigningKeys = self.get_json("/v1/signing-keys").await?;
+                response.validated(&self.trusted_keys)
+            }).await?
+        };
         verify_release_signature(
-            &self.trusted_keys,
+            keys,
             &envelope.signature.key_id,
             &canonical,
             &envelope.signature.value,
@@ -1445,6 +1485,38 @@ mod trusted_release_key_tests {
 
     fn encoded_key(byte: u8) -> String {
         URL_SAFE_NO_PAD.encode([byte; 32])
+    }
+
+    #[test]
+    fn server_identity_discovery_preserves_pins() {
+        let pinned = BTreeMap::from([("legacy".into(), [1; 32])]);
+        let catalog = || ServerSigningKeys {
+            schema_version: 1,
+            keys: BTreeMap::from([("legacy".into(), encoded_key(1)), ("server-new".into(), encoded_key(2))]),
+        };
+        assert_eq!(catalog().validated(&pinned).unwrap()["server-new"], [2; 32]);
+        let mut conflict = catalog();
+        conflict.keys.insert("legacy".into(), encoded_key(3));
+        assert!(conflict.validated(&pinned).is_err());
+        let mut malformed = catalog();
+        malformed.keys.insert("server-new".into(), "invalid".into());
+        assert!(malformed.validated(&pinned).is_err());
+        let mut wrong_schema = catalog();
+        wrong_schema.schema_version = 2;
+        assert!(wrong_schema.validated(&pinned).is_err());
+    }
+
+    #[test]
+    fn https_client_can_bootstrap_without_manual_signing_keys() {
+        let config = DistributionConfig {
+            base_url: "https://example.com:8444".into(),
+            release_key_id: String::new(),
+            release_public_key_base64url: String::new(),
+            additional_release_keys_json: String::new(),
+            ..DistributionConfig::default()
+        };
+        let client = DistributionClient::new(&config).unwrap();
+        assert!(client.trusted_keys.is_empty());
     }
 
     #[test]

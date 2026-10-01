@@ -76,13 +76,12 @@ its invariants while building client-facing update and repair workflows.
 ### 2. Build global profile administration and publication
 
 Distribution provides private HTTPS profile APIs, signed immutable revisions,
-and object downloads. Keep each release private key on an administrator PC;
-the server stores only trusted public keys. The offline signer and admin
-publication management are being completed in Distribution. For PC loss,
-generate a replacement signer on the replacement PC, trust its public key in
-Distribution and Pandora, and retain old public keys so existing history still
-verifies. The server must not generate or store release private keys. See
-Distribution's protocol and signer docs for the rotation procedure.
+and object downloads. The explicit user decision on 2026-10-01 supersedes
+workstation-only signing: the service signs authenticated publications using a
+persistent private identity in its data directory. Pandora discovers unknown
+public identities through the configured verified HTTPS origin, preserves
+existing pinned keys and rejects disagreement with them. Back up server data
+and historical public identities. Losing the admin PC needs no key migration.
 
 ### 3. Add Pandora global/local branch management — in progress
 

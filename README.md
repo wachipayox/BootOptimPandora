@@ -112,3 +112,12 @@ frames publish immediately; the animation continues while another window has
 keyboard focus, matching Pandora behavior. Two artificial timers were removed.
 Two deterministic scheduling tests pass; GUI presentation still needs visual
 validation. See docs/research/skin-preview-scheduling-2026-10-01.md.
+
+
+## Private profile publication
+
+Distribution 0.2.17 signs administrator publications automatically. The launcher
+obtains unknown public signing identities from the configured certificate-verified
+HTTPS server; manual signing-key setup is unnecessary. Existing pinned identities
+and revision/object verification remain compatible. Keep the complete server data
+directory backed up; losing the administrator PC needs no signing-key migration.
