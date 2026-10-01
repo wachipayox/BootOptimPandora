@@ -675,7 +675,7 @@ impl DistributionClient {
                     format!("mod:{}", item.id),
                     &item.object,
                     &pin,
-                    ProfileFilePolicy::Enforced,
+                    if is_initial_player_setting(&item.path) { ProfileFilePolicy::DefaultOnce } else { ProfileFilePolicy::Enforced },
                 )?;
             }
             for item in &manifest.remove_mods {
@@ -694,10 +694,14 @@ impl DistributionClient {
             }
             for item in &manifest.configs {
                 check_manifest_path(&item.path)?;
-                let policy = match item.policy.as_str() {
-                    "enforced" => ProfileFilePolicy::Enforced,
-                    "default_once" => ProfileFilePolicy::DefaultOnce,
-                    _ => return Err(DistributionError::InvalidResponse("unsupported config policy".into())),
+                let policy = if is_initial_player_setting(&item.path) {
+                    ProfileFilePolicy::DefaultOnce
+                } else {
+                    match item.policy.as_str() {
+                        "enforced" => ProfileFilePolicy::Enforced,
+                        "default_once" => ProfileFilePolicy::DefaultOnce,
+                        _ => return Err(DistributionError::InvalidResponse("unsupported config policy".into())),
+                    }
                 };
                 verify_expected_base(
                     &files,
@@ -737,13 +741,21 @@ impl DistributionClient {
                         files.remove(&previous);
                     }
                 }
+                // These two root-level files are player preferences. Seed them only
+                // when an instance is first created; never enforce pack revisions over
+                // edits the player makes later.
+                let policy = if is_initial_player_setting(&item.path) {
+                    ProfileFilePolicy::DefaultOnce
+                } else {
+                    ProfileFilePolicy::Enforced
+                };
                 insert_manifest_entry(
                     &mut files,
                     &item.path,
                     format!("object:{}", item.id),
                     &item.object,
                     &pin,
-                    ProfileFilePolicy::Enforced,
+                    policy,
                 )?;
             }
             parent_config_permissions = Some(manifest.permissions.configs.clone());
@@ -1124,14 +1136,19 @@ fn check_manifest_path(path: &str) -> Result<(), DistributionError> {
         "saves" | "screenshots" | "logs" | "crash-reports" | "server-resource-packs"
     ) || matches!(
         file_name.as_str(),
-        "servers.dat" | "options.txt" | "usercache.json" | "usernamecache.json" | "realms_persistence.json"
-    ) || first == ".pandora-layout-v1"
+        "usercache.json" | "usernamecache.json" | "realms_persistence.json"
+    ) || (components.len() == 1 && matches!(file_name.as_str(), "servers.dat" | "options.txt"))
+        || first == ".pandora-layout-v1"
     {
         return Err(DistributionError::InvalidResponse(
             "manifest attempts to manage player data or launcher state".into(),
         ));
     }
     Ok(())
+}
+
+fn is_initial_player_setting(path: &str) -> bool {
+    path.eq_ignore_ascii_case("options.txt") || path.eq_ignore_ascii_case("servers.dat")
 }
 
 fn verify_expected_base(

@@ -121,3 +121,10 @@ obtains unknown public signing identities from the configured certificate-verifi
 HTTPS server; manual signing-key setup is unnecessary. Existing pinned identities
 and revision/object verification remain compatible. Keep the complete server data
 directory backed up; losing the administrator PC needs no signing-key migration.
+
+
+Global profile player defaults: root-level `options.txt` and `servers.dat` are
+seeded only when the instance is first created. The launcher records them as
+user-owned after seeding, so later global or branch updates preserve player
+changes. Other player data such as `saves/`, screenshots, and launcher state
+remains excluded.
