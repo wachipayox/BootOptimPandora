@@ -83,6 +83,7 @@ impl Processor {
                 id,
                 name,
                 icon,
+                save_group_id,
                 root_path,
                 dot_minecraft_folder,
                 configuration,
@@ -96,6 +97,7 @@ impl Processor {
                     id,
                     name.as_str().into(),
                     icon,
+                    save_group_id,
                     root_path,
                     dot_minecraft_folder,
                     configuration,
@@ -108,6 +110,9 @@ impl Processor {
             },
             MessageToFrontend::InstanceRemoved { id } => {
                 InstanceEntries::remove(&self.data.instances, id, cx);
+            },
+            MessageToFrontend::InstanceSaveGroupUpdated { id, group_id } => {
+                InstanceEntries::set_save_group(&self.data.instances, id, group_id, cx);
             },
             MessageToFrontend::InstanceModified {
                 id,

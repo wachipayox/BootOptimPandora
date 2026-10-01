@@ -287,7 +287,8 @@ fn render_progress_trackers(modal_action: &ModalAction, elapsed_modal: f32) -> (
             }
 
             let title = tracker.get_title();
-            progress_entries.push(div().gap_3().child(SharedString::from(title)).child(progress_bar).opacity(opacity));
+            let row = div().gap_3().child(SharedString::from(title)).child(progress_bar).opacity(opacity);
+            progress_entries.push(if tracker.is_subtask() { row.pl_4().text_sm() } else { row });
         }
         (progress_entries, needs_animation)
     })

@@ -17,6 +17,7 @@ use crate::profile_branch::{
     EffectiveProfileEntry, GlobalRevisionPin, ProfileEntryMetadata, ProfileEntryOrigin, ProfileEntryOwnership,
     ProfileFilePolicy,
 };
+use bridge::modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::{Certificate, Client, Url};
 use schema::backend_config::DistributionConfig;
@@ -532,6 +533,25 @@ impl DistributionClient {
             .await
     }
 
+    pub async fn resolve_profile_with_progress(
+        &self,
+        profile_id: &str,
+        revision: &RevisionRef,
+        cache_root: &Path,
+        modal_action: &ModalAction,
+        overall_progress: &ProgressTracker,
+    ) -> Result<ResolvedGlobalProfile, DistributionError> {
+        self.resolve_profile_with_reuse_and_progress(
+            profile_id,
+            revision,
+            cache_root,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            Some((modal_action, overall_progress)),
+        )
+        .await
+    }
+
     /// Resolve a revision while reusing files already tracked by the local profile branch.
     /// Paths in `skip_paths` must be filtered by the caller because local ownership/tombstones
     /// keep them from flowing through an inherited update.
@@ -542,6 +562,19 @@ impl DistributionClient {
         cache_root: &Path,
         reusable_entries: &BTreeMap<String, ProfileEntryMetadata>,
         skip_paths: &BTreeSet<String>,
+    ) -> Result<ResolvedGlobalProfile, DistributionError> {
+        self.resolve_profile_with_reuse_and_progress(profile_id, revision, cache_root, reusable_entries, skip_paths, None)
+            .await
+    }
+
+    async fn resolve_profile_with_reuse_and_progress(
+        &self,
+        profile_id: &str,
+        revision: &RevisionRef,
+        cache_root: &Path,
+        reusable_entries: &BTreeMap<String, ProfileEntryMetadata>,
+        skip_paths: &BTreeSet<String>,
+        progress: Option<(&ModalAction, &ProgressTracker)>,
     ) -> Result<ResolvedGlobalProfile, DistributionError> {
         let mut chain = Vec::<VerifiedRevision>::new();
         let mut next = Some((
@@ -772,7 +805,42 @@ impl DistributionClient {
             }
         }
 
-        let mut entries = Vec::with_capacity(files.len());
+        let mut total_asset_bytes = 0u64;
+        let mut distinct_assets = BTreeMap::<String, u64>::new();
+        if progress.is_some() {
+            for entry in files.values() {
+                let has_config_settings = config_settings.iter().any(|((path, _), _)| path == &entry.path);
+                if skip_paths.contains(&entry.path)
+                    || (!has_config_settings
+                        && reusable_entries.get(&entry.path).is_some_and(|existing| {
+                            existing.logical_identity == entry.metadata.logical_identity
+                                && existing.source_sha256 == entry.metadata.source_sha256
+                                && existing.policy == entry.metadata.policy
+                        }))
+                {
+                    continue;
+                }
+                let object = object_refs
+                    .get(&(
+                        entry.metadata.logical_identity.clone(),
+                        entry.path.clone(),
+                        entry.metadata.source_sha256.clone(),
+                    ))
+                    .ok_or_else(|| {
+                        DistributionError::InvalidResponse("effective entry has no signed object reference".into())
+                    })?;
+                distinct_assets.entry(object.sha256.clone()).or_insert(object.size);
+            }
+            total_asset_bytes = distinct_assets.values().fold(0u64, |total, size| total.saturating_add(*size));
+            if let Some((_, overall)) = progress {
+                overall.set_title("Downloading modpack assets".into());
+                overall.set_count(0);
+                overall.set_total(progress_units(total_asset_bytes).max(1));
+            }
+        }
+
+        let mut counted_digests = BTreeSet::new();
+        let mut entries_with_sources = Vec::with_capacity(files.len());
         for (_, mut entry) in files {
             let has_config_settings = config_settings.iter().any(|((path, _), _)| path == &entry.path);
             if skip_paths.contains(&entry.path)
@@ -783,7 +851,7 @@ impl DistributionClient {
                             && existing.policy == entry.metadata.policy
                     }))
             {
-                entries.push(entry);
+                entries_with_sources.push(entry);
                 continue;
             }
             let object = object_refs
@@ -795,8 +863,41 @@ impl DistributionClient {
                 .ok_or_else(|| {
                     DistributionError::InvalidResponse("effective entry has no signed object reference".into())
                 })?;
-            entry.source = self.fetch_verified_object(object, cache_root).await?;
-            entries.push(entry);
+            if let Some((modal_action, overall)) = progress {
+                let first_reference = counted_digests.insert(object.sha256.clone());
+                if let Some(cached) = verified_cache_path(object, cache_root)? {
+                    if first_reference {
+                        overall.add_count(progress_units(object.size));
+                    }
+                    entry.source = cached;
+                } else {
+                    let file_progress = modal_action.push_sub_tracker(entry.path.as_str().into());
+                    file_progress.set_total(progress_units(object.size));
+                    let aggregate_progress = first_reference.then_some(overall);
+                    match self
+                        .fetch_verified_object_with_progress(object, cache_root, Some(&file_progress), aggregate_progress)
+                        .await
+                    {
+                        Ok(source) => {
+                            file_progress.set_count(progress_units(object.size));
+                            file_progress.set_finished(ProgressTrackerFinishType::Normal);
+                            entry.source = source;
+                        },
+                        Err(error) => {
+                            file_progress.set_finished(ProgressTrackerFinishType::Error);
+                            return Err(error);
+                        },
+                    }
+                }
+            } else {
+                entry.source = self.fetch_verified_object(object, cache_root).await?;
+            }
+            entries_with_sources.push(entry);
+        }
+        if let Some((_, overall)) = progress
+            && total_asset_bytes == 0
+        {
+            overall.set_count(1);
         }
         Ok(ResolvedGlobalProfile {
             icon_path,
@@ -804,7 +905,7 @@ impl DistributionClient {
             name: target_name,
             minecraft_version,
             neoforge_version,
-            entries,
+            entries: entries_with_sources,
             config_settings: config_settings.into_values().collect(),
         })
     }
@@ -826,23 +927,24 @@ impl DistributionClient {
         object: &ManifestObjectRef,
         cache_root: &Path,
     ) -> Result<PathBuf, DistributionError> {
+        self.fetch_verified_object_with_progress(object, cache_root, None, None).await
+    }
+
+    async fn fetch_verified_object_with_progress(
+        &self,
+        object: &ManifestObjectRef,
+        cache_root: &Path,
+        file_progress: Option<&ProgressTracker>,
+        aggregate_progress: Option<&ProgressTracker>,
+    ) -> Result<PathBuf, DistributionError> {
         if !valid_digest(&object.sha256) || object.size > MAX_OBJECT_BYTES {
             return Err(DistributionError::InvalidResponse("invalid or oversized object reference".into()));
         }
         let directory = cache_root.join("sha256").join(&object.sha256[..2]);
-        fs::create_dir_all(&directory)?;
-        let destination = directory.join(&object.sha256);
-        match fs::symlink_metadata(&destination) {
-            Ok(metadata) if metadata.file_type().is_file() => {
-                if verify_file(&destination, &object.sha256, object.size)? {
-                    return Ok(destination);
-                }
-                fs::remove_file(&destination)?;
-            },
-            Ok(_) => return Err(DistributionError::InvalidObject(object.sha256.clone())),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {},
-            Err(error) => return Err(error.into()),
+        if let Some(cached) = verified_cache_path(object, cache_root)? {
+            return Ok(cached);
         }
+        let destination = directory.join(&object.sha256);
 
         let url = self.object_url(&object.sha256)?;
         let mut response = self.client.get(url).send().await?;
@@ -867,6 +969,12 @@ impl DistributionClient {
                 }
                 hasher.update(&chunk);
                 output.write_all(&chunk)?;
+                if let Some(progress) = file_progress {
+                    progress.add_count(chunk.len());
+                }
+                if let Some(progress) = aggregate_progress {
+                    progress.add_count(chunk.len());
+                }
             }
             output.sync_all()?;
             let digest = hex::encode(hasher.finalize());
@@ -1096,6 +1204,32 @@ fn verify_file(path: &Path, expected_digest: &str, expected_size: u64) -> Result
     Ok(hex::encode(hasher.finalize()) == expected_digest)
 }
 
+fn verified_cache_path(object: &ManifestObjectRef, cache_root: &Path) -> Result<Option<PathBuf>, DistributionError> {
+    if !valid_digest(&object.sha256) || object.size > MAX_OBJECT_BYTES {
+        return Err(DistributionError::InvalidResponse("invalid or oversized object reference".into()));
+    }
+    let directory = cache_root.join("sha256").join(&object.sha256[..2]);
+    fs::create_dir_all(&directory)?;
+    let destination = directory.join(&object.sha256);
+    match fs::symlink_metadata(&destination) {
+        Ok(metadata) if metadata.file_type().is_file() => {
+            if verify_file(&destination, &object.sha256, object.size)? {
+                Ok(Some(destination))
+            } else {
+                fs::remove_file(&destination)?;
+                Ok(None)
+            }
+        },
+        Ok(_) => Err(DistributionError::InvalidObject(object.sha256.clone())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn progress_units(bytes: u64) -> usize {
+    usize::try_from(bytes).unwrap_or(usize::MAX)
+}
+
 fn check_manifest_path(path: &str) -> Result<(), DistributionError> {
     let components = Path::new(path).components().collect::<Vec<_>>();
     if path.is_empty()
@@ -1137,8 +1271,7 @@ fn check_manifest_path(path: &str) -> Result<(), DistributionError> {
     ) || matches!(
         file_name.as_str(),
         "usercache.json" | "usernamecache.json" | "realms_persistence.json"
-    ) || (components.len() == 1 && matches!(file_name.as_str(), "servers.dat" | "options.txt"))
-        || first == ".pandora-layout-v1"
+    ) || first == ".pandora-layout-v1"
     {
         return Err(DistributionError::InvalidResponse(
             "manifest attempts to manage player data or launcher state".into(),
@@ -1236,14 +1369,20 @@ impl crate::BackendState {
         name: &str,
         profile_id: &str,
         revision: &RevisionRef,
+        modal_action: &ModalAction,
+        progress: &ProgressTracker,
     ) -> Result<(), String> {
+        progress.set_title("Preparing modpack assets".into());
+        progress.set_count(0);
+        progress.set_total(1);
         let config = self.config.lock().get().distribution.clone();
         let client = DistributionClient::new(&config).map_err(|error| error.to_string())?;
         let cache_root = self.directories.root_launcher_dir.join("distribution-objects");
         let resolved = client
-            .resolve_profile(profile_id, revision, &cache_root)
+            .resolve_profile_with_progress(profile_id, revision, &cache_root, modal_action, progress)
             .await
             .map_err(|error| error.to_string())?;
+        progress.set_title("Applying modpack files".into());
         // The profile's presentation is unversioned and can have a newer icon than the selected
         // immutable revision. Use the current verified catalog icon, matching the carousel.
         let catalog = client.list_profiles().await.map_err(|error| error.to_string())?;
@@ -1335,6 +1474,7 @@ impl crate::BackendState {
         if !published {
             return Err("Global profile installation lost its game-files publication guard".into());
         }
+        progress.set_count(1);
         Ok(())
     }
 
@@ -1583,6 +1723,20 @@ mod trusted_release_key_tests {
             ..DistributionConfig::default()
         };
         assert!(matches!(trusted_release_keys(&malformed), Err(DistributionError::InvalidSigningKey)));
+    }
+
+    #[test]
+    fn player_settings_are_allowed_as_initial_defaults_only() {
+        for path in ["options.txt", "OPTIONS.TXT", "servers.dat", "Servers.dat"] {
+            check_manifest_path(path).unwrap();
+            assert!(is_initial_player_setting(path));
+        }
+        assert!(!is_initial_player_setting("config/options.txt"));
+        assert!(!is_initial_player_setting("servers/servers.dat"));
+
+        for path in ["saves/world/level.dat", "options.txt/../launcher.json", ".pandora-layout-v1/state.json"] {
+            assert!(check_manifest_path(path).is_err(), "protected path unexpectedly allowed: {path}");
+        }
     }
 
     #[test]

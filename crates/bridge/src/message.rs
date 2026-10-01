@@ -302,6 +302,7 @@ pub enum MessageToBackend {
         revision_id: String,
         sequence: i64,
         manifest_sha256: String,
+        modal_action: ModalAction,
     },
     UpdateGlobalProfileInstance {
         id: InstanceID,
@@ -409,6 +410,7 @@ pub enum MessageToFrontend {
         id: InstanceID,
         name: Ustr,
         icon: Option<UniqueBytes>,
+        save_group_id: Option<uuid::Uuid>,
         root_path: Arc<Path>,
         dot_minecraft_folder: Arc<Path>,
         configuration: InstanceConfiguration,
@@ -419,6 +421,10 @@ pub enum MessageToFrontend {
     },
     InstanceRemoved {
         id: InstanceID,
+    },
+    InstanceSaveGroupUpdated {
+        id: InstanceID,
+        group_id: Option<uuid::Uuid>,
     },
     InstanceModified {
         id: InstanceID,

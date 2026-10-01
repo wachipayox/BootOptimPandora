@@ -63,7 +63,7 @@ impl DuplicateInstanceModalState {
         let mut content = v_flex().gap_3().child(crate::labelled(t::instance::name(), Input::new(&self.name)));
         if self.as_branch {
             content = content.child(match &self.group {
-                None => div().child("Checking the parent's save groupâ€¦").into_any_element(),
+                None => div().child("Checking the parent's save group…").into_any_element(),
                 Some(Err(error)) => div().text_color(cx.theme().danger).child(error.clone()).into_any_element(),
                 Some(Ok(true)) => div().child("This instance will share its parent's worlds.").into_any_element(),
                 Some(Ok(false)) => v_flex().gap_2()
@@ -111,7 +111,7 @@ impl DuplicateInstanceModalState {
                         let modal_action = ModalAction::default();
                         window.close_dialog(cx);
                         generic::show_modal(window, cx,
-                            if this.as_branch { "Creating derived instanceâ€¦".into() } else { t::instance::duplicate::progress().into() },
+                            if this.as_branch { "Creating derived instance…".into() } else { t::instance::duplicate::progress().into() },
                             if this.as_branch { "Unable to create derived instance".into() } else { t::instance::duplicate::error().into() }, modal_action.clone());
                         if this.as_branch {
                             this.backend.send(MessageToBackend::CreateLocalBranch { id: this.instance_id, name: name.as_str().into(), create_save_group: this.create_group, reuse_parent_icon: this.reuse_icon, icon_hue_degrees: { let value = match this.hue.read(cx).value() { gpui_component::slider::SliderValue::Single(v) => v, gpui_component::slider::SliderValue::Range(v, _) => v }; value.round() as i32 - 180 }, modal_action });

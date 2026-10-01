@@ -24,6 +24,7 @@ impl InstanceEntries {
         id: InstanceID,
         name: SharedString,
         icon: Option<UniqueBytes>,
+        save_group_id: Option<uuid::Uuid>,
         root_path: Arc<Path>,
         dot_minecraft_folder: Arc<Path>,
         configuration: InstanceConfiguration,
@@ -38,6 +39,7 @@ impl InstanceEntries {
                 id,
                 name,
                 icon,
+                save_group_id,
                 title: "".into(),
                 root_path,
                 dot_minecraft_folder,
@@ -126,6 +128,19 @@ impl InstanceEntries {
         });
     }
 
+    pub fn set_save_group(entity: &Entity<Self>, id: InstanceID, group_id: Option<uuid::Uuid>, cx: &mut App) {
+        entity.update(cx, |entries, cx| {
+            if let Some(instance) = entries.entries.get_mut(&id) {
+                let updated = instance.update(cx, |instance, cx| {
+                    instance.save_group_id = group_id;
+                    cx.notify();
+                    instance.clone()
+                });
+                cx.emit(InstanceModifiedEvent { instance: updated });
+            }
+        });
+    }
+
     pub fn set_worlds(entity: &Entity<Self>, id: InstanceID, worlds: Arc<[InstanceWorldSummary]>, cx: &mut App) {
         entity.update(cx, |entries, cx| {
             if let Some(instance) = entries.entries.get_mut(&id) {
@@ -200,6 +215,7 @@ pub struct InstanceEntry {
     pub id: InstanceID,
     pub name: SharedString,
     pub icon: Option<UniqueBytes>,
+    pub save_group_id: Option<uuid::Uuid>,
     pub title: SharedString,
     pub root_path: Arc<Path>,
     pub dot_minecraft_folder: Arc<Path>,

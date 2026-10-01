@@ -541,6 +541,18 @@ impl BackendState {
                 existing.rewatch_directories(&mut self.file_watching.write());
 
                 let _ = self.send.send(existing.create_modify_message());
+                let group_id = crate::save_groups::group_id_for_saves_path(
+                    &existing.saves_path,
+                    &self.directories.save_groups_dir,
+                )
+                .unwrap_or_else(|error| {
+                    log::warn!("Unable to determine save group for {:?}: {error}", existing.root_path);
+                    None
+                });
+                self.send.send(MessageToFrontend::InstanceSaveGroupUpdated {
+                    id: existing.id,
+                    group_id,
+                });
 
                 if show_success {
                     self.send.send_info(format!("Instance '{}' updated", existing.name));
@@ -551,6 +563,15 @@ impl BackendState {
 
             let generation = instance_state.instances_generation;
             instance_state.instances_generation = instance_state.instances_generation.wrapping_add(1);
+
+            let save_group_id = crate::save_groups::group_id_for_saves_path(
+                &instance.saves_path,
+                &self.directories.save_groups_dir,
+            )
+            .unwrap_or_else(|error| {
+                log::warn!("Unable to determine save group for {:?}: {error}", instance.root_path);
+                None
+            });
 
             let instance = instance_state.instances.insert(move |index| {
                 let instance_id = InstanceID { index, generation };
@@ -567,6 +588,7 @@ impl BackendState {
                 id: instance.id,
                 name: instance.name,
                 icon: instance.icon.clone(),
+                save_group_id,
                 root_path: instance.resolve_real_root_path(),
                 dot_minecraft_folder: instance.dot_minecraft_path.clone(),
                 configuration: instance.configuration.get().clone(),

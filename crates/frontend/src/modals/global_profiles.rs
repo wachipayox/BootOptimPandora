@@ -1,6 +1,7 @@
 use bridge::{
     handle::BackendHandle,
     message::{GlobalProfileSummary, MessageToBackend},
+    modal_action::ModalAction,
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -92,12 +93,21 @@ impl GlobalProfilesModal {
                                     .label("Create instance")
                                     .disabled(!valid_name)
                                     .on_click(cx.listener(move |_, _, window, cx| {
+                                        let modal_action = ModalAction::default();
+                                        crate::modals::generic::show_modal(
+                                            window,
+                                            cx,
+                                            "Preparing modpack download…".into(),
+                                            "Global profile installation failed".into(),
+                                            modal_action.clone(),
+                                        );
                                         backend.send(MessageToBackend::CreateGlobalProfileInstance {
                                             name: display_name.clone(),
                                             profile_id: profile.profile_id.clone(),
                                             revision_id: revision_id.clone(),
                                             sequence,
                                             manifest_sha256: digest.clone(),
+                                            modal_action,
                                         });
                                         window.close_dialog(cx);
                                     })),
@@ -161,7 +171,7 @@ pub fn open_global_profile_details(profile: GlobalProfileSummary, backend_handle
         let enter_name_input = input.clone();
         let enter_profile = profile.clone();
         let enter_backend = backend_handle.clone();
-        let dialog = dialog.on_ok(move |_, _, cx| {
+        let dialog = dialog.on_ok(move |_, window, cx| {
             let name = enter_name_input.read(cx).value();
             let name = if name.trim().is_empty() { enter_profile.name.clone() } else { name.trim().to_owned() };
             if !crate::is_valid_instance_name(&name) { return false; }
@@ -177,12 +187,21 @@ pub fn open_global_profile_details(profile: GlobalProfileSummary, backend_handle
                     enter_profile.latest_manifest_sha256.clone(),
                 ),
             };
+            let modal_action = ModalAction::default();
+            crate::modals::generic::show_modal(
+                window,
+                cx,
+                "Preparing modpack download…".into(),
+                "Global profile installation failed".into(),
+                modal_action.clone(),
+            );
             enter_backend.send(MessageToBackend::CreateGlobalProfileInstance {
                 name,
                 profile_id: enter_profile.profile_id.clone(),
                 revision_id,
                 sequence,
                 manifest_sha256,
+                modal_action,
             });
             true
         });
@@ -208,7 +227,15 @@ pub fn open_global_profile_details(profile: GlobalProfileSummary, backend_handle
                         (Some(id), Some(sequence), Some(digest)) => (id.clone(), sequence, digest.clone()),
                         _ => (create_profile.latest_revision_id.clone(), create_profile.latest_sequence, create_profile.latest_manifest_sha256.clone()),
                     };
-                    backend.send(MessageToBackend::CreateGlobalProfileInstance { name, profile_id: create_profile.profile_id.clone(), revision_id, sequence, manifest_sha256 });
+                    let modal_action = ModalAction::default();
+                    crate::modals::generic::show_modal(
+                        window,
+                        cx,
+                        "Preparing modpack download…".into(),
+                        "Global profile installation failed".into(),
+                        modal_action.clone(),
+                    );
+                    backend.send(MessageToBackend::CreateGlobalProfileInstance { name, profile_id: create_profile.profile_id.clone(), revision_id, sequence, manifest_sha256, modal_action });
                     window.close_dialog(cx);
                 })))
     });

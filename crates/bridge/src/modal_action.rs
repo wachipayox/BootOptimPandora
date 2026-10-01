@@ -140,6 +140,14 @@ impl ModalActionInner {
     }
 
     pub fn push_tracker(&self, title: Arc<str>) -> ProgressTracker {
+        self.push_tracker_with_depth(title, false)
+    }
+
+    pub fn push_sub_tracker(&self, title: Arc<str>) -> ProgressTracker {
+        self.push_tracker_with_depth(title, true)
+    }
+
+    fn push_tracker_with_depth(&self, title: Arc<str>, is_subtask: bool) -> ProgressTracker {
         let tracker = ProgressTracker(Arc::new(ProgressTrackerInner {
             notify: self.notify.clone(),
             count: AtomicUsize::new(0),
@@ -147,6 +155,7 @@ impl ModalActionInner {
             finished_at: AtomicOptionInstant::none(),
             finish_type: AtomicProgressTrackerFinishType::new(ProgressTrackerFinishType::Normal),
             title: RwLock::new(title),
+            is_subtask,
             probe_modal_key: self.probe_key(),
             asset_verification_mode: self.asset_verification_mode,
         }));
@@ -195,6 +204,7 @@ struct ProgressTrackerInner {
     finished_at: AtomicOptionInstant,
     finish_type: AtomicProgressTrackerFinishType,
     title: RwLock<Arc<str>>,
+    is_subtask: bool,
     probe_modal_key: usize,
     asset_verification_mode: AssetVerificationMode,
 }
@@ -225,6 +235,10 @@ impl std::fmt::Debug for ProgressTrackerInner {
 }
 
 impl ProgressTracker {
+    pub fn is_subtask(&self) -> bool {
+        self.0.is_subtask
+    }
+
     pub fn asset_verification_mode(&self) -> AssetVerificationMode {
         self.0.asset_verification_mode
     }

@@ -148,6 +148,11 @@ fn group_for_link(saves: &Path, groups: &[(SaveGroupRecord, PathBuf)]) -> Result
     }
 }
 
+pub fn group_id_for_saves_path(saves: &Path, groups_dir: &Path) -> Result<Option<Uuid>, String> {
+    let groups = load_records(groups_dir)?;
+    group_for_link(saves, &groups)
+}
+
 fn same_path(left: &Path, right: &Path) -> bool {
     #[cfg(windows)]
     fn normalized(path: &Path) -> String {

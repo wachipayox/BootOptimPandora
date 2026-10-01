@@ -101,6 +101,7 @@ impl InstanceList {
 
         let theme = cx.theme();
         v_flex()
+            .relative()
             .flex_1()
             .p_2()
             .gap_2()
@@ -109,6 +110,17 @@ impl InstanceList {
             .border_1()
             .border_color(theme.border)
             .rounded(theme.radius_lg)
+            .when_some(item.save_group_id, |this, group_id| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_2()
+                        .rounded_sm()
+                        .bg(group_indicator_color(group_id)),
+                )
+            })
             .child(
                 h_flex()
                     .w_full()
@@ -130,6 +142,17 @@ impl InstanceList {
                 }),
             ))
     }
+}
+
+fn group_indicator_color(group_id: uuid::Uuid) -> Hsla {
+    let bytes = group_id.as_bytes();
+    let hash = bytes.iter().fold(2_166_136_261u32, |hash, byte| {
+        (hash ^ u32::from(*byte)).wrapping_mul(16_777_619)
+    });
+    let hue = (hash % 65_536) as f32 / 65_536.0;
+    let saturation = 0.68 + (f32::from(bytes[2]) / 255.0) * 0.18;
+    let lightness = 0.48 + (f32::from(bytes[3]) / 255.0) * 0.16;
+    hsla(hue, saturation, lightness, 1.0)
 }
 
 impl TableDelegate for InstanceList {

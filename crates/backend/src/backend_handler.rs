@@ -1654,18 +1654,28 @@ impl BackendState {
                 revision_id,
                 sequence,
                 manifest_sha256,
+                modal_action,
             } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
-                    backend.send.send_info(format!("Creating global profile instance '{name}'"));
+                    let progress = modal_action.push_tracker("Preparing modpack assets".into());
+                    progress.set_total(1);
                     let revision = crate::distribution::RevisionRef {
                         revision_id,
                         sequence,
                         manifest_sha256,
                     };
-                    match backend.create_global_profile_instance(&name, &profile_id, &revision).await {
-                        Ok(()) => backend.send.send_success(format!("Global profile instance '{name}' is ready")),
-                        Err(error) => backend.send.send_error(format!("Global profile installation failed: {error}")),
+                    match backend.create_global_profile_instance(&name, &profile_id, &revision, &modal_action, &progress).await {
+                        Ok(()) => {
+                            progress.set_title("Finishing modpack installation".into());
+                            progress.set_finished(ProgressTrackerFinishType::Normal);
+                            modal_action.set_finished();
+                            backend.send.send_success(format!("Global profile instance '{name}' is ready"));
+                        },
+                        Err(error) => {
+                            progress.set_finished(ProgressTrackerFinishType::Error);
+                            modal_action.set_finished_with_error(error.into());
+                        },
                     }
                 });
             },
@@ -2925,9 +2935,19 @@ fn refresh_instance_saves(state: &Arc<BackendState>, id: InstanceID, changed: bo
     if !changed {
         return;
     }
+    let saves_path = state.instance_state.read().instances.get(id).map(|instance| instance.saves_path.clone());
+    let Some(saves_path) = saves_path else {
+        return;
+    };
     if let Some(instance) = state.instance_state.write().instances.get_mut(id) {
         instance.mark_all_dirty(state, true);
     }
+    let group_id = crate::save_groups::group_id_for_saves_path(&saves_path, &state.directories.save_groups_dir)
+        .unwrap_or_else(|error| {
+            log::warn!("Unable to refresh save group indicator for {id:?}: {error}");
+            None
+        });
+    state.send.send(MessageToFrontend::InstanceSaveGroupUpdated { id, group_id });
 }
 
 fn check_argument_expansions(argument: &str) {
