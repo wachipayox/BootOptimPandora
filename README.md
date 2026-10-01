@@ -48,3 +48,76 @@ Unlikely, for a few reasons:
 
 ## Instance Page
 ![Instance Page](https://raw.githubusercontent.com/Moulberry/PandoraLauncher/refs/heads/master/screenshots/instance.png)
+
+## Private launcher interaction (2026-10-01)
+Repair game files is an instance Settings action. Duplicate and Create derived
+instance have separate controls. Derived instances reuse an existing managed
+save-group link; when the parent is ungrouped, creation asks whether to create a
+shared group. Failure/cancellation restores a group created by that attempt.
+
+GUI Start checks committed parent revision metadata with a two-second network
+budget. It does not enumerate/hash mods or configs. Updates are optional; an
+unavailable server does not block an installed game. Accepting updates processes
+local ancestors before children. Local parent snapshots store an applied parent
+generation; old branches require one explicit synchronization to establish it.
+External edits without a committed revision are not detected by this version-only
+check; explicit inherited-file updates still capture them with the existing scan.
+Global-to-global revisions still pin their exact base; changing such a base needs
+publishing a new child revision on Distribution.
+
+Global profiles appear in a separate moving carousel (three cards), paused on
+hover, dialogs and inactive windows. Detail dialogs offer installation. Profile
+artwork is optional signed CAS metadata, bounded to PNG2MiB/1024px, and is stored
+outside the game file tree; new installs copy it to the instance icon.
+Skin preview textures are decoded once per skin/cape and rendered by a single
+background task. Movement targets30FPS at native physical resolution (including DPI scaling). Isolated pixel-equivalence and CPU microbenchmarks passed;
+these are not measured GUI FPS or claims about laptop performance.
+
+Native skin preview development builds (2026-10-01): explicitly optimize the
+frontend workspace package; the wildcard dependency profile excludes it. At
+452x768, an isolated synthetic skin/cape benchmark measured 59.042 ms/frame
+unoptimized versus 19.846 ms/frame optimized. Thirteen reference comparisons
+were pixel-identical. Pixel conversion and RenderImage creation now run on the
+render worker rather than the UI thread. These are CPU renderer measurements,
+not end-to-end GUI FPS or laptop results. Native resolution is retained.
+
+Skin transparent-overlay culling (2026-10-01): cached conservative alpha
+coverage skips only faces incapable of sampling any visible texel, excluding
+capes and opaque base faces. Native 452x768 opt3 CPU renderer, three rounds of
+60 frames: empty overlay median 18.215 -> 14.387 ms; opaque 19.898 -> 18.825 ms;
+partial alpha 29.432 -> 29.166 ms. Only the empty-overlay improvement is
+attributable (~21%); 576 reference frames were pixel-identical. Coverage costs
+8,450 bytes per modern skin. Resolution, blend order and cadence stay unchanged.
+These are isolated renderer CPU timings, not GUI FPS.
+
+
+
+2026-10-01 profile presentation: the carousel now moves at 40 px/s with
+frame-paced subpixel motion (previously 20), pauses when hidden/hovered/inactive
+or a dialog is open, and consumes
+mutable HTTPS catalog name/description/icon overrides without changing installed
+game revisions. Signed game metadata remains authoritative for game content.
+Distribution 0.2.16 implements Edit profile -> Save changes; presentation icons
+are still bounded PNG CAS objects verified by size/hash before decoding.
+
+New instances installed from global profiles inherit the signed profile icon.
+Derived local branches inherit their parent's icon by default; the branch dialog
+can disable reuse or rotate its hue, writing the variation only to the child.
+Creating a branch from an ungrouped parent now opts into creating a shared save
+group by default.
+
+Skin scheduling audit (2026-10-01): the widget now requests one GPUI native
+next-frame callback at a time and advances at an anchored 30Hz cadence. Completed
+frames publish immediately; the animation continues while another window has
+keyboard focus, matching Pandora behavior. Two artificial timers were removed.
+Two deterministic scheduling tests pass; GUI presentation still needs visual
+validation. See docs/research/skin-preview-scheduling-2026-10-01.md.
+
+
+## Private profile publication
+
+Distribution 0.2.17 signs administrator publications automatically. The launcher
+obtains unknown public signing identities from the configured certificate-verified
+HTTPS server; manual signing-key setup is unnecessary. Existing pinned identities
+and revision/object verification remain compatible. Keep the complete server data
+directory backed up; losing the administrator PC needs no signing-key migration.

@@ -1,20 +1,52 @@
-use std::{collections::BTreeSet, ops::Range, sync::{Arc, atomic::AtomicBool}, time::Duration};
+use std::{
+    collections::BTreeSet,
+    ops::Range,
+    sync::{Arc, atomic::AtomicBool},
+    time::Duration,
+};
 
-use bridge::{install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget}, instance::{ContentFolder, ContentUpdateStatus, InstanceContentID, InstanceID}, message::MessageToBackend, meta::MetadataRequest, modal_action::ModalAction};
+use bridge::{
+    install::{ContentDownload, ContentInstall, ContentInstallFile, InstallTarget},
+    instance::{ContentFolder, ContentUpdateStatus, InstanceContentID, InstanceID},
+    message::MessageToBackend,
+    meta::MetadataRequest,
+    modal_action::ModalAction,
+};
 use enumset::EnumSet;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, WindowExt, button::{Button, ButtonGroup, ButtonVariant, ButtonVariants}, checkbox::Checkbox, h_flex, input::{Input, InputEvent, InputState}, notification::NotificationType, scroll::{ScrollableElement, Scrollbar}, skeleton::Skeleton, v_flex
+    ActiveTheme, Selectable, WindowExt,
+    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
+    checkbox::Checkbox,
+    h_flex,
+    input::{Input, InputEvent, InputState},
+    notification::NotificationType,
+    scroll::{ScrollableElement, Scrollbar},
+    skeleton::Skeleton,
+    v_flex,
 };
 use rustc_hash::FxHashMap;
-use schema::{content::{ContentInstallReason, ContentSource}, curseforge::{CurseforgeClassId, CurseforgeHit, CurseforgeSearchRequest, CurseforgeSearchResult, CurseforgeSortField}, loader::Loader};
+use schema::{
+    content::{ContentInstallReason, ContentSource},
+    curseforge::{
+        CurseforgeClassId, CurseforgeHit, CurseforgeSearchRequest, CurseforgeSearchResult, CurseforgeSortField,
+    },
+    loader::Loader,
+};
 use strum::IntoEnumIterator;
 use ustr::Ustr;
 
 use crate::{
-    component::error_alert::ErrorAlert, entity::{
-        DataEntities, instance::ContentStates, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult}
-    }, icon::PandoraIcon, interface_config::InterfaceConfig, pages::page::Page, format_downloads
+    component::error_alert::ErrorAlert,
+    entity::{
+        DataEntities,
+        instance::ContentStates,
+        metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult},
+    },
+    format_downloads,
+    icon::PandoraIcon,
+    interface_config::InterfaceConfig,
+    pages::page::Page,
 };
 
 pub struct CurseforgeSearchPage {
@@ -48,7 +80,7 @@ pub struct CurseforgeSearchPage {
 #[derive(Clone, Copy)]
 pub struct InstalledContent {
     pub content_id: InstanceContentID,
-    pub status: ContentUpdateStatus
+    pub status: ContentUpdateStatus,
 }
 
 pub fn get_primary_action(
@@ -60,7 +92,9 @@ pub fn get_primary_action(
     let install_latest = can_install_latest && InterfaceConfig::get(cx).content_install_latest;
     let installed = installed_content_by_project.get(&project_id);
 
-    if let Some(installed) = installed && !installed.is_empty() {
+    if let Some(installed) = installed
+        && !installed.is_empty()
+    {
         if !install_latest {
             return PrimaryAction::Reinstall;
         }
@@ -85,7 +119,7 @@ pub fn get_primary_action(
                     if action == PrimaryAction::CheckForUpdates {
                         action = PrimaryAction::ErrorCheckingForUpdates;
                     }
-                }
+                },
             };
         }
         return action;
@@ -99,7 +133,12 @@ pub fn get_primary_action(
 }
 
 impl CurseforgeSearchPage {
-    pub fn new(install_for: Option<InstanceID>, data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        install_for: Option<InstanceID>,
+        data: &DataEntities,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut project_type = InterfaceConfig::get(cx).curseforge_page_class_id;
         if project_type == CurseforgeClassId::Other {
             project_type = CurseforgeClassId::Mod;
@@ -118,7 +157,10 @@ impl CurseforgeSearchPage {
         });
 
         let mut can_install_latest = false;
-        let mut specific_installed_content_by_project: enum_map::EnumMap<ContentFolder, FxHashMap<u32, Vec<InstalledContent>>> = Default::default();
+        let mut specific_installed_content_by_project: enum_map::EnumMap<
+            ContentFolder,
+            FxHashMap<u32, Vec<InstalledContent>>,
+        > = Default::default();
         let mut all_installed_content_by_project: FxHashMap<u32, Vec<InstalledContent>> = FxHashMap::default();
         let mut filter_version = None;
 
@@ -138,7 +180,8 @@ impl CurseforgeSearchPage {
 
                     if let Some(content) = instance_content[content_folder].read(cx) {
                         for summary in content.iter() {
-                            let ContentSource::CurseforgeProject { project_id: project } = summary.content_source else {
+                            let ContentSource::CurseforgeProject { project_id: project } = summary.content_source
+                            else {
                                 continue;
                             };
 
@@ -165,7 +208,8 @@ impl CurseforgeSearchPage {
 
                         if let Some(content) = entity.read(cx) {
                             for summary in content.iter() {
-                                let ContentSource::CurseforgeProject { project_id: project } = summary.content_source else {
+                                let ContentSource::CurseforgeProject { project_id: project } = summary.content_source
+                                else {
                                     continue;
                                 };
 
@@ -184,7 +228,8 @@ impl CurseforgeSearchPage {
                                 installed.extend_from_slice(value.as_slice());
                             }
                         }
-                    }).detach();
+                    })
+                    .detach();
                 }
             }
         }
@@ -331,7 +376,10 @@ impl CurseforgeSearchPage {
         let offset = if self.pending_clear { 0 } else { self.hits.len() };
 
         let is_mod = class_id == CurseforgeClassId::Mod || class_id == CurseforgeClassId::Modpack;
-        let game_version = if is_mod && let Some(filter_version) = self.filter_version && modrinth_filter_version {
+        let game_version = if is_mod
+            && let Some(filter_version) = self.filter_version
+            && modrinth_filter_version
+        {
             Some(filter_version)
         } else {
             None
@@ -376,7 +424,7 @@ impl CurseforgeSearchPage {
             mod_loader_types,
             sort_field: self.sort_field as u32,
             index: offset as u32,
-            page_size: 20
+            page_size: 20,
         };
 
         let data = FrontendMetadata::request(&self.data.metadata, MetadataRequest::CurseforgeSearch(request), cx);
@@ -463,27 +511,23 @@ impl CurseforgeSearchPage {
             .map(|index| {
                 let Some(hit) = self.hits.get(index) else {
                     if let Some(search_error) = self.search_error.clone() {
-                        return div()
-                            .pl_3()
-                            .pt_3()
-                            .child(ErrorAlert::new(t::instance::content::requesting_from_error("Curseforge").into(), search_error));
+                        return div().pl_3().pt_3().child(ErrorAlert::new(
+                            t::instance::content::requesting_from_error("Curseforge").into(),
+                            search_error,
+                        ));
                     } else {
                         should_load_more = true;
-                        return div()
-                            .pl_3()
-                            .pt_3()
-                            .child(Skeleton::new().w_full().h(px(28.0 * 4.0)).rounded_lg());
+                        return div().pl_3().pt_3().child(Skeleton::new().w_full().h(px(28.0 * 4.0)).rounded_lg());
                     }
                 };
 
-
-                let image = if let Some(logo) = &hit.logo && !logo.thumbnail_url.is_empty() {
+                let image = if let Some(logo) = &hit.logo
+                    && !logo.thumbnail_url.is_empty()
+                {
                     gpui::img(SharedUri::from(logo.thumbnail_url.clone()))
                         .with_fallback(|| Skeleton::new().rounded_lg().size_16().into_any_element())
                 } else {
-                    gpui::img(ImageSource::Resource(Resource::Embedded(
-                        "images/default_mod.png".into(),
-                    )))
+                    gpui::img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))
                 };
 
                 let author = if hit.authors.len() == 1 {
@@ -516,13 +560,12 @@ impl CurseforgeSearchPage {
                     is_categories_empty = false;
                     Some(SharedString::new(category.name.clone()).into_any_element())
                 });
-                let categories = itertools::Itertools::intersperse_with(categories,
-                    || div().flex_shrink_0().child(tag_separator.clone()).into_any_element());
+                let categories = itertools::Itertools::intersperse_with(categories, || {
+                    div().flex_shrink_0().child(tag_separator.clone()).into_any_element()
+                });
 
-                let downloads = h_flex()
-                    .gap_1()
-                    .child(PandoraIcon::Download)
-                    .child(format_downloads(hit.download_count));
+                let downloads =
+                    h_flex().gap_1().child(PandoraIcon::Download).child(format_downloads(hit.download_count));
 
                 let primary_action = self.get_primary_action(hit.id, cx);
 
@@ -546,17 +589,23 @@ impl CurseforgeSearchPage {
                                             install_for,
                                             &data,
                                             window,
-                                            cx
+                                            cx,
                                         );
                                     },
                                     PrimaryAction::InstallLatest => {
                                         let Some(install_for) = install_for else {
-                                            window.push_notification((NotificationType::Error, t::instance::unable_to_find()), cx);
+                                            window.push_notification(
+                                                (NotificationType::Error, t::instance::unable_to_find()),
+                                                cx,
+                                            );
                                             return;
                                         };
 
                                         let Some(entry) = data.instances.read(cx).entries.get(&install_for) else {
-                                            window.push_notification((NotificationType::Error, t::instance::unable_to_find()), cx);
+                                            window.push_notification(
+                                                (NotificationType::Error, t::instance::unable_to_find()),
+                                                cx,
+                                            );
                                             return;
                                         };
 
@@ -568,20 +617,17 @@ impl CurseforgeSearchPage {
                                             target: InstallTarget::Instance(instance.id),
                                             loader,
                                             minecraft_version,
-                                            files: [
-                                                ContentInstallFile {
-                                                    replace_old: None,
-                                                    path: bridge::install::ContentInstallPath::Automatic,
-                                                    download: ContentDownload::Curseforge {
-                                                        project_id: hit.id,
-                                                        install_dependencies: true,
-                                                    },
-                                                    content_source: ContentSource::CurseforgeProject {
-                                                        project_id: hit.id
-                                                    },
-                                                    reason: ContentInstallReason::Standalone,
-                                                }
-                                            ].into(),
+                                            files: [ContentInstallFile {
+                                                replace_old: None,
+                                                path: bridge::install::ContentInstallPath::Automatic,
+                                                download: ContentDownload::Curseforge {
+                                                    project_id: hit.id,
+                                                    install_dependencies: true,
+                                                },
+                                                content_source: ContentSource::CurseforgeProject { project_id: hit.id },
+                                                reason: ContentInstallReason::Standalone,
+                                            }]
+                                            .into(),
                                         };
 
                                         crate::root::start_install(content_install, &data.backend_handle, window, cx);
@@ -590,10 +636,14 @@ impl CurseforgeSearchPage {
                                         let modal_action = ModalAction::default();
                                         data.backend_handle.send(MessageToBackend::UpdateCheck {
                                             instance: install_for.unwrap(),
-                                            modal_action: modal_action.clone()
+                                            modal_action: modal_action.clone(),
                                         });
-                                        crate::modals::generic::show_notification(window, cx,
-                                            t::instance::content::update::check::error().into(), modal_action);
+                                        crate::modals::generic::show_notification(
+                                            window,
+                                            cx,
+                                            t::instance::content::update::check::error().into(),
+                                            modal_action,
+                                        );
                                     },
                                     PrimaryAction::ErrorCheckingForUpdates => {},
                                     PrimaryAction::UpToDate => {},
@@ -603,19 +653,20 @@ impl CurseforgeSearchPage {
                                             data.backend_handle.send(MessageToBackend::UpdateContent {
                                                 instance: install_for.unwrap(),
                                                 content_id: *id,
-                                                modal_action: modal_action.clone()
+                                                modal_action: modal_action.clone(),
                                             });
-                                            crate::modals::generic::show_notification(window, cx,
-                                                t::instance::content::update::error().into(), modal_action);
+                                            crate::modals::generic::show_notification(
+                                                window,
+                                                cx,
+                                                t::instance::content::update::error().into(),
+                                                modal_action,
+                                            );
                                         }
                                     },
                                 }
                             } else {
                                 window.push_notification(
-                                    (
-                                        NotificationType::Error,
-                                        t::instance::content::install::unknown_type(),
-                                    ),
+                                    (NotificationType::Error, t::instance::content::install::unknown_type()),
                                     cx,
                                 );
                             }
@@ -639,22 +690,8 @@ impl CurseforgeSearchPage {
                             .flex_grow(1.0)
                             .gap_1()
                             .overflow_hidden()
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .items_end()
-                                    .line_clamp(1)
-                                    .text_lg()
-                                    .child(name)
-                                    .child(author_line),
-                            )
-                            .child(
-                                div()
-                                    .flex_auto()
-                                    .line_height(px(20.0))
-                                    .line_clamp(2)
-                                    .child(description),
-                            )
+                            .child(h_flex().gap_1().items_end().line_clamp(1).text_lg().child(name).child(author_line))
+                            .child(div().flex_auto().line_height(px(20.0)).line_clamp(2).child(description))
                             .child(
                                 h_flex()
                                     .text_sm()
@@ -703,7 +740,8 @@ impl PrimaryAction {
             PrimaryAction::ErrorCheckingForUpdates => t::common::error(),
             PrimaryAction::UpToDate => t::instance::content::update::check::up_to_date(),
             PrimaryAction::Update(..) => t::instance::content::update::label(),
-        }.into()
+        }
+        .into()
     }
 
     pub fn icon(&self) -> PandoraIcon {
@@ -746,7 +784,12 @@ impl Render for CurseforgeSearchPage {
         let can_load_more = self.total_hits > self.hits.len() as u64;
         let scroll_handle = self.scroll_handle.clone();
 
-        let item_count = self.hits.len() + if can_load_more || self.search_error.is_some() { 1 } else { 0 };
+        let item_count = self.hits.len()
+            + if can_load_more || self.search_error.is_some() {
+                1
+            } else {
+                0
+            };
 
         if let Some(content_states) = &self.content_states {
             content_states.observe_all();
@@ -757,39 +800,26 @@ impl Render for CurseforgeSearchPage {
             .size_full()
             .overflow_y_hidden()
             .child(
-                uniform_list(
-                    "uniform-list",
-                    item_count,
-                    cx.processor(Self::render_items),
-                )
-                .size_full()
-                .track_scroll(&scroll_handle),
+                uniform_list("uniform-list", item_count, cx.processor(Self::render_items))
+                    .size_full()
+                    .track_scroll(&scroll_handle),
             )
-            .child(
-                div()
-                    .w_3()
-                    .h_full()
-                    .py_3()
-                    .child(Scrollbar::vertical(&scroll_handle)),
-            );
+            .child(div().w_3().h_full().py_3().child(Scrollbar::vertical(&scroll_handle)));
 
-        let mut top_bar = h_flex()
-            .w_full()
-            .gap_3()
-            .child(Input::new(&self.search_state));
-
+        let mut top_bar = h_flex().w_full().gap_3().child(Input::new(&self.search_state));
 
         if self.can_install_latest {
             let install_latest = InterfaceConfig::get(cx).content_install_latest;
-            top_bar = top_bar.child(Checkbox::new("install-latest")
-                .label(t::instance::content::install::latest())
-                .tooltip(t::instance::content::install::always_latest())
-                .checked(install_latest)
-                .on_click({
-                    move |value, _, cx| {
-                        InterfaceConfig::get_mut(cx).content_install_latest = *value;
-                    }
-                })
+            top_bar = top_bar.child(
+                Checkbox::new("install-latest")
+                    .label(t::instance::content::install::latest())
+                    .tooltip(t::instance::content::install::always_latest())
+                    .checked(install_latest)
+                    .on_click({
+                        move |value, _, cx| {
+                            InterfaceConfig::get_mut(cx).content_install_latest = *value;
+                        }
+                    }),
             );
         }
 
@@ -808,7 +838,11 @@ impl Render for CurseforgeSearchPage {
         let type_button_group = ButtonGroup::new("type")
             .layout(Axis::Vertical)
             .outline()
-            .child(Button::new("mods").label(t::instance::content::mods()).selected(filter_project_type == CurseforgeClassId::Mod))
+            .child(
+                Button::new("mods")
+                    .label(t::instance::content::mods())
+                    .selected(filter_project_type == CurseforgeClassId::Mod),
+            )
             .child(
                 Button::new("modpacks")
                     .label(t::instance::content::modpacks())
@@ -819,7 +853,11 @@ impl Render for CurseforgeSearchPage {
                     .label(t::instance::content::resourcepacks())
                     .selected(filter_project_type == CurseforgeClassId::Resourcepack),
             )
-            .child(Button::new("shaders").label(t::instance::content::shaders()).selected(filter_project_type == CurseforgeClassId::Shader))
+            .child(
+                Button::new("shaders")
+                    .label(t::instance::content::shaders())
+                    .selected(filter_project_type == CurseforgeClassId::Shader),
+            )
             .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| match clicked[0] {
                 0 => page.set_project_type(CurseforgeClassId::Mod, window, cx),
                 1 => page.set_project_type(CurseforgeClassId::Modpack, window, cx),
@@ -828,25 +866,47 @@ impl Render for CurseforgeSearchPage {
                 _ => {},
             }));
 
-        let loader_button_group = if filter_project_type == CurseforgeClassId::Mod || filter_project_type == CurseforgeClassId::Modpack {
-            Some(ButtonGroup::new("loader_group")
-                .layout(Axis::Vertical)
-                .outline()
-                .multiple(true)
-                .child(Button::new("fabric").label(t::modrinth::category::fabric()).selected(self.filter_loaders.contains(Loader::Fabric)))
-                .child(Button::new("forge").label(t::modrinth::category::forge()).selected(self.filter_loaders.contains(Loader::Forge)))
-                .child(Button::new("neoforge").label(t::modrinth::category::neoforge()).selected(self.filter_loaders.contains(Loader::NeoForge)))
-                .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
-                    page.set_filter_loaders(clicked.iter().filter_map(|index| match index {
-                        0 => Some(Loader::Fabric),
-                        1 => Some(Loader::Forge),
-                        2 => Some(Loader::NeoForge),
-                        _ => None
-                    }).collect(), window, cx);
-                })))
-        } else {
-            None
-        };
+        let loader_button_group =
+            if filter_project_type == CurseforgeClassId::Mod || filter_project_type == CurseforgeClassId::Modpack {
+                Some(
+                    ButtonGroup::new("loader_group")
+                        .layout(Axis::Vertical)
+                        .outline()
+                        .multiple(true)
+                        .child(
+                            Button::new("fabric")
+                                .label(t::modrinth::category::fabric())
+                                .selected(self.filter_loaders.contains(Loader::Fabric)),
+                        )
+                        .child(
+                            Button::new("forge")
+                                .label(t::modrinth::category::forge())
+                                .selected(self.filter_loaders.contains(Loader::Forge)),
+                        )
+                        .child(
+                            Button::new("neoforge")
+                                .label(t::modrinth::category::neoforge())
+                                .selected(self.filter_loaders.contains(Loader::NeoForge)),
+                        )
+                        .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
+                            page.set_filter_loaders(
+                                clicked
+                                    .iter()
+                                    .filter_map(|index| match index {
+                                        0 => Some(Loader::Fabric),
+                                        1 => Some(Loader::Forge),
+                                        2 => Some(Loader::NeoForge),
+                                        _ => None,
+                                    })
+                                    .collect(),
+                                window,
+                                cx,
+                            );
+                        })),
+                )
+            } else {
+                None
+            };
 
         let categories = match filter_project_type {
             CurseforgeClassId::Mod => FILTER_MOD_CATEGORIES,
@@ -864,72 +924,92 @@ impl Render for CurseforgeSearchPage {
             .child(
                 Button::new("toggle-categories")
                     .label(t::instance::content::categories())
-                    .icon(if is_category_shown { PandoraIcon::ChevronDown } else { PandoraIcon::ChevronRight })
+                    .icon(if is_category_shown {
+                        PandoraIcon::ChevronDown
+                    } else {
+                        PandoraIcon::ChevronRight
+                    })
                     .when(!is_category_shown, |this| this.outline())
                     .on_click(move |_, _, _| {
                         show_categories.store(!is_category_shown, std::sync::atomic::Ordering::Relaxed);
-                    })
+                    }),
             )
-            .when(is_category_shown, |this| this.child(ButtonGroup::new("category_group")
-                .layout(Axis::Vertical)
-                .outline()
-                .multiple(true)
-                .children(categories.iter().map(|(name, id)| {
-                    Button::new(("category", *id))
-                        .child(
-                            h_flex().w_full().justify_start().gap_2()
-                            .child(SharedString::new(*name)))
-                        .selected(self.filter_categories.contains(id))
-                }))
-                .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
-                    page.set_filter_categories(clicked.iter()
-                        .filter_map(|index| categories.get(*index).map(|(_, id)| *id))
-                        .collect(), window, cx);
-                }))))
+            .when(is_category_shown, |this| {
+                this.child(
+                    ButtonGroup::new("category_group")
+                        .layout(Axis::Vertical)
+                        .outline()
+                        .multiple(true)
+                        .children(categories.iter().map(|(name, id)| {
+                            Button::new(("category", *id))
+                                .child(h_flex().w_full().justify_start().gap_2().child(SharedString::new(*name)))
+                                .selected(self.filter_categories.contains(id))
+                        }))
+                        .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| {
+                            page.set_filter_categories(
+                                clicked.iter().filter_map(|index| categories.get(*index).map(|(_, id)| *id)).collect(),
+                                window,
+                                cx,
+                            );
+                        })),
+                )
+            })
             .into_any_element();
 
         let is_sort_shown = self.show_sort.load(std::sync::atomic::Ordering::Relaxed);
         let show_sort = self.show_sort.clone();
 
-        let sort = v_flex()
-            .gap_1()
-            .child(
-                Button::new("toggle-sort")
-                    .label(t::instance::content::sort())
-                    .icon(if is_sort_shown { PandoraIcon::ChevronDown } else { PandoraIcon::ChevronRight })
-                    .when(!is_sort_shown, |this| this.outline())
-                    .on_click(move |_, _, _| {
-                        show_sort.store(!is_sort_shown, std::sync::atomic::Ordering::Relaxed);
-                    })
-            )
-            .when(is_sort_shown, |this| this.child(ButtonGroup::new("sort_field")
-                .layout(Axis::Vertical)
-                .outline()
-                .children(CurseforgeSortField::iter().map(|field| {
-                    let id = field.clone() as u32;
-                    Button::new(("sort", id))
-                        .child(
-                            h_flex().w_full().justify_start().gap_2()
-                            .child(t::curseforge::sort::get(field.as_str()).unwrap_or("missing_translation")))
-                        .selected(id == self.sort_field.clone() as u32)
-                }))
-                .on_click(cx.listener(move |page, clicked: &Vec<usize>, window, cx| {
-                    let sort_field = CurseforgeSortField::iter().nth(clicked[0]).unwrap_or_default();
-                    page.set_sort_field(sort_field, window, cx);
-                }))))
-            .into_any_element();
+        let sort =
+            v_flex()
+                .gap_1()
+                .child(
+                    Button::new("toggle-sort")
+                        .label(t::instance::content::sort())
+                        .icon(if is_sort_shown {
+                            PandoraIcon::ChevronDown
+                        } else {
+                            PandoraIcon::ChevronRight
+                        })
+                        .when(!is_sort_shown, |this| this.outline())
+                        .on_click(move |_, _, _| {
+                            show_sort.store(!is_sort_shown, std::sync::atomic::Ordering::Relaxed);
+                        }),
+                )
+                .when(is_sort_shown, |this| {
+                    this.child(
+                        ButtonGroup::new("sort_field")
+                            .layout(Axis::Vertical)
+                            .outline()
+                            .children(CurseforgeSortField::iter().map(|field| {
+                                let id = field.clone() as u32;
+                                Button::new(("sort", id))
+                                    .child(h_flex().w_full().justify_start().gap_2().child(
+                                        t::curseforge::sort::get(field.as_str()).unwrap_or("missing_translation"),
+                                    ))
+                                    .selected(id == self.sort_field.clone() as u32)
+                            }))
+                            .on_click(cx.listener(move |page, clicked: &Vec<usize>, window, cx| {
+                                let sort_field = CurseforgeSortField::iter().nth(clicked[0]).unwrap_or_default();
+                                page.set_sort_field(sort_field, window, cx);
+                            })),
+                    )
+                })
+                .into_any_element();
 
         let is_mod = filter_project_type == CurseforgeClassId::Mod || filter_project_type == CurseforgeClassId::Modpack;
         let filter_version_toggle = if is_mod && let Some(filter_version) = self.filter_version {
             let title = format!("{}: {}", t::instance::version(), filter_version);
-            Some(Button::new("filter_version").label(title)
-                .outline()
-                .selected(InterfaceConfig::get(cx).content_filter_version)
-                .on_click(cx.listener(|page, _, _, cx| {
-                    let cfg = InterfaceConfig::get_mut(cx);
-                    cfg.content_filter_version = !cfg.content_filter_version;
-                    page.reload(cx);
-                })))
+            Some(
+                Button::new("filter_version")
+                    .label(title)
+                    .outline()
+                    .selected(InterfaceConfig::get(cx).content_filter_version)
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        let cfg = InterfaceConfig::get_mut(cx);
+                        cfg.content_filter_version = !cfg.content_filter_version;
+                        page.reload(cx);
+                    })),
+            )
         } else {
             None
         };
@@ -1010,8 +1090,5 @@ const FILTER_RESOURCEPACK_CATEGORIES: &[(&'static str, u32)] = &[
     ("Traditional", 403),
 ];
 
-const FILTER_SHADERPACK_CATEGORIES: &[(&'static str, u32)] = &[
-    ("Fantasy", 6554),
-    ("Realistic", 6553),
-    ("Vanilla", 6555),
-];
+const FILTER_SHADERPACK_CATEGORIES: &[(&'static str, u32)] =
+    &[("Fantasy", 6554), ("Realistic", 6553), ("Vanilla", 6555)];

@@ -1,9 +1,18 @@
-use std::{path::{Path, PathBuf}, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use schema::{content::{ContentInstallReason, ContentSource}, loader::Loader};
+use schema::{
+    content::{ContentInstallReason, ContentSource},
+    loader::Loader,
+};
 use ustr::Ustr;
 
-use crate::{instance::{InstanceID, ModpackFilePath}, safe_path::SafePath};
+use crate::{
+    instance::{InstanceID, ModpackFilePath},
+    safe_path::SafePath,
+};
 
 #[derive(Debug, Clone)]
 pub enum InstallTarget {
@@ -57,5 +66,5 @@ pub enum ContentDownload {
     },
     File {
         path: PathBuf,
-    }
+    },
 }

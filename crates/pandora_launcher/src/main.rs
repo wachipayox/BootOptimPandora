@@ -2,10 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::ffi::OsString;
+use std::fmt::Write;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::fmt::Write;
 use std::time::SystemTime;
 
 use bridge::handle::{BackendHandle, FrontendHandle};
@@ -45,6 +45,9 @@ struct Cli {
     /// Open the launcher and launch an instance using the GUI Start asset verification mode
     #[arg(long, conflicts_with = "run_instance")]
     run_instance_normal: Option<String>,
+    /// Open or move the launcher to a one-based display number (for example, --monitor 3)
+    #[arg(long, value_name = "NUMBER", value_parser = parse_monitor_number)]
+    monitor: Option<usize>,
     /// Internal function to set traversable ACLs in an elevated context
     #[cfg(windows)]
     #[arg(long, hide = false, num_args = 2..)]
@@ -222,8 +225,22 @@ fn main() {
 
         run_cli(cli, &frontend_handle, &backend_handle);
 
-        backend::start(runtime, launcher_dir.clone(), frontend_handle, backend_handle.clone(), backend_recv, quit_handler.fork());
-        frontend::start(launcher_dir.clone(), panic_message, deadlock_message, backend_handle, frontend_recv, quit_handler);
+        backend::start(
+            runtime,
+            launcher_dir.clone(),
+            frontend_handle,
+            backend_handle.clone(),
+            backend_recv,
+            quit_handler.fork(),
+        );
+        frontend::start(
+            launcher_dir.clone(),
+            panic_message,
+            deadlock_message,
+            backend_handle,
+            frontend_recv,
+            quit_handler,
+        );
         log::info!("Quitting...");
     } else {
         eprintln!("Connecting to existing local socket: {socket:?}");
@@ -297,7 +314,7 @@ struct PlatformClientStream {
 impl PlatformListener {
     fn bind(local_path: &Path) -> std::io::Result<Self> {
         Ok(Self {
-            listener: tokio::net::UnixListener::bind(local_path)?
+            listener: tokio::net::UnixListener::bind(local_path)?,
         })
     }
 
@@ -319,29 +336,30 @@ impl PlatformListener {
             .first_pipe_instance(true)
             .create(&pipe_name)?;
 
-        Ok(Self { pipe_name, pipe, })
+        Ok(Self { pipe_name, pipe })
     }
 
     async fn accept(&mut self) -> std::io::Result<PlatformServerStream> {
         self.pipe.connect().await?;
-        let old_pipe = std::mem::replace(&mut self.pipe, tokio::net::windows::named_pipe::ServerOptions::new()
-            .access_outbound(false)
-            .create(&self.pipe_name)?);
-        Ok(PlatformServerStream {
-            server: old_pipe
-        })
+        let old_pipe = std::mem::replace(
+            &mut self.pipe,
+            tokio::net::windows::named_pipe::ServerOptions::new()
+                .access_outbound(false)
+                .create(&self.pipe_name)?,
+        );
+        Ok(PlatformServerStream { server: old_pipe })
     }
 }
 
 impl PlatformServerStream {
     #[cfg(unix)]
     fn project(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut tokio::net::UnixStream> {
-        unsafe { self.map_unchecked_mut(|s| { &mut s.stream }) }
+        unsafe { self.map_unchecked_mut(|s| &mut s.stream) }
     }
 
     #[cfg(windows)]
     fn project(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut tokio::net::windows::named_pipe::NamedPipeServer> {
-        unsafe { self.map_unchecked_mut(|s| { &mut s.server }) }
+        unsafe { self.map_unchecked_mut(|s| &mut s.server) }
     }
 }
 
@@ -358,11 +376,13 @@ impl tokio::io::AsyncRead for PlatformServerStream {
 #[cfg(unix)]
 impl PlatformClientStream {
     async fn connect(local_path: &Path) -> std::io::Result<Self> {
-        Ok(Self { stream: tokio::net::UnixStream::connect(local_path).await? })
+        Ok(Self {
+            stream: tokio::net::UnixStream::connect(local_path).await?,
+        })
     }
 
     fn project(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut tokio::net::UnixStream> {
-        unsafe { self.map_unchecked_mut(|s| { &mut s.stream }) }
+        unsafe { self.map_unchecked_mut(|s| &mut s.stream) }
     }
 }
 
@@ -385,7 +405,7 @@ impl PlatformClientStream {
     }
 
     fn project(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut tokio::net::windows::named_pipe::NamedPipeClient> {
-        unsafe { self.map_unchecked_mut(|s| { &mut s.client }) }
+        unsafe { self.map_unchecked_mut(|s| &mut s.client) }
     }
 }
 
@@ -398,17 +418,23 @@ impl tokio::io::AsyncWrite for PlatformClientStream {
         tokio::io::AsyncWrite::poll_write(self.project(), cx, buf)
     }
 
-    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
         tokio::io::AsyncWrite::poll_flush(self.project(), cx)
     }
 
-    fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
         tokio::io::AsyncWrite::poll_shutdown(self.project(), cx)
     }
 }
 
 fn run_cli(cli: Cli, frontend: &FrontendHandle, backend: &BackendHandle) {
-    frontend.send(MessageToFrontend::OpenOrFocusMainWindow);
+    frontend.send(MessageToFrontend::OpenOrFocusMainWindow { monitor: cli.monitor });
 
     if let Some((name, modal_action)) = cli_start_request(&cli) {
         backend.send(bridge::message::MessageToBackend::StartInstanceByName {
@@ -419,20 +445,24 @@ fn run_cli(cli: Cli, frontend: &FrontendHandle, backend: &BackendHandle) {
     }
 }
 
+fn parse_monitor_number(value: &str) -> Result<usize, String> {
+    let monitor = value.parse::<usize>().map_err(|_| format!("invalid monitor number: {value}"))?;
+    if monitor == 0 {
+        return Err("monitor numbers start at 1".into());
+    }
+    Ok(monitor)
+}
+
 fn cli_start_request(cli: &Cli) -> Option<(String, ModalAction)> {
     cli.run_instance
         .as_ref()
         .map(|name| (name.clone(), ModalAction::default()))
-        .or_else(|| {
-            cli.run_instance_normal
-                .as_ref()
-                .map(|name| (name.clone(), ModalAction::normal_launch()))
-        })
+        .or_else(|| cli.run_instance_normal.as_ref().map(|name| (name.clone(), ModalAction::normal_launch())))
 }
 
 #[cfg(test)]
 mod cli_tests {
-    use super::{cli_start_request, Cli};
+    use super::{Cli, cli_start_request};
     use bridge::modal_action::AssetVerificationMode;
     use clap::Parser;
 
@@ -441,10 +471,7 @@ mod cli_tests {
         let cli = Cli::try_parse_from(["pandora", "--run-instance", "Pack"]).unwrap();
         let (name, action) = cli_start_request(&cli).unwrap();
         assert_eq!(name, "Pack");
-        assert_eq!(
-            action.asset_verification_mode(),
-            AssetVerificationMode::FullVerification
-        );
+        assert_eq!(action.asset_verification_mode(), AssetVerificationMode::FullVerification);
     }
 
     #[test]
@@ -452,22 +479,12 @@ mod cli_tests {
         let cli = Cli::try_parse_from(["pandora", "--run-instance-normal", "Pack"]).unwrap();
         let (name, action) = cli_start_request(&cli).unwrap();
         assert_eq!(name, "Pack");
-        assert_eq!(
-            action.asset_verification_mode(),
-            AssetVerificationMode::Normal
-        );
+        assert_eq!(action.asset_verification_mode(), AssetVerificationMode::Normal);
     }
 
     #[test]
     fn run_instance_modes_are_mutually_exclusive() {
-        assert!(Cli::try_parse_from([
-            "pandora",
-            "--run-instance",
-            "Pack",
-            "--run-instance-normal",
-            "Pack",
-        ])
-        .is_err());
+        assert!(Cli::try_parse_from(["pandora", "--run-instance", "Pack", "--run-instance-normal", "Pack",]).is_err());
     }
 
     #[test]
@@ -514,7 +531,10 @@ fn show_error_eprintln(error: String) {
         .show();
 }
 
-fn start_deadlock_detection(deadlock_message: &Arc<parking_lot::lock_api::RwLock<parking_lot::RawRwLock, Option<String>>>, frontend_handle: &bridge::handle::FrontendHandle) {
+fn start_deadlock_detection(
+    deadlock_message: &Arc<parking_lot::lock_api::RwLock<parking_lot::RawRwLock, Option<String>>>,
+    frontend_handle: &bridge::handle::FrontendHandle,
+) {
     std::thread::spawn({
         let deadlock_message = deadlock_message.clone();
         let frontend_handle = frontend_handle.clone();
@@ -574,10 +594,7 @@ fn init_logging(level: log::LevelFilter, log_file: &Path) -> Result<(), fern::In
         .format(move |out, message, record| {
             out.finish(format_args!(
                 "{color_line}[{time} {level} {target}{color_line}] {message}\x1B[0m",
-                color_line = format_args!(
-                    "\x1B[{}m",
-                    colors_line.get_color(&record.level()).to_fg_str()
-                ),
+                color_line = format_args!("\x1B[{}m", colors_line.get_color(&record.level()).to_fg_str()),
                 time = humantime::format_rfc3339_seconds(SystemTime::now()),
                 level = record.level(),
                 target = record.target(),
@@ -586,10 +603,7 @@ fn init_logging(level: log::LevelFilter, log_file: &Path) -> Result<(), fern::In
         })
         .chain(std::io::stdout());
 
-    base_config
-        .chain(file_config)
-        .chain(stdout_config)
-        .apply()?;
+    base_config.chain(file_config).chain(stdout_config).apply()?;
 
     Ok(())
 }

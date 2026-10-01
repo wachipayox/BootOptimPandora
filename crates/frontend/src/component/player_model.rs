@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
-use gpui::{App, AppContext, AvailableSpace, Bounds, Element, Entity, IntoElement, RenderImage, Size, Style, Task, px, size};
+use gpui::{
+    App, AppContext, AvailableSpace, Bounds, Element, Entity, IntoElement, RenderImage, Size, Style, Task, px, size,
+};
 use schema::{minecraft_profile::SkinVariant, unique_bytes::UniqueBytes};
 
 use crate::interface_config::InterfaceConfig;
 
 pub const DEFAULT_YAW: f64 = 22.5;
 pub const DEFAULT_PITCH: f64 = 10.5;
-pub const DEFAULT_ANIMATION: f64 = 1.0/16.0;
+pub const DEFAULT_ANIMATION: f64 = 1.0 / 16.0;
 
 struct RenderedPlayerModel {
     image: Arc<RenderImage>,
@@ -29,8 +31,11 @@ pub struct PlayerModelState {
     pub yaw: f64,
     pub pitch: f64,
     pub animation: f64,
+    textures: Option<(UniqueBytes, Option<UniqueBytes>, Arc<crate::skin_renderer::SkinTextures>)>,
+    failed_textures: Option<(UniqueBytes, Option<UniqueBytes>)>,
     rendered: Option<RenderedPlayerModel>,
     render_task: Option<Task<()>>,
+    render_scratch: crate::skin_renderer::SkinRenderScratch,
 }
 
 impl PlayerModelState {
@@ -42,14 +47,18 @@ impl PlayerModelState {
             yaw: DEFAULT_YAW,
             pitch: DEFAULT_PITCH,
             animation: DEFAULT_ANIMATION,
+            textures: None,
+            failed_textures: None,
             rendered: None,
             render_task: None,
+            render_scratch: Default::default(),
         });
         cx.observe_release(&entity, |entity, cx| {
             if let Some(rendered) = entity.rendered.take() {
                 cx.drop_image(rendered.image, None);
             }
-        }).detach();
+        })
+        .detach();
         entity
     }
 
@@ -57,9 +66,14 @@ impl PlayerModelState {
         let Some(rendered) = &self.rendered else {
             return true;
         };
-        return rendered.width != width || rendered.height != height || rendered.yaw != self.yaw
-            || rendered.pitch != self.pitch || rendered.animation != self.animation
-            || rendered.variant != self.variant || rendered.skin != self.skin || rendered.cape != self.cape
+        return rendered.width != width
+            || rendered.height != height
+            || rendered.yaw != self.yaw
+            || rendered.pitch != self.pitch
+            || rendered.animation != self.animation
+            || rendered.variant != self.variant
+            || rendered.skin != self.skin
+            || rendered.cape != self.cape
             || rendered.zoom != zoom;
     }
 }
@@ -70,9 +84,7 @@ pub struct PlayerModel {
 
 impl PlayerModel {
     pub fn new(state: &Entity<PlayerModelState>) -> Self {
-        Self {
-            state: state.clone(),
-        }
+        Self { state: state.clone() }
     }
 }
 
@@ -103,21 +115,22 @@ impl Element for PlayerModel {
         window: &mut gpui::Window,
         _cx: &mut gpui::App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let layout_id = window.request_measured_layout(Style::default(), move |known, available_space, _window, _cx| {
-            let height = if let Some(height) = known.height {
-                height
-            } else {
-                match available_space.height {
-                    AvailableSpace::Definite(pixels) => pixels,
-                    AvailableSpace::MinContent => px(0.0),
-                    AvailableSpace::MaxContent => px(1000.0),
-                }
-            };
+        let layout_id =
+            window.request_measured_layout(Style::default(), move |known, available_space, _window, _cx| {
+                let height = if let Some(height) = known.height {
+                    height
+                } else {
+                    match available_space.height {
+                        AvailableSpace::Definite(pixels) => pixels,
+                        AvailableSpace::MinContent => px(0.0),
+                        AvailableSpace::MaxContent => px(1000.0),
+                    }
+                };
 
-            let width = px(height.as_f32() * crate::skin_renderer::ASPECT_RATIO as f32);
+                let width = px(height.as_f32() * crate::skin_renderer::ASPECT_RATIO as f32);
 
-            size(width, height)
-        });
+                size(width, height)
+            });
 
         (layout_id, ())
     }
@@ -146,38 +159,84 @@ impl Element for PlayerModel {
         let element_height = bounds.size.height.as_f32().round();
         let element_width = (element_height as f32 * crate::skin_renderer::ASPECT_RATIO as f32).round();
         let window_scale = window.scale_factor();
-        let image_height = (element_height * window_scale) as u32;
-        let image_width = (element_width * window_scale) as u32;
+        let physical_height = (element_height * window_scale) as u32;
         let zoom = InterfaceConfig::get(cx).player_model_zoom.clamp(50, 400) as f64 / 100.0;
         self.state.update(cx, |state, cx| {
-            if state.render_task.is_none() && state.needs_rerender(image_width, image_height, zoom) {
+            // Preserve native physical resolution, including the window DPI scale.
+            let image_height = physical_height;
+            let image_width = (image_height as f64 * crate::skin_renderer::ASPECT_RATIO).round() as u32;
+            let invalid_texture = state.failed_textures.as_ref()
+                .is_some_and(|(skin, cape)| skin == &state.skin && cape == &state.cape);
+            if image_width > 0 && image_height > 0 && !invalid_texture
+                && state.render_task.is_none() && state.needs_rerender(image_width, image_height, zoom) {
                 let skin = state.skin.clone();
                 let cape = state.cape.clone();
                 let yaw = state.yaw;
                 let pitch = state.pitch;
                 let animation = state.animation;
                 let variant = state.variant;
+                let mut scratch = std::mem::take(&mut state.render_scratch);
+                let textures = state.textures.as_ref()
+                    .filter(|(cached_skin, cached_cape, _)| cached_skin == &skin && cached_cape == &cape)
+                    .map(|(_, _, textures)| textures.clone());
 
                 let (send, recv) = tokio::sync::oneshot::channel();
 
-                cx.background_executor().spawn(async move {
-                    send.send(crate::skin_renderer::render_skin_3d(&skin, cape.as_deref(), variant, image_width, image_height, yaw, pitch, animation, 0.0, zoom))
-                }).detach();
+                cx.background_executor()
+                    .spawn(async move {
+                        let textures = textures.or_else(|| crate::skin_renderer::SkinTextures::decode(&skin, cape.as_deref()).map(Arc::new));
+                        let data = textures.as_ref().and_then(|textures| crate::skin_renderer::render_skin_textures_with_scratch(
+                            textures,
+                            variant,
+                            image_width,
+                            image_height,
+                            yaw,
+                            pitch,
+                            animation,
+                            0.0,
+                            zoom,
+                            &mut scratch,
+                        )).map(|mut data| {
+                            // GPUI expects BGRA. Convert the full native framebuffer on the worker,
+                            // not on the UI thread while it is handling input and drawing controls.
+                            for pixel in data.chunks_exact_mut(4) {
+                                pixel.swap(0, 2);
+                            }
+                            Arc::new(RenderImage::new([image::Frame::new(data)]))
+                        });
+                        send.send((textures, data, scratch))
+                    })
+                    .detach();
 
                 let skin = state.skin.clone();
                 let cape = state.cape.clone();
                 state.render_task = Some(cx.spawn(async move |state, cx| {
-                    let Ok(Some(mut data)) = recv.await else {
-                        return;
-                    };
+                    let result = recv.await;
 
                     _ = state.update(cx, |state, cx| {
-                        for pixel in data.chunks_exact_mut(4) {
-                            pixel.swap(0, 2);
+                        state.render_task = None;
+                        let Ok((textures, data, scratch)) = result else { return; };
+                        state.render_scratch = scratch;
+                        if textures.is_none() {
+                            if state.skin == skin && state.cape == cape {
+                                if let Some(rendered) = state.rendered.take() {
+                                    cx.drop_image(rendered.image, None);
+                                }
+                            }
+                            state.failed_textures = Some((skin, cape));
+                            cx.notify();
+                            return;
                         }
-
-                        let render_image = Arc::new(RenderImage::new([image::Frame::new(data)]));
-
+                        let Some(render_image) = data else { return; };
+                        if let Some(textures) = textures {
+                            state.textures = Some((skin.clone(), cape.clone(), textures));
+                            state.failed_textures = None;
+                        }
+                        // A queued result may belong to a skin replaced while the worker ran.
+                        if state.skin != skin || state.cape != cape {
+                            cx.notify();
+                            return;
+                        }
                         if let Some(rendered) = state.rendered.take() {
                             cx.drop_image(rendered.image, None);
                         }
@@ -193,7 +252,6 @@ impl Element for PlayerModel {
                             width: image_width,
                             height: image_height,
                         });
-                        state.render_task = None;
                         cx.notify();
                     });
                 }));

@@ -1,10 +1,23 @@
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
-use bridge::{manual_download::{ManualCurseforgeDownload, ManualCurseforgeDownloadRequest}, notify_signal::KeepAliveNotifySignal};
+use bridge::{
+    manual_download::{ManualCurseforgeDownload, ManualCurseforgeDownloadRequest},
+    notify_signal::KeepAliveNotifySignal,
+};
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, Disableable, WindowExt, button::{Button, ButtonVariants}, dialog::Dialog, h_flex, scroll::ScrollableElement, v_flex};
+use gpui_component::{
+    ActiveTheme, Disableable, WindowExt,
+    button::{Button, ButtonVariants},
+    dialog::Dialog,
+    h_flex,
+    scroll::ScrollableElement,
+    v_flex,
+};
 
-use crate::{component::{path_label::PathLabel, shrinking_text::ShrinkingText}, icon::PandoraIcon};
+use crate::{
+    component::{path_label::PathLabel, shrinking_text::ShrinkingText},
+    icon::PandoraIcon,
+};
 
 struct ManualCurseforgeDownloadsDialog {
     files: Arc<[ManualCurseforgeDownload]>,
@@ -18,7 +31,8 @@ struct ManualCurseforgeDownloadsDialog {
 }
 
 pub fn open(request: ManualCurseforgeDownloadRequest, window: &mut Window, cx: &mut App) {
-    let mut directory = directories::UserDirs::new().and_then(|dirs| dirs.download_dir().map(PathBuf::from))
+    let mut directory = directories::UserDirs::new()
+        .and_then(|dirs| dirs.download_dir().map(PathBuf::from))
         .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.home_dir().join("Downloads")))
         .unwrap_or(PathBuf::from("."));
     if let Ok(canonicalize) = directory.canonicalize() {
@@ -96,7 +110,8 @@ pub fn open(request: ManualCurseforgeDownloadRequest, window: &mut Window, cx: &
                 this.cancelled = true;
                 cx.notify();
             });
-        }).detach();
+        })
+        .detach();
     });
 }
 
@@ -144,7 +159,7 @@ impl ManualCurseforgeDownloadsDialog {
                     files: false,
                     directories: true,
                     multiple: false,
-                    prompt: Some(t::instance::content::manual_curseforge_downloads::choose_folder().into())
+                    prompt: Some(t::instance::content::manual_curseforge_downloads::choose_folder().into()),
                 };
                 let receiver = cx.prompt_for_paths(options);
                 cx.spawn(async move |this, cx| {
@@ -159,74 +174,146 @@ impl ManualCurseforgeDownloadsDialog {
                         this.download_path = PathLabel::new(path, this.download_path_valid);
                         cx.notify();
                     });
-                }).detach();
+                })
+                .detach();
             });
 
             let start_watching = cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.start_watching(cx);
             });
-            return modal.title(t::instance::content::manual_curseforge_downloads::title())
-                .child(v_flex().gap_2().w_full().min_w_0().line_height(rems(1.2))
-                    .child(div().w_full().whitespace_normal().child(t::instance::content::manual_curseforge_downloads::description()))
+            return modal.title(t::instance::content::manual_curseforge_downloads::title()).child(
+                v_flex()
+                    .gap_2()
+                    .w_full()
+                    .min_w_0()
+                    .line_height(rems(1.2))
+                    .child(
+                        div()
+                            .w_full()
+                            .whitespace_normal()
+                            .child(t::instance::content::manual_curseforge_downloads::description()),
+                    )
                     .child(self.download_path.button("choose-folder").on_click(select_folder))
                     // todo: translate
-                    .child(h_flex().gap_2().w_full()
-                        .child(Button::new("skip").flex_1().warning().label(t::common::skip()).on_click(move |_, window, cx| {
-                            window.close_dialog(cx);
-                        }))
-                        .child(Button::new("start").flex_1().success().label(t::common::cont()).disabled(!self.download_path_valid).on_click(start_watching))
-                    )
-                );
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .w_full()
+                            .child(Button::new("skip").flex_1().warning().label(t::common::skip()).on_click(
+                                move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                },
+                            ))
+                            .child(
+                                Button::new("start")
+                                    .flex_1()
+                                    .success()
+                                    .label(t::common::cont())
+                                    .disabled(!self.download_path_valid)
+                                    .on_click(start_watching),
+                            ),
+                    ),
+            );
         }
 
         let max_list_height = window.viewport_size().height * 0.55;
         let list_height = px(self.files.len() as f32 * 48.0 + 4.0).min(max_list_height);
-        let open_all = cx.listener(|this, _: &ClickEvent, _, _| {
-            this.open_all()
-        });
+        let open_all = cx.listener(|this, _: &ClickEvent, _, _| this.open_all());
 
         let uniform_list = uniform_list("files", self.files.len(), {
             let files = self.files.clone();
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                files[range.clone()].iter().map(|file| {
-                    let completed = this.completed.contains(&file.sha1);
-                    let trailing = if completed {
-                        div().flex_shrink_0().text_color(cx.theme().success)
-                            .child(t::instance::content::manual_curseforge_downloads::downloaded()).into_any_element()
-                    } else {
-                        let url = file.page_url.clone();
-                        let open = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                            cx.open_url(&url);
+                files[range.clone()]
+                    .iter()
+                    .map(|file| {
+                        let completed = this.completed.contains(&file.sha1);
+                        let trailing = if completed {
+                            div()
+                                .flex_shrink_0()
+                                .text_color(cx.theme().success)
+                                .child(t::instance::content::manual_curseforge_downloads::downloaded())
+                                .into_any_element()
+                        } else {
+                            let url = file.page_url.clone();
+                            let open = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                                cx.open_url(&url);
+                            };
+                            Button::new(SharedString::new(format!("open-{}", file.file_id)))
+                                .flex_shrink_0()
+                                .info()
+                                .label(t::instance::content::manual_curseforge_downloads::open())
+                                .on_click(open)
+                                .into_any_element()
                         };
-                        Button::new(SharedString::new(format!("open-{}", file.file_id))).flex_shrink_0().info()
-                            .label(t::instance::content::manual_curseforge_downloads::open()).on_click(open).into_any_element()
-                    };
-                    h_flex().w_full().gap_2().px_2().items_center()
-                        .child(v_flex().whitespace_nowrap().overflow_x_hidden().flex_1()
-                            .child(SharedString::from(&file.name))
-                            .child(div().text_color(cx.theme().muted_foreground).child(ShrinkingText::new(SharedString::from(&file.filename))))
-                        )
-                        .child(trailing)
-                        .h_12()
-                        .into_any_element()
-                }).collect()
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .px_2()
+                            .items_center()
+                            .child(
+                                v_flex()
+                                    .whitespace_nowrap()
+                                    .overflow_x_hidden()
+                                    .flex_1()
+                                    .child(SharedString::from(&file.name))
+                                    .child(
+                                        div()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(ShrinkingText::new(SharedString::from(&file.filename))),
+                                    ),
+                            )
+                            .child(trailing)
+                            .h_12()
+                            .into_any_element()
+                    })
+                    .collect()
             })
-        }).track_scroll(&self.scroll_handle).size_full();
+        })
+        .track_scroll(&self.scroll_handle)
+        .size_full();
 
-        let elements = div().border_1().rounded(cx.theme().radius_lg).border_color(cx.theme().border)
+        let elements = div()
+            .border_1()
+            .rounded(cx.theme().radius_lg)
+            .border_color(cx.theme().border)
             .w_full()
             .h(list_height)
             .child(uniform_list)
             .vertical_scrollbar(&self.scroll_handle);
 
-        modal.title(t::instance::content::manual_curseforge_downloads::title())
-            .child(v_flex().gap_2().w_full().min_w_0().line_height(rems(1.2))
-                .child(div().w_full().whitespace_normal().child(t::instance::content::manual_curseforge_downloads::description()))
-                .child(elements)
-            ).footer(h_flex().gap_2().w_full()
-                .child(Button::new("skip").flex_1().warning().label(t::common::skip()).on_click(move |_, window, cx| {
-                    window.close_dialog(cx);
-                }))
-                .child(Button::new("open-all").flex_1().info().icon(PandoraIcon::ExternalLink).label(t::instance::content::manual_curseforge_downloads::open_all()).on_click(open_all)))
+        modal
+            .title(t::instance::content::manual_curseforge_downloads::title())
+            .child(
+                v_flex()
+                    .gap_2()
+                    .w_full()
+                    .min_w_0()
+                    .line_height(rems(1.2))
+                    .child(
+                        div()
+                            .w_full()
+                            .whitespace_normal()
+                            .child(t::instance::content::manual_curseforge_downloads::description()),
+                    )
+                    .child(elements),
+            )
+            .footer(
+                h_flex()
+                    .gap_2()
+                    .w_full()
+                    .child(Button::new("skip").flex_1().warning().label(t::common::skip()).on_click(
+                        move |_, window, cx| {
+                            window.close_dialog(cx);
+                        },
+                    ))
+                    .child(
+                        Button::new("open-all")
+                            .flex_1()
+                            .info()
+                            .icon(PandoraIcon::ExternalLink)
+                            .label(t::instance::content::manual_curseforge_downloads::open_all())
+                            .on_click(open_all),
+                    ),
+            )
     }
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use gpui_component::{ActiveTheme, Icon, h_flex};
 use gpui::*;
+use gpui_component::{ActiveTheme, Icon, h_flex};
 
 use crate::{entity::DataEntities, icon::PandoraIcon, ui::PageType};
 
@@ -14,7 +14,11 @@ pub struct PagePath {
 
 impl PagePath {
     pub fn new(data: DataEntities, main_page: PageType, breadcrumb: Arc<[PageType]>) -> Self {
-        Self { data, main_page, breadcrumb }
+        Self {
+            data,
+            main_page,
+            breadcrumb,
+        }
     }
 }
 
@@ -39,10 +43,11 @@ impl RenderOnce for PagePath {
                             let rest = &pages[0..i];
                             crate::root::switch_page(page, rest, window, cx);
                         }
-                    }).into_any_element();
+                    })
+                    .into_any_element();
                 [
                     item,
-                    Icon::new(PandoraIcon::ChevronRight).size_4().top_px().into_any_element()
+                    Icon::new(PandoraIcon::ChevronRight).size_4().top_px().into_any_element(),
                 ]
             }))
             .child(div().text_color(cx.theme().foreground).child(self.main_page.title(&self.data, cx)))

@@ -74,6 +74,24 @@ pub struct ExportOptions {
 }
 
 pub enum MessageToBackend {
+    GetSaveGroups {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<Vec<SaveGroupSummary>, String>>,
+    },
+    CreateSaveGroup {
+        id: InstanceID,
+        name: String,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    JoinSaveGroup {
+        id: InstanceID,
+        group_id: uuid::Uuid,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    LeaveSaveGroup {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     RequestMetadata {
         request: MetadataRequest,
         force_reload: bool,
@@ -88,6 +106,14 @@ pub enum MessageToBackend {
         id: InstanceID,
     },
     DuplicateInstance {
+        id: InstanceID,
+        name: Ustr,
+        modal_action: ModalAction,
+    },
+    CreateLocalBranch {
+        create_save_group: bool,
+        reuse_parent_icon: bool,
+        icon_hue_degrees: i32,
         id: InstanceID,
         name: Ustr,
         modal_action: ModalAction,
@@ -261,6 +287,14 @@ pub enum MessageToBackend {
     GetGlobalProfiles {
         channel: tokio::sync::oneshot::Sender<Result<Vec<GlobalProfileSummary>, String>>,
     },
+    CheckInheritedUpdates {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<Vec<String>, String>>,
+    },
+    UpdateInheritedChain {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     CheckDistributionConnection,
     CreateGlobalProfileInstance {
         name: String,
@@ -361,6 +395,14 @@ pub enum MessageToBackend {
     Quit,
 }
 
+#[derive(Debug, Clone)]
+pub struct SaveGroupSummary {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub member_count: usize,
+    pub selected: bool,
+}
+
 #[derive(Debug)]
 pub enum MessageToFrontend {
     InstanceAdded {
@@ -430,7 +472,10 @@ pub enum MessageToFrontend {
     UpdateAvailable {
         update: UpdatePrompt,
     },
-    OpenOrFocusMainWindow,
+    OpenOrFocusMainWindow {
+        /// One-based display number from the platform's active display list.
+        monitor: Option<usize>,
+    },
     ManualCurseforgeDownloadsRequired {
         request: ManualCurseforgeDownloadRequest,
     },
@@ -438,6 +483,10 @@ pub enum MessageToFrontend {
 
 #[derive(Debug, Clone)]
 pub struct GlobalProfileSummary {
+    pub description: String,
+    pub minecraft: String,
+    pub neoforge: String,
+    pub icon_path: Option<PathBuf>,
     pub profile_id: String,
     pub name: String,
     pub latest_revision_id: String,

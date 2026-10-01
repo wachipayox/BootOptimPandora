@@ -1,19 +1,37 @@
-use std::sync::{Arc};
+use std::sync::Arc;
 
-use bridge::{instance::{ContentFolder, InstanceID}, meta::MetadataRequest};
+use bridge::{
+    instance::{ContentFolder, InstanceID},
+    meta::MetadataRequest,
+};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Icon, WindowExt, button::{Button, ButtonVariants}, h_flex, notification::NotificationType, skeleton::Skeleton, tab::{Tab, TabBar}, text::TextView, v_flex
+    ActiveTheme, Icon, WindowExt,
+    button::{Button, ButtonVariants},
+    h_flex,
+    notification::NotificationType,
+    skeleton::Skeleton,
+    tab::{Tab, TabBar},
+    text::TextView,
+    v_flex,
 };
-use schema::{content::ContentSource, loader::Loader, modrinth::{
-    ModrinthProjectRequest, ModrinthProjectResult, ModrinthProjectType,
-}};
+use schema::{
+    content::ContentSource,
+    loader::Loader,
+    modrinth::{ModrinthProjectRequest, ModrinthProjectResult, ModrinthProjectType},
+};
 use strum::IntoEnumIterator;
 
 use crate::{
-    component::error_alert::ErrorAlert, entity::{
-        DataEntities, instance::ContentStates, metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState}
-    }, format_downloads, icon::PandoraIcon, pages::modrinth_page::{InstalledContent, PrimaryAction, env_display, get_primary_action, icon_for}
+    component::error_alert::ErrorAlert,
+    entity::{
+        DataEntities,
+        instance::ContentStates,
+        metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState},
+    },
+    format_downloads,
+    icon::PandoraIcon,
+    pages::modrinth_page::{InstalledContent, PrimaryAction, env_display, get_primary_action, icon_for},
 };
 
 pub struct ModrinthProjectPage {
@@ -40,7 +58,8 @@ impl ModrinthProjectPage {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut can_install_latest = false;
-        let mut specific_installed_content: enum_map::EnumMap<ContentFolder, Vec<InstalledContent>> = Default::default();
+        let mut specific_installed_content: enum_map::EnumMap<ContentFolder, Vec<InstalledContent>> =
+            Default::default();
         let mut all_installed_content = Vec::new();
         let mut content_states = None;
 
@@ -56,7 +75,10 @@ impl ModrinthProjectPage {
                 for content_folder in ContentFolder::iter() {
                     if let Some(content) = instance_content[content_folder].read(cx) {
                         for summary in content.iter() {
-                            let ContentSource::ModrinthProject { project_id: other_project_id } = &summary.content_source else {
+                            let ContentSource::ModrinthProject {
+                                project_id: other_project_id,
+                            } = &summary.content_source
+                            else {
                                 continue;
                             };
 
@@ -82,7 +104,10 @@ impl ModrinthProjectPage {
 
                         if let Some(content) = entity.read(cx) {
                             for summary in content.iter() {
-                                let ContentSource::ModrinthProject { project_id: other_project_id } = &summary.content_source else {
+                                let ContentSource::ModrinthProject {
+                                    project_id: other_project_id,
+                                } = &summary.content_source
+                                else {
                                     continue;
                                 };
 
@@ -99,9 +124,11 @@ impl ModrinthProjectPage {
 
                         page.all_installed_content.clear();
                         for content_folder in ContentFolder::iter() {
-                            page.all_installed_content.extend_from_slice(page.specific_installed_content[content_folder].as_slice());
+                            page.all_installed_content
+                                .extend_from_slice(page.specific_installed_content[content_folder].as_slice());
                         }
-                    }).detach();
+                    })
+                    .detach();
                 }
             }
         }
@@ -148,10 +175,10 @@ impl ModrinthProjectPage {
 
         let result: FrontendMetadataResult<ModrinthProjectResult> = state.read(cx).result();
         match result {
-            FrontendMetadataResult::Loading => {}
+            FrontendMetadataResult::Loading => {},
             FrontendMetadataResult::Loaded(project) => {
                 self.project = Some(Arc::new(project.clone()));
-            }
+            },
             FrontendMetadataResult::Error(error, alive) => {
                 self.error = Some(error);
 
@@ -164,7 +191,7 @@ impl ModrinthProjectPage {
                         });
                     });
                 }
-            }
+            },
         }
     }
 }
@@ -190,21 +217,22 @@ impl Render for ModrinthProjectPage {
         let content: AnyElement = if let Some(error) = &self.error {
             v_flex()
                 .p_4()
-                .child(ErrorAlert::new(
-                    t::instance::content::error_loading().into(),
-                    error.clone(),
-                ))
+                .child(ErrorAlert::new(t::instance::content::error_loading().into(), error.clone()))
                 .into_any_element()
         } else if let Some(project) = &self.project {
             let project = Arc::clone(project);
 
-            let icon = gpui::img(SharedUri::from(project.icon_url.as_ref().map(|url| url.to_string()).unwrap_or_else(|| "".to_string())))
-                    .with_fallback(|| Skeleton::new().rounded_lg().size_20().into_any_element());
+            let icon = gpui::img(SharedUri::from(
+                project.icon_url.as_ref().map(|url| url.to_string()).unwrap_or_else(|| "".to_string()),
+            ))
+            .with_fallback(|| Skeleton::new().rounded_lg().size_20().into_any_element());
 
             let (env_icon, env_name) = env_display(project.client_side.unwrap(), project.server_side.unwrap());
 
             let categories_el: Option<AnyElement> = {
-                let cats: Vec<_> = project.categories.iter()
+                let cats: Vec<_> = project
+                    .categories
+                    .iter()
                     .flat_map(|c| c.iter())
                     .chain(project.additional_categories.iter().flat_map(|c| c.iter()))
                     .collect();
@@ -217,27 +245,16 @@ impl Render for ModrinthProjectPage {
                         .map(|c| t::modrinth::category::get(c.as_str(), false).unwrap_or(c.as_str()))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    Some(h_flex()
-                        .gap_1()
-                        .text_sm()
-                        .child(PandoraIcon::Tags)
-                        .child(text)
-                        .into_any_element())
+                    Some(h_flex().gap_1().text_sm().child(PandoraIcon::Tags).child(text).into_any_element())
                 }
             };
 
             let stats = h_flex()
                 .gap_4()
-                .child(h_flex().gap_1()
-                    .child(PandoraIcon::Download)
-                    .child(format_downloads(project.downloads)))
+                .child(h_flex().gap_1().child(PandoraIcon::Download).child(format_downloads(project.downloads)))
                 .when_some(categories_el, |this, el| this.child(el));
 
-            let info_bar = h_flex()
-                .gap_4()
-                .items_center()
-                .text_sm()
-                .child(stats);
+            let info_bar = h_flex().gap_4().items_center().text_sm().child(stats);
 
             let mut link_row = h_flex().gap_1().flex_wrap();
 
@@ -247,7 +264,9 @@ impl Render for ModrinthProjectPage {
             let install_button: AnyElement = {
                 let data = self.data.clone();
                 let install_for = self.install_for;
-                let project_name = project.title.clone()
+                let project_name = project
+                    .title
+                    .clone()
                     .map(SharedString::new)
                     .unwrap_or(t::instance::content::unnamed().into());
 
@@ -268,7 +287,15 @@ impl Render for ModrinthProjectPage {
                         let project_id_str = project_id_str.clone();
                         move |_, window, cx| {
                             if project_type != ModrinthProjectType::Other {
-                                primary_action.perform(project_name.clone(), &project_id_str, project_type, install_for, &data, window, cx);
+                                primary_action.perform(
+                                    project_name.clone(),
+                                    &project_id_str,
+                                    project_type,
+                                    install_for,
+                                    &data,
+                                    window,
+                                    cx,
+                                );
                             } else {
                                 window.push_notification(
                                     (NotificationType::Error, t::instance::content::install::unknown_type()),
@@ -281,9 +308,7 @@ impl Render for ModrinthProjectPage {
             };
             link_row = link_row.child(install_button);
 
-            let slug = project.slug.as_deref()
-                .unwrap_or(project.id.as_ref())
-                .to_string();
+            let slug = project.slug.as_deref().unwrap_or(project.id.as_ref()).to_string();
             let project_type_str = project.project_type.as_str().to_string();
             link_row = link_row.child(
                 Button::new("modrinth_web")
@@ -292,7 +317,9 @@ impl Render for ModrinthProjectPage {
                     .info()
                     .on_click({
                         let url = format!("https://modrinth.com/{}/{}", project_type_str, slug);
-                        move |_, _, cx| { cx.open_url(&url); }
+                        move |_, _, cx| {
+                            cx.open_url(&url);
+                        }
                     }),
             );
 
@@ -303,7 +330,9 @@ impl Render for ModrinthProjectPage {
                         .label(t::instance::content::links::source())
                         .icon(PandoraIcon::CodeXml)
                         .info()
-                        .on_click(move |_, _, cx| { cx.open_url(&url); }),
+                        .on_click(move |_, _, cx| {
+                            cx.open_url(&url);
+                        }),
                 );
             }
             if let Some(url) = &project.issues_url {
@@ -313,95 +342,88 @@ impl Render for ModrinthProjectPage {
                         .label(t::instance::content::links::issues())
                         .icon(PandoraIcon::Bug)
                         .info()
-                        .on_click(move |_, _, cx| { cx.open_url(&url); }),
+                        .on_click(move |_, _, cx| {
+                            cx.open_url(&url);
+                        }),
                 );
             }
             if let Some(url) = &project.wiki_url {
                 let url = url.clone();
-                link_row = link_row.child(
-                    Button::new("wiki")
-                        .label(t::instance::content::links::wiki())
-                        .info()
-                        .on_click(move |_, _, cx| { cx.open_url(&url); }),
-                );
+                link_row =
+                    link_row.child(Button::new("wiki").label(t::instance::content::links::wiki()).info().on_click(
+                        move |_, _, cx| {
+                            cx.open_url(&url);
+                        },
+                    ));
             }
             if let Some(url) = &project.discord_url {
                 let url = url.clone();
                 link_row = link_row.child(
-                    Button::new("discord").
-                        label(t::instance::content::links::discord())
-                        .info()
-                        .on_click(move |_, _, cx| { cx.open_url(&url); }),
+                    Button::new("discord").label(t::instance::content::links::discord()).info().on_click(
+                        move |_, _, cx| {
+                            cx.open_url(&url);
+                        },
+                    ),
                 );
             }
 
             let license_el: Option<AnyElement> = project.license.as_ref().map(|lic| {
                 let display_id = match lic.id.as_ref() {
                     "LicenseRef-All-Rights-Reserved" => "ARR".to_string(),
-                    id if id.contains("LicenseRef") => id
-                        .replace("LicenseRef-", "")
-                        .replace("-", " "),
+                    id if id.contains("LicenseRef") => id.replace("LicenseRef-", "").replace("-", " "),
                     id => id.to_string(),
                 };
                 let url = lic.url.as_ref().map(|u| u.to_string());
 
-                let mut container = h_flex()
-                    .id("license")
-                    .gap_1()
-                    .text_sm()
-                    .child(PandoraIcon::Scroll)
-                    .child(display_id);
+                let mut container =
+                    h_flex().id("license").gap_1().text_sm().child(PandoraIcon::Scroll).child(display_id);
 
                 if let Some(url) = url {
-                    container = container
-                        .cursor_pointer()
-                        .on_click(move |_, _, cx| {
-                            cx.open_url(&url);
-                        });
+                    container = container.cursor_pointer().on_click(move |_, _, cx| {
+                        cx.open_url(&url);
+                    });
                 }
 
                 container.into_any_element()
             });
 
-            let versions_el: Option<AnyElement> = project.game_versions.as_deref()
-                .filter(|v| !v.is_empty())
-                .map(|gv| {
+            let versions_el: Option<AnyElement> =
+                project.game_versions.as_deref().filter(|v| !v.is_empty()).map(|gv| {
                     let text = if gv.len() <= 5 {
                         gv.iter().map(|v| v.as_ref()).collect::<Vec<_>>().join(", ")
                     } else {
                         t::modrinth::versions::range(
                             gv.first().map(|v| v.as_ref()).unwrap_or(""),
                             gv.last().map(|v| v.as_ref()).unwrap_or(""),
-                            gv.len())
+                            gv.len(),
+                        )
                     };
-                    h_flex()
-                        .gap_1()
-                        .text_sm()
-                        .child(PandoraIcon::Layers)
-                        .child(text)
-                        .into_any_element()
+                    h_flex().gap_1().text_sm().child(PandoraIcon::Layers).child(text).into_any_element()
                 });
 
-            let info_el: AnyElement = h_flex().gap_4()
+            let info_el: AnyElement = h_flex()
+                .gap_4()
                 .when_some(versions_el, |this, el| this.child(el))
                 .when_some(project.loaders.as_deref(), |this, loaders| {
                     this.children(loaders.iter().map(|loader| {
-                        h_flex().gap_1()
-                            .when_some(icon_for(loader.id()), |this, icon| {
-                                this.child(Icon::empty().path(icon))
-                            })
+                        h_flex()
+                            .gap_1()
+                            .when_some(icon_for(loader.id()), |this, icon| this.child(Icon::empty().path(icon)))
                             .child(loader.pretty_name())
                     }))
                 })
-                .child(h_flex().gap_1()
-                    .child(env_icon)
-                    .child(env_name))
+                .child(h_flex().gap_1().child(env_icon).child(env_name))
                 .when_some(license_el, |this, el| this.child(el))
                 .into_any_element();
 
             let gallery = project.gallery.as_deref().filter(|images| !images.is_empty());
-            let active_tab = if self.active_tab == 1 && gallery.is_some() { 1 } else { 0 };
-            let tabs_el: AnyElement = TabBar::new("content_tabs").underline()
+            let active_tab = if self.active_tab == 1 && gallery.is_some() {
+                1
+            } else {
+                0
+            };
+            let tabs_el: AnyElement = TabBar::new("content_tabs")
+                .underline()
                 .selected_index(active_tab)
                 .on_click(cx.listener(|this, selected_index: &usize, _window, cx| {
                     this.active_tab = *selected_index;
@@ -415,47 +437,79 @@ impl Render for ModrinthProjectPage {
 
             let body_el: AnyElement = if active_tab == 1 {
                 v_flex()
-                    .mt_2().pt_2()
-                    .child(h_flex()
-                        .flex_wrap()
-                        .gap_3()
-                        .children(gallery.into_iter().flatten().enumerate().map(|(idx, img)| {
-                            v_flex().rounded_lg().h_80()
-                                .child(gpui::img(SharedUri::from(&img.url))
-                                    .w_full()
-                                    .h_72()
-                                    .cursor_pointer()
-                                    .rounded_t_lg()
-                                    .id(("gallery_img", idx))
-                                    .on_click({
-                                        let url = img.url.clone();
-                                        move |_, _, cx| { cx.open_url(&url); }
-                                    }))
-                                .child(v_flex().p_1().max_w_full().min_w_0()
-                                    .child(div().text_sm().child(SharedString::new(img.title.as_deref().unwrap_or_default())))
+                    .mt_2()
+                    .pt_2()
+                    .child(h_flex().flex_wrap().gap_3().children(gallery.into_iter().flatten().enumerate().map(
+                        |(idx, img)| {
+                            v_flex()
+                                .rounded_lg()
+                                .h_80()
+                                .child(
+                                    gpui::img(SharedUri::from(&img.url))
+                                        .w_full()
+                                        .h_72()
+                                        .cursor_pointer()
+                                        .rounded_t_lg()
+                                        .id(("gallery_img", idx))
+                                        .on_click({
+                                            let url = img.url.clone();
+                                            move |_, _, cx| {
+                                                cx.open_url(&url);
+                                            }
+                                        }),
                                 )
-                        })))
+                                .child(v_flex().p_1().max_w_full().min_w_0().child(
+                                    div().text_sm().child(SharedString::new(img.title.as_deref().unwrap_or_default())),
+                                ))
+                        },
+                    )))
                     .into_any_element()
-            } else if let Some(body) = &project.body && !body.is_empty() {
+            } else if let Some(body) = &project.body
+                && !body.is_empty()
+            {
                 v_flex()
                     .child(TextView::markdown("project_description", body.to_string()).gap_4())
                     .into_any_element()
             } else {
                 v_flex()
-                    .mt_2().pt_2()
-                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child(t::instance::content::no_description()))
+                    .mt_2()
+                    .pt_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(t::instance::content::no_description()),
+                    )
                     .into_any_element()
             };
 
-            v_flex().p_4().gap_3().w_full()
-                .child(h_flex().gap_4()
-                    .child(icon.rounded_lg().size_24().min_w_24().min_h_24())
-                    .child(v_flex().w_full().line_height(relative(1.1)).gap_2()
-                        .child(div().text_xl().overflow_hidden().child(project.title.clone()
-                            .map(SharedString::new)
-                            .unwrap_or(t::instance::content::unnamed().into())))
-                        .child(div().max_w(rems(40.0)).min_w_0().child(project.description.clone().map(SharedString::new).unwrap_or_default()))
-                        .child(info_bar))
+            v_flex()
+                .p_4()
+                .gap_3()
+                .w_full()
+                .child(
+                    h_flex().gap_4().child(icon.rounded_lg().size_24().min_w_24().min_h_24()).child(
+                        v_flex()
+                            .w_full()
+                            .line_height(relative(1.1))
+                            .gap_2()
+                            .child(
+                                div().text_xl().overflow_hidden().child(
+                                    project
+                                        .title
+                                        .clone()
+                                        .map(SharedString::new)
+                                        .unwrap_or(t::instance::content::unnamed().into()),
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .max_w(rems(40.0))
+                                    .min_w_0()
+                                    .child(project.description.clone().map(SharedString::new).unwrap_or_default()),
+                            )
+                            .child(info_bar),
+                    ),
                 )
                 .child(link_row)
                 .child(info_el)
@@ -463,19 +517,34 @@ impl Render for ModrinthProjectPage {
                 .child(body_el)
                 .into_any_element()
         } else {
-            v_flex().p_4().gap_3().w_full()
-                .child(h_flex().gap_4()
-                    .child(Skeleton::new().rounded_lg().size_24().min_w_24().min_h_24())
-                    .child(v_flex().w_full()
-                        .child(h_flex().gap_4().mr_4().justify_between()
-                            .child(v_flex().w_full().gap_2().mr_auto()
-                                .child(Skeleton::new().h_6())
-                                .child(Skeleton::new().h_12())
-                            )
-                            .child(Skeleton::new().h_12().w_32().rounded_md())
-                        )
-                        .child(Skeleton::new().h_6().w_full().rounded_md())
-                    )
+            v_flex()
+                .p_4()
+                .gap_3()
+                .w_full()
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(Skeleton::new().rounded_lg().size_24().min_w_24().min_h_24())
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .child(
+                                    h_flex()
+                                        .gap_4()
+                                        .mr_4()
+                                        .justify_between()
+                                        .child(
+                                            v_flex()
+                                                .w_full()
+                                                .gap_2()
+                                                .mr_auto()
+                                                .child(Skeleton::new().h_6())
+                                                .child(Skeleton::new().h_12()),
+                                        )
+                                        .child(Skeleton::new().h_12().w_32().rounded_md()),
+                                )
+                                .child(Skeleton::new().h_6().w_full().rounded_md()),
+                        ),
                 )
                 .child(Skeleton::new().h_6().w_64().rounded_md())
                 .child(Skeleton::new().h_6().w_64().rounded_lg())

@@ -3,7 +3,12 @@ use std::{cell::RefCell, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
 use ftree::FenwickTree;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    button::Button, h_flex, input::{Input, InputEvent, InputState}, scroll::{Scrollbar, ScrollbarHandle}, v_flex, ActiveTheme as _, Icon, Sizable
+    ActiveTheme as _, Icon, Sizable,
+    button::Button,
+    h_flex,
+    input::{Input, InputEvent, InputState},
+    scroll::{Scrollbar, ScrollbarHandle},
+    v_flex,
 };
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
@@ -50,10 +55,7 @@ pub struct GameOutput {
 }
 
 impl GameOutput {
-    pub fn new(
-        mut receiver: tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>,
-        cx: &mut Context<Self>
-    ) -> Self {
+    pub fn new(mut receiver: tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>, cx: &mut Context<Self>) -> Self {
         let task = cx.spawn(async move |output, cx| {
             loop {
                 let Some(msg) = receiver.recv().await else {
@@ -128,15 +130,47 @@ impl GameOutput {
             let levels = CachedShapedLogLevels {
                 fatal: self.shape_log_level("FATAL", hsla(0.0, 0.737, 0.418, 1.0), text_system, &text_style, font_size), // red-700
                 error: self.shape_log_level("ERROR", hsla(0.0, 0.842, 0.602, 1.0), text_system, &text_style, font_size), // red-500
-                warn: self.shape_log_level("WARN", hsla(24.6/360.0, 0.95, 0.531, 1.0), text_system, &text_style, font_size), // orange-500
-                info: self.shape_log_level("INFO", hsla(83.7/360.0, 0.805, 0.443, 1.0), text_system, &text_style, font_size), // lime-500
-                debug: self.shape_log_level("DEBUG", hsla(258.3/360.0, 0.895, 0.663, 1.0), text_system, &text_style, font_size), // violet-500
-                trace: self.shape_log_level("TRACE", hsla(198.6/360.0, 0.887, 0.484, 1.0), text_system, &text_style, font_size), // sky-500
+                warn: self.shape_log_level(
+                    "WARN",
+                    hsla(24.6 / 360.0, 0.95, 0.531, 1.0),
+                    text_system,
+                    &text_style,
+                    font_size,
+                ), // orange-500
+                info: self.shape_log_level(
+                    "INFO",
+                    hsla(83.7 / 360.0, 0.805, 0.443, 1.0),
+                    text_system,
+                    &text_style,
+                    font_size,
+                ), // lime-500
+                debug: self.shape_log_level(
+                    "DEBUG",
+                    hsla(258.3 / 360.0, 0.895, 0.663, 1.0),
+                    text_system,
+                    &text_style,
+                    font_size,
+                ), // violet-500
+                trace: self.shape_log_level(
+                    "TRACE",
+                    hsla(198.6 / 360.0, 0.887, 0.484, 1.0),
+                    text_system,
+                    &text_style,
+                    font_size,
+                ), // sky-500
                 other: self.shape_log_level("OTHER", hsla(0.0, 0.5, 0.5, 1.0), text_system, &text_style, font_size),
             };
 
-            self.level_column_width = levels.fatal.width.max(levels.error.width).max(levels.warn.width)
-                .max(levels.info.width).max(levels.debug.width).max(levels.trace.width).max(levels.other.width) + font_size/2.0;
+            self.level_column_width = levels
+                .fatal
+                .width
+                .max(levels.error.width)
+                .max(levels.warn.width)
+                .max(levels.info.width)
+                .max(levels.debug.width)
+                .max(levels.trace.width)
+                .max(levels.other.width)
+                + font_size / 2.0;
             self.shaped_log_levels = Some(levels);
         }
         let Some(item_state) = &mut self.item_state else {
@@ -158,7 +192,7 @@ impl GameOutput {
             if !item_state.search_query.is_empty() {
                 for (line_index, line) in msg.text.iter().enumerate() {
                     if let Some(found) = line.find(item_state.search_query.as_str()) {
-                        highlighted_text = Some((line_index, found..found+item_state.search_query.as_str().len()));
+                        highlighted_text = Some((line_index, found..found + item_state.search_query.as_str().len()));
                         break;
                     }
                 }
@@ -233,9 +267,11 @@ impl GameOutputItem {
         let mut recompute = true;
 
         if let Some(last_wrapped) = cache.item_lines.get(&self.index)
-            && (last_wrapped.wrap_width == wrap_width || (last_wrapped.lines.len() == 1 && last_wrapped.lines.first().unwrap().width < wrap_width)) {
-                recompute = false;
-            }
+            && (last_wrapped.wrap_width == wrap_width
+                || (last_wrapped.lines.len() == 1 && last_wrapped.lines.first().unwrap().width < wrap_width))
+        {
+            recompute = false;
+        }
 
         if recompute {
             let mut wrapped = Vec::new();
@@ -361,11 +397,13 @@ impl Element for GameOutputList {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id = self.interactivity.request_layout(global_id, inspector_id, window, cx, |mut style, window, cx| {
-            style.size.width = relative(1.0).into();
-            style.size.height = relative(1.0).into();
-            window.request_layout(style, None, cx)
-        });
+        let layout_id =
+            self.interactivity
+                .request_layout(global_id, inspector_id, window, cx, |mut style, window, cx| {
+                    style.size.width = relative(1.0).into();
+                    style.size.height = relative(1.0).into();
+                    window.request_layout(style, None, cx)
+                });
         (layout_id, ())
     }
 
@@ -378,15 +416,8 @@ impl Element for GameOutputList {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        self.interactivity.prepaint(
-            global_id,
-            inspector_id,
-            bounds,
-            bounds.size,
-            window,
-            cx,
-            |_, _, _, _, _| {}
-        )
+        self.interactivity
+            .prepaint(global_id, inspector_id, bounds, bounds.size, window, cx, |_, _, _, _, _| {})
     }
 
     fn paint(
@@ -400,14 +431,8 @@ impl Element for GameOutputList {
         cx: &mut App,
     ) {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            self.interactivity.paint(
-                global_id,
-                inspector_id,
-                bounds,
-                None,
-                window,
-                cx,
-                |_, window, cx| {
+            self.interactivity
+                .paint(global_id, inspector_id, bounds, None, window, cx, |_, window, cx| {
                     let visible_bounds = bounds;
                     let mut bounds = bounds.inset(px(12.0));
                     bounds.size.width += px(12.0);
@@ -420,20 +445,27 @@ impl Element for GameOutputList {
                         let font_size = text_style.font_size.to_pixels(window.rem_size());
                         let line_height = font_size * 1.25;
 
-                        let text_width = bounds.size.width
-                            - game_output.time_column_width
-                            - game_output.level_column_width;
+                        let text_width =
+                            bounds.size.width - game_output.time_column_width - game_output.level_column_width;
                         let wrap_width = text_width.max(font_size * 30);
 
                         let mut line_wrapper = window.text_system().line_wrapper(game_output.font.clone(), font_size);
 
-                        let scroll_render_info = game_output.update_scrolling(line_height, wrap_width,
-                            font_size, &text_style, &mut line_wrapper, window.text_system());
+                        let scroll_render_info = game_output.update_scrolling(
+                            line_height,
+                            wrap_width,
+                            font_size,
+                            &text_style,
+                            &mut line_wrapper,
+                            window.text_system(),
+                        );
 
-                        if let Some(item_state) = game_output.item_state.as_mut() && !item_state.items.is_empty() {
+                        if let Some(item_state) = game_output.item_state.as_mut()
+                            && !item_state.items.is_empty()
+                        {
                             if scroll_render_info.reverse {
                                 paint_lines::<true>(
-                                    item_state.items[..scroll_render_info.item+1].iter_mut().rev(),
+                                    item_state.items[..scroll_render_info.item + 1].iter_mut().rev(),
                                     visible_bounds,
                                     bounds,
                                     scroll_render_info.offset,
@@ -566,7 +598,8 @@ impl GameOutput {
                         let real_pivot = active_drag.real_pivot.min(Pixels::ZERO);
                         let new_max_offset =
                             (item_state.total_line_count * line_height - scroll_state.bounds.size.height).max(px(1.0));
-                        let old_max_offset = (active_drag.start_content_height - scroll_state.bounds.size.height).max(px(1.0));
+                        let old_max_offset =
+                            (active_drag.start_content_height - scroll_state.bounds.size.height).max(px(1.0));
 
                         if offset < drag_pivot {
                             effective_offset = (offset - drag_pivot) / (-old_max_offset - drag_pivot)
@@ -635,10 +668,12 @@ impl GameOutput {
                         }
                     }
 
-                    let render_offset = -(remainder_lines * line_height) + line_remainder + line_height - top_offset_for_inset;
+                    let render_offset =
+                        -(remainder_lines * line_height) + line_remainder + line_height - top_offset_for_inset;
 
                     if scroll_state.active_drag.is_some() {
-                        let mut remaining_lines = ((scroll_state.bounds.size.height - render_offset) / line_height) as usize + 1;
+                        let mut remaining_lines =
+                            ((scroll_state.bounds.size.height - render_offset) / line_height) as usize + 1;
                         let mut changed = false;
                         for item in item_state.items[item_index..].iter_mut() {
                             if item.skip {
@@ -759,10 +794,13 @@ fn paint_lines<'a, const REVERSE: bool>(
 
         // Shape time text if needed
         if let TimeShapedLine::Timestamp(timestamp) = item.time {
-            if let Some(last_shaped_time) = &cache.last_time && cache.last_time_millis == timestamp {
+            if let Some(last_shaped_time) = &cache.last_time
+                && cache.last_time_millis == timestamp
+            {
                 item.time = TimeShapedLine::Shaped(Arc::clone(last_shaped_time));
             } else {
-                let date_time = chrono::DateTime::from_timestamp_millis(timestamp).unwrap().with_timezone(&chrono::Local);
+                let date_time =
+                    chrono::DateTime::from_timestamp_millis(timestamp).unwrap().with_timezone(&chrono::Local);
                 let time = format!("{}", date_time.time().format("%H:%M:%S%.3f"));
                 let time_run = TextRun {
                     len: time.len(),
@@ -793,7 +831,7 @@ fn paint_lines<'a, const REVERSE: bool>(
         }
 
         let mut level_origin = time_origin;
-        level_origin.x += *time_column_width + level_column_width - item.level.width - font_size/2.0;
+        level_origin.x += *time_column_width + level_column_width - item.level.width - font_size / 2.0;
         _ = item.level.paint(level_origin, line_height, TextAlign::Left, None, window, cx);
 
         if line_count != item.total_lines {
@@ -937,11 +975,7 @@ impl ScrollbarHandle for ScrollHandler {
 }
 
 impl GameOutputRoot {
-    pub fn new(
-        game_output: Entity<GameOutput>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(game_output: Entity<GameOutput>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let scroll_state = Rc::clone(&game_output.read(cx).scroll_state);
 
         let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(t::common::search()).clean_on_escape());
@@ -968,7 +1002,11 @@ impl GameOutputRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let InputEvent::PressEnter { secondary: false, shift: _ } = event else {
+        let InputEvent::PressEnter {
+            secondary: false,
+            shift: _,
+        } = event
+        else {
             return;
         };
 
@@ -1004,7 +1042,8 @@ impl GameOutputRoot {
                     });
                     this.search_state.update(cx, |input, cx| input.set_loading(false, window, cx));
                     cx.notify();
-                }).unwrap();
+                })
+                .unwrap();
             });
         } else {
             self._search_task = cx.spawn_in(window, async move |this, window| {
@@ -1014,7 +1053,7 @@ impl GameOutputRoot {
                     let mut contains = None;
                     for (line_index, line) in item.text.iter().enumerate() {
                         if let Some(found) = line.find(search_pattern.as_str()) {
-                            contains = Some((line_index, found..found+search_pattern.as_str().len()));
+                            contains = Some((line_index, found..found + search_pattern.as_str().len()));
                             break;
                         }
                     }
@@ -1055,23 +1094,26 @@ impl Render for GameOutputRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let search = Input::new(&self.search_state).prefix(Icon::new(PandoraIcon::Search).small());
 
-        let bar = h_flex()
-            .w_full()
-            .rounded(cx.theme().radius)
-            .id("controls")
-            .flex_1()
-            .gap_4()
-            .child(search)
-            .child(Button::new("top").label(t::common::nav::top()).on_click(cx.listener(|root, _, _, cx| {
-                let mut state = root.scroll_handler.state.borrow_mut();
-                state.scrolling = GameOutputScrolling::Top { offset: Pixels::ZERO };
-                cx.notify();
-            })))
-            .child(Button::new("bottom").label(t::common::nav::bottom()).on_click(cx.listener(|root, _, _, cx| {
-                let mut state = root.scroll_handler.state.borrow_mut();
-                state.scrolling = GameOutputScrolling::Bottom;
-                cx.notify();
-            })));
+        let bar =
+            h_flex()
+                .w_full()
+                .rounded(cx.theme().radius)
+                .id("controls")
+                .flex_1()
+                .gap_4()
+                .child(search)
+                .child(Button::new("top").label(t::common::nav::top()).on_click(cx.listener(|root, _, _, cx| {
+                    let mut state = root.scroll_handler.state.borrow_mut();
+                    state.scrolling = GameOutputScrolling::Top { offset: Pixels::ZERO };
+                    cx.notify();
+                })))
+                .child(Button::new("bottom").label(t::common::nav::bottom()).on_click(cx.listener(
+                    |root, _, _, cx| {
+                        let mut state = root.scroll_handler.state.borrow_mut();
+                        state.scrolling = GameOutputScrolling::Bottom;
+                        cx.notify();
+                    },
+                )));
 
         v_flex()
             .size_full()
@@ -1088,13 +1130,7 @@ impl Render for GameOutputRoot {
                         interactivity: Interactivity::new(),
                         game_output: self.game_output.clone(),
                     })
-                    .child(
-                        div()
-                            .w_3()
-                            .h_full()
-                            .border_y_12()
-                            .child(Scrollbar::vertical(&self.scroll_handler)),
-                    ),
+                    .child(div().w_3().h_full().border_y_12().child(Scrollbar::vertical(&self.scroll_handler))),
             )
             .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _, cx| {
                 let state = root.scroll_handler.state.borrow();

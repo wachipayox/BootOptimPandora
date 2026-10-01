@@ -72,11 +72,19 @@ impl GlobalProfilesModal {
                             .border_color(cx.theme().border)
                             .rounded_md()
                             .child(
-                                v_flex().gap_1().child(div().font_semibold().child(title)).child(
-                                    div()
-                                        .text_xs()
-                                        .child(format!("{} · revision {} · {}", id_label, sequence, &revision_id)),
-                                ),
+                                v_flex()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .gap_1()
+                                    .child(div().truncate().font_semibold().child(title))
+                                    .child(div().text_sm().child(profile.description.clone()))
+                                    .child(div().text_sm().child(format!("Minecraft {} · NeoForge {}", profile.minecraft, profile.neoforge)))
+                                    .child(
+                                        div()
+                                            .truncate()
+                                            .text_xs()
+                                            .child(format!("{} · revision {} · {}", id_label, sequence, &revision_id)),
+                                    ),
                             )
                             .child(
                                 Button::new(format!("create-global-{}", profile.profile_id))
@@ -98,14 +106,17 @@ impl GlobalProfilesModal {
                     .collect::<Vec<_>>();
                 v_flex()
                     .gap_3()
-                    .child("Instance name")
+                    .child("Name for the new instance")
                     .child(Input::new(&self.name_input))
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(
+                        "Leave blank to use the global profile name. Choose a different name if you already have an instance with that name.",
+                    ))
                     .children(rows)
                     .into_any_element()
             },
         };
 
-        modal.title("Global profiles").child(body).footer(
+        modal.title("Global profiles").width(px(720.0)).child(body).footer(
             h_flex().w_full().justify_end().child(
                 Button::new("close-global-profiles")
                     .label("Close")
@@ -118,7 +129,7 @@ impl GlobalProfilesModal {
 pub fn open_global_profiles(backend_handle: BackendHandle, window: &mut Window, cx: &mut App) {
     let state = cx.new(|cx| GlobalProfilesModal {
         backend_handle: backend_handle.clone(),
-        name_input: cx.new(|cx| InputState::new(window, cx).placeholder("New instance name")),
+        name_input: cx.new(|cx| InputState::new(window, cx).placeholder("Optional instance name")),
         profiles: None,
         _load_task: None,
     });
@@ -138,5 +149,67 @@ pub fn open_global_profiles(backend_handle: BackendHandle, window: &mut Window, 
 
     window.open_dialog(cx, move |modal, window, cx| {
         cx.update_entity(&state, |state, cx| state.render(modal, window, cx))
+    });
+}
+
+pub fn open_global_profile_details(profile: GlobalProfileSummary, backend_handle: BackendHandle, window: &mut Window, cx: &mut App) {
+    let input = cx.new(|cx| InputState::new(window, cx).placeholder(profile.name.clone()));
+    window.open_dialog(cx, move |dialog, _, _| {
+        let name_input = input.clone();
+        let create_profile = profile.clone();
+        let backend = backend_handle.clone();
+        let enter_name_input = input.clone();
+        let enter_profile = profile.clone();
+        let enter_backend = backend_handle.clone();
+        let dialog = dialog.on_ok(move |_, _, cx| {
+            let name = enter_name_input.read(cx).value();
+            let name = if name.trim().is_empty() { enter_profile.name.clone() } else { name.trim().to_owned() };
+            if !crate::is_valid_instance_name(&name) { return false; }
+            let (revision_id, sequence, manifest_sha256) = match (
+                &enter_profile.stable_revision_id,
+                enter_profile.stable_sequence,
+                &enter_profile.stable_manifest_sha256,
+            ) {
+                (Some(id), Some(sequence), Some(digest)) => (id.clone(), sequence, digest.clone()),
+                _ => (
+                    enter_profile.latest_revision_id.clone(),
+                    enter_profile.latest_sequence,
+                    enter_profile.latest_manifest_sha256.clone(),
+                ),
+            };
+            enter_backend.send(MessageToBackend::CreateGlobalProfileInstance {
+                name,
+                profile_id: enter_profile.profile_id.clone(),
+                revision_id,
+                sequence,
+                manifest_sha256,
+            });
+            true
+        });
+        let icon = match &profile.icon_path {
+            Some(path) => gpui::img(path.clone()).size_24().rounded_lg().into_any_element(),
+            None => gpui::img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into()))).size_24().into_any_element(),
+        };
+        dialog.title(profile.name.clone()).width(px(760.0))
+            .child(v_flex().gap_5()
+                .child(h_flex().gap_4().items_center().child(icon).child(v_flex().gap_2()
+                    .child(format!("Minecraft {}", profile.minecraft))
+                    .child(format!("NeoForge {}", profile.neoforge))
+                    .child(format!("Version {}", profile.stable_sequence.unwrap_or(profile.latest_sequence)))))
+                .child(div().child(if profile.description.is_empty() { "No description available".to_owned() } else { profile.description.clone() }))
+                .child(crate::labelled("Instance name", Input::new(&input))))
+            .footer(h_flex().gap_3().w_full().justify_end()
+                .child(Button::new("close").label("Close").on_click(|_, window, cx| window.close_dialog(cx)))
+                .child(Button::new("create-global").success().label("Create instance").on_click(move |_, window, cx| {
+                    let name = name_input.read(cx).value();
+                    let name = if name.trim().is_empty() { create_profile.name.clone() } else { name.trim().to_owned() };
+                    if !crate::is_valid_instance_name(&name) { return; }
+                    let (revision_id, sequence, manifest_sha256) = match (&create_profile.stable_revision_id, create_profile.stable_sequence, &create_profile.stable_manifest_sha256) {
+                        (Some(id), Some(sequence), Some(digest)) => (id.clone(), sequence, digest.clone()),
+                        _ => (create_profile.latest_revision_id.clone(), create_profile.latest_sequence, create_profile.latest_manifest_sha256.clone()),
+                    };
+                    backend.send(MessageToBackend::CreateGlobalProfileInstance { name, profile_id: create_profile.profile_id.clone(), revision_id, sequence, manifest_sha256 });
+                    window.close_dialog(cx);
+                })))
     });
 }

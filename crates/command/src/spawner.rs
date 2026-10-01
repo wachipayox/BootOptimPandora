@@ -43,7 +43,10 @@ fn illegal_filename_char(b: u8) -> bool {
     b < 0x1f || matches!(b, b'/' | b'?' | b'<' | b'>' | b'\\' | b':' | b'*' | b'|' | b'"')
 }
 
-pub fn spawn(command: PandoraCommand, spawn_type: SpawnType) -> tokio::sync::oneshot::Receiver<std::io::Result<PandoraChild>> {
+pub fn spawn(
+    command: PandoraCommand,
+    spawn_type: SpawnType,
+) -> tokio::sync::oneshot::Receiver<std::io::Result<PandoraChild>> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
 
     static SPAWNING_CHANNEL: OnceCell<mpsc::Sender<SpawnInfo>> = OnceCell::new();
@@ -60,7 +63,8 @@ pub fn spawn(command: PandoraCommand, spawn_type: SpawnType) -> tokio::sync::one
                 unsafe {
                     _ = windows::Win32::System::Com::CoInitializeEx(
                         None,
-                        windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
+                        windows::Win32::System::Com::COINIT_APARTMENTTHREADED
+                            | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
                     );
                 }
 
@@ -72,12 +76,22 @@ pub fn spawn(command: PandoraCommand, spawn_type: SpawnType) -> tokio::sync::one
 
         send
     });
-    channel.send(SpawnInfo { command, spawn_type, sender }).unwrap();
+    channel
+        .send(SpawnInfo {
+            command,
+            spawn_type,
+            sender,
+        })
+        .unwrap();
 
     receiver
 }
 
-fn handle_spawn(mut command: PandoraCommand, spawn_type: SpawnType, context: &mut SpawnContext) -> std::io::Result<PandoraChild> {
+fn handle_spawn(
+    mut command: PandoraCommand,
+    spawn_type: SpawnType,
+    context: &mut SpawnContext,
+) -> std::io::Result<PandoraChild> {
     let probe_minecraft = is_probe_minecraft_launch(&command) && probe_root_ready();
     if probe_minecraft {
         probe_event("java_spawn", "begin", None);
@@ -191,9 +205,7 @@ fn is_direct_java_executable(executable: &OsStr) -> bool {
         return false;
     };
     let name = name.to_string_lossy();
-    name.eq_ignore_ascii_case("java")
-        || name.eq_ignore_ascii_case("java.exe")
-        || name.eq_ignore_ascii_case("javaw.exe")
+    name.eq_ignore_ascii_case("java") || name.eq_ignore_ascii_case("java.exe") || name.eq_ignore_ascii_case("javaw.exe")
 }
 
 pub(crate) fn is_probe_minecraft_launch(command: &PandoraCommand) -> bool {
@@ -242,9 +254,13 @@ pub(crate) fn probe_event(phase: &str, event: &str, outcome: Option<&str>) {
     let _guard = probe_write_lock().lock();
     let now = monotonic_ns();
     let line = if let Some(outcome) = outcome {
-        format!("{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"{event}\",\"network\":false,\"outcome\":\"{outcome}\"}}\n")
+        format!(
+            "{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"{event}\",\"network\":false,\"outcome\":\"{outcome}\"}}\n"
+        )
     } else {
-        format!("{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"{event}\",\"network\":false}}\n")
+        format!(
+            "{{\"schema\":\"{LAUNCH_PROBE_SCHEMA}\",\"mono_ns\":{now},\"phase\":\"{phase}\",\"event\":\"{event}\",\"network\":false}}\n"
+        )
     };
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = file.write_all(line.as_bytes());
@@ -278,7 +294,8 @@ fn monotonic_ns() -> u64 {
     let mut ticks = 0_i64;
     let mut frequency = 0_i64;
     unsafe {
-        if QueryPerformanceCounter(&mut ticks) == 0 || QueryPerformanceFrequency(&mut frequency) == 0 || frequency <= 0 {
+        if QueryPerformanceCounter(&mut ticks) == 0 || QueryPerformanceFrequency(&mut frequency) == 0 || frequency <= 0
+        {
             return 0;
         }
     }

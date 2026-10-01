@@ -22,6 +22,7 @@ use crate::{
 };
 
 pub struct InstancesPage {
+    global_carousel: Entity<crate::component::global_profile_carousel::GlobalProfileCarousel>,
     instance_table: Entity<TableState<InstanceList>>,
     view_dropdown: Entity<SelectState<NamedDropdown<InstancesViewMode>>>,
 
@@ -54,7 +55,9 @@ impl InstancesPage {
         })
         .detach();
 
+        let global_carousel = cx.new(|cx| crate::component::global_profile_carousel::GlobalProfileCarousel::new(data.backend_handle.clone(), window, cx));
         Self {
+            global_carousel,
             instance_table,
             view_dropdown,
             metadata: data.metadata.clone(),
@@ -79,17 +82,11 @@ impl Page for InstancesPage {
                     cx,
                 );
             }));
-        let global_profiles = Button::new("global_profiles")
-            .icon(PandoraIcon::Globe)
-            .label("Global profiles")
-            .on_click(cx.listener(|this, _, window, cx| {
-                crate::modals::global_profiles::open_global_profiles(this.backend_handle.clone(), window, cx);
-            }));
         // wrapping in div makes it not take up the full space of the titlebar
         let select_view =
             div().child(Select::new(&self.view_dropdown).title_prefix(format!("{}: ", t::instance::view_mode())));
 
-        h_flex().gap_3().child(create_instance).child(global_profiles).child(select_view)
+        h_flex().gap_3().child(create_instance).child(select_view)
     }
 
     fn scrollable(&self, cx: &App) -> bool {
@@ -102,7 +99,7 @@ impl Page for InstancesPage {
 
 impl Render for InstancesPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        match InterfaceConfig::get(cx).instances_view_mode {
+        let locals = match InterfaceConfig::get(cx).instances_view_mode {
             InstancesViewMode::Cards => {
                 let cards = self.instance_table.update(cx, |table, cx| {
                     let rows = table.delegate().rows_count(cx);
@@ -117,7 +114,8 @@ impl Render for InstancesPage {
                     .into_any_element()
             },
             InstancesViewMode::List => DataTable::new(&self.instance_table).bordered(false).into_any_element(),
-        }
+        };
+        gpui_component::v_flex().size_full().gap_4().child(div().p_4().child(self.global_carousel.clone())).child(div().min_h_0().flex_1().child(locals))
     }
 }
 

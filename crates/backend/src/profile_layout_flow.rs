@@ -380,14 +380,45 @@ impl PersistentProfileLayout {
         &mut self,
         lineage: ProfileLineage,
     ) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
+        let is_local_child = matches!(
+            lineage.parent.as_ref(),
+            Some(crate::profile_branch::ProfileParentRef::LocalProfile { .. })
+        );
         let branch = self.branch_manifest()?;
         let delta = ProfileRevisionDelta {
             lineage,
             target_revision: branch.applied_revision,
-            config_settings: Vec::new(),
+            config_settings: branch.config_settings,
             changes: Vec::new(),
         };
-        self.reconcile_revision_delta(&delta)
+        if is_local_child {
+            self.reconcile_local_branch_baseline(&delta)
+        } else {
+            self.reconcile_revision_delta(&delta)
+        }
+    }
+
+    fn reconcile_local_branch_baseline(
+        &mut self,
+        delta: &ProfileRevisionDelta,
+    ) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
+        self.reconcile_revision_delta_inner(delta, false, true)
+    }
+
+    /// Creates a local child from a completed instance snapshot and reconciles the initial parent
+    /// tree in one transaction. The destination already contains a clone of the parent, so
+    /// inherited ownership is rebased and its initial files are not misclassified as user edits.
+    pub fn initialize_local_child_branch(
+        &mut self,
+        delta: &ProfileRevisionDelta,
+    ) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
+        if !matches!(
+            delta.lineage.parent.as_ref(),
+            Some(crate::profile_branch::ProfileParentRef::LocalProfile { .. })
+        ) {
+            return Err(ProfileLayoutFlowError::AmbiguousTransaction);
+        }
+        self.reconcile_revision_delta_inner(delta, false, true)
     }
 
     /// Applies an already-resolved revision-history delta. Only paths listed in `delta.changes`
@@ -397,7 +428,7 @@ impl PersistentProfileLayout {
         &mut self,
         delta: &ProfileRevisionDelta,
     ) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
-        self.reconcile_revision_delta_inner(delta, false)
+        self.reconcile_revision_delta_inner(delta, false, false)
     }
 
     /// Explicit full managed-tree parity for a global or globally derived profile.
@@ -474,13 +505,14 @@ impl PersistentProfileLayout {
             config_settings: config_settings.to_vec(),
             changes,
         };
-        self.reconcile_revision_delta_inner(&delta, true)
+        self.reconcile_revision_delta_inner(&delta, true, false)
     }
 
     fn reconcile_revision_delta_inner(
         &mut self,
         delta: &ProfileRevisionDelta,
         repair: bool,
+        local_child_baseline: bool,
     ) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
         self.recover_if_needed()?;
         delta.validate(self.profile_uuid)?;
@@ -495,6 +527,12 @@ impl PersistentProfileLayout {
         }
         let current_generation = current.as_ref().map(|m| m.generation);
         let mut branch = current.as_ref().map(|m| m.branch.clone()).unwrap_or_default();
+        if local_child_baseline {
+            for metadata in branch.entries.values_mut() {
+                metadata.ownership = ProfileEntryOwnership::Inherited;
+            }
+            branch.tombstones.clear();
+        }
 
         if !repair
             && current.is_some()
@@ -502,6 +540,7 @@ impl PersistentProfileLayout {
             && branch.lineage == delta.lineage
             && branch.applied_revision == delta.target_revision
             && branch.config_setting_signatures == target_config_setting_signatures
+            && branch.config_settings == delta.config_settings
         {
             self.status.state = ProfileLayoutState::Ready;
             self.status.generation = current_generation;
@@ -516,9 +555,17 @@ impl PersistentProfileLayout {
         let mut operations = Vec::<JournalOperation>::new();
         let mut desired = BTreeMap::<String, CanonicalDesired>::new();
         let mut blocking_conflicts = Vec::<String>::new();
+        let mut canonical_paths = BTreeSet::new();
 
         for change in &delta.changes {
-            let path = change.path().to_owned();
+            let logical_path = crate::profile_branch::canonical_mod_path(change.path());
+            if !canonical_paths.insert(logical_path.clone()) {
+                return Err(ProfileLayoutFlowError::OwnershipChanged(logical_path));
+            }
+            let path = self.resolve_mod_state_path(&logical_path, &branch, &managed_entries)?;
+            rekey_profile_path(&mut branch.entries, &logical_path, &path)?;
+            rekey_profile_path(&mut branch.tombstones, &logical_path, &path)?;
+            rekey_profile_path(&mut managed_entries, &logical_path, &path)?;
             let current_metadata = branch.entries.get(&path).cloned();
             let has_local_tombstone = branch.tombstones.contains_key(&path);
             let path_has_config_rules = delta.config_settings.iter().any(|setting| setting.path == path);
@@ -527,6 +574,84 @@ impl PersistentProfileLayout {
                 ProfileDeltaChange::Upsert(entry) => entry.metadata.ownership == ProfileEntryOwnership::Inherited,
                 ProfileDeltaChange::Remove { ownership, .. } => *ownership == ProfileEntryOwnership::Inherited,
             };
+            let is_local_descendant = matches!(
+                branch.lineage.parent.as_ref(),
+                Some(crate::profile_branch::ProfileParentRef::LocalProfile { .. })
+            );
+
+            // A branch is trusted between explicit update/repair operations. When an incoming
+            // ancestor delta touches a previously inherited file, compare only that path with
+            // the last applied hash. Preserve an edit or deletion as a local override/tombstone
+            // instead of replacing it and hiding the edit in a conflict-copy directory.
+            if incoming_is_inherited
+                && !local_child_baseline
+                && !has_local_tombstone
+                && let Some(mut metadata) = current_metadata.clone()
+                && metadata.ownership == ProfileEntryOwnership::Inherited
+                && (metadata.policy != ProfileFilePolicy::Enforced
+                    || matches!(&metadata.origin, ProfileEntryOrigin::LocalProfile { .. }))
+                && !(path_has_config_rules
+                    && metadata.logical_identity.starts_with("config:")
+                    && matches!(&metadata.origin, ProfileEntryOrigin::GlobalRevision { .. })
+                    && !is_local_descendant)
+            {
+                let previous_applied_hash = managed_entries
+                    .get(&path)
+                    .map(|previous| previous.applied_hash.as_str())
+                    .unwrap_or(metadata.source_sha256.as_str());
+                match observe_live(&self.live_root(), &path)? {
+                    LiveEntry::Missing => {
+                        managed_entries.remove(&path);
+                        branch.entries.remove(&path);
+                        branch.tombstones.insert(
+                            path.clone(),
+                            ProfileEntryTombstone {
+                                policy: metadata.policy,
+                            },
+                        );
+                        continue;
+                    },
+                    LiveEntry::File { hash } if hash != previous_applied_hash => {
+                        metadata.origin = ProfileEntryOrigin::LocalProfile {
+                            profile_uuid: self.profile_uuid,
+                        };
+                        metadata.ownership = ProfileEntryOwnership::Local;
+                        metadata.source_sha256 = hash;
+                        managed_entries.remove(&path);
+                        branch.entries.insert(path.clone(), metadata);
+                        continue;
+                    },
+                    LiveEntry::File { .. } => {},
+                    LiveEntry::Directory | LiveEntry::ReparsePoint | LiveEntry::OtherType => {
+                        blocking_conflicts.push(format!("{path}:unexpected_type"));
+                        continue;
+                    },
+                }
+            }
+
+            // A new parent path can collide with a file added locally since the previous update.
+            // Once this profile already has a parent baseline, preserve that untracked live file
+            // as a local addition instead of replacing it with the newly inherited path.
+            if incoming_is_inherited
+                && !local_child_baseline
+                && !has_local_tombstone
+                && current_metadata.is_none()
+                && current.is_some()
+                && branch.lineage.parent.is_some()
+                && !path_has_config_rules
+                && let ProfileDeltaChange::Upsert(entry) = change
+                && let LiveEntry::File { hash } = observe_live(&self.live_root(), &path)?
+            {
+                let mut metadata = entry.metadata.clone();
+                metadata.origin = ProfileEntryOrigin::LocalProfile {
+                    profile_uuid: self.profile_uuid,
+                };
+                metadata.ownership = ProfileEntryOwnership::Local;
+                metadata.source_sha256 = hash;
+                branch.entries.insert(path, metadata);
+                continue;
+            }
+
             if incoming_is_inherited
                 && (has_local_tombstone
                     || current_metadata
@@ -733,13 +858,13 @@ impl PersistentProfileLayout {
                     }
                 },
                 ProfileDeltaChange::Remove {
-                    path,
                     origin: _,
                     ownership,
                     policy,
+                    ..
                 } => {
                     if *ownership != ProfileEntryOwnership::Inherited {
-                        match observe_live(&self.live_root(), path)? {
+                        match observe_live(&self.live_root(), &path)? {
                             LiveEntry::Missing => {},
                             LiveEntry::File { hash } => {
                                 operations.push(JournalOperation {
@@ -755,16 +880,16 @@ impl PersistentProfileLayout {
                                 continue;
                             },
                         }
-                        managed_entries.remove(path);
-                        branch.entries.remove(path);
+                        managed_entries.remove(&path);
+                        branch.entries.remove(&path);
                         branch.tombstones.insert(path.clone(), ProfileEntryTombstone { policy: *policy });
                         continue;
                     }
 
                     match policy {
                         ProfileFilePolicy::Enforced => {
-                            if let Some(previous) = managed_entries.get(path) {
-                                match observe_live(&self.live_root(), path)? {
+                            if let Some(previous) = managed_entries.get(&path) {
+                                match observe_live(&self.live_root(), &path)? {
                                     LiveEntry::Missing => {},
                                     LiveEntry::File { hash } => {
                                         operations.push(JournalOperation {
@@ -781,18 +906,18 @@ impl PersistentProfileLayout {
                                     },
                                 }
                             }
-                            managed_entries.remove(path);
-                            branch.entries.remove(path);
+                            managed_entries.remove(&path);
+                            branch.entries.remove(&path);
                         },
                         ProfileFilePolicy::DefaultOnce | ProfileFilePolicy::UserOwned => {
-                            if let Some(mut existing) = branch.entries.get(path).cloned() {
+                            if let Some(mut existing) = branch.entries.get(&path).cloned() {
                                 existing.origin = ProfileEntryOrigin::LocalProfile {
                                     profile_uuid: self.profile_uuid,
                                 };
                                 existing.ownership = ProfileEntryOwnership::UserOwned;
                                 branch.entries.insert(path.clone(), existing);
                             }
-                            managed_entries.remove(path);
+                            managed_entries.remove(&path);
                         },
                     }
                 },
@@ -816,6 +941,7 @@ impl PersistentProfileLayout {
         branch.lineage = delta.lineage.clone();
         branch.applied_revision = delta.target_revision.clone();
         branch.config_setting_signatures = target_config_setting_signatures;
+        branch.config_settings = delta.config_settings.clone();
         branch.validate(self.profile_uuid)?;
 
         let tx = new_uuid();
@@ -1245,6 +1371,37 @@ impl PersistentProfileLayout {
         safe_join(&self.live_root(), relative)
     }
 
+    fn resolve_mod_state_path(
+        &self,
+        logical_path: &str,
+        branch: &ProfileBranchManifest,
+        managed_entries: &BTreeMap<String, ManagedManifestEntry>,
+    ) -> Result<String, ProfileLayoutFlowError> {
+        let Some(disabled_path) = crate::profile_branch::disabled_mod_alias(logical_path) else {
+            return Ok(logical_path.to_owned());
+        };
+        let enabled_exists = path_exists_no_follow(&self.live_path(logical_path)?)?;
+        let disabled_exists = path_exists_no_follow(&self.live_path(&disabled_path)?)?;
+        if enabled_exists && disabled_exists {
+            return Err(ProfileLayoutFlowError::OwnershipChanged(logical_path.to_owned()));
+        }
+        if disabled_exists {
+            return Ok(disabled_path);
+        }
+        if enabled_exists {
+            return Ok(logical_path.to_owned());
+        }
+        // A missing local file is still tracked in the branch manifest. Preserve the last
+        // explicit enablement state so an update cannot silently turn a disabled mod on.
+        if branch.entries.contains_key(&disabled_path)
+            || branch.tombstones.contains_key(&disabled_path)
+            || managed_entries.contains_key(&disabled_path)
+        {
+            return Ok(disabled_path);
+        }
+        Ok(logical_path.to_owned())
+    }
+
     fn staging_live_path(&self, tx: Uuid, relative: &str) -> Result<PathBuf, ProfileLayoutFlowError> {
         safe_join(&self.staging_dir(tx).join("live"), relative)
     }
@@ -1324,6 +1481,32 @@ impl PersistentProfileLayout {
         }
         self.commit_manifest(&journal)
     }
+}
+
+fn rekey_profile_path<T>(
+    entries: &mut BTreeMap<String, T>,
+    logical_path: &str,
+    live_path: &str,
+) -> Result<(), ProfileLayoutFlowError> {
+    if logical_path == live_path {
+        let Some(alias) = crate::profile_branch::disabled_mod_alias(logical_path) else {
+            return Ok(());
+        };
+        if entries.contains_key(logical_path) && entries.contains_key(&alias) {
+            return Err(ProfileLayoutFlowError::OwnershipChanged(logical_path.to_owned()));
+        }
+        if let Some(value) = entries.remove(&alias) {
+            entries.insert(logical_path.to_owned(), value);
+        }
+    } else {
+        if entries.contains_key(logical_path) && entries.contains_key(live_path) {
+            return Err(ProfileLayoutFlowError::OwnershipChanged(logical_path.to_owned()));
+        }
+        if let Some(value) = entries.remove(logical_path) {
+            entries.insert(live_path.to_owned(), value);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1547,6 +1730,14 @@ fn observe_live(root: &Path, relative: &str) -> Result<LiveEntry, ProfileLayoutF
         },
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(LiveEntry::Missing),
         Err(err) => Err(err.into()),
+    }
+}
+
+fn path_exists_no_follow(path: &Path) -> Result<bool, ProfileLayoutFlowError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -1988,6 +2179,8 @@ mod tests {
             metadata: crate::profile_branch::ProfileEntryMetadata {
                 logical_identity: format!("identity-{name}"),
                 source_sha256: sha256_bytes(bytes),
+                source_size_bytes: bytes.len() as u64,
+                source_modified_unix_nanos: 0,
                 origin: crate::profile_branch::ProfileEntryOrigin::GlobalRevision { pin },
                 ownership: crate::profile_branch::ProfileEntryOwnership::Inherited,
                 policy,
@@ -2009,6 +2202,8 @@ mod tests {
             metadata: crate::profile_branch::ProfileEntryMetadata {
                 logical_identity: format!("config:{path}"),
                 source_sha256: sha256_bytes(bytes),
+                source_size_bytes: bytes.len() as u64,
+                source_modified_unix_nanos: 0,
                 origin: crate::profile_branch::ProfileEntryOrigin::GlobalRevision { pin },
                 ownership: crate::profile_branch::ProfileEntryOwnership::Inherited,
                 policy: crate::profile_branch::ProfileFilePolicy::DefaultOnce,
@@ -2158,6 +2353,225 @@ mod tests {
 
         assert_eq!(fs::read(root.0.join(".minecraft/mods/a.jar")).unwrap(), b"a-v2");
         assert_eq!(fs::read(root.0.join(".minecraft/mods/b.jar")).unwrap(), b"local-b");
+    }
+
+    #[test]
+    fn local_branch_update_preserves_modified_and_deleted_inherited_files() {
+        let root = TestRoot::new("local-branch-overrides");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let parent_uuid = uuid::Uuid::from_bytes([31; 16]);
+        let lineage = crate::profile_branch::ProfileLineage::from_local(parent_uuid, None).unwrap();
+        let source_v1 = root.source("child.jar", b"parent-v1");
+        let metadata_v1 = crate::profile_branch::ProfileEntryMetadata {
+            logical_identity: "local-parent-child.jar".to_owned(),
+            source_sha256: source_v1.source_sha256.clone(),
+            source_size_bytes: b"parent-v1".len() as u64,
+            source_modified_unix_nanos: 0,
+            origin: crate::profile_branch::ProfileEntryOrigin::LocalProfile {
+                profile_uuid: parent_uuid,
+            },
+            ownership: crate::profile_branch::ProfileEntryOwnership::Inherited,
+            policy: crate::profile_branch::ProfileFilePolicy::Enforced,
+        };
+        let make_entry = |source: &DesiredManagedFile, metadata: crate::profile_branch::ProfileEntryMetadata| {
+            crate::profile_branch::EffectiveProfileEntry {
+                path: "mods/child.jar".to_owned(),
+                source: source.source.clone(),
+                metadata,
+            }
+        };
+        let change = crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(&source_v1, metadata_v1.clone()));
+        layout
+            .reconcile_revision_delta(&crate::profile_branch::ProfileRevisionDelta {
+                lineage: lineage.clone(),
+                target_revision: None,
+                config_settings: Vec::new(),
+                changes: vec![change],
+            })
+            .unwrap();
+
+        let live = root.0.join(".minecraft/mods/child.jar");
+        fs::write(&live, b"user-edit").unwrap();
+        let source_v2 = root.source("child-v2.jar", b"parent-v2-content");
+        let mut metadata_v2 = metadata_v1;
+        metadata_v2.source_sha256 = source_v2.source_sha256.clone();
+        metadata_v2.source_size_bytes = b"parent-v2-content".len() as u64;
+        layout
+            .reconcile_revision_delta(&crate::profile_branch::ProfileRevisionDelta {
+                lineage: lineage.clone(),
+                target_revision: None,
+                config_settings: Vec::new(),
+                changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(
+                    &source_v2,
+                    metadata_v2,
+                ))],
+            })
+            .unwrap();
+        assert_eq!(fs::read(&live).unwrap(), b"user-edit");
+        let branch = layout.branch_manifest().unwrap();
+        assert_eq!(
+            branch.entries["mods/child.jar"].ownership,
+            crate::profile_branch::ProfileEntryOwnership::Local
+        );
+
+        // A user deletion of a locally overridden file remains absent on future parent updates.
+        fs::remove_file(&live).unwrap();
+        let source_v3 = root.source("child-v3.jar", b"parent-v3-content");
+        let mut metadata_v3 = branch.entries["mods/child.jar"].clone();
+        metadata_v3.source_sha256 = source_v3.source_sha256.clone();
+        metadata_v3.ownership = crate::profile_branch::ProfileEntryOwnership::Inherited;
+        metadata_v3.origin = crate::profile_branch::ProfileEntryOrigin::LocalProfile {
+            profile_uuid: parent_uuid,
+        };
+        layout
+            .reconcile_revision_delta(&crate::profile_branch::ProfileRevisionDelta {
+                lineage,
+                target_revision: None,
+                config_settings: Vec::new(),
+                changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(
+                    &source_v3,
+                    metadata_v3,
+                ))],
+            })
+            .unwrap();
+        assert!(!live.exists());
+        assert_eq!(
+            layout.branch_manifest().unwrap().entries["mods/child.jar"].ownership,
+            crate::profile_branch::ProfileEntryOwnership::Local
+        );
+    }
+
+    #[test]
+    fn parent_mod_updates_follow_child_enabled_or_disabled_state() {
+        let root = TestRoot::new("local-branch-mod-toggle");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let parent_uuid = uuid::Uuid::from_bytes([33; 16]);
+        let lineage = crate::profile_branch::ProfileLineage::from_local(parent_uuid, None).unwrap();
+        let source_v1 = root.source("parent-v1.jar", b"parent-v1");
+        let mut metadata = crate::profile_branch::ProfileEntryMetadata {
+            logical_identity: "local-parent:mods/child.jar".to_owned(),
+            source_sha256: source_v1.source_sha256.clone(),
+            source_size_bytes: b"parent-v1".len() as u64,
+            source_modified_unix_nanos: 0,
+            origin: crate::profile_branch::ProfileEntryOrigin::LocalProfile {
+                profile_uuid: parent_uuid,
+            },
+            ownership: crate::profile_branch::ProfileEntryOwnership::Inherited,
+            policy: crate::profile_branch::ProfileFilePolicy::Enforced,
+        };
+        let make_entry = |source: &DesiredManagedFile, metadata: crate::profile_branch::ProfileEntryMetadata| {
+            crate::profile_branch::EffectiveProfileEntry {
+                path: "mods/child.jar".to_owned(),
+                source: source.source.clone(),
+                metadata,
+            }
+        };
+        layout
+            .reconcile_revision_delta(&crate::profile_branch::ProfileRevisionDelta {
+                lineage: lineage.clone(),
+                target_revision: None,
+                config_settings: Vec::new(),
+                changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(
+                    &source_v1,
+                    metadata.clone(),
+                ))],
+            })
+            .unwrap();
+
+        let enabled_path = root.0.join(".minecraft/mods/child.jar");
+        let disabled_path = root.0.join(".minecraft/mods/child.jar.disabled");
+        fs::rename(&enabled_path, &disabled_path).unwrap();
+        let source_v2 = root.source("parent-v2.jar", b"parent-v2");
+        metadata.source_sha256 = source_v2.source_sha256.clone();
+        metadata.source_size_bytes = b"parent-v2".len() as u64;
+        layout
+            .reconcile_revision_delta(&crate::profile_branch::ProfileRevisionDelta {
+                lineage: lineage.clone(),
+                target_revision: None,
+                config_settings: Vec::new(),
+                changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(
+                    &source_v2,
+                    metadata.clone(),
+                ))],
+            })
+            .unwrap();
+        assert!(!enabled_path.exists());
+        assert_eq!(fs::read(&disabled_path).unwrap(), b"parent-v2");
+
+        fs::rename(&disabled_path, &enabled_path).unwrap();
+        let source_v3 = root.source("parent-v3.jar", b"parent-v3");
+        metadata.source_sha256 = source_v3.source_sha256.clone();
+        metadata.source_size_bytes = b"parent-v3".len() as u64;
+        layout
+            .reconcile_revision_delta(&crate::profile_branch::ProfileRevisionDelta {
+                lineage,
+                target_revision: None,
+                config_settings: Vec::new(),
+                changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(
+                    &source_v3, metadata,
+                ))],
+            })
+            .unwrap();
+        assert_eq!(fs::read(&enabled_path).unwrap(), b"parent-v3");
+        assert!(!disabled_path.exists());
+    }
+
+    #[test]
+    fn local_child_initialization_rebases_parent_edits_as_inherited_content() {
+        let root = TestRoot::new("local-child-initialize");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let global = global_pin("global-r1", 'a');
+        let original = effective_entry(
+            &root,
+            "base.jar",
+            b"global-v1",
+            global.clone(),
+            crate::profile_branch::ProfileFilePolicy::Enforced,
+        );
+        layout
+            .reconcile_revision_delta(&global_delta(
+                global.clone(),
+                vec![crate::profile_branch::ProfileDeltaChange::Upsert(original)],
+            ))
+            .unwrap();
+
+        // The cloned parent already contains a local edit that the parent has not yet synced into
+        // its own branch metadata. Initializing a child must snapshot it as inherited content.
+        let live = root.0.join(".minecraft/mods/base.jar");
+        fs::write(&live, b"parent-local-edit").unwrap();
+        let parent_uuid = uuid::Uuid::from_bytes([32; 16]);
+        let incoming = effective_entry(
+            &root,
+            "base-parent-edit.jar",
+            b"parent-local-edit",
+            global.clone(),
+            crate::profile_branch::ProfileFilePolicy::Enforced,
+        );
+        let mut incoming = incoming;
+        incoming.path = "mods/base.jar".to_owned();
+        incoming.metadata.logical_identity = "local-parent:mods/base.jar".to_owned();
+        incoming.metadata.origin = crate::profile_branch::ProfileEntryOrigin::LocalProfile {
+            profile_uuid: parent_uuid,
+        };
+        let lineage = crate::profile_branch::ProfileLineage::from_local(parent_uuid, Some(global.clone())).unwrap();
+        let delta = crate::profile_branch::ProfileRevisionDelta {
+            lineage,
+            target_revision: Some(global),
+            config_settings: Vec::new(),
+            changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(incoming)],
+        };
+        layout.initialize_local_child_branch(&delta).unwrap();
+
+        assert_eq!(fs::read(&live).unwrap(), b"parent-local-edit");
+        let branch = layout.branch_manifest().unwrap();
+        assert_eq!(
+            branch.entries["mods/base.jar"].ownership,
+            crate::profile_branch::ProfileEntryOwnership::Inherited
+        );
+        assert!(matches!(
+            &branch.entries["mods/base.jar"].origin,
+            crate::profile_branch::ProfileEntryOrigin::LocalProfile { profile_uuid } if *profile_uuid == parent_uuid
+        ));
     }
 
     #[test]
