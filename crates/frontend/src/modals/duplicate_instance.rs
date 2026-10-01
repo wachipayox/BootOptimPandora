@@ -92,7 +92,7 @@ impl DuplicateInstanceModalState {
                 let hue_row = h_flex().gap_2().items_center()
                     .child(preview)
                     .child(Slider::new(&self.hue).flex_1())
-                    .child(div().w(px(36.0)).child(format!("{}°", hue_value.round() as i32)))
+                    .child(div().w(px(56.0)).flex_shrink_0().whitespace_nowrap().child(format!("{}°", hue_value.round() as i32)))
                     .child(Button::new("randomize-parent-icon-hue").label("↻").small()
                         .on_click(cx.listener(|this, _, window, cx| {
                             let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos();

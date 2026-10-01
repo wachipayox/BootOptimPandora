@@ -473,6 +473,10 @@ async fn duplicate_instance_inner(
             },
             Err(error) => Err(error),
         };
+        // The source guard protects the parent while bytes and lineage are copied. Release it
+        // before re-reading the parent's persistent snapshot below; otherwise that read tries
+        // to reacquire the same exclusive lock and reports a false cross-process busy error.
+        drop(clone_source);
         if let Err(error) = setup_result {
             let _ = fs::remove_dir_all(&dest);
             modal_action.set_finished_with_error(format!("Instance copied, but branch setup failed: {error}").into());
