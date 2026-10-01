@@ -1621,8 +1621,7 @@ impl BackendState {
             MessageToBackend::CheckInheritedUpdates { id, channel } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
-                    let result = tokio::time::timeout(std::time::Duration::from_secs(2), backend.check_inherited_updates(id)).await
-                        .unwrap_or_else(|_| Err("The update check timed out".into()));
+                    let result = backend.check_inherited_updates(id).await;
                     let _ = channel.send(result);
                 });
             },

@@ -121,3 +121,18 @@ obtains unknown public signing identities from the configured certificate-verifi
 HTTPS server; manual signing-key setup is unnecessary. Existing pinned identities
 and revision/object verification remain compatible. Keep the complete server data
 directory backed up; losing the administrator PC needs no signing-key migration.
+
+## Starting installed profile branches
+
+Start (including quick play) checks committed parent versions before launching.
+The HTTPS lookup has a two-second budget and never scans the installed modpack.
+If an update exists, the dialog offers Update and start or Start without updating.
+Unavailable remote metadata does not suppress known local-parent changes.
+
+Withdrawing a global profile from Distribution leaves installed instances and
+their pinned game files intact, but stops discovering newer global revisions.
+Deleting a local parent likewise leaves each child tree intact. The child keeps
+its original parent UUID; it is not silently reparented to its grandparent.
+Update discovery stops at the missing ancestor, while surviving descendants
+can still synchronize with their own existing local parents. Explicit update
+from a missing parent reports that the source is unavailable.
