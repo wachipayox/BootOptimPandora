@@ -1123,6 +1123,7 @@ impl Instance {
 
         self.root_path = new.root_path;
         self.name = new.name;
+        self.icon = new.icon;
         self.configuration = new.configuration;
     }
 
