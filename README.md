@@ -136,3 +136,9 @@ its original parent UUID; it is not silently reparented to its grandparent.
 Update discovery stops at the missing ancestor, while surviving descendants
 can still synchronize with their own existing local parents. Explicit update
 from a missing parent reports that the source is unavailable.
+
+Global profile player defaults: root-level `options.txt` and `servers.dat` are
+seeded only when the instance is first created. The launcher records them as
+user-owned after seeding, so later global or branch updates preserve player
+changes. Other player data such as `saves/`, screenshots, and launcher state
+remains excluded.
