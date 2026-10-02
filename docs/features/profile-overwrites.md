@@ -7,8 +7,10 @@ each available parent scope:
 - An instance with global ancestry is compared with the signed effective file
   set of its pinned global revision, including that revision's global parents.
 
-The tab presents the instance's modpack as a collapsible folder tree. Changed
-files have a marker. Selecting one shows its exact status relative to each
+The tab presents the instance's modpack as a collapsible folder tree with
+connector lines, file and folder icons, search, and an optional differences
+filter. Common modpack folders appear first. Changed files have a short status
+badge. Selecting one shows its exact status relative to each
 available parent: added, modified, removed, enabled or disabled. A content
 change combined with a toggle is shown as both. The `.disabled` suffix for
 toggleable mods is treated as local mod state rather than a second mod identity.
@@ -30,7 +32,7 @@ pack. Global comparison requests signed revision metadata but does not
 download modpack objects. If the distribution service is unavailable, the
 local-parent section remains available and the global section shows the error.
 
-Worlds, logs, crash reports, screenshots, session/cache state, game libraries,
+Worlds, logs, crash reports, screenshots, known player caches, session/cache state, game libraries,
 and other launcher runtime directories are excluded. Symbolic links, junctions
 and unsupported entries are never followed and are reported as skipped. If a
 local parent has been deleted, its section explains that the comparison cannot
