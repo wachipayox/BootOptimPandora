@@ -1628,9 +1628,9 @@ impl BackendState {
                     let _ = channel.send(result);
                 });
             },
-            MessageToBackend::UpdateInheritedChain { id, channel } => {
+            MessageToBackend::UpdateInheritedChain { id, channel, modal_action } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move { let _ = channel.send(backend.update_inherited_chain(id).await); });
+                tokio::task::spawn(async move { let _ = channel.send(backend.update_inherited_chain(id, &modal_action).await); });
             },
             MessageToBackend::CheckDistributionConnection => {
                 let config = self.config.lock().get().distribution.clone();
@@ -1699,7 +1699,7 @@ impl BackendState {
                         .and_then(|snapshot| snapshot.branch.lineage.parent);
                     let result = match parent_kind {
                         Some(crate::profile_branch::ProfileParentRef::GlobalRevision { .. }) => {
-                            backend.update_global_profile_instance(id).await
+                            backend.update_global_profile_instance(id, None).await
                         },
                         Some(crate::profile_branch::ProfileParentRef::LocalProfile { .. }) => {
                             backend.update_local_profile_branch(id).await

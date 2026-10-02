@@ -1484,7 +1484,11 @@ impl crate::BackendState {
         Ok(())
     }
 
-    pub async fn update_global_profile_instance(&self, id: bridge::instance::InstanceID) -> Result<bool, String> {
+    pub async fn update_global_profile_instance(
+        &self,
+        id: bridge::instance::InstanceID,
+        progress: Option<(&ModalAction, &ProgressTracker)>,
+    ) -> Result<bool, String> {
         let snapshot = self.persistent_profile_branch_status(id, None).map_err(|error| error.to_string())?;
         let Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin: parent_pin }) =
             snapshot.branch.lineage.parent.as_ref()
@@ -1531,12 +1535,13 @@ impl crate::BackendState {
 
         let cache_root = self.directories.root_launcher_dir.join("distribution-objects");
         let resolved = client
-            .resolve_profile_with_reuse(
+            .resolve_profile_with_reuse_and_progress(
                 &profile.profile_id,
                 &target_revision,
                 &cache_root,
                 &reusable_entries,
                 &skip_paths,
+                progress,
             )
             .await
             .map_err(|error| error.to_string())?;

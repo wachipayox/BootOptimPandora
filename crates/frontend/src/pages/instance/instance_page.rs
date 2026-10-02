@@ -67,6 +67,11 @@ impl Page for InstancePage {
 
         let button =
             match instance.status {
+                InstanceStatus::NotRunning if root::inherited_operation_active(id) => Button::new("updating_inherited")
+                    .warning()
+                    .icon(PandoraIcon::Loader)
+                    .label("Updating inherited files")
+                    .into_any_element(),
                 InstanceStatus::NotRunning => Button::new("start_instance")
                     .success()
                     .icon(PandoraIcon::Play)
@@ -180,6 +185,10 @@ impl Page for InstancePage {
 
 impl Render for InstancePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let updating = root::inherited_operation_active(self.instance.read(cx).id);
+        if updating && InterfaceConfig::get(cx).instance_subpage != InstanceSubpageType::Quickplay {
+            InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Quickplay;
+        }
         let instance_subpage = InterfaceConfig::get(cx).instance_subpage;
         if instance_subpage != self.subpage.page_type() {
             let subpage =
@@ -236,15 +245,16 @@ impl Render for InstancePage {
                     .selected_index(selected_index)
                     .underline()
                     .child(Tab::new().label(t::instance::quickplay()))
-                    .child(Tab::new().label(t::instance::logs::title()))
-                    .child(Tab::new().label(t::instance::content::mods()))
-                    .child(Tab::new().label(t::instance::content::resourcepacks()))
-                    .when(show_shader_tab, |this| this.child(Tab::new().label(t::instance::content::shaders())))
-                    .child(Tab::new().label(t::settings::title()))
+                    .child(Tab::new().label(t::instance::logs::title()).disabled(updating))
+                    .child(Tab::new().label(t::instance::content::mods()).disabled(updating))
+                    .child(Tab::new().label(t::instance::content::resourcepacks()).disabled(updating))
+                    .when(show_shader_tab, |this| this.child(Tab::new().label(t::instance::content::shaders()).disabled(updating)))
+                    .child(Tab::new().label(t::settings::title()).disabled(updating))
                     .when(show_live_game_output, |this| {
-                        this.child(Tab::new().label(t::instance::live_game_output()))
+                        this.child(Tab::new().label(t::instance::live_game_output()).disabled(updating))
                     })
                     .on_click(cx.listener(move |_, index, _, cx| {
+                        if updating { return; }
                         let page_type = match *index {
                             0 => InstanceSubpageType::Quickplay,
                             1 => InstanceSubpageType::Logs,

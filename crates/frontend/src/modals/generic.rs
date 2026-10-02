@@ -384,14 +384,14 @@ pub fn show_modal(
     title: SharedString,
     error_title: SharedString,
     modal_action: ModalAction,
-) {
+) -> Option<AnyWindowHandle> {
     let min_size = Size::new(px(448.0), px(96.0));
     let (bounds, display_id) = if let Some(display) = window.display(cx) {
         (display.bounds(), Some(display.id()))
     } else {
         (window.bounds(), None)
     };
-    _ = cx.open_window(
+    cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin: bounds.center() - min_size.center(),
@@ -451,5 +451,5 @@ pub fn show_modal(
                 _notify_task: Arc::new(task),
             })
         },
-    );
+    ).ok().map(Into::into)
 }

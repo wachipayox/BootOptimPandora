@@ -1268,9 +1268,9 @@ impl InstanceSettingsSubpage {
                     .overflow_x_hidden()
                     .on_click({
                         let id = self.instance_id;
-                        let backend_handle = self.backend_handle.clone();
-                        move |_: &ClickEvent, _, _| {
-                            backend_handle.send(MessageToBackend::UpdateGlobalProfileInstance { id });
+                        let data = self.data.clone();
+                        move |_: &ClickEvent, window, cx| {
+                            crate::root::update_inherited_files(id, &data, window, cx);
                         }
                     })
                 )

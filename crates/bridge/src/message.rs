@@ -299,6 +299,7 @@ pub enum MessageToBackend {
     UpdateInheritedChain {
         id: InstanceID,
         channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+        modal_action: ModalAction,
     },
     CheckDistributionConnection,
     CreateGlobalProfileInstance {

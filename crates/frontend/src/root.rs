@@ -1,6 +1,6 @@
 use std::{
     path::Path,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, LazyLock, atomic::AtomicBool},
 };
 
 use parking_lot::Mutex;
@@ -54,6 +54,42 @@ impl LauncherRoot {
 }
 
 static RENDER_CUSTOM_TITLEBAR: AtomicBool = AtomicBool::new(true);
+static INHERITED_OPERATIONS: LazyLock<Mutex<FxHashSet<InstanceID>>> = LazyLock::new(|| Mutex::new(FxHashSet::default()));
+
+pub fn inherited_operation_active(id: InstanceID) -> bool {
+    INHERITED_OPERATIONS.lock().contains(&id)
+}
+
+fn begin_inherited_operation(id: InstanceID, cx: &mut App) -> bool {
+    let inserted = INHERITED_OPERATIONS.lock().insert(id);
+    if inserted && matches!(InterfaceConfig::get(cx).main_page, PageType::InstancePage { .. }) {
+        InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Quickplay;
+    }
+    inserted
+}
+
+fn finish_inherited_operation(id: InstanceID, window: &mut Window) {
+    INHERITED_OPERATIONS.lock().remove(&id);
+    window.refresh();
+}
+
+pub fn update_inherited_files(id: InstanceID, data: &DataEntities, window: &mut Window, cx: &mut App) {
+    if !begin_inherited_operation(id, cx) { return; }
+    window.refresh();
+    let modal = ModalAction::default();
+    let (send, receive) = tokio::sync::oneshot::channel();
+    data.backend_handle.send(MessageToBackend::UpdateInheritedChain { id, channel: send, modal_action: modal.clone() });
+    let progress_window = modals::generic::show_modal(window, cx, "Updating inherited files…".into(), "Unable to update inherited files".into(), modal.clone());
+    let handle = window.window_handle();
+    cx.spawn(async move |cx| {
+        let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
+        match result {
+            Ok(()) => { modal.set_finished(); if let Some(progress_window) = progress_window { _ = cx.update_window(progress_window, |_, window, _| window.remove_window()); } },
+            Err(error) => modal.set_finished_with_error(error.into()),
+        }
+        _ = cx.update_window(handle, |_, window, _| finish_inherited_operation(id, window));
+    }).detach();
+}
 
 pub(crate) fn should_render_custom_titlebar() -> bool {
     RENDER_CUSTOM_TITLEBAR.load(std::sync::atomic::Ordering::Relaxed)
@@ -172,12 +208,20 @@ pub fn start_instance(
     id: InstanceID, name: SharedString, quick_play: Option<QuickPlayLaunch>,
     data: &DataEntities, window: &mut Window, cx: &mut App,
 ) {
+    if !begin_inherited_operation(id, cx) { return; }
+    window.refresh();
+    let check_modal = ModalAction::default();
+    let check_tracker = check_modal.push_tracker("Checking for updates".into());
+    let check_window = modals::generic::show_modal(window, cx, "Checking for updates…".into(), "Unable to check for updates".into(), check_modal.clone());
     let (send, receive) = tokio::sync::oneshot::channel();
     data.backend_handle.send(MessageToBackend::CheckInheritedUpdates { id, channel: send });
     let handle = window.window_handle();
     let data = data.clone();
     cx.spawn(async move |cx| {
         let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
+        check_tracker.set_finished(bridge::modal_action::ProgressTrackerFinishType::Normal);
+        check_modal.set_finished();
+        if let Some(check_window) = check_window { _ = cx.update_window(check_window, |_, window, _| window.remove_window()); }
         _ = cx.update_window(handle, |_, window, cx| {
             match result {
                 Ok(updates) if !updates.is_empty() => {
@@ -185,38 +229,53 @@ pub fn start_instance(
                     window.open_dialog(cx, move |dialog, _, _| {
                         let skip_data = data.clone(); let skip_name = name.clone(); let skip_quick = quick_play.clone();
                         let update_data = data.clone(); let update_name = name.clone(); let update_quick = quick_play.clone();
-                        dialog.title("Inherited profile update").child(caption.clone())
+                        let enter_data = data.clone(); let enter_name = name.clone(); let enter_quick = quick_play.clone();
+                        dialog.title("Inherited profile update")
+                            .overlay_closable(false).keyboard(false).close_button(false)
+                            .on_ok(move |_, window, cx| {
+                                update_then_start(id, enter_name.clone(), enter_quick.clone(), &enter_data, window, cx);
+                                true
+                            })
+                            .child(caption.clone())
                             .footer(h_flex().gap_2()
                                 .child(Button::new("skip-update").label("Start without updating").on_click(move |_, window, cx| {
                                     window.close_dialog(cx);
+                                    finish_inherited_operation(id, window);
                                     start_instance_unchecked(id, skip_name.clone(), skip_quick.clone(), &skip_data, window, cx);
                                 }))
                                 .child(Button::new("update-start").label("Update and start").on_click(move |_, window, cx| {
                                     window.close_dialog(cx);
-                                    let (send, receive) = tokio::sync::oneshot::channel();
-                                    update_data.backend_handle.send(MessageToBackend::UpdateInheritedChain { id, channel: send });
-                                    let modal = ModalAction::default();
-                                    modals::generic::show_modal(window, cx, "Updating inherited files…".into(), "Unable to update inherited files".into(), modal.clone());
-                                    let handle = window.window_handle(); let data = update_data.clone(); let name = update_name.clone(); let quick = update_quick.clone();
-                                    cx.spawn(async move |cx| {
-                                        match receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into())) {
-                                            Ok(()) => { modal.set_finished(); _ = cx.update_window(handle, |_, window, cx| {
-                                                window.close_dialog(cx); start_instance_unchecked(id, name, quick, &data, window, cx);
-                                            }); },
-                                            Err(error) => modal.set_finished_with_error(error.into()),
-                                        }
-                                    }).detach();
+                                    update_then_start(id, update_name.clone(), update_quick.clone(), &update_data, window, cx);
                                 })))
                     });
                 },
-                Ok(_) => start_instance_unchecked(id, name, quick_play, &data, window, cx),
+                Ok(_) => { finish_inherited_operation(id, window); start_instance_unchecked(id, name, quick_play, &data, window, cx); },
                 Err(error) => {
                     // Connectivity must not prevent playing an already installed instance.
                     log::warn!("Inherited update check skipped: {error}");
+                    finish_inherited_operation(id, window);
                     start_instance_unchecked(id, name, quick_play, &data, window, cx);
                 },
             }
         });
+    }).detach();
+}
+
+fn update_then_start(id: InstanceID, name: SharedString, quick: Option<QuickPlayLaunch>, data: &DataEntities, window: &mut Window, cx: &mut App) {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    let modal = ModalAction::default();
+    data.backend_handle.send(MessageToBackend::UpdateInheritedChain { id, channel: send, modal_action: modal.clone() });
+    let progress_window = modals::generic::show_modal(window, cx, "Updating inherited files…".into(), "Unable to update inherited files".into(), modal.clone());
+    let handle = window.window_handle();
+    let data = data.clone();
+    cx.spawn(async move |cx| {
+        match receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into())) {
+            Ok(()) => { modal.set_finished(); if let Some(progress_window) = progress_window { _ = cx.update_window(progress_window, |_, window, _| window.remove_window()); } _ = cx.update_window(handle, |_, window, cx| {
+                finish_inherited_operation(id, window);
+                start_instance_unchecked(id, name, quick, &data, window, cx);
+            }); },
+            Err(error) => { modal.set_finished_with_error(error.into()); _ = cx.update_window(handle, |_, window, _| finish_inherited_operation(id, window)); },
+        }
     }).detach();
 }
 

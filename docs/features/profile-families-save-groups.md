@@ -40,3 +40,24 @@ Validation: focused tests cover ancestor/descendant symmetry, excluding siblings
 missing parents/cycles, metadata-only reads while a layout lock is held, and
 renaming without changing identity/storage/world bytes. GUI interactions and
 automatic grouping against a live catalog require the local launcher check.
+
+## Inherited update flow
+
+Starting an instance now shows a short update check before the game launch
+pipeline. The check compares the committed generation of every local ancestor,
+then a metadata-only fingerprint of each local parent's `.minecraft` tree,
+and finally the selected revision of the global ancestor. It reads file names,
+sizes, and modification times without hashing file contents. `saves`, `logs`,
+`crash-reports`, `screenshots`, `session.lock`, and `usercache.json` are excluded from the fingerprint. This
+detects normal edits made outside Pandora while keeping HDD reads bounded;
+same-size edits with preserved timestamps remain a known limitation.
+
+When an update is available, Enter chooses **Update and start**. The other
+option starts the installed state unchanged. Both this action and **Update
+inherited files** in instance settings use the same progress window and update
+ancestors from oldest to youngest. The instance switches to Quickplay and its
+other tabs are disabled during the operation. On success the progress window
+closes and the tabs unlock; errors keep the message visible and also unlock
+the tabs. Global asset downloads show an aggregate byte bar and a bar for each
+downloaded file. A removed local or global ancestor does not invalidate an already
+installed descendant.

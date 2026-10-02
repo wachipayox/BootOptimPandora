@@ -2,9 +2,10 @@
 //!
 //! A branch starts from a copy-on-write optimized instance clone, then records the parent's
 //! effective `.minecraft` tree. Explicit updates enumerate the parent and use size/mtime as a
-//! cheap unchanged-file filter; only changed/new files are hashed. Start never scans a branch.
+//! cheap unchanged-file filter; only changed/new files are hashed. Start checks parent
+//! file metadata, but never reads their contents or scans the child's tree.
 
-use std::{collections::BTreeMap, fs, io::Read, path::Path, time::UNIX_EPOCH};
+use std::{collections::BTreeMap, fs, io::Read, path::{Path, PathBuf}, time::UNIX_EPOCH};
 
 use bridge::instance::InstanceID;
 use sha2::{Digest, Sha256};
@@ -18,6 +19,7 @@ use crate::{
         ProfileEntryOrigin, ProfileEntryOwnership, ProfileFilePolicy, ProfileLineage, ProfileRevisionDelta,
     },
 };
+use bridge::modal_action::{ModalAction, ProgressTrackerFinishType};
 
 pub(crate) fn snapshot_parent_tree(
     root: &Path,
@@ -214,7 +216,18 @@ impl BackendState {
         let path = self.parent_version_path(id)?;
         let temporary = path.with_extension("tmp");
         fs::write(&temporary, bytes).map_err(|e| e.to_string())?;
-        fs::rename(temporary, path).map_err(|e| e.to_string())
+        fs::rename(temporary, path).map_err(|e| e.to_string())?;
+        if let Some(parent_id) = self.find_instance_id_for_profile_uuid(parent.profile_uuid) {
+            let root = self.instance_state.read().instances.get(parent_id)
+                .ok_or("Local parent disappeared")?.dot_minecraft_path.to_path_buf();
+            let fingerprint = parent_tree_fingerprint(&root)?;
+            let path = self.parent_fingerprint_path(id)?;
+            fs::write(&path, fingerprint).map_err(|e| format!("Unable to record parent file state: {e}"))?;
+        }
+        Ok(())
+    }
+    fn parent_fingerprint_path(&self, id: InstanceID) -> Result<PathBuf, String> {
+        Ok(self.parent_version_path(id)?.with_file_name("local-parent-tree.sha256"))
     }
     fn inherited_local_chain(&self, id: InstanceID) -> Result<Vec<(InstanceID, crate::ProfileBranchSnapshot)>, String> {
         let mut current = id;
@@ -251,6 +264,16 @@ impl BackendState {
             // Old branches get a single explicit synchronization, not an expensive scan here.
             if stored != Some((parent.profile_uuid, parent.generation)) {
                 updates.push("Local parent revision".into());
+            } else {
+                let parent_id = pair[1].0;
+                let root = self.instance_state.read().instances.get(parent_id)
+                    .ok_or("Local parent disappeared")?.dot_minecraft_path.to_path_buf();
+                let stored_fingerprint = fs::read_to_string(self.parent_fingerprint_path(*child_id)?).ok();
+                let current = tokio::task::spawn_blocking(move || parent_tree_fingerprint(&root))
+                    .await.map_err(|error| format!("Parent file scan failed: {error}"))??;
+                if stored_fingerprint.as_deref() != Some(current.as_str()) {
+                    updates.push("Local parent files".into());
+                }
             }
         }
         if let Some((_, root)) = chain.last()
@@ -277,31 +300,89 @@ impl BackendState {
         Ok((pin.revision_id != target.revision_id || pin.manifest_sha256 != target.manifest_sha256)
             .then(|| profile.name.clone()))
     }
-    pub async fn update_inherited_chain(&self, id: InstanceID) -> Result<(), String> {
+    pub async fn update_inherited_chain(&self, id: InstanceID, modal_action: &ModalAction) -> Result<(), String> {
         let chain = self.inherited_local_chain(id)?;
+        let overall = modal_action.push_tracker("Updating inherited files".into());
+        overall.set_total(chain.len().max(1));
         // Update ancestors first, then carry each resulting snapshot down to its children.
         for (instance, snapshot) in chain.into_iter().rev() {
-            match snapshot.branch.lineage.parent {
+            if modal_action.has_requested_cancel() {
+                overall.set_finished(ProgressTrackerFinishType::Error);
+                return Err("Inherited update cancelled".into());
+            }
+            let step = modal_action.push_sub_tracker("Applying parent changes".into());
+            let result: Result<(), String> = match snapshot.branch.lineage.parent {
                 Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin }) => {
                     // Only update a published ancestor with a newer revision. Missing
                     // catalog entries must not block surviving local descendants.
                     match tokio::time::timeout(std::time::Duration::from_secs(2), self.available_global_update(&pin)).await {
-                        Ok(Ok(Some(_))) => { self.update_global_profile_instance(instance).await?; },
-                        Ok(Ok(None)) => {},
-                        Ok(Err(error)) => return Err(error),
-                        Err(_) => return Err("Global ancestor update check timed out".into()),
+                        Ok(Ok(Some(_))) => {
+                            let assets = modal_action.push_sub_tracker("Downloading modpack assets".into());
+                            let result = self.update_global_profile_instance(instance, Some((modal_action, &assets))).await.map(|_| ());
+                            assets.set_finished(if result.is_ok() { ProgressTrackerFinishType::Normal } else { ProgressTrackerFinishType::Error });
+                            result
+                        },
+                        Ok(Ok(None)) => Ok(()),
+                        Ok(Err(error)) => Err(error),
+                        Err(_) => Err("Global ancestor update check timed out".into()),
                     }
                 },
                 Some(crate::profile_branch::ProfileParentRef::LocalProfile { profile_uuid }) => {
                     if self.find_instance_id_for_profile_uuid(profile_uuid).is_some() {
-                        self.update_local_profile_branch(instance).await?;
+                        self.update_local_profile_branch(instance).await.map(|_| ())
+                    } else {
+                        Ok(())
                     }
                 },
-                None => {},
+                None => Ok(()),
+            };
+            if let Err(error) = result {
+                step.set_finished(ProgressTrackerFinishType::Error);
+                overall.set_finished(ProgressTrackerFinishType::Error);
+                return Err(error);
             }
+            step.set_finished(ProgressTrackerFinishType::Normal);
+            overall.add_count(1);
         }
+        overall.set_finished(ProgressTrackerFinishType::Normal);
         Ok(())
     }
+}
+
+/// Metadata-only tree stamp: catches edits outside the launcher without reading mod contents.
+/// Volatile game output and private worlds never affect inherited profile updates.
+fn parent_tree_fingerprint(root: &Path) -> Result<String, String> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).map_err(|e| format!("Unable to inspect parent files: {e}"))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
+            if directory == root && matches!(entry.file_name().to_string_lossy().to_ascii_lowercase().as_str(),
+                "saves" | "logs" | "crash-reports" | "screenshots" | "session.lock" | "usercache.json") { continue; }
+            #[cfg(windows)]
+            if junction::exists(&path).unwrap_or(false) { continue; }
+            let kind = entry.file_type().map_err(|e| e.to_string())?;
+            if kind.is_symlink() { continue; }
+            if kind.is_dir() { pending.push(path); }
+            else if kind.is_file() {
+                let metadata = entry.metadata().map_err(|e| e.to_string())?;
+                let modified = metadata.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map_or(0, |duration| duration.as_nanos());
+                files.push((relative.to_string_lossy().replace('\\', "/"), metadata.len(), modified));
+            }
+        }
+    }
+    files.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let mut hasher = Sha256::new();
+    for (path, size, modified) in files {
+        hasher.update(path.as_bytes());
+        hasher.update([0]);
+        hasher.update(size.to_le_bytes());
+        hasher.update(modified.to_le_bytes());
+    }
+    Ok(hex::encode(hasher.finalize()))
 }
 
 impl BackendState {
