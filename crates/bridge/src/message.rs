@@ -292,6 +292,27 @@ pub enum MessageToBackend {
     GetGlobalProfiles {
         channel: tokio::sync::oneshot::Sender<Result<Vec<GlobalProfileSummary>, String>>,
     },
+    GetProfileOverwrites {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<crate::profile_overwrites::ProfileOverwritesReport, String>>,
+    },
+    ReadProfileTextFile {
+        id: InstanceID,
+        path: String,
+        channel: tokio::sync::oneshot::Sender<Result<crate::profile_overwrites::ProfileTextFile, String>>,
+    },
+    SaveProfileTextFile {
+        id: InstanceID,
+        path: String,
+        contents: String,
+        expected_sha256: String,
+        channel: tokio::sync::oneshot::Sender<Result<crate::profile_overwrites::ProfileTextFile, String>>,
+    },
+    ToggleProfileMod {
+        id: InstanceID,
+        path: String,
+        channel: tokio::sync::oneshot::Sender<Result<String, String>>,
+    },
     CheckInheritedUpdates {
         id: InstanceID,
         channel: tokio::sync::oneshot::Sender<Result<Vec<String>, String>>,

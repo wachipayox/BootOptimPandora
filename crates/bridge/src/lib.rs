@@ -12,6 +12,7 @@ pub mod meta;
 pub mod modal_action;
 pub mod notify_signal;
 pub mod profile_family;
+pub mod profile_overwrites;
 pub mod quit;
 pub mod safe_path;
 pub mod serial;

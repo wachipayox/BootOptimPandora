@@ -79,21 +79,34 @@ pub struct ProfileLayoutManifest {
 
 /// Read committed lineage for catalog presentation without taking a game/layout lock,
 /// creating an identity, recovering transactions, or inspecting live modpack files.
-pub(crate) fn read_committed_branch(instance_root: &Path) -> Result<Option<ProfileBranchManifest>, ProfileLayoutFlowError> {
+pub(crate) fn read_committed_branch(
+    instance_root: &Path,
+) -> Result<Option<ProfileBranchManifest>, ProfileLayoutFlowError> {
+    Ok(read_committed_manifest(instance_root)?.map(|manifest| manifest.branch))
+}
+
+pub(crate) fn read_committed_manifest(
+    instance_root: &Path,
+) -> Result<Option<ProfileLayoutManifest>, ProfileLayoutFlowError> {
     let control = instance_root.join(CONTROL_DIR);
     let path = control.join(MANIFEST_FILE);
-    if !path.exists() { return Ok(None); }
+    if !path.exists() {
+        return Ok(None);
+    }
     ensure_plain_existing_directory(&control)?;
     ensure_regular_file(&path)?;
     let identity_path = control.join(IDENTITY_FILE);
     ensure_regular_file(&identity_path)?;
     let identity: ProfileIdentity = serde_json::from_slice(&fs::read(identity_path)?)?;
     let manifest: ProfileLayoutManifest = serde_json::from_slice(&fs::read(path)?)?;
-    if identity.schema != SCHEMA_VERSION || manifest.schema != SCHEMA_VERSION || identity.profile_uuid != manifest.profile_uuid {
+    if identity.schema != SCHEMA_VERSION
+        || manifest.schema != SCHEMA_VERSION
+        || identity.profile_uuid != manifest.profile_uuid
+    {
         return Err(ProfileLayoutFlowError::IdentityMismatch);
     }
     manifest.branch.validate(identity.profile_uuid)?;
-    Ok(Some(manifest.branch))
+    Ok(Some(manifest))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2047,7 +2060,10 @@ mod tests {
         assert!(!root.0.join(CONTROL_DIR).exists());
         fs::write(root.0.join(".minecraft/mods/local.jar"), b"user-data").unwrap();
         let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
-        let lineage = ProfileLineage::from_global(crate::profile_branch::GlobalRevisionPin::new("root", "r1", "a".repeat(64)).unwrap()).unwrap();
+        let lineage = ProfileLineage::from_global(
+            crate::profile_branch::GlobalRevisionPin::new("root", "r1", "a".repeat(64)).unwrap(),
+        )
+        .unwrap();
         layout.configure_branch_lineage(lineage.clone()).unwrap();
         // Keep the layout lock held: catalog lookup must be independently read-only.
         let manifest_before = fs::read(layout.manifest_path()).unwrap();

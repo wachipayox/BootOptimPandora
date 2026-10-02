@@ -21,7 +21,8 @@ use crate::{
     pages::{
         instance::{
             content_subpage::InstanceContentSubpage, logs_subpage::InstanceLogsSubpage,
-            quickplay_subpage::InstanceQuickplaySubpage, settings_subpage::InstanceSettingsSubpage,
+            overwrites_subpage::InstanceOverwritesSubpage, quickplay_subpage::InstanceQuickplaySubpage,
+            settings_subpage::InstanceSettingsSubpage,
         },
         page::Page,
     },
@@ -172,10 +173,7 @@ impl Page for InstancePage {
                 }
             });
 
-        h_flex()
-            .gap_3()
-            .child(button)
-            .child(open_dot_minecraft_button)
+        h_flex().gap_3().child(button).child(open_dot_minecraft_button)
     }
 
     fn scrollable(&self, _cx: &App) -> bool {
@@ -221,18 +219,25 @@ impl Render for InstancePage {
             InstanceSubpage::Mods(_) => 2,
             InstanceSubpage::ResourcePacks(_) => 3,
             InstanceSubpage::Shaders(_) => 4,
-            InstanceSubpage::Settings(_) => {
+            InstanceSubpage::Overwrites(_) => {
                 if show_shader_tab {
                     5
                 } else {
                     4
                 }
             },
-            InstanceSubpage::LiveGameOutput(_) => {
+            InstanceSubpage::Settings(_) => {
                 if show_shader_tab {
                     6
                 } else {
                     5
+                }
+            },
+            InstanceSubpage::LiveGameOutput(_) => {
+                if show_shader_tab {
+                    7
+                } else {
+                    6
                 }
             },
         };
@@ -248,13 +253,18 @@ impl Render for InstancePage {
                     .child(Tab::new().label(t::instance::logs::title()).disabled(updating))
                     .child(Tab::new().label(t::instance::content::mods()).disabled(updating))
                     .child(Tab::new().label(t::instance::content::resourcepacks()).disabled(updating))
-                    .when(show_shader_tab, |this| this.child(Tab::new().label(t::instance::content::shaders()).disabled(updating)))
+                    .when(show_shader_tab, |this| {
+                        this.child(Tab::new().label(t::instance::content::shaders()).disabled(updating))
+                    })
+                    .child(Tab::new().label("Overwrites").disabled(updating))
                     .child(Tab::new().label(t::settings::title()).disabled(updating))
                     .when(show_live_game_output, |this| {
                         this.child(Tab::new().label(t::instance::live_game_output()).disabled(updating))
                     })
                     .on_click(cx.listener(move |_, index, _, cx| {
-                        if updating { return; }
+                        if updating {
+                            return;
+                        }
                         let page_type = match *index {
                             0 => InstanceSubpageType::Quickplay,
                             1 => InstanceSubpageType::Logs,
@@ -264,19 +274,24 @@ impl Render for InstancePage {
                                 if show_shader_tab {
                                     InstanceSubpageType::Shaders
                                 } else {
-                                    InstanceSubpageType::Settings
+                                    InstanceSubpageType::Overwrites
                                 }
                             },
                             5 => {
                                 if show_shader_tab {
-                                    InstanceSubpageType::Settings
-                                } else if show_live_game_output {
-                                    InstanceSubpageType::LiveGameOutput
+                                    InstanceSubpageType::Overwrites
                                 } else {
-                                    return;
+                                    InstanceSubpageType::Settings
                                 }
                             },
-                            6 => InstanceSubpageType::LiveGameOutput,
+                            6 => {
+                                if show_shader_tab {
+                                    InstanceSubpageType::Settings
+                                } else {
+                                    InstanceSubpageType::LiveGameOutput
+                                }
+                            },
+                            7 => InstanceSubpageType::LiveGameOutput,
                             _ => {
                                 return;
                             },
@@ -297,6 +312,7 @@ pub enum InstanceSubpageType {
     Mods,
     ResourcePacks,
     Shaders,
+    Overwrites,
     Settings,
     LiveGameOutput,
 }
@@ -328,6 +344,9 @@ impl InstanceSubpageType {
             InstanceSubpageType::Shaders => InstanceSubpage::Shaders(cx.new(|cx| {
                 InstanceContentSubpage::new(instance, ContentType::Shaders, data, backend_handle, window, cx)
             })),
+            InstanceSubpageType::Overwrites => InstanceSubpage::Overwrites(
+                cx.new(|cx| InstanceOverwritesSubpage::new(instance, backend_handle, window, cx)),
+            ),
             InstanceSubpageType::Settings => InstanceSubpage::Settings(
                 cx.new(|cx| InstanceSettingsSubpage::new(instance, data, backend_handle, window, cx)),
             ),
@@ -349,6 +368,7 @@ pub enum InstanceSubpage {
     Mods(Entity<InstanceContentSubpage>),
     ResourcePacks(Entity<InstanceContentSubpage>),
     Shaders(Entity<InstanceContentSubpage>),
+    Overwrites(Entity<InstanceOverwritesSubpage>),
     Settings(Entity<InstanceSettingsSubpage>),
     LiveGameOutput(Entity<GameOutputRoot>),
 }
@@ -361,6 +381,7 @@ impl InstanceSubpage {
             InstanceSubpage::Mods(_) => InstanceSubpageType::Mods,
             InstanceSubpage::ResourcePacks(_) => InstanceSubpageType::ResourcePacks,
             InstanceSubpage::Shaders(_) => InstanceSubpageType::Shaders,
+            InstanceSubpage::Overwrites(_) => InstanceSubpageType::Overwrites,
             InstanceSubpage::Settings(_) => InstanceSubpageType::Settings,
             InstanceSubpage::LiveGameOutput(_) => InstanceSubpageType::LiveGameOutput,
         }
@@ -373,6 +394,7 @@ impl InstanceSubpage {
             Self::Mods(entity) => entity.into_any_element(),
             Self::ResourcePacks(entity) => entity.into_any_element(),
             Self::Shaders(entity) => entity.into_any_element(),
+            Self::Overwrites(entity) => entity.into_any_element(),
             Self::Settings(entity) => entity.into_any_element(),
             Self::LiveGameOutput(entity) => entity.into_any_element(),
         }

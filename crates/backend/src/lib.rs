@@ -39,6 +39,7 @@ pub mod profile_layout_flow;
 mod profile_layout_identity;
 mod profile_layout_ownership;
 mod profile_layout_service;
+mod profile_overwrites;
 pub use profile_layout_service::{ProfileBranchSnapshot, ProfileLayoutServiceError};
 mod save_groups;
 mod server_list_pinger;

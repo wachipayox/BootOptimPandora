@@ -146,7 +146,11 @@ impl BackendState {
             MessageToBackend::GetSaveGroups { id, channel } => {
                 let _ = channel.send(crate::BackendState::list_save_groups(self, id));
             },
-            MessageToBackend::RenameSaveGroup { group_id, name, channel } => {
+            MessageToBackend::RenameSaveGroup {
+                group_id,
+                name,
+                channel,
+            } => {
                 let _ = channel.send(self.rename_save_group(group_id, name));
             },
             MessageToBackend::CreateSaveGroup { id, name, channel } => {
@@ -279,11 +283,27 @@ impl BackendState {
                     crate::duplicate::duplicate_instance(backend, id, &name, modal_action).await;
                 });
             },
-            MessageToBackend::CreateLocalBranch { id, name, create_save_group, reuse_parent_icon, icon_hue_degrees, modal_action } => {
+            MessageToBackend::CreateLocalBranch {
+                id,
+                name,
+                create_save_group,
+                reuse_parent_icon,
+                icon_hue_degrees,
+                modal_action,
+            } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
                     backend.send.send_info(format!("Creating local branch '{name}'"));
-                    crate::duplicate::create_local_branch(backend, id, &name, create_save_group, reuse_parent_icon, icon_hue_degrees, modal_action).await;
+                    crate::duplicate::create_local_branch(
+                        backend,
+                        id,
+                        &name,
+                        create_save_group,
+                        reuse_parent_icon,
+                        icon_hue_degrees,
+                        modal_action,
+                    )
+                    .await;
                 });
             },
             MessageToBackend::ExportInstance {
@@ -1621,6 +1641,36 @@ impl BackendState {
                     let _ = channel.send(result);
                 });
             },
+            MessageToBackend::GetProfileOverwrites { id, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let _ = channel.send(backend.profile_overwrites_report(id).await);
+                });
+            },
+            MessageToBackend::ReadProfileTextFile { id, path, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let _ = channel.send(backend.read_profile_text_file(id, path).await);
+                });
+            },
+            MessageToBackend::SaveProfileTextFile {
+                id,
+                path,
+                contents,
+                expected_sha256,
+                channel,
+            } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let _ = channel.send(backend.save_profile_text_file(id, path, contents, expected_sha256).await);
+                });
+            },
+            MessageToBackend::ToggleProfileMod { id, path, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let _ = channel.send(backend.toggle_profile_mod(id, path).await);
+                });
+            },
             MessageToBackend::CheckInheritedUpdates { id, channel } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
@@ -1628,9 +1678,15 @@ impl BackendState {
                     let _ = channel.send(result);
                 });
             },
-            MessageToBackend::UpdateInheritedChain { id, channel, modal_action } => {
+            MessageToBackend::UpdateInheritedChain {
+                id,
+                channel,
+                modal_action,
+            } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move { let _ = channel.send(backend.update_inherited_chain(id, &modal_action).await); });
+                tokio::task::spawn(async move {
+                    let _ = channel.send(backend.update_inherited_chain(id, &modal_action).await);
+                });
             },
             MessageToBackend::CheckDistributionConnection => {
                 let config = self.config.lock().get().distribution.clone();
@@ -1669,7 +1725,17 @@ impl BackendState {
                         sequence,
                         manifest_sha256,
                     };
-                    match backend.create_global_profile_instance(&name, &profile_id, &revision, &modal_action, &progress, save_group_target).await {
+                    match backend
+                        .create_global_profile_instance(
+                            &name,
+                            &profile_id,
+                            &revision,
+                            &modal_action,
+                            &progress,
+                            save_group_target,
+                        )
+                        .await
+                    {
                         Ok(()) => {
                             progress.set_title("Finishing modpack installation".into());
                             progress.set_finished(ProgressTrackerFinishType::Normal);

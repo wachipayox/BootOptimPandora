@@ -17,8 +17,8 @@ use crate::profile_branch::{
     EffectiveProfileEntry, GlobalRevisionPin, ProfileEntryMetadata, ProfileEntryOrigin, ProfileEntryOwnership,
     ProfileFilePolicy,
 };
-use bridge::modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use bridge::modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType};
 use reqwest::{Certificate, Client, Url};
 use schema::backend_config::DistributionConfig;
 use serde::{Deserialize, Serialize};
@@ -390,7 +390,8 @@ impl DistributionClient {
 
         let trusted_keys = if config.release_key_id.trim().is_empty()
             && config.release_public_key_base64url.trim().is_empty()
-            && config.additional_release_keys_json.trim().is_empty() {
+            && config.additional_release_keys_json.trim().is_empty()
+        {
             BTreeMap::new()
         } else {
             trusted_release_keys(config)?
@@ -494,17 +495,14 @@ impl DistributionClient {
         let keys = if self.trusted_keys.contains_key(&envelope.signature.key_id) {
             &self.trusted_keys
         } else {
-            self.server_keys.get_or_try_init(|| async {
-                let response: ServerSigningKeys = self.get_json("/v1/signing-keys").await?;
-                response.validated(&self.trusted_keys)
-            }).await?
+            self.server_keys
+                .get_or_try_init(|| async {
+                    let response: ServerSigningKeys = self.get_json("/v1/signing-keys").await?;
+                    response.validated(&self.trusted_keys)
+                })
+                .await?
         };
-        verify_release_signature(
-            keys,
-            &envelope.signature.key_id,
-            &canonical,
-            &envelope.signature.value,
-        )?;
+        verify_release_signature(keys, &envelope.signature.key_id, &canonical, &envelope.signature.value)?;
         if !(manifest.schema_version == 1 || manifest.schema_version == 2)
             || manifest.profile.id != profile_id
             || manifest.revision.id != revision_id
@@ -548,6 +546,7 @@ impl DistributionClient {
             &BTreeMap::new(),
             &BTreeSet::new(),
             Some((modal_action, overall_progress)),
+            false,
         )
         .await
     }
@@ -563,8 +562,39 @@ impl DistributionClient {
         reusable_entries: &BTreeMap<String, ProfileEntryMetadata>,
         skip_paths: &BTreeSet<String>,
     ) -> Result<ResolvedGlobalProfile, DistributionError> {
-        self.resolve_profile_with_reuse_and_progress(profile_id, revision, cache_root, reusable_entries, skip_paths, None)
-            .await
+        self.resolve_profile_with_reuse_and_progress(
+            profile_id,
+            revision,
+            cache_root,
+            reusable_entries,
+            skip_paths,
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// Resolve signed effective file metadata without downloading content objects.
+    pub async fn resolve_profile_metadata(
+        &self,
+        pin: &GlobalRevisionPin,
+    ) -> Result<ResolvedGlobalProfile, DistributionError> {
+        let target = self.fetch_revision(&pin.profile_id, &pin.revision_id, &pin.manifest_sha256, None).await?;
+        let revision = RevisionRef {
+            revision_id: pin.revision_id.clone(),
+            sequence: target.manifest.revision.sequence,
+            manifest_sha256: pin.manifest_sha256.clone(),
+        };
+        self.resolve_profile_with_reuse_and_progress(
+            &pin.profile_id,
+            &revision,
+            Path::new(""),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            None,
+            true,
+        )
+        .await
     }
 
     async fn resolve_profile_with_reuse_and_progress(
@@ -575,6 +605,7 @@ impl DistributionClient {
         reusable_entries: &BTreeMap<String, ProfileEntryMetadata>,
         skip_paths: &BTreeSet<String>,
         progress: Option<(&ModalAction, &ProgressTracker)>,
+        metadata_only: bool,
     ) -> Result<ResolvedGlobalProfile, DistributionError> {
         let mut chain = Vec::<VerifiedRevision>::new();
         let mut next = Some((
@@ -622,6 +653,7 @@ impl DistributionClient {
         .map_err(|error| DistributionError::InvalidResponse(error.to_string()))?;
         let target_name = target.manifest.profile.name.clone();
         let icon_path = match &target.manifest.profile.icon {
+            _ if metadata_only => None,
             Some(icon) => Some(self.fetch_verified_icon(icon, cache_root).await?),
             None => None,
         };
@@ -708,7 +740,11 @@ impl DistributionClient {
                     format!("mod:{}", item.id),
                     &item.object,
                     &pin,
-                    if is_initial_player_setting(&item.path) { ProfileFilePolicy::DefaultOnce } else { ProfileFilePolicy::Enforced },
+                    if is_initial_player_setting(&item.path) {
+                        ProfileFilePolicy::DefaultOnce
+                    } else {
+                        ProfileFilePolicy::Enforced
+                    },
                 )?;
             }
             for item in &manifest.remove_mods {
@@ -863,6 +899,10 @@ impl DistributionClient {
                 .ok_or_else(|| {
                     DistributionError::InvalidResponse("effective entry has no signed object reference".into())
                 })?;
+            if metadata_only {
+                entries_with_sources.push(entry);
+                continue;
+            }
             if let Some((modal_action, overall)) = progress {
                 let first_reference = counted_digests.insert(object.sha256.clone());
                 if let Some(cached) = verified_cache_path(object, cache_root)? {
@@ -875,7 +915,12 @@ impl DistributionClient {
                     file_progress.set_total(progress_units(object.size));
                     let aggregate_progress = first_reference.then_some(overall);
                     match self
-                        .fetch_verified_object_with_progress(object, cache_root, Some(&file_progress), aggregate_progress)
+                        .fetch_verified_object_with_progress(
+                            object,
+                            cache_root,
+                            Some(&file_progress),
+                            aggregate_progress,
+                        )
                         .await
                     {
                         Ok(source) => {
@@ -910,15 +955,23 @@ impl DistributionClient {
         })
     }
 
-    async fn fetch_verified_icon(&self, icon: &ManifestObjectRef, cache_root: &Path) -> Result<PathBuf, DistributionError> {
+    async fn fetch_verified_icon(
+        &self,
+        icon: &ManifestObjectRef,
+        cache_root: &Path,
+    ) -> Result<PathBuf, DistributionError> {
         if !valid_digest(&icon.sha256) || icon.size > 2 * 1024 * 1024 || icon.media_type != "image/png" {
             return Err(DistributionError::InvalidResponse("invalid signed profile icon".into()));
         }
         let path = self.fetch_verified_object(icon, cache_root).await?;
         let reader = image::ImageReader::open(&path)?.with_guessed_format()?;
-        if reader.format() != Some(image::ImageFormat::Png) { return Err(DistributionError::InvalidResponse("profile icon is not PNG".into())); }
+        if reader.format() != Some(image::ImageFormat::Png) {
+            return Err(DistributionError::InvalidResponse("profile icon is not PNG".into()));
+        }
         let dimensions = reader.into_dimensions().map_err(|e| DistributionError::InvalidResponse(e.to_string()))?;
-        if dimensions.0 == 0 || dimensions.1 == 0 || dimensions.0 > 1024 || dimensions.1 > 1024 { return Err(DistributionError::InvalidResponse("profile icon exceeds 1024 × 1024 pixels".into())); }
+        if dimensions.0 == 0 || dimensions.1 == 0 || dimensions.0 > 1024 || dimensions.1 > 1024 {
+            return Err(DistributionError::InvalidResponse("profile icon exceeds 1024 × 1024 pixels".into()));
+        }
         Ok(path)
     }
 
@@ -1268,10 +1321,8 @@ fn check_manifest_path(path: &str) -> Result<(), DistributionError> {
     if matches!(
         first.as_str(),
         "saves" | "screenshots" | "logs" | "crash-reports" | "server-resource-packs"
-    ) || matches!(
-        file_name.as_str(),
-        "usercache.json" | "usernamecache.json" | "realms_persistence.json"
-    ) || first == ".pandora-layout-v1"
+    ) || matches!(file_name.as_str(), "usercache.json" | "usernamecache.json" | "realms_persistence.json")
+        || first == ".pandora-layout-v1"
     {
         return Err(DistributionError::InvalidResponse(
             "manifest attempts to manage player data or launcher state".into(),
@@ -1387,11 +1438,15 @@ impl crate::BackendState {
         // The profile's presentation is unversioned and can have a newer icon than the selected
         // immutable revision. Use the current verified catalog icon, matching the carousel.
         let catalog = client.list_profiles().await.map_err(|error| error.to_string())?;
-        let published_profile = catalog.iter().find(|profile| profile.profile_id == profile_id)
+        let published_profile = catalog
+            .iter()
+            .find(|profile| profile.profile_id == profile_id)
             .ok_or_else(|| "The selected global profile is no longer published".to_owned())?;
         let profile_icon = match &published_profile.presentation {
             Some(presentation) => match &presentation.icon {
-                Some(icon) => Some(client.fetch_verified_icon(icon, &cache_root).await.map_err(|error| error.to_string())?),
+                Some(icon) => {
+                    Some(client.fetch_verified_icon(icon, &cache_root).await.map_err(|error| error.to_string())?)
+                },
                 None => None,
             },
             None => resolved.icon_path.clone(),
@@ -1420,7 +1475,8 @@ impl crate::BackendState {
         // Keep the normal file watcher path, but also load synchronously so the profile transaction
         // can acquire the new instance ID before the game-files publication guard is released.
         if let Some(icon) = &profile_icon {
-            crate::fs::write_safe(&root.join("icon.png"), &std::fs::read(icon).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            crate::fs::write_safe(&root.join("icon.png"), &std::fs::read(icon).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
         }
         self.load_instance_from_path(&root, false, false);
         if !libraries_ready {
@@ -1478,7 +1534,9 @@ impl crate::BackendState {
         if let Some(target) = save_group_target {
             progress.set_title("Connecting shared worlds".into());
             if let Err(error) = self.attach_global_profile_save_group(id, profile_id, &target).await {
-                self.send.send_warning(format!("Instance created, but automatic save grouping failed: {error}. Use Manage save group to retry."));
+                self.send.send_warning(format!(
+                    "Instance created, but automatic save grouping failed: {error}. Use Manage save group to retry."
+                ));
             }
         }
         Ok(())
@@ -1542,6 +1600,7 @@ impl crate::BackendState {
                 &reusable_entries,
                 &skip_paths,
                 progress,
+                false,
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -1745,7 +1804,11 @@ mod trusted_release_key_tests {
         assert!(!is_initial_player_setting("config/options.txt"));
         assert!(!is_initial_player_setting("servers/servers.dat"));
 
-        for path in ["saves/world/level.dat", "options.txt/../launcher.json", ".pandora-layout-v1/state.json"] {
+        for path in [
+            "saves/world/level.dat",
+            "options.txt/../launcher.json",
+            ".pandora-layout-v1/state.json",
+        ] {
             assert!(check_manifest_path(path).is_err(), "protected path unexpectedly allowed: {path}");
         }
     }
@@ -1786,31 +1849,52 @@ impl crate::BackendState {
         profile_id: &str,
     ) -> Result<Vec<bridge::message::GlobalProfileSaveGroupTarget>, String> {
         let catalog = self.load_global_catalog().await?;
-        let parents = catalog.iter().map(|p| (p.profile_id.clone(), p.parent_profile_id.clone()))
+        let parents = catalog
+            .iter()
+            .map(|p| (p.profile_id.clone(), p.parent_profile_id.clone()))
             .collect::<bridge::profile_family::Parents>();
-        if !parents.contains_key(profile_id) { return Err("Global profile is no longer published".into()); }
-        let instances = self.instance_state.read().instances.iter()
-            .map(|instance| (instance.id, instance.name.to_string(), instance.root_path.to_path_buf())).collect::<Vec<_>>();
+        if !parents.contains_key(profile_id) {
+            return Err("Global profile is no longer published".into());
+        }
+        let instances = self
+            .instance_state
+            .read()
+            .instances
+            .iter()
+            .map(|instance| (instance.id, instance.name.to_string(), instance.root_path.to_path_buf()))
+            .collect::<Vec<_>>();
         let mut targets = BTreeMap::new();
         for (id, name, root) in instances {
             let branch = match crate::profile_layout_flow::read_committed_branch(&root) {
                 Ok(Some(branch)) => branch,
                 Ok(None) => continue,
-                Err(error) => { log::warn!("Ignoring unavailable lineage at {root:?} during family lookup: {error}"); continue; },
+                Err(error) => {
+                    log::warn!("Ignoring unavailable lineage at {root:?} during family lookup: {error}");
+                    continue;
+                },
             };
-            let Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin }) = branch.lineage.parent.as_ref() else { continue; };
-            if !bridge::profile_family::related(profile_id, &pin.profile_id, &parents) { continue; }
+            let Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin }) = branch.lineage.parent.as_ref()
+            else {
+                continue;
+            };
+            if !bridge::profile_family::related(profile_id, &pin.profile_id, &parents) {
+                continue;
+            }
             let groups = self.list_save_groups(id)?;
             let selected = groups.iter().find(|group| group.selected);
             let group_id = selected.map(|group| group.id);
             targets.entry(group_id).or_insert(bridge::message::GlobalProfileSaveGroupTarget {
                 anchor_id: id,
                 group_id,
-                name: selected.map(|group| group.name.clone()).unwrap_or_else(|| format!("Create shared group with {name}")),
+                name: selected
+                    .map(|group| group.name.clone())
+                    .unwrap_or_else(|| format!("Create shared group with {name}")),
             });
         }
         // Prefer an existing group; an ungrouped relative need not introduce an extra choice.
-        if targets.keys().any(Option::is_some) { targets.remove(&None); }
+        if targets.keys().any(Option::is_some) {
+            targets.remove(&None);
+        }
         Ok(targets.into_values().collect())
     }
 
@@ -1821,27 +1905,40 @@ impl crate::BackendState {
         chosen: &bridge::message::GlobalProfileSaveGroupTarget,
     ) -> Result<(), String> {
         let targets = self.global_profile_save_group_targets(profile_id).await?;
-        let target = targets.iter().find(|target| match chosen.group_id {
-            Some(group_id) => target.group_id == Some(group_id),
-            None => target.anchor_id == chosen.anchor_id && target.group_id.is_none(),
-        })
+        let target = targets
+            .iter()
+            .find(|target| match chosen.group_id {
+                Some(group_id) => target.group_id == Some(group_id),
+                None => target.anchor_id == chosen.anchor_id && target.group_id.is_none(),
+            })
             .ok_or("The selected related instance or group changed during installation")?;
         let anchor = target.anchor_id;
         let mut created = false;
         let group_id = match target.group_id {
             Some(group_id) => group_id,
             None => {
-                let name = self.instance_state.read().instances.get(anchor).ok_or("Related instance no longer exists")?.name.to_string();
+                let name = self
+                    .instance_state
+                    .read()
+                    .instances
+                    .get(anchor)
+                    .ok_or("Related instance no longer exists")?
+                    .name
+                    .to_string();
                 self.create_save_group(anchor, format!("Worlds of {name}").chars().take(80).collect())?;
                 created = true;
-                self.list_save_groups(anchor)?.into_iter().find(|group| group.selected)
-                    .ok_or("New shared group could not be found")?.id
+                self.list_save_groups(anchor)?
+                    .into_iter()
+                    .find(|group| group.selected)
+                    .ok_or("New shared group could not be found")?
+                    .id
             },
         };
         let result = self.join_save_group(id, group_id);
         if result.is_err() && created {
             if let Err(error) = self.leave_save_group(anchor) {
-                self.send.send_warning(format!("Shared worlds remain in their group after grouping failed: {error}"));
+                self.send
+                    .send_warning(format!("Shared worlds remain in their group after grouping failed: {error}"));
             }
         }
         crate::backend_handler::refresh_instance_saves(self, anchor, true);
@@ -1857,21 +1954,42 @@ impl crate::BackendState {
         for profile in profiles {
             let stable = profile.channels.iter().find(|channel| channel.name == "stable");
             let revision = selected_revision(&profile);
-            let verified = client.fetch_verified_revision(&profile.profile_id, revision).await.map_err(|e| e.to_string())?;
+            let verified = client
+                .fetch_verified_revision(&profile.profile_id, revision)
+                .await
+                .map_err(|e| e.to_string())?;
             let metadata = &verified.manifest.profile;
             let presentation = profile.presentation.as_ref();
             let display_icon = presentation.map(|p| &p.icon).unwrap_or(&metadata.icon);
             let icon_path = if let Some(icon) = display_icon {
-                Some(client.fetch_verified_icon(icon, &self.directories.root_launcher_dir.join("distribution-objects")).await.map_err(|e| e.to_string())?)
-            } else { None };
+                Some(
+                    client
+                        .fetch_verified_icon(icon, &self.directories.root_launcher_dir.join("distribution-objects"))
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+            } else {
+                None
+            };
             summaries.push(bridge::message::GlobalProfileSummary {
                 parent_profile_id: verified.manifest.base.as_ref().map(|base| base.profile_id.clone()),
-                profile_id: profile.profile_id.clone(), name: presentation.map(|p| p.name.clone()).unwrap_or_else(|| metadata.name.clone()),
-                description: presentation.map(|p| p.description.clone()).unwrap_or_else(|| if metadata.description.is_empty() { verified.manifest.revision.release_notes.clone().unwrap_or_default() } else { metadata.description.clone() }),
-                minecraft: verified.manifest.game.minecraft.clone(), neoforge: verified.manifest.game.neoforge.clone(), icon_path,
-                latest_revision_id: profile.latest_revision.revision_id, latest_sequence: profile.latest_revision.sequence,
+                profile_id: profile.profile_id.clone(),
+                name: presentation.map(|p| p.name.clone()).unwrap_or_else(|| metadata.name.clone()),
+                description: presentation.map(|p| p.description.clone()).unwrap_or_else(|| {
+                    if metadata.description.is_empty() {
+                        verified.manifest.revision.release_notes.clone().unwrap_or_default()
+                    } else {
+                        metadata.description.clone()
+                    }
+                }),
+                minecraft: verified.manifest.game.minecraft.clone(),
+                neoforge: verified.manifest.game.neoforge.clone(),
+                icon_path,
+                latest_revision_id: profile.latest_revision.revision_id,
+                latest_sequence: profile.latest_revision.sequence,
                 latest_manifest_sha256: profile.latest_revision.manifest_sha256,
-                stable_revision_id: stable.map(|c| c.revision.revision_id.clone()), stable_sequence: stable.map(|c| c.revision.sequence),
+                stable_revision_id: stable.map(|c| c.revision.revision_id.clone()),
+                stable_sequence: stable.map(|c| c.revision.sequence),
                 stable_manifest_sha256: stable.map(|c| c.revision.manifest_sha256.clone()),
             });
         }
