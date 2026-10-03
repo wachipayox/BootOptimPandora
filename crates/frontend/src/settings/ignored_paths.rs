@@ -16,7 +16,7 @@ pub(super) fn create_page() -> SettingPage {
             items: vec![SettingItem {
                 title: || "Archivos ignorados del modpack",
                 description: || "Rutas de .minecraft omitidas al buscar cambios y heredar archivos.",
-                widget: SettingItemWidget::BackendWide(Rc::new(|config, _, cx| {
+                widget: SettingItemWidget::BackendWide(Rc::new(|config, root, _, cx| {
                     let muted = cx.theme().muted_foreground;
                     let border = cx.theme().border;
                     let mut list = v_flex().gap_1();
@@ -41,10 +41,10 @@ pub(super) fn create_page() -> SettingPage {
                             .child(div().text_sm().text_color(muted)
                                 .child("Se aplican a todas las instancias. Una carpeta incluye recursivamente su contenido. Las rutas empiezan en .minecraft; ignorarlas no borra archivos.")))
                         .child(h_flex().w_full().gap_2().items_center()
-                            .child(Input::new(&cx.entity().read(cx).ignored_path_input).flex_1())
+                            .child(Input::new(&root.ignored_path_input).flex_1())
                             .child(Button::new("add-ignored-profile-path").label("Añadir ruta")
                                 .on_click(cx.listener(|root, _, window, cx| root.add_ignored_path(window, cx)))))
-                        .when_some(cx.entity().read(cx).ignored_path_error.clone(), |view, error| {
+                        .when_some(root.ignored_path_error.clone(), |view, error| {
                             view.child(div().text_sm().text_color(cx.theme().danger).child(error))
                         })
                         .child(div().text_xs().text_color(muted)

@@ -428,7 +428,7 @@ impl SettingsRoot {
                                 has_backend_missing = true;
                                 continue;
                             };
-                            (func)(backend_config, window, cx)
+                            (func)(backend_config, root, window, cx)
                         },
                         SettingItemWidget::Any(func) => (func)(window, cx),
                     };
@@ -508,7 +508,7 @@ enum SettingItemWidget {
         max: Option<i32>,
     },
     Backend(Rc<dyn Fn(&BackendConfig, &mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
-    BackendWide(Rc<dyn Fn(&BackendConfig, &mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
+    BackendWide(Rc<dyn Fn(&BackendConfig, &SettingsRoot, &mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
     Any(Rc<dyn Fn(&mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
 }
 
