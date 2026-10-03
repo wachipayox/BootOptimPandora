@@ -1,0 +1,86 @@
+use std::rc::Rc;
+
+use gpui::{prelude::*, *};
+use gpui_component::{
+    ActiveTheme, Icon, Sizable, StyledExt, button::Button, h_flex, input::Input, scroll::ScrollableElement, v_flex,
+};
+
+use super::{SettingGroup, SettingItem, SettingItemWidget, SettingPage, SettingsRoot};
+use crate::icon::PandoraIcon;
+
+pub(super) fn create_page() -> SettingPage {
+    SettingPage {
+        title: || "Rutas ignoradas",
+        groups: vec![SettingGroup {
+            title: None,
+            items: vec![SettingItem {
+                title: || "Archivos ignorados del modpack",
+                description: || "Rutas de .minecraft omitidas al buscar cambios y heredar archivos.",
+                widget: SettingItemWidget::BackendWide(Rc::new(|config, _, cx| {
+                    let muted = cx.theme().muted_foreground;
+                    let border = cx.theme().border;
+                    let mut list = v_flex().gap_1();
+                    for path in &config.ignored_profile_paths.0 {
+                        let remove = path.clone();
+                        list = list.child(h_flex().w_full().items_center().justify_between().gap_3()
+                            .px_3().py_2().rounded_md().border_1().border_color(border)
+                            .child(h_flex().items_center().gap_2().min_w_0()
+                                .child(Icon::new(PandoraIcon::Folder).size_4().text_color(muted))
+                                .child(div().font_family("Consolas").text_sm().truncate().child(format!("/{path}"))))
+                            .child(Button::new(SharedString::from(format!("unignore-{path}")))
+                                .label("Quitar").small()
+                                .on_click(cx.listener(move |root, _, _, cx| root.remove_ignored_path(&remove, cx)))));
+                    }
+                    if config.ignored_profile_paths.0.is_empty() {
+                        list = list.child(div().p_4().text_sm().text_color(muted)
+                            .child("La lista está vacía. Las rutas protegidas del juego siguen excluidas."));
+                    }
+                    v_flex().w_full().gap_4()
+                        .child(v_flex().gap_1()
+                            .child(div().text_lg().font_semibold().child("Rutas ignoradas"))
+                            .child(div().text_sm().text_color(muted)
+                                .child("Se aplican a todas las instancias. Una carpeta incluye recursivamente su contenido. Las rutas empiezan en .minecraft; ignorarlas no borra archivos.")))
+                        .child(h_flex().w_full().gap_2().items_center()
+                            .child(Input::new(&cx.entity().read(cx).ignored_path_input).flex_1())
+                            .child(Button::new("add-ignored-profile-path").label("Añadir ruta")
+                                .on_click(cx.listener(|root, _, window, cx| root.add_ignored_path(window, cx)))))
+                        .when_some(cx.entity().read(cx).ignored_path_error.clone(), |view, error| {
+                            view.child(div().text_sm().text_color(cx.theme().danger).child(error))
+                        })
+                        .child(div().text_xs().text_color(muted)
+                            .child("Ejemplos: /mods/.connector, /.analogaudio, /config/client-cache"))
+                        .child(div().text_sm().font_semibold()
+                            .child(format!("{} rutas", config.ignored_profile_paths.0.len())))
+                        .child(v_flex().max_h(px(275.0)).overflow_y_scrollbar().child(list))
+                        .into_any_element()
+                })),
+                ..Default::default()
+            }].into(),
+            searched_items: None,
+        }].into(),
+        searched_groups: None,
+    }
+}
+
+impl SettingsRoot {
+    pub(super) fn add_ignored_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let path = self.ignored_path_input.read(cx).value().to_string();
+        let mut paths = self
+            .backend_config()
+            .map(|config| config.ignored_profile_paths.0.clone())
+            .unwrap_or_default();
+        paths.push(path);
+        if self.set_ignored_profile_paths(paths, cx) {
+            self.ignored_path_input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+    }
+
+    pub(super) fn remove_ignored_path(&mut self, path: &str, cx: &mut Context<Self>) {
+        let mut paths = self
+            .backend_config()
+            .map(|config| config.ignored_profile_paths.0.clone())
+            .unwrap_or_default();
+        paths.retain(|item| item != path);
+        self.set_ignored_profile_paths(paths, cx);
+    }
+}

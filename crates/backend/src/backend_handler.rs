@@ -1634,6 +1634,20 @@ impl BackendState {
             MessageToBackend::GetBackendConfiguration { channel } => {
                 _ = channel.send(self.config.lock().get().clone());
             },
+            MessageToBackend::SetIgnoredProfilePaths { paths } => {
+                match schema::ignored_profile_paths::IgnoredProfilePaths::normalized(paths) {
+                    Ok(paths) => self.config.lock().modify(|config| config.ignored_profile_paths = paths),
+                    Err(error) => self.send.send_error(error),
+                }
+            },
+            MessageToBackend::AddIgnoredProfilePath { path, channel } => {
+                let mut config = self.config.lock();
+                let mut paths = config.get().ignored_profile_paths.0.clone();
+                paths.push(path);
+                let result = schema::ignored_profile_paths::IgnoredProfilePaths::normalized(paths)
+                    .map(|paths| config.modify(|config| config.ignored_profile_paths = paths));
+                let _ = channel.send(result);
+            },
             MessageToBackend::GetGlobalProfiles { channel } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
@@ -1669,6 +1683,17 @@ impl BackendState {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
                     let _ = channel.send(backend.toggle_profile_mod(id, path).await);
+                });
+            },
+            MessageToBackend::RestoreProfileFile {
+                id,
+                path,
+                source,
+                channel,
+            } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let _ = channel.send(backend.restore_profile_file(id, path, source).await);
                 });
             },
             MessageToBackend::CheckInheritedUpdates { id, channel } => {

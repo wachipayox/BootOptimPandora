@@ -248,10 +248,24 @@ pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name
     duplicate_instance_inner(backend, id, name, modal_action, false, true, 0).await;
 }
 
-pub async fn create_local_branch(backend: Arc<BackendState>, id: InstanceID, name: &str, create_save_group: bool, reuse_parent_icon: bool, icon_hue_degrees: i32, modal_action: ModalAction) {
+pub async fn create_local_branch(
+    backend: Arc<BackendState>,
+    id: InstanceID,
+    name: &str,
+    create_save_group: bool,
+    reuse_parent_icon: bool,
+    icon_hue_degrees: i32,
+    modal_action: ModalAction,
+) {
     // Validate before moving any worlds; failed/cancelled creation restores a newly made group.
     if !crate::fs::is_single_component_path_str(name)
-        || !sanitize_filename::is_sanitized_with_options(name, sanitize_filename::OptionsForCheck { windows: true, ..Default::default() })
+        || !sanitize_filename::is_sanitized_with_options(
+            name,
+            sanitize_filename::OptionsForCheck {
+                windows: true,
+                ..Default::default()
+            },
+        )
         || backend.instance_state.read().instances.iter().any(|instance| instance.name == name)
     {
         modal_action.set_finished_with_error("Choose a valid, unused instance name".into());
@@ -263,15 +277,32 @@ pub async fn create_local_branch(backend: Arc<BackendState>, id: InstanceID, nam
             Ok(groups) if groups.iter().any(|group| group.selected) => {},
             Ok(_) => match backend.create_save_group(id, format!("Worlds of {name}")) {
                 Ok(()) => created_group = true,
-                Err(error) => { modal_action.set_finished_with_error(error.into()); return; }
+                Err(error) => {
+                    modal_action.set_finished_with_error(error.into());
+                    return;
+                },
             },
-            Err(error) => { modal_action.set_finished_with_error(error.into()); return; }
+            Err(error) => {
+                modal_action.set_finished_with_error(error.into());
+                return;
+            },
         }
     }
-    duplicate_instance_inner(backend.clone(), id, name, modal_action.clone(), true, reuse_parent_icon, icon_hue_degrees).await;
+    duplicate_instance_inner(
+        backend.clone(),
+        id,
+        name,
+        modal_action.clone(),
+        true,
+        reuse_parent_icon,
+        icon_hue_degrees,
+    )
+    .await;
     if created_group && (modal_action.get_error_message().is_some() || modal_action.has_requested_cancel()) {
         if let Err(error) = backend.leave_save_group(id) {
-            backend.send.send_error(format!("Branch creation stopped; worlds remain in their save group: {error}"));
+            backend
+                .send
+                .send_error(format!("Branch creation stopped; worlds remain in their save group: {error}"));
         }
     }
 }
@@ -392,11 +423,17 @@ async fn duplicate_instance_inner(
 
     let result = match result {
         Ok(()) => {
-            let icon_result = if as_branch { apply_branch_icon(&dest, reuse_parent_icon, icon_hue_degrees) } else { Ok(()) };
-            let normalized = icon_result.and_then(|()| if as_branch {
-                normalize_disabled_mods_for_branch(&dest)
+            let icon_result = if as_branch {
+                apply_branch_icon(&dest, reuse_parent_icon, icon_hue_degrees)
             } else {
                 Ok(())
+            };
+            let normalized = icon_result.and_then(|()| {
+                if as_branch {
+                    normalize_disabled_mods_for_branch(&dest)
+                } else {
+                    Ok(())
+                }
             });
             normalized.and_then(|()| {
                 clone_destination
@@ -440,15 +477,17 @@ async fn duplicate_instance_inner(
                 // This is a one-time full-tree snapshot (reflinked where possible), not per-start
                 // sandbox copying. The lineage update rebases cloned ownership as inherited while
                 // preserving the new UUID and the already-copied bytes.
+                let ignored = backend.config.lock().get().ignored_profile_paths.clone();
                 match tokio::task::spawn_blocking(move || {
                     let mut child_layout = crate::profile_layout_flow::PersistentProfileLayout::open(&child_root)
                         .map_err(|error| error.to_string())?;
                     let child_branch = child_layout.branch_manifest().map_err(|error| error.to_string())?;
-                    let parent_entries = crate::local_profile::snapshot_parent_tree(
+                    let parent_entries = crate::local_profile::snapshot_parent_tree_filtered(
                         &parent_root,
                         parent_uuid,
                         &parent_branch,
                         Some(&child_branch.entries),
+                        &ignored,
                     )?;
                     let delta = crate::local_profile::local_parent_delta(
                         &child_branch,
@@ -482,11 +521,23 @@ async fn duplicate_instance_inner(
             modal_action.set_finished_with_error(format!("Instance copied, but branch setup failed: {error}").into());
         } else {
             if backend.load_instance_from_path(&dest, false, false) {
-                let child_id = backend.instance_state.read().instances.iter().find(|i| i.root_path.as_ref() == dest.as_path()).map(|i| i.id);
+                let child_id = backend
+                    .instance_state
+                    .read()
+                    .instances
+                    .iter()
+                    .find(|i| i.root_path.as_ref() == dest.as_path())
+                    .map(|i| i.id);
                 if let Some(child_id) = child_id {
-                    match backend.persistent_profile_branch_status(id, None).map_err(|e| e.to_string()).and_then(|parent| backend.record_parent_version(child_id, &parent)) {
+                    match backend
+                        .persistent_profile_branch_status(id, None)
+                        .map_err(|e| e.to_string())
+                        .and_then(|parent| backend.record_parent_version(child_id, &parent))
+                    {
                         Ok(()) => {},
-                        Err(error) => backend.send.send_error(format!("Branch created; parent version could not be recorded: {error}")),
+                        Err(error) => backend
+                            .send
+                            .send_error(format!("Branch created; parent version could not be recorded: {error}")),
                     }
                 }
                 backend.send.send_success(format!("Local branch '{name}' is ready"));
@@ -511,11 +562,15 @@ fn apply_branch_icon(instance_root: &Path, reuse: bool, hue_degrees: i32) -> Res
         return Ok(());
     }
     let hue_degrees = hue_degrees.clamp(-180, 180);
-    if hue_degrees == 0 || !icon_path.is_file() { return Ok(()); }
-    let image = image::open(&icon_path).map_err(|error| Error::new(ErrorKind::InvalidData, format!("cannot read parent icon: {error}")))?;
+    if hue_degrees == 0 || !icon_path.is_file() {
+        return Ok(());
+    }
+    let image = image::open(&icon_path)
+        .map_err(|error| Error::new(ErrorKind::InvalidData, format!("cannot read parent icon: {error}")))?;
     let rotated = image.huerotate(hue_degrees);
     let mut output = std::io::BufWriter::new(fs::File::create(&icon_path)?);
-    rotated.write_to(&mut output, image::ImageFormat::Png)
+    rotated
+        .write_to(&mut output, image::ImageFormat::Png)
         .map_err(|error| Error::new(ErrorKind::Other, format!("cannot recolor branch icon: {error}")))?;
     output.flush()
 }

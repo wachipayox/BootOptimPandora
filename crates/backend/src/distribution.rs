@@ -21,6 +21,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bridge::modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType};
 use reqwest::{Certificate, Client, Url};
 use schema::backend_config::DistributionConfig;
+use schema::ignored_profile_paths::IgnoredProfilePaths;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -310,6 +311,8 @@ pub struct ResolvedGlobalProfile {
     pub minecraft_version: String,
     pub neoforge_version: String,
     pub entries: Vec<EffectiveProfileEntry>,
+    /// Signed object references, indexed by effective destination path.
+    pub objects_by_path: BTreeMap<String, ManifestObjectRef>,
     /// Effective per-setting rules after applying ancestor-to-descendant overrides.
     pub config_settings: Vec<ManifestConfigSetting>,
 }
@@ -547,6 +550,7 @@ impl DistributionClient {
             &BTreeSet::new(),
             Some((modal_action, overall_progress)),
             false,
+            &IgnoredProfilePaths(Vec::new()),
         )
         .await
     }
@@ -570,6 +574,7 @@ impl DistributionClient {
             skip_paths,
             None,
             false,
+            &IgnoredProfilePaths(Vec::new()),
         )
         .await
     }
@@ -593,8 +598,32 @@ impl DistributionClient {
             &BTreeSet::new(),
             None,
             true,
+            &IgnoredProfilePaths(Vec::new()),
         )
         .await
+    }
+
+    /// Download one file from a pinned, verified revision without fetching the rest of the pack.
+    pub async fn fetch_pinned_file(
+        &self,
+        pin: &GlobalRevisionPin,
+        canonical_path: &str,
+        cache_root: &Path,
+    ) -> Result<Option<(PathBuf, String)>, DistributionError> {
+        let resolved = self.resolve_profile_metadata(pin).await?;
+        let Some(entry) = resolved
+            .entries
+            .iter()
+            .find(|entry| crate::profile_branch::canonical_mod_path(&entry.path) == canonical_path)
+        else {
+            return Ok(None);
+        };
+        let object = resolved
+            .objects_by_path
+            .get(&entry.path)
+            .ok_or_else(|| DistributionError::InvalidResponse("signed file has no object reference".into()))?;
+        let source = self.fetch_verified_object(object, cache_root).await?;
+        Ok(Some((source, entry.path.clone())))
     }
 
     async fn resolve_profile_with_reuse_and_progress(
@@ -606,6 +635,7 @@ impl DistributionClient {
         skip_paths: &BTreeSet<String>,
         progress: Option<(&ModalAction, &ProgressTracker)>,
         metadata_only: bool,
+        ignored_paths: &IgnoredProfilePaths,
     ) -> Result<ResolvedGlobalProfile, DistributionError> {
         let mut chain = Vec::<VerifiedRevision>::new();
         let mut next = Some((
@@ -846,7 +876,8 @@ impl DistributionClient {
         if progress.is_some() {
             for entry in files.values() {
                 let has_config_settings = config_settings.iter().any(|((path, _), _)| path == &entry.path);
-                if skip_paths.contains(&entry.path)
+                if ignored_paths.contains(&entry.path)
+                    || skip_paths.contains(&entry.path)
                     || (!has_config_settings
                         && reusable_entries.get(&entry.path).is_some_and(|existing| {
                             existing.logical_identity == entry.metadata.logical_identity
@@ -879,7 +910,8 @@ impl DistributionClient {
         let mut entries_with_sources = Vec::with_capacity(files.len());
         for (_, mut entry) in files {
             let has_config_settings = config_settings.iter().any(|((path, _), _)| path == &entry.path);
-            if skip_paths.contains(&entry.path)
+            if ignored_paths.contains(&entry.path)
+                || skip_paths.contains(&entry.path)
                 || (!has_config_settings
                     && reusable_entries.get(&entry.path).is_some_and(|existing| {
                         existing.logical_identity == entry.metadata.logical_identity
@@ -944,6 +976,18 @@ impl DistributionClient {
         {
             overall.set_count(1);
         }
+        let objects_by_path = entries_with_sources
+            .iter()
+            .filter_map(|entry| {
+                object_refs
+                    .get(&(
+                        entry.metadata.logical_identity.clone(),
+                        entry.path.clone(),
+                        entry.metadata.source_sha256.clone(),
+                    ))
+                    .map(|object| (entry.path.clone(), (*object).clone()))
+            })
+            .collect();
         Ok(ResolvedGlobalProfile {
             icon_path,
             pin: target_pin,
@@ -951,6 +995,7 @@ impl DistributionClient {
             minecraft_version,
             neoforge_version,
             entries: entries_with_sources,
+            objects_by_path,
             config_settings: config_settings.into_values().collect(),
         })
     }
@@ -1590,6 +1635,7 @@ impl crate::BackendState {
             }
         }
         skip_paths.extend(snapshot.branch.tombstones.keys().cloned());
+        let ignored_paths = self.config.lock().get().ignored_profile_paths.clone();
 
         let cache_root = self.directories.root_launcher_dir.join("distribution-objects");
         let resolved = client
@@ -1601,29 +1647,35 @@ impl crate::BackendState {
                 &skip_paths,
                 progress,
                 false,
+                &ignored_paths,
             )
             .await
             .map_err(|error| error.to_string())?;
 
-        let target_rule_signatures = crate::config_settings::config_setting_signatures(&resolved.config_settings)
-            .map_err(|error| error.to_string())?;
+        let config_settings = resolved
+            .config_settings
+            .into_iter()
+            .filter(|rule| !ignored_paths.contains(&rule.path))
+            .collect::<Vec<_>>();
+        let target_rule_signatures =
+            crate::config_settings::config_setting_signatures(&config_settings).map_err(|error| error.to_string())?;
         let mut changed_rule_paths = BTreeSet::new();
         for (identity, signature) in &target_rule_signatures {
             if snapshot.branch.config_setting_signatures.get(identity) != Some(signature) {
                 if let Some((path, _)) = identity.split_once('\0') {
+                    if ignored_paths.contains(path) {
+                        continue;
+                    }
                     changed_rule_paths.insert(path.to_owned());
                 }
             }
         }
-        let target_rule_paths = resolved
-            .config_settings
-            .iter()
-            .map(|setting| setting.path.as_str())
-            .collect::<BTreeSet<_>>();
+        let target_rule_paths = config_settings.iter().map(|setting| setting.path.as_str()).collect::<BTreeSet<_>>();
 
         let target_entries = resolved
             .entries
             .into_iter()
+            .filter(|entry| !ignored_paths.contains(&entry.path))
             .map(|entry| (entry.path.clone(), entry))
             .collect::<BTreeMap<_, _>>();
         let mut changes = Vec::new();
@@ -1656,6 +1708,9 @@ impl crate::BackendState {
             changes.push(crate::profile_branch::ProfileDeltaChange::Upsert(entry.clone()));
         }
         for (path, metadata) in &snapshot.branch.entries {
+            if ignored_paths.contains(path) {
+                continue;
+            }
             if target_entries.contains_key(path)
                 || metadata.ownership != ProfileEntryOwnership::Inherited
                 || !matches!(&metadata.origin, ProfileEntryOrigin::GlobalRevision { .. })
@@ -1678,7 +1733,7 @@ impl crate::BackendState {
                 &crate::profile_branch::ProfileRevisionDelta {
                     lineage,
                     target_revision: Some(target_pin),
-                    config_settings: resolved.config_settings,
+                    config_settings,
                     changes,
                 },
             )

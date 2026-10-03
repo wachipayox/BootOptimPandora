@@ -9,8 +9,11 @@ use std::{
 
 use bridge::{
     instance::{InstanceID, InstanceStatus},
-    profile_overwrites::{OverwriteChange, ProfileFile, ProfileOverwrite, ProfileOverwritesReport, ProfileTextFile},
+    profile_overwrites::{
+        OverwriteChange, ProfileFile, ProfileOverwrite, ProfileOverwritesReport, ProfileTextFile, RestoreSource,
+    },
 };
+use schema::ignored_profile_paths::IgnoredProfilePaths;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -44,7 +47,9 @@ impl BackendState {
         };
         let manifest = crate::profile_layout_flow::read_committed_manifest(&root)
             .map_err(|error| format!("Unable to read inherited profile information: {error}"))?;
+        let ignored = self.config.lock().get().ignored_profile_paths.clone();
         let mut report = ProfileOverwritesReport {
+            ignored_paths: ignored.0.clone(),
             files: Vec::new(),
             local_parent: None,
             local_changes: Vec::new(),
@@ -55,7 +60,7 @@ impl BackendState {
             skipped_entries: 0,
         };
         let Some(manifest) = manifest else {
-            let (files, skipped) = tokio::task::spawn_blocking(move || scan_tree(&minecraft))
+            let (files, skipped) = tokio::task::spawn_blocking(move || scan_tree(&minecraft, &ignored))
                 .await
                 .map_err(|error| error.to_string())??;
             report.files = file_summaries(&files);
@@ -92,7 +97,7 @@ impl BackendState {
         let global_pin = branch.applied_revision.or(branch.lineage.global_ancestor);
         let signed = if let Some(pin) = global_pin {
             report.global_profile = Some(format!("{} · {}", pin.profile_id, pin.revision_id));
-            match self.signed_overwrite_baseline(&pin).await {
+            match self.signed_overwrite_baseline(&pin, &ignored).await {
                 Ok((name, mut entries, rule_paths)) => {
                     for path in rule_paths {
                         let Some(entry) = branch.entries.get(&path) else {
@@ -126,9 +131,9 @@ impl BackendState {
         let local_parent_path = local_parent.map(|(_, path)| path);
         let compared = tokio::task::spawn_blocking(move || {
             let mut hashes = HashMap::new();
-            let (child, mut skipped) = scan_tree(&minecraft)?;
+            let (child, mut skipped) = scan_tree(&minecraft, &ignored)?;
             let local_changes = if let Some(parent) = local_parent_path {
-                let (parent, parent_skipped) = scan_tree(&parent)?;
+                let (parent, parent_skipped) = scan_tree(&parent, &ignored)?;
                 skipped += parent_skipped;
                 compare_local(&child, &parent, &mut hashes)?
             } else {
@@ -205,9 +210,85 @@ impl BackendState {
         .map_err(|error| error.to_string())?
     }
 
+    pub(crate) async fn restore_profile_file(
+        &self,
+        id: InstanceID,
+        path: String,
+        source: RestoreSource,
+    ) -> Result<(), String> {
+        crate::profile_branch::validate_profile_relative_path(&path).map_err(|error| error.to_string())?;
+        let canonical = canonical_mod_path(&path);
+        let ignored = self.config.lock().get().ignored_profile_paths.clone();
+        if ignored.contains(&canonical) {
+            return Err("This path is ignored by profile updates.".into());
+        }
+        let (root, minecraft) = {
+            let state = self.instance_state.read();
+            let instance = state.instances.get(id).ok_or("Instance is no longer available")?;
+            if instance.status() != InstanceStatus::NotRunning {
+                return Err("Close the game before restoring inherited files.".into());
+            }
+            (instance.root_path.to_path_buf(), instance.dot_minecraft_path.to_path_buf())
+        };
+        let manifest = crate::profile_layout_flow::read_committed_manifest(&root)
+            .map_err(|error| error.to_string())?
+            .ok_or("This instance has no inherited profile")?;
+        let input = match source {
+            RestoreSource::LocalParent => {
+                let Some(ProfileParentRef::LocalProfile { profile_uuid }) = manifest.branch.lineage.parent else {
+                    return Err("This instance has no direct local parent.".into());
+                };
+                let parent_id = self
+                    .find_instance_id_for_profile_uuid(profile_uuid)
+                    .ok_or("The local parent is no longer available")?;
+                let state = self.instance_state.read();
+                let parent = state.instances.get(parent_id).ok_or("The local parent is no longer available")?;
+                RestoreInput::Local(parent.root_path.to_path_buf(), parent.dot_minecraft_path.to_path_buf())
+            },
+            RestoreSource::PinnedGlobal => {
+                let pin = manifest
+                    .branch
+                    .applied_revision
+                    .or(manifest.branch.lineage.global_ancestor)
+                    .ok_or("This instance has no pinned global revision")?;
+                let config = self.config.lock().get().distribution.clone();
+                let client = DistributionClient::new(&config).map_err(|error| error.to_string())?;
+                let cache = self.directories.root_launcher_dir.join("distribution-objects");
+                let (file, relative) = client
+                    .fetch_pinned_file(&pin, &canonical, &cache)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or("This file is absent from the pinned global revision")?;
+                RestoreInput::Global(file, relative)
+            },
+        };
+        tokio::task::spawn_blocking(move || {
+            let _child_lock = profile_edit_lock(&root)?;
+            match input {
+                RestoreInput::Local(parent_root, parent_minecraft) => {
+                    let _parent_lock = profile_edit_lock(&parent_root)?;
+                    let (parent, _) = scan_tree(&parent_minecraft, &ignored)?;
+                    let source = parent.get(&canonical).ok_or("The file is absent from the local parent")?;
+                    let relative = if source.disabled {
+                        format!("{canonical}.disabled")
+                    } else {
+                        canonical.clone()
+                    };
+                    install_restored_file(&minecraft, &canonical, &source.path, &relative, &ignored)
+                },
+                RestoreInput::Global(file, relative) => {
+                    install_restored_file(&minecraft, &canonical, &file, &relative, &ignored)
+                },
+            }
+        })
+        .await
+        .map_err(|error| format!("Restore task failed: {error}"))?
+    }
+
     async fn signed_overwrite_baseline(
         &self,
         pin: &GlobalRevisionPin,
+        ignored: &IgnoredProfilePaths,
     ) -> Result<(String, BTreeMap<String, SignedEntry>, BTreeSet<String>), String> {
         let config = self.config.lock().get().distribution.clone();
         let client = DistributionClient::new(&config).map_err(|error| error.to_string())?;
@@ -215,6 +296,9 @@ impl BackendState {
         let rule_paths = resolved.config_settings.iter().map(|rule| rule.path.clone()).collect();
         let mut files = BTreeMap::new();
         for entry in resolved.entries {
+            if ignored.contains(&entry.path) {
+                continue;
+            }
             let key = canonical_mod_path(&entry.path);
             let signed = SignedEntry {
                 sha256: entry.metadata.source_sha256,
@@ -227,6 +311,93 @@ impl BackendState {
         }
         Ok((resolved.name, files, rule_paths))
     }
+}
+
+enum RestoreInput {
+    Local(PathBuf, PathBuf),
+    Global(PathBuf, String),
+}
+
+fn install_restored_file(
+    minecraft: &Path,
+    canonical: &str,
+    source: &Path,
+    relative: &str,
+    ignored: &IgnoredProfilePaths,
+) -> Result<(), String> {
+    if ignored.contains(relative) || canonical_mod_path(relative) != canonical {
+        return Err("The source path does not match the selected file.".into());
+    }
+    let _ = checked_file_path(
+        source.parent().ok_or("Invalid source")?,
+        source.file_name().and_then(|name| name.to_str()).ok_or("Invalid source name")?,
+    )?;
+    let (child, _) = scan_tree(minecraft, ignored)?;
+    let existing = child.get(canonical);
+    let target = safe_destination(minecraft, relative)?;
+    if fs::symlink_metadata(&target).is_ok() && existing.is_none_or(|entry| entry.path != target) {
+        return Err("A different file already exists at the restore destination.".into());
+    }
+    let source_hash = file_hash(source, &mut HashMap::new())?;
+    if let Some(existing) = existing
+        && existing.path == target
+        && file_hash(&existing.path, &mut HashMap::new())? == source_hash
+    {
+        return Err("This file already matches its selected parent.".into());
+    }
+    let directory = target.parent().ok_or("Invalid restore destination")?;
+    let temporary = directory.join(format!(".restore-{}.tmp", uuid::Uuid::new_v4()));
+    if let Err(error) = fs::copy(source, &temporary) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("Unable to stage parent file: {error}"));
+    }
+    if file_hash(&temporary, &mut HashMap::new())? != source_hash {
+        let _ = fs::remove_file(&temporary);
+        return Err("Parent file changed while it was being copied; nothing was restored.".into());
+    }
+    let backup = existing.map(|entry| entry.path.with_extension(format!("restore-{}.bak", uuid::Uuid::new_v4())));
+    if let Some(existing) = existing {
+        if let Err(error) = fs::rename(&existing.path, backup.as_ref().unwrap()) {
+            let _ = fs::remove_file(&temporary);
+            return Err(format!("Unable to back up the current file: {error}"));
+        }
+    }
+    if let Err(error) = fs::rename(&temporary, &target) {
+        if let (Some(existing), Some(backup)) = (existing, &backup) {
+            let _ = fs::rename(backup, &existing.path);
+        }
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("Unable to install parent file: {error}"));
+    }
+    if let Some(backup) = backup {
+        let _ = fs::remove_file(backup);
+    }
+    Ok(())
+}
+
+fn safe_destination(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    crate::profile_branch::validate_profile_relative_path(relative).map_err(|error| error.to_string())?;
+    let mut path = root.to_path_buf();
+    let parts: Vec<_> = relative.split('/').collect();
+    for part in &parts[..parts.len() - 1] {
+        path.push(part);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if !metadata.is_dir() || metadata.file_type().is_symlink() => {
+                return Err("Restore destination contains a linked or non-directory component.".into());
+            },
+            Ok(_) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&path).map_err(|error| error.to_string())?;
+            },
+            Err(error) => return Err(error.to_string()),
+        }
+        #[cfg(windows)]
+        if junction::exists(&path).unwrap_or(false) {
+            return Err("Restore destination contains a junction.".into());
+        }
+    }
+    path.push(parts.last().ok_or("Invalid restore path")?);
+    Ok(path)
 }
 
 fn profile_edit_lock(root: &Path) -> Result<Option<crate::profile_layout_identity::ProfileLayoutLockGuard>, String> {
@@ -354,7 +525,7 @@ fn save_text(root: &Path, relative: &str, contents: &str, expected_sha256: &str)
     read_text(root, relative)
 }
 
-fn scan_tree(root: &Path) -> Result<(BTreeMap<String, FileEntry>, usize), String> {
+fn scan_tree(root: &Path, ignored: &IgnoredProfilePaths) -> Result<(BTreeMap<String, FileEntry>, usize), String> {
     if !root.exists() {
         return Ok((BTreeMap::new(), 0));
     }
@@ -370,6 +541,14 @@ fn scan_tree(root: &Path) -> Result<(BTreeMap<String, FileEntry>, usize), String
         {
             let entry = entry.map_err(|error| error.to_string())?;
             let path = entry.path();
+            let relative_for_filter = path
+                .strip_prefix(root)
+                .map_err(|error| error.to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if ignored.contains(&relative_for_filter) {
+                continue;
+            }
             if directory == root
                 && matches!(
                     entry.file_name().to_string_lossy().to_ascii_lowercase().as_str(),

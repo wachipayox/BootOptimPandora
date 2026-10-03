@@ -20,6 +20,12 @@ pub struct ProfileTextFile {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestoreSource {
+    LocalParent,
+    PinnedGlobal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OverwriteChange {
     Added,
     AddedDisabled,
@@ -33,6 +39,7 @@ pub enum OverwriteChange {
 
 #[derive(Clone, Debug)]
 pub struct ProfileOverwritesReport {
+    pub ignored_paths: Vec<String>,
     pub files: Vec<ProfileFile>,
     pub local_parent: Option<String>,
     pub local_changes: Vec<ProfileOverwrite>,

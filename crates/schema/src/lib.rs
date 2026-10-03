@@ -11,6 +11,7 @@ pub mod fabric_loader_manifest;
 pub mod fabric_mod;
 pub mod forge;
 pub mod forge_mod;
+pub mod ignored_profile_paths;
 pub mod instance;
 pub mod java_runtime_component;
 pub mod java_runtimes;

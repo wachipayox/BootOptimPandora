@@ -6,14 +6,15 @@ use bridge::{
     handle::BackendHandle,
     instance::InstanceID,
     message::MessageToBackend,
-    profile_overwrites::{OverwriteChange, ProfileOverwritesReport, ProfileTextFile},
+    profile_overwrites::{OverwriteChange, ProfileOverwritesReport, ProfileTextFile, RestoreSource},
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable, Icon, Sizable, StyledExt,
+    ActiveTheme as _, Disableable, Icon, Sizable, StyledExt, WindowExt,
     button::Button,
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    menu::{ContextMenuExt, PopupMenuItem},
     scroll::ScrollableElement,
     v_flex,
 };
@@ -314,6 +315,107 @@ impl InstanceOverwritesSubpage {
         });
         cx.notify();
     }
+    fn ignore_path(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        let (channel, receive) = tokio::sync::oneshot::channel();
+        self.backend.send(MessageToBackend::AddIgnoredProfilePath {
+            path: path.clone(),
+            channel,
+        });
+        self.busy = true;
+        self._save = cx.spawn_in(window, async move |page, cx| {
+            let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
+            _ = page.update_in(cx, |page, window, cx| {
+                page.busy = false;
+                match result {
+                    Ok(()) => {
+                        page.selected = None;
+                        page.text = None;
+                        page.notice = Some(format!("/{path} está en la lista global de ignorados."));
+                        page.reload(window, cx);
+                    },
+                    Err(error) => page.notice = Some(format!("No se pudo ignorar la ruta: {error}")),
+                }
+                cx.notify();
+            });
+        });
+        cx.notify();
+    }
+
+    fn confirm_restore(&mut self, path: String, source: RestoreSource, window: &mut Window, cx: &mut Context<Self>) {
+        let label = match source {
+            RestoreSource::LocalParent => "madre local",
+            RestoreSource::PinnedGlobal => "revisión global fijada",
+        };
+        let entity = cx.entity();
+        let display_path = path.clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let entity = entity.clone();
+            let path = path.clone();
+            dialog
+                .title("Restaurar archivo")
+                .width(px(500.0))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(format!("¿Restaurar {display_path} desde la {label}?"))
+                        .child("Se sustituirá el archivo local si existe. La madre no cambiará."),
+                )
+                .footer(
+                    h_flex()
+                        .w_full()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("cancel-restore")
+                                .label("Cancelar")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(Button::new("confirm-restore").label("Restaurar").on_click(move |_, window, cx| {
+                            window.close_dialog(cx);
+                            _ = entity.update(cx, |page, cx| page.restore_file(path.clone(), source, window, cx));
+                        })),
+                )
+        });
+    }
+
+    fn restore_file(&mut self, path: String, source: RestoreSource, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        let (channel, receive) = tokio::sync::oneshot::channel();
+        self.backend.send(MessageToBackend::RestoreProfileFile {
+            id: self.instance,
+            path,
+            source,
+            channel,
+        });
+        self.busy = true;
+        self.notice = Some("Restaurando archivo…".into());
+        self._save = cx.spawn_in(window, async move |page, cx| {
+            let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
+            _ = page.update_in(cx, |page, window, cx| {
+                page.busy = false;
+                match result {
+                    Ok(()) => {
+                        page.selected = None;
+                        page.text = None;
+                        page.notice = Some("Archivo restaurado desde su madre.".into());
+                        page.reload(window, cx);
+                    },
+                    Err(error) => page.notice = Some(format!("No se pudo restaurar: {error}")),
+                }
+                cx.notify();
+            });
+        });
+        cx.notify();
+    }
+}
+
+fn can_restore(change: OverwriteChange) -> bool {
+    !matches!(change, OverwriteChange::Added | OverwriteChange::AddedDisabled)
 }
 
 impl Render for InstanceOverwritesSubpage {
@@ -373,6 +475,7 @@ impl Render for InstanceOverwritesSubpage {
                 let empty = rows.is_empty();
                 let file_index: BTreeMap<_, _> = report.files.iter().map(|file| (file.path.as_str(), file)).collect();
                 let mut tree = v_flex();
+                let page_entity = cx.entity();
                 for row in rows {
                     let path = row.path.clone();
                     let name = path.rsplit('/').next().unwrap_or(&path).to_string();
@@ -385,6 +488,16 @@ impl Render for InstanceOverwritesSubpage {
                         .iter()
                         .find(|change| change.path == comparison)
                         .or_else(|| report.global_changes.iter().find(|change| change.path == comparison));
+                    let restore_local = !row.folder
+                        && report
+                            .local_changes
+                            .iter()
+                            .any(|change| change.path == comparison && can_restore(change.change));
+                    let restore_global = !row.folder
+                        && report
+                            .global_changes
+                            .iter()
+                            .any(|change| change.path == comparison && can_restore(change.change));
                     let selected = self.selected.as_deref() == Some(&path);
                     let folder = row.folder;
                     let expanded = self.expanded.contains(&path) || !query.trim().is_empty();
@@ -426,16 +539,69 @@ impl Render for InstanceOverwritesSubpage {
                     if selected {
                         item = item.bg(accent.opacity(0.35));
                     }
-                    tree = tree.child(item.on_click(cx.listener(move |page, _, window, cx| {
-                        if folder {
-                            if !page.expanded.insert(click_path.clone()) {
-                                page.expanded.remove(&click_path);
+                    let menu_path = path.clone();
+                    let menu_entity = page_entity.clone();
+                    tree = tree.child(
+                        item.on_click(cx.listener(move |page, _, window, cx| {
+                            if folder {
+                                if !page.expanded.insert(click_path.clone()) {
+                                    page.expanded.remove(&click_path);
+                                }
+                                cx.notify();
+                            } else {
+                                page.select(click_path.clone(), window, cx);
                             }
-                            cx.notify();
-                        } else {
-                            page.select(click_path.clone(), window, cx);
-                        }
-                    })));
+                        }))
+                        .context_menu(move |menu, _, _| {
+                            let ignored_path = menu_path.clone();
+                            let ignored_entity = menu_entity.clone();
+                            let mut menu = menu.item(
+                                PopupMenuItem::new(if folder {
+                                    "Ignorar carpeta y su contenido"
+                                } else {
+                                    "Añadir archivo a ignorados"
+                                })
+                                .on_click(move |_, window, cx| {
+                                    _ = ignored_entity
+                                        .update(cx, |page, cx| page.ignore_path(ignored_path.clone(), window, cx));
+                                }),
+                            );
+                            if restore_local {
+                                let restore_path = menu_path.clone();
+                                let restore_entity = menu_entity.clone();
+                                menu = menu.item(PopupMenuItem::new("Restaurar desde madre local").on_click(
+                                    move |_, window, cx| {
+                                        _ = restore_entity.update(cx, |page, cx| {
+                                            page.confirm_restore(
+                                                restore_path.clone(),
+                                                RestoreSource::LocalParent,
+                                                window,
+                                                cx,
+                                            )
+                                        });
+                                    },
+                                ));
+                            }
+                            if restore_global {
+                                let restore_path = menu_path.clone();
+                                let restore_entity = menu_entity.clone();
+                                menu =
+                                    menu.item(PopupMenuItem::new("Restaurar desde revisión global fijada").on_click(
+                                        move |_, window, cx| {
+                                            _ = restore_entity.update(cx, |page, cx| {
+                                                page.confirm_restore(
+                                                    restore_path.clone(),
+                                                    RestoreSource::PinnedGlobal,
+                                                    window,
+                                                    cx,
+                                                )
+                                            });
+                                        },
+                                    ));
+                            }
+                            menu
+                        }),
+                    );
                 }
                 if empty {
                     tree = tree.child(div().p_4().text_sm().text_color(muted).child(if self.only_changes {
@@ -467,6 +633,12 @@ impl Render for InstanceOverwritesSubpage {
                                     .child(div().text_xs().text_color(muted).child(format!("{total} archivos"))),
                             )
                             .child(Input::new(&self.search).prefix(Icon::new(PandoraIcon::Search).small()))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child("Clic derecho en un archivo o carpeta para ver sus opciones."),
+                            )
                             .child(
                                 h_flex()
                                     .gap_2()

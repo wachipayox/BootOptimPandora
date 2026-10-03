@@ -14,6 +14,29 @@ badge. Selecting one shows its exact status relative to each
 available parent: added, modified, removed, enabled or disabled. A content
 change combined with a toggle is shown as both. The `.disabled` suffix for
 toggleable mods is treated as local mod state rather than a second mod identity.
+Deleted inherited files remain visible in the tree and are labelled as removed.
+
+Right-clicking a file or folder offers to ignore its path. The ignore list is
+global to the launcher, uses paths relative to `.minecraft`, and matching a
+folder excludes all descendants. The same list filters local-parent snapshots,
+the fast parent fingerprint, signed global update comparisons, and this tab.
+The Settings > Ignored paths page permits manual additions and removal. New
+installations start with `mods/.connector`, `.analogaudio`, `.bootoptim`,
+`mods/mcef-cache`, `.mixin.out`, and `unilog`. The last three are generated
+library/cache or diagnostic data observed in this pack. Existing installations
+receive these defaults when the config field is absent. User data directories
+such as `saves` remain separately protected by the runtime exclusion policy.
+Ignoring a path does not delete or change its current files. An old child
+fingerprint recorded before changing the ignore list can produce one update
+notice; the next inherited update records the new filtered fingerprint.
+
+For a changed or removed file that exists in a parent, the context menu offers
+restoration from the direct local parent and/or the pinned global revision.
+The action asks for confirmation, requires the game to be stopped, and changes
+only the selected child. A local parent is read at its current version; a global
+source is fetched as a verified object from the pinned revision. The new file
+is staged before the old file is moved aside and restored on a failed install.
+The parent remains unchanged. A missing parent file does not offer restoration.
 
 Supported UTF-8 text files (`.toml`, `.properties`, `.txt`, `.cfg`, `.ini`,
 `.json`, `.mcmeta`, `.yaml`, `.yml`) up to 1 MiB can be viewed and edited

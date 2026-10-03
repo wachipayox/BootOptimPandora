@@ -11,6 +11,7 @@ use gpui_component::{
     v_flex,
 };
 use schema::backend_config::{BackendConfig, DistributionConfig, ProxyConfig};
+use schema::ignored_profile_paths::IgnoredProfilePaths;
 
 use crate::{
     component::{
@@ -25,6 +26,7 @@ use crate::{
 mod appearance;
 mod distribution;
 mod general;
+mod ignored_paths;
 mod network;
 #[cfg(windows)]
 mod windows_security;
@@ -32,6 +34,8 @@ mod windows_security;
 struct SettingsRoot {
     settings: Settings,
     search_state: Entity<InputState>,
+    ignored_path_input: Entity<InputState>,
+    ignored_path_error: Option<String>,
     group_list_state: ListState,
     use_custom_titlebar: bool,
     sidebar_state: ResizePanelState,
@@ -87,6 +91,33 @@ impl SettingsRoot {
         }
         self.backend_handle.send(MessageToBackend::SetDistributionConfiguration { config });
         self.update_backend_configuration(cx);
+    }
+
+    fn set_ignored_profile_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) -> bool {
+        let paths = match IgnoredProfilePaths::normalized(paths) {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.ignored_path_error = Some(error);
+                cx.notify();
+                return false;
+            },
+        };
+        self.ignored_path_error = None;
+        if self.actual_backend_config.is_some() {
+            self.on_receive_backend_config = if self.temp_backend_config.is_some() {
+                OnReceiveBackendConfig::RequestAgainThenClearTemp
+            } else {
+                OnReceiveBackendConfig::ClearTemp
+            };
+            let pending = self
+                .temp_backend_config
+                .get_or_insert_with(|| self.actual_backend_config.clone().unwrap());
+            pending.ignored_profile_paths = paths.clone();
+        }
+        self.backend_handle.send(MessageToBackend::SetIgnoredProfilePaths { paths: paths.0 });
+        self.update_backend_configuration(cx);
+        cx.notify();
+        true
     }
 
     pub fn update_backend_configuration(&mut self, cx: &mut Context<Self>) {
@@ -314,6 +345,7 @@ impl SettingsRoot {
 
                 for item_ix in items {
                     let item = &group.items[item_ix];
+                    let wide = matches!(&item.widget, SettingItemWidget::BackendWide(_));
 
                     let widget = match &item.widget {
                         SettingItemWidget::None => {
@@ -391,9 +423,20 @@ impl SettingsRoot {
 
                             (func)(backend_config, window, cx)
                         },
+                        SettingItemWidget::BackendWide(func) => {
+                            let Some(backend_config) = root.backend_config() else {
+                                has_backend_missing = true;
+                                continue;
+                            };
+                            (func)(backend_config, window, cx)
+                        },
                         SettingItemWidget::Any(func) => (func)(window, cx),
                     };
 
+                    if wide {
+                        item_elements.push(v_flex().w_full().child(widget));
+                        continue;
+                    }
                     let item_element = h_flex()
                         .justify_between()
                         .items_center()
@@ -465,6 +508,7 @@ enum SettingItemWidget {
         max: Option<i32>,
     },
     Backend(Rc<dyn Fn(&BackendConfig, &mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
+    BackendWide(Rc<dyn Fn(&BackendConfig, &mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
     Any(Rc<dyn Fn(&mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
 }
 
@@ -741,12 +785,25 @@ pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut 
             let sidebar_state = ResizePanelState::new(px(175.0), px(150.0), px(225.0));
 
             let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(t::common::search()));
+            let ignored_path_input = cx.new(|cx| InputState::new(window, cx).placeholder("/mods/example-cache"));
 
             cx.subscribe(&search_state, SettingsRoot::on_search).detach();
+            cx.subscribe_in(
+                &ignored_path_input,
+                window,
+                |root: &mut SettingsRoot, _, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        root.add_ignored_path(window, cx);
+                    }
+                },
+            )
+            .detach();
 
             let mut root = SettingsRoot {
                 settings: create_settings(data, window, cx),
                 search_state,
+                ignored_path_input,
+                ignored_path_error: None,
                 use_custom_titlebar,
                 sidebar_state,
                 group_list_state: ListState::new(0, ListAlignment::Top, px(100.)),
@@ -771,6 +828,7 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
         appearance::create_page(data, window, cx),
         network::create_page(),
         distribution::create_page(),
+        ignored_paths::create_page(),
     ];
     #[cfg(windows)]
     pages.push(windows_security::create_page());

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct BackendConfig {
+    #[serde(default)]
+    pub ignored_profile_paths: crate::ignored_profile_paths::IgnoredProfilePaths,
     #[serde(
         default,
         skip_serializing_if = "is_default_sync_targets",

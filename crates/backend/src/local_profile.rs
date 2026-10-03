@@ -5,9 +5,16 @@
 //! cheap unchanged-file filter; only changed/new files are hashed. Start checks parent
 //! file metadata, but never reads their contents or scans the child's tree.
 
-use std::{collections::BTreeMap, fs, io::Read, path::{Path, PathBuf}, time::UNIX_EPOCH};
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+    time::UNIX_EPOCH,
+};
 
 use bridge::instance::InstanceID;
+use schema::ignored_profile_paths::IgnoredProfilePaths;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -27,6 +34,22 @@ pub(crate) fn snapshot_parent_tree(
     parent_branch: &ProfileBranchManifest,
     previous_child_entries: Option<&BTreeMap<String, ProfileEntryMetadata>>,
 ) -> Result<Vec<EffectiveProfileEntry>, String> {
+    snapshot_parent_tree_filtered(
+        root,
+        parent_uuid,
+        parent_branch,
+        previous_child_entries,
+        &IgnoredProfilePaths::default(),
+    )
+}
+
+pub(crate) fn snapshot_parent_tree_filtered(
+    root: &Path,
+    parent_uuid: Uuid,
+    parent_branch: &ProfileBranchManifest,
+    previous_child_entries: Option<&BTreeMap<String, ProfileEntryMetadata>>,
+    ignored: &IgnoredProfilePaths,
+) -> Result<Vec<EffectiveProfileEntry>, String> {
     if !root.is_dir() {
         return Err("The local parent has no .minecraft directory".into());
     }
@@ -38,9 +61,13 @@ pub(crate) fn snapshot_parent_tree(
         for entry in entries {
             let entry = entry.map_err(|error| format!("Unable to read a parent file entry: {error}"))?;
             let path = entry.path();
+            let relative_for_filter =
+                path.strip_prefix(root).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
             // Worlds are personal mutable data, not part of a modpack profile snapshot.
             // In particular, never traverse a save-group junction from a branched instance.
-            if directory == root && entry.file_name().to_string_lossy().eq_ignore_ascii_case("saves") {
+            if ignored.contains(&relative_for_filter)
+                || (directory == root && is_private_runtime_root(&relative_for_filter))
+            {
                 continue;
             }
             let file_type = entry.file_type().map_err(|error| format!("Unable to inspect {path:?}: {error}"))?;
@@ -149,6 +176,20 @@ pub(crate) fn snapshot_parent_tree(
     Ok(result.into_values().collect())
 }
 
+fn is_private_runtime_root(path: &str) -> bool {
+    matches!(
+        path.to_ascii_lowercase().as_str(),
+        "saves"
+            | "logs"
+            | "crash-reports"
+            | "screenshots"
+            | "session.lock"
+            | "usercache.json"
+            | "usernamecache.json"
+            | "realms_persistence.json"
+    )
+}
+
 pub(crate) fn local_parent_delta(
     child_branch: &ProfileBranchManifest,
     parent_uuid: Uuid,
@@ -209,18 +250,32 @@ impl BackendState {
     pub(crate) fn parent_version_path(&self, id: InstanceID) -> Result<std::path::PathBuf, String> {
         let state = self.instance_state.read();
         let instance = state.instances.get(id).ok_or("Instance is no longer available")?;
-        Ok(instance.root_path.join(crate::profile_layout_identity::CONTROL_DIR_NAME).join("local-parent-version.json"))
+        Ok(instance
+            .root_path
+            .join(crate::profile_layout_identity::CONTROL_DIR_NAME)
+            .join("local-parent-version.json"))
     }
-    pub(crate) fn record_parent_version(&self, id: InstanceID, parent: &crate::ProfileBranchSnapshot) -> Result<(), String> {
+    pub(crate) fn record_parent_version(
+        &self,
+        id: InstanceID,
+        parent: &crate::ProfileBranchSnapshot,
+    ) -> Result<(), String> {
         let bytes = serde_json::to_vec(&(parent.profile_uuid, parent.generation)).map_err(|e| e.to_string())?;
         let path = self.parent_version_path(id)?;
         let temporary = path.with_extension("tmp");
         fs::write(&temporary, bytes).map_err(|e| e.to_string())?;
         fs::rename(temporary, path).map_err(|e| e.to_string())?;
         if let Some(parent_id) = self.find_instance_id_for_profile_uuid(parent.profile_uuid) {
-            let root = self.instance_state.read().instances.get(parent_id)
-                .ok_or("Local parent disappeared")?.dot_minecraft_path.to_path_buf();
-            let fingerprint = parent_tree_fingerprint(&root)?;
+            let root = self
+                .instance_state
+                .read()
+                .instances
+                .get(parent_id)
+                .ok_or("Local parent disappeared")?
+                .dot_minecraft_path
+                .to_path_buf();
+            let ignored = self.config.lock().get().ignored_profile_paths.clone();
+            let fingerprint = parent_tree_fingerprint(&root, &ignored)?;
             let path = self.parent_fingerprint_path(id)?;
             fs::write(&path, fingerprint).map_err(|e| format!("Unable to record parent file state: {e}"))?;
         }
@@ -259,18 +314,27 @@ impl BackendState {
         for pair in chain.windows(2) {
             let (child_id, _) = &pair[0];
             let (_, parent) = &pair[1];
-            let stored = fs::read(self.parent_version_path(*child_id)?).ok()
+            let stored = fs::read(self.parent_version_path(*child_id)?)
+                .ok()
                 .and_then(|bytes| serde_json::from_slice::<(Uuid, Option<u64>)>(&bytes).ok());
             // Old branches get a single explicit synchronization, not an expensive scan here.
             if stored != Some((parent.profile_uuid, parent.generation)) {
                 updates.push("Local parent revision".into());
             } else {
                 let parent_id = pair[1].0;
-                let root = self.instance_state.read().instances.get(parent_id)
-                    .ok_or("Local parent disappeared")?.dot_minecraft_path.to_path_buf();
+                let root = self
+                    .instance_state
+                    .read()
+                    .instances
+                    .get(parent_id)
+                    .ok_or("Local parent disappeared")?
+                    .dot_minecraft_path
+                    .to_path_buf();
                 let stored_fingerprint = fs::read_to_string(self.parent_fingerprint_path(*child_id)?).ok();
-                let current = tokio::task::spawn_blocking(move || parent_tree_fingerprint(&root))
-                    .await.map_err(|error| format!("Parent file scan failed: {error}"))??;
+                let ignored = self.config.lock().get().ignored_profile_paths.clone();
+                let current = tokio::task::spawn_blocking(move || parent_tree_fingerprint(&root, &ignored))
+                    .await
+                    .map_err(|error| format!("Parent file scan failed: {error}"))??;
                 if stored_fingerprint.as_deref() != Some(current.as_str()) {
                     updates.push("Local parent files".into());
                 }
@@ -279,7 +343,7 @@ impl BackendState {
         if let Some((_, root)) = chain.last()
             && let Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin }) = &root.branch.lineage.parent
         {
-            match tokio::time::timeout(std::time::Duration::from_secs(2), self.available_global_update(pin)).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), self.available_global_update(pin)).await {
                 Ok(Ok(Some(name))) => updates.push(name),
                 Ok(Ok(None)) => {},
                 Ok(Err(error)) => log::warn!("Global update check skipped: {error}"),
@@ -288,7 +352,10 @@ impl BackendState {
         }
         Ok(updates)
     }
-    async fn available_global_update(&self, pin: &crate::profile_branch::GlobalRevisionPin) -> Result<Option<String>, String> {
+    async fn available_global_update(
+        &self,
+        pin: &crate::profile_branch::GlobalRevisionPin,
+    ) -> Result<Option<String>, String> {
         let config = self.config.lock().get().distribution.clone();
         let client = crate::distribution::DistributionClient::new(&config).map_err(|e| e.to_string())?;
         let profiles = client.list_profiles().await.map_err(|e| e.to_string())?;
@@ -297,8 +364,48 @@ impl BackendState {
             return Ok(None);
         };
         let target = crate::distribution::selected_revision(profile);
-        Ok((pin.revision_id != target.revision_id || pin.manifest_sha256 != target.manifest_sha256)
-            .then(|| profile.name.clone()))
+        if pin.revision_id == target.revision_id && pin.manifest_sha256 == target.manifest_sha256 {
+            return Ok(None);
+        }
+        // The catalog check is normally enough. Only when a newer revision exists do we
+        // inspect signed metadata, so changes confined to ignored cache paths stay silent.
+        let ignored = self.config.lock().get().ignored_profile_paths.clone();
+        let target_pin = crate::profile_branch::GlobalRevisionPin::new(
+            profile.profile_id.clone(),
+            target.revision_id.clone(),
+            target.manifest_sha256.clone(),
+        )
+        .map_err(|error| error.to_string())?;
+        let (current, latest) =
+            tokio::try_join!(client.resolve_profile_metadata(pin), client.resolve_profile_metadata(&target_pin),)
+                .map_err(|error| error.to_string())?;
+        let files = |resolved: &crate::distribution::ResolvedGlobalProfile| {
+            resolved
+                .entries
+                .iter()
+                .filter(|entry| !ignored.contains(&entry.path))
+                .map(|entry| {
+                    (
+                        entry.path.clone(),
+                        (
+                            entry.metadata.logical_identity.clone(),
+                            entry.metadata.source_sha256.clone(),
+                            entry.metadata.policy,
+                        ),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let rules = |resolved: &crate::distribution::ResolvedGlobalProfile| {
+            let rules = resolved
+                .config_settings
+                .iter()
+                .filter(|rule| !ignored.contains(&rule.path))
+                .cloned()
+                .collect::<Vec<_>>();
+            crate::config_settings::config_setting_signatures(&rules).map_err(|error| error.to_string())
+        };
+        Ok((files(&current) != files(&latest) || rules(&current)? != rules(&latest)?).then(|| profile.name.clone()))
     }
     pub async fn update_inherited_chain(&self, id: InstanceID, modal_action: &ModalAction) -> Result<(), String> {
         let chain = self.inherited_local_chain(id)?;
@@ -315,11 +422,20 @@ impl BackendState {
                 Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin }) => {
                     // Only update a published ancestor with a newer revision. Missing
                     // catalog entries must not block surviving local descendants.
-                    match tokio::time::timeout(std::time::Duration::from_secs(2), self.available_global_update(&pin)).await {
+                    match tokio::time::timeout(std::time::Duration::from_secs(5), self.available_global_update(&pin))
+                        .await
+                    {
                         Ok(Ok(Some(_))) => {
                             let assets = modal_action.push_sub_tracker("Downloading modpack assets".into());
-                            let result = self.update_global_profile_instance(instance, Some((modal_action, &assets))).await.map(|_| ());
-                            assets.set_finished(if result.is_ok() { ProgressTrackerFinishType::Normal } else { ProgressTrackerFinishType::Error });
+                            let result = self
+                                .update_global_profile_instance(instance, Some((modal_action, &assets)))
+                                .await
+                                .map(|_| ());
+                            assets.set_finished(if result.is_ok() {
+                                ProgressTrackerFinishType::Normal
+                            } else {
+                                ProgressTrackerFinishType::Error
+                            });
                             result
                         },
                         Ok(Ok(None)) => Ok(()),
@@ -351,7 +467,7 @@ impl BackendState {
 
 /// Metadata-only tree stamp: catches edits outside the launcher without reading mod contents.
 /// Volatile game output and private worlds never affect inherited profile updates.
-fn parent_tree_fingerprint(root: &Path) -> Result<String, String> {
+fn parent_tree_fingerprint(root: &Path, ignored: &IgnoredProfilePaths) -> Result<String, String> {
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
     while let Some(directory) = pending.pop() {
@@ -359,18 +475,28 @@ fn parent_tree_fingerprint(root: &Path) -> Result<String, String> {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
             let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
-            if directory == root && matches!(entry.file_name().to_string_lossy().to_ascii_lowercase().as_str(),
-                "saves" | "logs" | "crash-reports" | "screenshots" | "session.lock" | "usercache.json") { continue; }
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            if ignored.contains(&relative) || (directory == root && is_private_runtime_root(&relative)) {
+                continue;
+            }
             #[cfg(windows)]
-            if junction::exists(&path).unwrap_or(false) { continue; }
+            if junction::exists(&path).unwrap_or(false) {
+                continue;
+            }
             let kind = entry.file_type().map_err(|e| e.to_string())?;
-            if kind.is_symlink() { continue; }
-            if kind.is_dir() { pending.push(path); }
-            else if kind.is_file() {
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                pending.push(path);
+            } else if kind.is_file() {
                 let metadata = entry.metadata().map_err(|e| e.to_string())?;
-                let modified = metadata.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                let modified = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                     .map_or(0, |duration| duration.as_nanos());
-                files.push((relative.to_string_lossy().replace('\\', "/"), metadata.len(), modified));
+                files.push((relative, metadata.len(), modified));
             }
         }
     }
@@ -416,8 +542,15 @@ impl BackendState {
         let previous = child_snapshot.branch.entries.clone();
         let parent_branch_for_scan = parent_snapshot.branch.clone();
         let parent_uuid_value = *parent_uuid;
+        let ignored = self.config.lock().get().ignored_profile_paths.clone();
         let entries = tokio::task::spawn_blocking(move || {
-            snapshot_parent_tree(&parent_root, parent_uuid_value, &parent_branch_for_scan, Some(&previous))
+            snapshot_parent_tree_filtered(
+                &parent_root,
+                parent_uuid_value,
+                &parent_branch_for_scan,
+                Some(&previous),
+                &ignored,
+            )
         })
         .await
         .map_err(|error| format!("Parent snapshot task failed: {error}"))??;
@@ -435,7 +568,10 @@ impl BackendState {
             || child_snapshot.branch.config_settings != delta.config_settings;
         let outcome = self.apply_persistent_profile_delta(id, &delta).map_err(|error| error.to_string())?;
         match outcome {
-            crate::profile_layout_flow::ReconcileOutcome::Ready { .. } => { self.record_parent_version(id, &parent_snapshot)?; Ok(changed) },
+            crate::profile_layout_flow::ReconcileOutcome::Ready { .. } => {
+                self.record_parent_version(id, &parent_snapshot)?;
+                Ok(changed)
+            },
             crate::profile_layout_flow::ReconcileOutcome::NeedsReconcile { conflicts, .. } => {
                 Err(format!("Local parent update needs attention: {}", conflicts.join(", ")))
             },

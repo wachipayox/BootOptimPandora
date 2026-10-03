@@ -289,6 +289,13 @@ pub enum MessageToBackend {
     GetBackendConfiguration {
         channel: tokio::sync::oneshot::Sender<BackendConfig>,
     },
+    SetIgnoredProfilePaths {
+        paths: Vec<String>,
+    },
+    AddIgnoredProfilePath {
+        path: String,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     GetGlobalProfiles {
         channel: tokio::sync::oneshot::Sender<Result<Vec<GlobalProfileSummary>, String>>,
     },
@@ -312,6 +319,12 @@ pub enum MessageToBackend {
         id: InstanceID,
         path: String,
         channel: tokio::sync::oneshot::Sender<Result<String, String>>,
+    },
+    RestoreProfileFile {
+        id: InstanceID,
+        path: String,
+        source: crate::profile_overwrites::RestoreSource,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
     CheckInheritedUpdates {
         id: InstanceID,
