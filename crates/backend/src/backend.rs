@@ -165,6 +165,16 @@ pub fn start(
     let secret_storage = Arc::new(OnceCell::new());
 
     let mut config: Persistent<BackendConfig> = Persistent::load(directories.config_json.clone());
+    if config.get().ignored_profile_defaults_version < 1 {
+        config.modify(|settings| {
+            let mut paths = settings.ignored_profile_paths.0.clone();
+            paths.extend(schema::ignored_profile_paths::IgnoredProfilePaths::recommended_defaults());
+            if let Ok(paths) = schema::ignored_profile_paths::IgnoredProfilePaths::normalized(paths) {
+                settings.ignored_profile_paths = paths;
+            }
+            settings.ignored_profile_defaults_version = 1;
+        });
+    }
     let proxy_config = config.get().proxy.clone();
     let proxy_password: Option<String> = if proxy_config.enabled && proxy_config.auth_enabled {
         runtime.block_on(async {

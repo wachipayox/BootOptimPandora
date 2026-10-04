@@ -35,6 +35,7 @@ pub struct InstancePage {
     data: DataEntities,
     pub instance: Entity<InstanceEntry>,
     subpage: InstanceSubpage,
+    overwrites_subpage: Option<Entity<InstanceOverwritesSubpage>>,
 }
 
 impl InstancePage {
@@ -51,10 +52,15 @@ impl InstancePage {
                 .unwrap()
         });
 
+        let overwrites_subpage = match &subpage {
+            InstanceSubpage::Overwrites(page) => Some(page.clone()),
+            _ => None,
+        };
         Self {
             data: data.clone(),
             instance,
             subpage,
+            overwrites_subpage,
         }
     }
 }
@@ -189,8 +195,16 @@ impl Render for InstancePage {
         }
         let instance_subpage = InterfaceConfig::get(cx).instance_subpage;
         if instance_subpage != self.subpage.page_type() {
-            let subpage =
-                instance_subpage.create(&self.instance, &self.data, self.data.backend_handle.clone(), window, cx);
+            let subpage = if instance_subpage == InstanceSubpageType::Overwrites {
+                self.overwrites_subpage.clone().map(|page| {
+                    page.update(cx, |page, cx| page.on_reenter(window, cx));
+                    InstanceSubpage::Overwrites(page)
+                }).or_else(|| {
+                    instance_subpage.create(&self.instance, &self.data, self.data.backend_handle.clone(), window, cx)
+                })
+            } else {
+                instance_subpage.create(&self.instance, &self.data, self.data.backend_handle.clone(), window, cx)
+            };
 
             self.subpage = subpage.unwrap_or_else(|| {
                 InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Quickplay;
@@ -198,6 +212,9 @@ impl Render for InstancePage {
                     .create(&self.instance, &self.data, self.data.backend_handle.clone(), window, cx)
                     .unwrap()
             });
+            if let InstanceSubpage::Overwrites(page) = &self.subpage {
+                self.overwrites_subpage = Some(page.clone());
+            }
         }
 
         let entry = self.instance.read(cx);

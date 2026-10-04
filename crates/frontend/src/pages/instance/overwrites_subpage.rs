@@ -32,6 +32,7 @@ pub struct InstanceOverwritesSubpage {
     notice: Option<String>,
     busy: bool,
     _load: Task<()>,
+    _policy_check: Task<()>,
     _read: Task<()>,
     _save: Task<()>,
 }
@@ -176,6 +177,7 @@ impl InstanceOverwritesSubpage {
             notice: None,
             busy: false,
             _load: Task::ready(()),
+            _policy_check: Task::ready(()),
             _read: Task::ready(()),
             _save: Task::ready(()),
         };
@@ -190,7 +192,6 @@ impl InstanceOverwritesSubpage {
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.report = None;
         let (channel, receive) = tokio::sync::oneshot::channel();
         self.backend.send(MessageToBackend::GetProfileOverwrites {
             id: self.instance,
@@ -203,6 +204,39 @@ impl InstanceOverwritesSubpage {
                 cx.notify();
             });
         });
+        cx.notify();
+    }
+
+    pub(crate) fn on_reenter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (channel, receive) = tokio::sync::oneshot::channel();
+        self.backend.send(MessageToBackend::GetBackendConfiguration { channel });
+        self._policy_check = cx.spawn_in(window, async move |page, cx| {
+            if let Ok(config) = receive.await {
+                _ = page.update_in(cx, |page, window, cx| {
+                    let new_paths = config.ignored_profile_paths.0;
+                    let Some(Ok(report)) = &page.report else { return; };
+                    if report.ignored_paths == new_paths { return; }
+                    if report.ignored_paths.iter().all(|path| new_paths.contains(path)) {
+                        page.apply_ignore_policy(new_paths, cx);
+                    } else {
+                        page.reload(window, cx);
+                    }
+                });
+            }
+        });
+    }
+
+    fn apply_ignore_policy(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        let Some(Ok(report)) = &mut self.report else { return; };
+        let ignored = schema::ignored_profile_paths::IgnoredProfilePaths(paths.clone());
+        report.ignored_paths = paths;
+        report.files.retain(|file| !ignored.contains(&file.path));
+        report.local_changes.retain(|change| !ignored.contains(&change.path));
+        report.global_changes.retain(|change| !ignored.contains(&change.path));
+        if self.selected.as_ref().is_some_and(|path| ignored.contains(path)) {
+            self.selected = None;
+            self.text = None;
+        }
         cx.notify();
     }
 
@@ -327,14 +361,17 @@ impl InstanceOverwritesSubpage {
         self.busy = true;
         self._save = cx.spawn_in(window, async move |page, cx| {
             let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
-            _ = page.update_in(cx, |page, window, cx| {
+            _ = page.update_in(cx, |page, _, cx| {
                 page.busy = false;
                 match result {
                     Ok(()) => {
-                        page.selected = None;
-                        page.text = None;
                         page.notice = Some(format!("/{path} está en la lista global de ignorados."));
-                        page.reload(window, cx);
+                        let mut paths = page.report.as_ref().and_then(|report| report.as_ref().ok())
+                            .map(|report| report.ignored_paths.clone()).unwrap_or_default();
+                        paths.push(path.clone());
+                        if let Ok(paths) = schema::ignored_profile_paths::IgnoredProfilePaths::normalized(paths) {
+                            page.apply_ignore_policy(paths.0, cx);
+                        }
                     },
                     Err(error) => page.notice = Some(format!("No se pudo ignorar la ruta: {error}")),
                 }

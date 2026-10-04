@@ -5,6 +5,8 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
+    sync::OnceLock,
+    time::UNIX_EPOCH,
 };
 
 use bridge::{
@@ -15,6 +17,14 @@ use bridge::{
 };
 use schema::ignored_profile_paths::IgnoredProfilePaths;
 use sha2::{Digest, Sha256};
+
+struct CachedFileHash {
+    size: u64,
+    modified_nanos: u128,
+    sha256: String,
+}
+
+static FILE_HASH_CACHE: OnceLock<parking_lot::Mutex<HashMap<PathBuf, CachedFileHash>>> = OnceLock::new();
 
 use crate::{
     BackendState,
@@ -700,6 +710,16 @@ fn file_hash(path: &Path, hashes: &mut HashMap<PathBuf, String>) -> Result<Strin
     if let Some(digest) = hashes.get(path) {
         return Ok(digest.clone());
     }
+    let metadata = fs::metadata(path).map_err(|error| format!("Unable to inspect {}: {error}", path.display()))?;
+    let modified_nanos = metadata.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_nanos());
+    let cache = FILE_HASH_CACHE.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().get(path) {
+        if hit.size == metadata.len() && hit.modified_nanos == modified_nanos {
+            hashes.insert(path.to_path_buf(), hit.sha256.clone());
+            return Ok(hit.sha256.clone());
+        }
+    }
     let mut file = fs::File::open(path).map_err(|error| format!("Unable to compare {}: {error}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 128 * 1024];
@@ -713,6 +733,17 @@ fn file_hash(path: &Path, hashes: &mut HashMap<PathBuf, String>) -> Result<Strin
         hasher.update(&buffer[..read]);
     }
     let digest = hex::encode(hasher.finalize());
+    let after = fs::metadata(path).map_err(|error| format!("Unable to inspect {}: {error}", path.display()))?;
+    let after_modified = after.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_nanos());
+    if after.len() != metadata.len() || after_modified != modified_nanos {
+        return Err(format!("{} changed while being compared; refresh the list", path.display()));
+    }
     hashes.insert(path.to_path_buf(), digest.clone());
+    let mut cache = cache.lock();
+    if cache.len() >= 20_000 { cache.clear(); }
+    cache.insert(path.to_path_buf(), CachedFileHash {
+        size: metadata.len(), modified_nanos, sha256: digest.clone(),
+    });
     Ok(digest)
 }

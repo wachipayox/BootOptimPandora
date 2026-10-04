@@ -16,17 +16,23 @@ pub(super) fn create_page() -> SettingPage {
             items: vec![SettingItem {
                 title: || "Archivos ignorados del modpack",
                 description: || "Rutas de .minecraft omitidas al buscar cambios y heredar archivos.",
-                widget: SettingItemWidget::BackendWide(Rc::new(|config, root, _, cx| {
+                widget: SettingItemWidget::BackendWide(Rc::new(|config, root, window, cx| {
                     let muted = cx.theme().muted_foreground;
                     let border = cx.theme().border;
+                    let list_height = (window.viewport_size().height.as_f32() - 310.0).max(160.0);
                     let mut list = v_flex().gap_1();
                     for path in &config.ignored_profile_paths.0 {
                         let remove = path.clone();
+                        let label = if path == "*" {
+                            "Otras rutas fuera del modpack habitual".to_owned()
+                        } else {
+                            format!("/{path}")
+                        };
                         list = list.child(h_flex().w_full().items_center().justify_between().gap_3()
                             .px_3().py_2().rounded_md().border_1().border_color(border)
                             .child(h_flex().items_center().gap_2().min_w_0()
                                 .child(Icon::new(PandoraIcon::Folder).size_4().text_color(muted))
-                                .child(div().font_family("Consolas").text_sm().truncate().child(format!("/{path}"))))
+                                .child(div().font_family("Consolas").text_sm().truncate().child(label)))
                             .child(Button::new(SharedString::from(format!("unignore-{path}")))
                                 .label("Quitar").small()
                                 .on_click(cx.listener(move |root, _, _, cx| root.remove_ignored_path(&remove, cx)))));
@@ -50,8 +56,17 @@ pub(super) fn create_page() -> SettingPage {
                         .child(div().text_xs().text_color(muted)
                             .child("Ejemplos: /mods/.connector, /.analogaudio, /config/client-cache"))
                         .child(div().text_sm().font_semibold()
-                            .child(format!("{} rutas", config.ignored_profile_paths.0.len())))
-                        .child(v_flex().max_h(px(275.0)).overflow_y_scrollbar().child(list))
+                            .child(format!("{} reglas", config.ignored_profile_paths.0.len())))
+                        .when(config.ignored_profile_paths.0.iter().any(|path| path == "*"), |view| {
+                            view.child(div().text_xs().text_color(muted)
+                                .child("«Otras rutas» omite carpetas generadas fuera del modpack habitual. Puedes quitar esa regla."))
+                        })
+                        .when((config.ignored_profile_paths.0.len() as f32 * 56.0) > list_height, |view| {
+                            view.child(div().text_xs().text_color(muted)
+                                .child("Desplaza la lista para ver las demás reglas."))
+                        })
+                        .child(v_flex().id("ignored-profile-path-list")
+                            .max_h(px(list_height)).pr_3().overflow_y_scrollbar().child(list))
                         .into_any_element()
                 })),
                 ..Default::default()

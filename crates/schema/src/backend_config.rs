@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 pub struct BackendConfig {
     #[serde(default)]
     pub ignored_profile_paths: crate::ignored_profile_paths::IgnoredProfilePaths,
+    /// One-time migration so new recommended paths reach existing installations.
+    #[serde(default)]
+    pub ignored_profile_defaults_version: u8,
     #[serde(
         default,
         skip_serializing_if = "is_default_sync_targets",
