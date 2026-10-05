@@ -33,6 +33,7 @@ pub struct InstanceOverwritesSubpage {
     ancestor_level: usize,
     ancestor_cache: BTreeMap<(String, usize), ProfileAncestorText>,
     diff_rows: Vec<DiffRow>,
+    diff_hunks: Vec<(usize, usize, bool, bool)>,
     diff_width: f32,
     diff_scroll: UniformListScrollHandle,
     editing: bool,
@@ -300,6 +301,7 @@ impl InstanceOverwritesSubpage {
             ancestor_level: 0,
             ancestor_cache: BTreeMap::new(),
             diff_rows: Vec::new(),
+            diff_hunks: Vec::new(),
             diff_width: 0.,
             diff_scroll: UniformListScrollHandle::new(),
             editing: false,
@@ -450,7 +452,7 @@ impl InstanceOverwritesSubpage {
                 receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()))
             };
             let right = result.as_ref().ok().and_then(|r| r.contents.clone()).unwrap_or_default();
-            let (rows, width) = cx
+            let (rows, width, hunks) = cx
                 .background_executor()
                 .spawn(async move {
                     let rows = diff_lines(&local, &right);
@@ -461,7 +463,24 @@ impl InstanceOverwritesSubpage {
                         .map(|(_, text)| text.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum::<usize>())
                         .max()
                         .unwrap_or(0);
-                    (rows, (width as f32 * 8.5 + 68.) * 2.)
+                    let mut hunks = Vec::new();
+                    let mut start = 0;
+                    while start < rows.len() {
+                        if !rows[start].changed {
+                            start += 1;
+                            continue;
+                        }
+                        let mut end = start;
+                        let (mut local, mut parent) = (false, false);
+                        while end < rows.len() && rows[end].changed {
+                            local |= rows[end].left.is_some();
+                            parent |= rows[end].right.is_some();
+                            end += 1;
+                        }
+                        hunks.push((start, end - start, local, parent));
+                        start = end;
+                    }
+                    (rows, (width as f32 * 8.5 + 68.) * 2., hunks)
                 })
                 .await;
             _ = page.update_in(cx, |page, _, cx| {
@@ -476,6 +495,7 @@ impl InstanceOverwritesSubpage {
                 }
                 page.ancestor = Some(result);
                 page.diff_rows = rows;
+                page.diff_hunks = hunks;
                 page.diff_width = width;
                 cx.notify();
             });
@@ -588,11 +608,14 @@ impl InstanceOverwritesSubpage {
                     };
                     let list = uniform_list(
                         if left { "config-diff-left" } else { "config-diff-right" },
-                        self.diff_rows.len(),
+                        self.diff_rows.len() + 1,
                         cx.processor(move |page, range: std::ops::Range<usize>, _, _| {
                             range
                                 .map(|index| {
-                                    let row = &page.diff_rows[index];
+                                    // Extra empty row keeps the final real line above the overlay scrollbar.
+                                    let Some(row) = page.diff_rows.get(index) else {
+                                        return div().w_full().h(px(24.));
+                                    };
                                     div().w_full().h(px(24.)).font_family("Consolas").text_sm().child(diff_cell(
                                         if left { &row.left } else { &row.right },
                                         row.changed,
@@ -619,6 +642,27 @@ impl InstanceOverwritesSubpage {
                         ),
                     );
                 }
+                let total = (self.diff_rows.len() + 1) as f32;
+                let mut overview = div().relative().w(px(12.)).h_full().bg(secondary.opacity(0.25));
+                for &(start, count, local, parent) in &self.diff_hunks {
+                    overview = overview.child(
+                        h_flex()
+                            .id(("diff-change-marker", start))
+                            .absolute()
+                            .left_0()
+                            .w_full()
+                            .top(relative(start as f32 / total))
+                            .h(relative(count as f32 / total))
+                            .min_h(px(3.))
+                            .cursor_pointer()
+                            .child(div().w_1_2().h_full().when(local, |this| this.bg(rgb(0x2ea043))))
+                            .child(div().w_1_2().h_full().when(parent, |this| this.bg(rgb(0xf85149))))
+                            .on_click(cx.listener(move |page, _, _, cx| {
+                                page.diff_scroll.scroll_to_item(start, ScrollStrategy::Center);
+                                cx.notify();
+                            })),
+                    );
+                }
                 view = view.child(
                     h_flex()
                         .flex_1()
@@ -626,7 +670,15 @@ impl InstanceOverwritesSubpage {
                         .border_1()
                         .border_color(border)
                         .child(div().flex_1().min_w_0().h_full().child(panels))
-                        .child(div().w_3().h_full().pt(px(44.)).child(Scrollbar::vertical(&self.diff_scroll))),
+                        .child(
+                            v_flex().h_full().flex_shrink_0().pt(px(44.)).child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .child(overview)
+                                    .child(div().w_3().h_full().child(Scrollbar::vertical(&self.diff_scroll))),
+                            ),
+                        ),
                 );
             },
         }
