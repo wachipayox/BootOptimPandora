@@ -452,7 +452,7 @@ impl DistributionClient {
             .await
     }
 
-    async fn fetch_revision(
+    pub(crate) async fn fetch_revision(
         &self,
         profile_id: &str,
         revision_id: &str,

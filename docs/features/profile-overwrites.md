@@ -53,6 +53,26 @@ pack. Global comparison requests signed revision metadata but does not
 download modpack objects. If the distribution service is unavailable, the
 local-parent section remains available and the global section shows the error.
 
+## Text comparison
+
+Selecting TOML, properties, TXT, CFG, INI, JSON, MCMETA, YAML or YML opens an
+aligned comparison: the instance on the left, the selected ancestor on the
+right. The right header selects the mother, grandmother, or another ancestor
+up to eight levels, following local parents and then the pinned global revision
+chain. Local ancestors show their current files; global ancestors show their
+installed revision, including its effective enforced and initial config rules.
+Only the selected ancestor's content object is downloaded, with signature/hash
+verification. Missing files are represented by an empty column.
+
+Line numbers and green/red backgrounds distinguish local and ancestor changes.
+Both columns scroll together; long lines have horizontal scrolling. Diff work
+runs off the UI thread, uses bounded LCS with a bounded-window fallback for large
+files, and virtualizes rows. Text previews remain limited to 1 MiB per file.
+The per-page ancestor cache holds at most 32 path/level results and is cleared by
+explicit refresh, save, or restoration. Select **Editar archivo** to use the
+existing guarded editor; save or discard changes before returning to comparison.
+If the server is unavailable, available local comparisons remain usable.
+
 The tab keeps its report while navigating among pages of the same instance.
 Adding an ignored path removes matching rows from that report immediately.
 On return, a cheap config read checks whether the ignore policy changed; added

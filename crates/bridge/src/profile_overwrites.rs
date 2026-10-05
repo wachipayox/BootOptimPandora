@@ -19,6 +19,12 @@ pub struct ProfileTextFile {
     pub sha256: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct ProfileAncestorText {
+    pub ancestors: Vec<String>,
+    pub contents: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RestoreSource {
     LocalParent,

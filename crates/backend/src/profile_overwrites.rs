@@ -49,6 +49,134 @@ struct SignedEntry {
 }
 
 impl BackendState {
+    pub(crate) async fn read_profile_ancestor_text(
+        &self,
+        id: InstanceID,
+        path: String,
+        level: usize,
+    ) -> Result<bridge::profile_overwrites::ProfileAncestorText, String> {
+        if level >= 8 || !text_extension(&path) {
+            return Err("Unsupported text file or ancestor level".into());
+        }
+        crate::profile_branch::validate_profile_relative_path(&path).map_err(|e| e.to_string())?;
+        let mut root = self
+            .instance_state
+            .read()
+            .instances
+            .get(id)
+            .ok_or("Instance is no longer available")?
+            .root_path
+            .to_path_buf();
+        let mut names = Vec::new();
+        let mut selected_local = None;
+        let mut selected_global = None;
+        let mut seen = BTreeSet::new();
+        let mut global = None;
+        while names.len() < 8 {
+            let Some(manifest) =
+                crate::profile_layout_flow::read_committed_manifest(&root).map_err(|e| e.to_string())?
+            else {
+                break;
+            };
+            match manifest.branch.lineage.parent {
+                Some(ProfileParentRef::LocalProfile { profile_uuid }) => {
+                    if !seen.insert(profile_uuid) {
+                        return Err("Cyclic local ancestry".into());
+                    }
+                    let parent_id = self
+                        .find_instance_id_for_profile_uuid(profile_uuid)
+                        .ok_or("The local ancestor has been deleted")?;
+                    let state = self.instance_state.read();
+                    let parent = state.instances.get(parent_id).ok_or("Local ancestor is unavailable")?;
+                    if names.len() == level {
+                        selected_local = Some(parent.dot_minecraft_path.to_path_buf());
+                    }
+                    names.push(format!("{} · local", parent.name));
+                    root = parent.root_path.to_path_buf();
+                },
+                Some(ProfileParentRef::GlobalRevision { pin }) => {
+                    global = Some(manifest.branch.applied_revision.unwrap_or(pin));
+                    break;
+                },
+                None => {
+                    break;
+                },
+            }
+        }
+        if let Some(mut pin) = global {
+            let config = self.config.lock().get().distribution.clone();
+            let client = DistributionClient::new(&config).map_err(|e| e.to_string())?;
+            let mut seen_global = BTreeSet::new();
+            while names.len() < 8 {
+                if !seen_global.insert(pin.clone()) {
+                    return Err("Cyclic global ancestry".into());
+                }
+                let revision =
+                    match client.fetch_revision(&pin.profile_id, &pin.revision_id, &pin.manifest_sha256, None).await {
+                        Ok(revision) => revision,
+                        Err(_) if selected_local.is_some() => break,
+                        Err(error) => return Err(error.to_string()),
+                    };
+                if names.len() == level {
+                    selected_global = Some(pin.clone());
+                }
+                names.push(format!("{} · global", revision.manifest.profile.name));
+                let Some(base) = revision.manifest.base else {
+                    break;
+                };
+                pin = GlobalRevisionPin {
+                    profile_id: base.profile_id,
+                    revision_id: base.revision_id,
+                    manifest_sha256: base.manifest_sha256,
+                };
+            }
+            if let Some(pin) = selected_global {
+                let cache = self.directories.root_launcher_dir.join("distribution-objects");
+                let resolved = client.resolve_profile_metadata(&pin).await.map_err(|e| e.to_string())?;
+                let source = client.fetch_pinned_file(&pin, &path, &cache).await.map_err(|e| e.to_string())?;
+                let contents = tokio::task::spawn_blocking(move || {
+                    source
+                        .map(|(file, relative)| {
+                            let published = read_text_contents(&file)?;
+                            let merged = crate::config_settings::merge_config_settings(
+                                &relative,
+                                published.as_bytes(),
+                                None,
+                                &BTreeSet::new(),
+                                &resolved.config_settings,
+                            )
+                            .map_err(|e| e.to_string())?;
+                            String::from_utf8(merged.bytes).map_err(|e| e.to_string())
+                        })
+                        .transpose()
+                })
+                .await
+                .map_err(|e| e.to_string())??;
+                return Ok(bridge::profile_overwrites::ProfileAncestorText {
+                    ancestors: names,
+                    contents,
+                });
+            }
+        }
+        let contents = tokio::task::spawn_blocking(move || {
+            selected_local
+                .map(|root| {
+                    if !root.join(&path).exists() {
+                        return Ok(None);
+                    }
+                    read_text(&root, &path).map(|file| Some(file.contents))
+                })
+                .transpose()
+                .map(Option::flatten)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        Ok(bridge::profile_overwrites::ProfileAncestorText {
+            ancestors: names,
+            contents,
+        })
+    }
+
     pub(crate) async fn profile_overwrites_report(&self, id: InstanceID) -> Result<ProfileOverwritesReport, String> {
         let (root, minecraft) = {
             let state = self.instance_state.read();
@@ -491,6 +619,15 @@ fn checked_text_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
 
 fn read_text(root: &Path, relative: &str) -> Result<ProfileTextFile, String> {
     let path = checked_text_path(root, relative)?;
+    let contents = read_text_contents(&path)?;
+    Ok(ProfileTextFile {
+        path: relative.into(),
+        sha256: hex::encode(Sha256::digest(contents.as_bytes())),
+        contents,
+    })
+}
+
+fn read_text_contents(path: &Path) -> Result<String, String> {
     if fs::metadata(&path).map_err(|error| error.to_string())?.len() > 1024 * 1024 {
         return Err("Text preview is limited to 1 MiB per file.".into());
     }
@@ -502,11 +639,7 @@ fn read_text(root: &Path, relative: &str) -> Result<ProfileTextFile, String> {
     if contents.contains('\0') {
         return Err("Binary files cannot be edited here.".into());
     }
-    Ok(ProfileTextFile {
-        path: relative.into(),
-        contents,
-        sha256: hex::encode(Sha256::digest(&bytes)),
-    })
+    Ok(contents)
 }
 
 fn save_text(root: &Path, relative: &str, contents: &str, expected_sha256: &str) -> Result<ProfileTextFile, String> {
@@ -711,7 +844,10 @@ fn file_hash(path: &Path, hashes: &mut HashMap<PathBuf, String>) -> Result<Strin
         return Ok(digest.clone());
     }
     let metadata = fs::metadata(path).map_err(|error| format!("Unable to inspect {}: {error}", path.display()))?;
-    let modified_nanos = metadata.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+    let modified_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |duration| duration.as_nanos());
     let cache = FILE_HASH_CACHE.get_or_init(Default::default);
     if let Some(hit) = cache.lock().get(path) {
@@ -734,16 +870,26 @@ fn file_hash(path: &Path, hashes: &mut HashMap<PathBuf, String>) -> Result<Strin
     }
     let digest = hex::encode(hasher.finalize());
     let after = fs::metadata(path).map_err(|error| format!("Unable to inspect {}: {error}", path.display()))?;
-    let after_modified = after.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+    let after_modified = after
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |duration| duration.as_nanos());
     if after.len() != metadata.len() || after_modified != modified_nanos {
         return Err(format!("{} changed while being compared; refresh the list", path.display()));
     }
     hashes.insert(path.to_path_buf(), digest.clone());
     let mut cache = cache.lock();
-    if cache.len() >= 20_000 { cache.clear(); }
-    cache.insert(path.to_path_buf(), CachedFileHash {
-        size: metadata.len(), modified_nanos, sha256: digest.clone(),
-    });
+    if cache.len() >= 20_000 {
+        cache.clear();
+    }
+    cache.insert(
+        path.to_path_buf(),
+        CachedFileHash {
+            size: metadata.len(),
+            modified_nanos,
+            sha256: digest.clone(),
+        },
+    );
     Ok(digest)
 }

@@ -308,6 +308,12 @@ pub enum MessageToBackend {
         path: String,
         channel: tokio::sync::oneshot::Sender<Result<crate::profile_overwrites::ProfileTextFile, String>>,
     },
+    ReadProfileAncestorText {
+        id: InstanceID,
+        path: String,
+        level: usize,
+        channel: tokio::sync::oneshot::Sender<Result<crate::profile_overwrites::ProfileAncestorText, String>>,
+    },
     SaveProfileTextFile {
         id: InstanceID,
         path: String,

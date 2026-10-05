@@ -1667,6 +1667,12 @@ impl BackendState {
                     let _ = channel.send(backend.read_profile_text_file(id, path).await);
                 });
             },
+            MessageToBackend::ReadProfileAncestorText { id, path, level, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let _ = channel.send(backend.read_profile_ancestor_text(id, path, level).await);
+                });
+            },
             MessageToBackend::SaveProfileTextFile {
                 id,
                 path,

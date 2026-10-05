@@ -6,16 +6,18 @@ use bridge::{
     handle::BackendHandle,
     instance::InstanceID,
     message::MessageToBackend,
-    profile_overwrites::{OverwriteChange, ProfileOverwritesReport, ProfileTextFile, RestoreSource},
+    profile_overwrites::{
+        OverwriteChange, ProfileAncestorText, ProfileOverwritesReport, ProfileTextFile, RestoreSource,
+    },
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, Disableable, Icon, Sizable, StyledExt, WindowExt,
-    button::Button,
+    button::{Button, DropdownButton},
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     menu::{ContextMenuExt, PopupMenuItem},
-    scroll::ScrollableElement,
+    scroll::{ScrollableElement, Scrollbar},
     v_flex,
 };
 
@@ -26,6 +28,13 @@ pub struct InstanceOverwritesSubpage {
     expanded: BTreeSet<String>,
     selected: Option<String>,
     text: Option<Result<ProfileTextFile, String>>,
+    ancestor: Option<Result<ProfileAncestorText, String>>,
+    ancestor_level: usize,
+    ancestor_cache: BTreeMap<(String, usize), ProfileAncestorText>,
+    diff_rows: Vec<DiffRow>,
+    diff_scroll: UniformListScrollHandle,
+    editing: bool,
+    _ancestor_read: Task<()>,
     editor: Entity<TextareaState>,
     search: Entity<InputState>,
     only_changes: bool,
@@ -41,6 +50,120 @@ struct TreeRow {
     path: String,
     folder: bool,
     connector: String,
+}
+
+struct DiffRow {
+    left: Option<(usize, String)>,
+    right: Option<(usize, String)>,
+    changed: bool,
+}
+
+// Bounded LCS for ordinary configs; large files use a bounded alignment window.
+// Work runs on the background executor, and rows are virtualized in the viewer.
+fn diff_lines(left: &str, right: &str) -> Vec<DiffRow> {
+    let a: Vec<_> = left.split_inclusive('\n').collect();
+    let b: Vec<_> = right.split_inclusive('\n').collect();
+    let width = b.len() + 1;
+    let mut table = if (a.len() + 1).saturating_mul(width) <= 2_000_000 {
+        vec![0u32; (a.len() + 1) * width]
+    } else {
+        Vec::new()
+    };
+    if !table.is_empty() {
+        for i in (0..a.len()).rev() {
+            for j in (0..b.len()).rev() {
+                table[i * width + j] = if a[i] == b[j] {
+                    1 + table[(i + 1) * width + j + 1]
+                } else {
+                    table[(i + 1) * width + j].max(table[i * width + j + 1])
+                };
+            }
+        }
+    }
+    let mut rows = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    let mut removed = Vec::new();
+    let mut added = Vec::new();
+    let flush = |rows: &mut Vec<DiffRow>, removed: &mut Vec<(usize, String)>, added: &mut Vec<(usize, String)>| {
+        let mut l = removed.drain(..);
+        let mut r = added.drain(..);
+        loop {
+            let left = l.next();
+            let right = r.next();
+            if left.is_none() && right.is_none() {
+                break;
+            }
+            rows.push(DiffRow {
+                left,
+                right,
+                changed: true,
+            });
+        }
+    };
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i] == b[j] {
+            flush(&mut rows, &mut removed, &mut added);
+            rows.push(DiffRow {
+                left: Some((i + 1, a[i].into())),
+                right: Some((j + 1, b[j].into())),
+                changed: false,
+            });
+            i += 1;
+            j += 1;
+        } else {
+            let take_left = j == b.len()
+                || (i < a.len()
+                    && if !table.is_empty() {
+                        table[(i + 1) * width + j] >= table[i * width + j + 1]
+                    } else {
+                        let next_a = a.iter().skip(i + 1).take(64).position(|line| j < b.len() && *line == b[j]);
+                        let next_b = b.iter().skip(j + 1).take(64).position(|line| *line == a[i]);
+                        next_a.unwrap_or(65) <= next_b.unwrap_or(65)
+                    });
+            if take_left {
+                removed.push((i + 1, a[i].into()));
+                i += 1;
+            } else {
+                added.push((j + 1, b[j].into()));
+                j += 1;
+            }
+        }
+    }
+    flush(&mut rows, &mut removed, &mut added);
+    rows
+}
+
+fn ancestor_label(level: usize) -> String {
+    match level {
+        0 => "Madre".into(),
+        1 => "Abuela".into(),
+        _ => format!("Antepasado {}", level + 1),
+    }
+}
+
+fn diff_cell(line: &Option<(usize, String)>, changed: bool, left: bool, muted: Hsla, border: Hsla) -> Div {
+    let background = if changed && line.is_some() {
+        if left {
+            rgba(0x2ea04325).into()
+        } else {
+            rgba(0xf8514925).into()
+        }
+    } else {
+        transparent_black()
+    };
+    let (number, text) = line
+        .as_ref()
+        .map(|(n, t)| (n.to_string(), t.trim_end_matches(['\r', '\n']).replace('\t', "    ")))
+        .unwrap_or_default();
+    h_flex()
+        .w_1_2()
+        .min_w_0()
+        .h(px(24.))
+        .bg(background)
+        .border_r_1()
+        .border_color(border)
+        .child(div().w(px(58.)).flex_shrink_0().pr_3().text_right().text_color(muted).child(number))
+        .child(div().flex_1().min_w_0().whitespace_nowrap().overflow_hidden().child(text))
 }
 
 fn tree_rows(
@@ -171,6 +294,13 @@ impl InstanceOverwritesSubpage {
             expanded: BTreeSet::new(),
             selected: None,
             text: None,
+            ancestor: None,
+            ancestor_level: 0,
+            ancestor_cache: BTreeMap::new(),
+            diff_rows: Vec::new(),
+            diff_scroll: UniformListScrollHandle::new(),
+            editing: false,
+            _ancestor_read: Task::ready(()),
             editor: cx.new(|cx| TextareaState::new(window, cx).auto_grow(10, 24)),
             search,
             only_changes: false,
@@ -192,6 +322,7 @@ impl InstanceOverwritesSubpage {
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ancestor_cache.clear();
         let (channel, receive) = tokio::sync::oneshot::channel();
         self.backend.send(MessageToBackend::GetProfileOverwrites {
             id: self.instance,
@@ -199,8 +330,11 @@ impl InstanceOverwritesSubpage {
         });
         self._load = cx.spawn_in(window, async move |page, cx| {
             let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
-            _ = page.update_in(cx, |page, _, cx| {
+            _ = page.update_in(cx, |page, window, cx| {
                 page.report = Some(result);
+                if let Some(path) = page.selected.clone() {
+                    page.select(path, window, cx);
+                }
                 cx.notify();
             });
         });
@@ -214,8 +348,12 @@ impl InstanceOverwritesSubpage {
             if let Ok(config) = receive.await {
                 _ = page.update_in(cx, |page, window, cx| {
                     let new_paths = config.ignored_profile_paths.0;
-                    let Some(Ok(report)) = &page.report else { return; };
-                    if report.ignored_paths == new_paths { return; }
+                    let Some(Ok(report)) = &page.report else {
+                        return;
+                    };
+                    if report.ignored_paths == new_paths {
+                        return;
+                    }
                     if report.ignored_paths.iter().all(|path| new_paths.contains(path)) {
                         page.apply_ignore_policy(new_paths, cx);
                     } else {
@@ -227,7 +365,9 @@ impl InstanceOverwritesSubpage {
     }
 
     fn apply_ignore_policy(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
-        let Some(Ok(report)) = &mut self.report else { return; };
+        let Some(Ok(report)) = &mut self.report else {
+            return;
+        };
         let ignored = schema::ignored_profile_paths::IgnoredProfilePaths(paths.clone());
         report.ignored_paths = paths;
         report.files.retain(|file| !ignored.contains(&file.path));
@@ -244,11 +384,14 @@ impl InstanceOverwritesSubpage {
         self.selected = Some(path.clone());
         self.text = None;
         self.notice = None;
-        let editable = self
-            .report
-            .as_ref()
-            .and_then(|r| r.as_ref().ok())
-            .is_some_and(|r| r.files.iter().any(|file| file.path == path && file.editable));
+        self.editing = false;
+        self.ancestor_level = 0;
+        self.ancestor = None;
+        self.diff_rows.clear();
+        let editable = matches!(
+            path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str(),
+            "toml" | "properties" | "txt" | "cfg" | "ini" | "json" | "mcmeta" | "yaml" | "yml"
+        );
         if editable {
             let (channel, receive) = tokio::sync::oneshot::channel();
             self.backend.send(MessageToBackend::ReadProfileTextFile {
@@ -266,11 +409,204 @@ impl InstanceOverwritesSubpage {
                         page.editor.update(cx, |editor, cx| editor.set_value(file.contents.clone(), window, cx));
                     }
                     page.text = Some(result);
+                    page.load_ancestor(window, cx);
                     cx.notify();
                 });
             });
         }
         cx.notify();
+    }
+
+    fn load_ancestor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.selected.clone() else {
+            return;
+        };
+        self.ancestor = None;
+        self.diff_rows.clear();
+        let level = self.ancestor_level;
+        let cached = self.ancestor_cache.get(&(path.clone(), level)).cloned();
+        let local = self
+            .text
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map(|f| f.contents.clone())
+            .unwrap_or_default();
+        let (channel, receive) = tokio::sync::oneshot::channel();
+        if cached.is_none() {
+            self.backend.send(MessageToBackend::ReadProfileAncestorText {
+                id: self.instance,
+                path: path.clone(),
+                level,
+                channel,
+            });
+        }
+        self._ancestor_read = cx.spawn_in(window, async move |page, cx| {
+            let result = if let Some(cached) = cached {
+                Ok(cached)
+            } else {
+                receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()))
+            };
+            let right = result.as_ref().ok().and_then(|r| r.contents.clone()).unwrap_or_default();
+            let rows = cx.background_executor().spawn(async move { diff_lines(&local, &right) }).await;
+            _ = page.update_in(cx, |page, _, cx| {
+                if page.selected.as_deref() != Some(&path) || page.ancestor_level != level {
+                    return;
+                }
+                if let Ok(value) = &result {
+                    if page.ancestor_cache.len() >= 32 {
+                        page.ancestor_cache.clear();
+                    }
+                    page.ancestor_cache.insert((path, level), value.clone());
+                }
+                page.ancestor = Some(result);
+                page.diff_rows = rows;
+                cx.notify();
+            });
+        });
+        cx.notify();
+    }
+
+    fn comparison_view(&self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let secondary = cx.theme().secondary;
+        let mut view = v_flex().flex_1().min_h_0().gap_2();
+        let names = self
+            .ancestor
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map(|r| r.ancestors.clone())
+            .unwrap_or_default();
+        let label = names
+            .get(self.ancestor_level)
+            .map(|name| format!("{} · {name}", ancestor_label(self.ancestor_level)))
+            .unwrap_or_else(|| "Elegir antepasado".into());
+        let entity = cx.entity().downgrade();
+        view = view.child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(muted)
+                        .child("Verde: cambios de esta instancia · Rojo: contenido de la madre"),
+                )
+                .child(
+                    Button::new("edit-comparison-file")
+                        .label("Editar archivo")
+                        .disabled(!matches!(self.text, Some(Ok(_))) || self.busy)
+                        .on_click(cx.listener(|page, _, _, cx| {
+                            page.editing = true;
+                            cx.notify();
+                        })),
+                ),
+        );
+        view = view.child(
+            h_flex()
+                .w_full()
+                .rounded_t_md()
+                .bg(secondary)
+                .border_1()
+                .border_color(border)
+                .child(div().w_1_2().px_3().py_2().font_semibold().child("Esta instancia"))
+                .child(
+                    div().w_1_2().min_w_0().px_2().py_1().child(
+                        DropdownButton::new("comparison-ancestor")
+                            .small()
+                            .button(Button::new("ancestor-label").label(label))
+                            .dropdown_menu(move |mut menu, window, _| {
+                                for (level, name) in names.iter().enumerate() {
+                                    let Some(entity) = entity.upgrade() else {
+                                        break;
+                                    };
+                                    menu = menu.item(
+                                        PopupMenuItem::new(format!("{} · {name}", ancestor_label(level))).on_click(
+                                            window.listener_for(&entity, move |page: &mut Self, _, window, cx| {
+                                                page.ancestor_level = level;
+                                                page.load_ancestor(window, cx);
+                                            }),
+                                        ),
+                                    );
+                                }
+                                menu
+                            }),
+                    ),
+                ),
+        );
+        match &self.ancestor {
+            None => view = view.child(div().p_4().text_color(muted).child("Cargando comparación…")),
+            Some(Err(error)) => {
+                view =
+                    view.child(div().p_4().text_color(muted).child(format!("No se pudo leer el antepasado: {error}")))
+            },
+            Some(Ok(result)) if result.ancestors.is_empty() => {
+                view = view.child(
+                    div()
+                        .p_4()
+                        .text_color(muted)
+                        .child("Esta instancia no tiene una madre disponible para comparar."),
+                )
+            },
+            Some(Ok(result)) => {
+                if result.contents.is_none() {
+                    view =
+                        view.child(div().text_sm().text_color(muted).child("El archivo no existe en este antepasado."));
+                }
+                if !matches!(self.text, Some(Ok(_))) {
+                    view = view.child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child("El archivo no está disponible en esta instancia."),
+                    );
+                }
+                let width = self
+                    .diff_rows
+                    .iter()
+                    .flat_map(|r| [&r.left, &r.right])
+                    .filter_map(|line| line.as_ref())
+                    .map(|(_, text)| text.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum::<usize>())
+                    .max()
+                    .unwrap_or(0);
+                view = view.child(
+                    h_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .border_1()
+                        .border_color(border)
+                        .child(
+                            div().flex_1().min_w_0().h_full().overflow_x_scrollbar().child(
+                                uniform_list(
+                                    "config-diff-lines",
+                                    self.diff_rows.len(),
+                                    cx.processor(move |page, range: std::ops::Range<usize>, _, _| {
+                                        range
+                                            .map(|index| {
+                                                let row = &page.diff_rows[index];
+                                                h_flex()
+                                                    .w_full()
+                                                    .h(px(24.))
+                                                    .font_family("Consolas")
+                                                    .text_sm()
+                                                    .child(diff_cell(&row.left, row.changed, true, muted, border))
+                                                    .child(diff_cell(&row.right, row.changed, false, muted, border))
+                                            })
+                                            .collect::<Vec<_>>()
+                                    }),
+                                )
+                                .w_full()
+                                .h_full()
+                                .min_w(px((width as f32 * 8.5 + 68.) * 2.))
+                                .track_scroll(&self.diff_scroll),
+                            ),
+                        )
+                        .child(div().w_3().h_full().child(Scrollbar::vertical(&self.diff_scroll))),
+                );
+            },
+        }
+        view.into_any_element()
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -366,8 +702,12 @@ impl InstanceOverwritesSubpage {
                 match result {
                     Ok(()) => {
                         page.notice = Some(format!("/{path} está en la lista global de ignorados."));
-                        let mut paths = page.report.as_ref().and_then(|report| report.as_ref().ok())
-                            .map(|report| report.ignored_paths.clone()).unwrap_or_default();
+                        let mut paths = page
+                            .report
+                            .as_ref()
+                            .and_then(|report| report.as_ref().ok())
+                            .map(|report| report.ignored_paths.clone())
+                            .unwrap_or_default();
                         paths.push(path.clone());
                         if let Ok(paths) = schema::ignored_profile_paths::IgnoredProfilePaths::normalized(paths) {
                             page.apply_ignore_policy(paths.0, cx);
@@ -766,70 +1106,88 @@ impl Render for InstanceOverwritesSubpage {
                     if report.local_parent.is_some() || report.global_profile.is_some() {
                         details = details.child(sources);
                     }
-                    match &self.text {
-                        Some(Ok(file)) => {
-                            let dirty = self.editor.read(cx).value().as_str() != file.contents;
-                            details = details
-                                .child(
-                                    h_flex()
-                                        .justify_between()
-                                        .items_center()
-                                        .child(v_flex().child(div().font_semibold().child("Contenido")).child(
-                                            div().text_xs().text_color(muted).child(if dirty {
-                                                "Cambios sin guardar"
-                                            } else {
-                                                "Edición local de esta rama"
-                                            }),
-                                        ))
-                                        .child(
-                                            h_flex()
-                                                .gap_2()
-                                                .child(
-                                                    Button::new("discard-overwrite-text")
-                                                        .label("Descartar")
-                                                        .disabled(!dirty || self.busy)
-                                                        .on_click(cx.listener(|page, _, window, cx| {
-                                                            if let Some(Ok(file)) = &page.text {
-                                                                let original = file.contents.clone();
-                                                                page.editor.update(cx, |editor, cx| {
-                                                                    editor.set_value(original, window, cx)
-                                                                });
-                                                            }
-                                                        })),
-                                                )
-                                                .child(
-                                                    Button::new("save-overwrite-text")
-                                                        .label("Guardar cambios")
-                                                        .disabled(!dirty || self.busy)
-                                                        .on_click(
-                                                            cx.listener(|page, _, window, cx| page.save(window, cx)),
-                                                        ),
-                                                ),
+                    let is_text = matches!(
+                        path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str(),
+                        "toml" | "properties" | "txt" | "cfg" | "ini" | "json" | "mcmeta" | "yaml" | "yml"
+                    );
+                    if is_text && !self.editing {
+                        details = details.child(self.comparison_view(cx));
+                    } else {
+                        match &self.text {
+                            Some(Ok(file)) => {
+                                let dirty = self.editor.read(cx).value().as_str() != file.contents;
+                                details = details
+                                    .child(
+                                        h_flex()
+                                            .justify_between()
+                                            .items_center()
+                                            .child(v_flex().child(div().font_semibold().child("Contenido")).child(
+                                                div().text_xs().text_color(muted).child(if dirty {
+                                                    "Cambios sin guardar"
+                                                } else {
+                                                    "Edición local de esta rama"
+                                                }),
+                                            ))
+                                            .child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .child(
+                                                        Button::new("back-to-comparison")
+                                                            .label("Comparar")
+                                                            .disabled(dirty || self.busy)
+                                                            .on_click(cx.listener(|page, _, window, cx| {
+                                                                page.editing = false;
+                                                                page.load_ancestor(window, cx);
+                                                            })),
+                                                    )
+                                                    .child(
+                                                        Button::new("discard-overwrite-text")
+                                                            .label("Descartar")
+                                                            .disabled(!dirty || self.busy)
+                                                            .on_click(cx.listener(|page, _, window, cx| {
+                                                                if let Some(Ok(file)) = &page.text {
+                                                                    let original = file.contents.clone();
+                                                                    page.editor.update(cx, |editor, cx| {
+                                                                        editor.set_value(original, window, cx)
+                                                                    });
+                                                                }
+                                                            })),
+                                                    )
+                                                    .child(
+                                                        Button::new("save-overwrite-text")
+                                                            .label("Guardar cambios")
+                                                            .disabled(!dirty || self.busy)
+                                                            .on_click(
+                                                                cx.listener(|page, _, window, cx| {
+                                                                    page.save(window, cx)
+                                                                }),
+                                                            ),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(v_flex().flex_1().overflow_y_scrollbar().child(Textarea::new(&self.editor)));
+                            },
+                            Some(Err(error)) => {
+                                details = details.child(
+                                    div()
+                                        .p_4()
+                                        .rounded_md()
+                                        .bg(secondary)
+                                        .child(format!("No se puede previsualizar este archivo: {error}")),
+                                );
+                            },
+                            None if selected_file.is_some_and(|file| file.editable) => {
+                                details = details.child(div().text_color(muted).child("Abriendo archivo de texto…"));
+                            },
+                            None => {
+                                details =
+                                    details.child(
+                                        div().p_4().rounded_md().bg(secondary).child(
+                                            "Archivo binario o eliminado. La edición de texto no está disponible.",
                                         ),
-                                )
-                                .child(v_flex().flex_1().overflow_y_scrollbar().child(Textarea::new(&self.editor)));
-                        },
-                        Some(Err(error)) => {
-                            details = details.child(
-                                div()
-                                    .p_4()
-                                    .rounded_md()
-                                    .bg(secondary)
-                                    .child(format!("No se puede previsualizar este archivo: {error}")),
-                            );
-                        },
-                        None if selected_file.is_some_and(|file| file.editable) => {
-                            details = details.child(div().text_color(muted).child("Abriendo archivo de texto…"));
-                        },
-                        None => {
-                            details = details.child(
-                                div()
-                                    .p_4()
-                                    .rounded_md()
-                                    .bg(secondary)
-                                    .child("Archivo binario o eliminado. La edición de texto no está disponible."),
-                            );
-                        },
+                                    );
+                            },
+                        }
                     }
                     if selected_file.is_some()
                         && path.to_ascii_lowercase().starts_with("mods/")
