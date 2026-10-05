@@ -15,7 +15,7 @@ impl Default for IgnoredProfilePaths {
 
 impl IgnoredProfilePaths {
     /// `*` excludes roots outside the small set of conventional modpack content.
-    /// It can be removed from Settings like any other default rule.
+    /// Settings exposes this rule as the reversible "Otras" checkbox.
     pub fn recommended_defaults() -> Vec<String> {
         [
             "*", "mods/.connector", "mods/mcef-cache", "mods/mcef-libraries",
@@ -69,9 +69,8 @@ impl IgnoredProfilePaths {
 fn is_conventional_modpack_root(root: &str) -> bool {
     matches!(root,
         "mods" | "config" | "defaultconfigs" | "resourcepacks" | "shaderpacks"
-        | "datapacks" | "kubejs" | "scripts" | "fancymenu_data"
+        | "datapacks" | "kubejs" | "scripts"
         | "openloader" | "global_packs" | "patchouli_books"
-        | "options.txt" | "servers.dat" | "optionsof.txt"
-        | "optionsshaders.txt" | "optionsviveprofiles.txt"
+        | "servers.dat" | "optionsof.txt" | "optionsshaders.txt"
     )
 }

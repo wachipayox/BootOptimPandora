@@ -63,13 +63,15 @@ the cache is bounded to 20,000 paths and a file changing during a hash is
 rejected for a later refresh.
 
 The default list includes `mods/mcef-libraries`, `.sable`, and `.voxy` as
-well as the initial cache paths. A removable `*` rule ignores other top-level
+well as the initial cache paths. The persistent "Otras" checkbox controls an internal `*` rule that ignores other top-level
 folders and files outside the conventional modpack roots (`mods`, `config`,
 `defaultconfigs`, `resourcepacks`, `shaderpacks`, `datapacks`, `kubejs`,
-`scripts`, `fancymenu_data`, `openloader`, `global_packs`,
+`scripts`, `openloader`, `global_packs`,
 `patchouli_books`, and common options/server files). Existing installs gain
 these defaults once through a versioned config migration; subsequent user
-removals are preserved. The settings list grows with the window and scrolls
+removals are preserved. `fancymenu_data`, `options.txt`, and `optionsviveprofiles.txt`
+are part of "Otras"; disabling its checkbox restores their visibility unless
+another explicit rule excludes them. The settings list grows with the window and scrolls
 when necessary.
 
 Worlds, logs, crash reports, screenshots, known player caches, session/cache state, game libraries,
