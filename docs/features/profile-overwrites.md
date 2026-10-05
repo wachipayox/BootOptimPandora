@@ -68,13 +68,13 @@ Line numbers and green/red backgrounds distinguish local and ancestor changes.
 Both columns scroll together vertically. Their draggable separator defaults to
 equal widths based on the viewport, independently of line length. Each column
 has its own horizontal scrolling for long lines, and headers resize with their
-column. The chosen split is retained while the comparison view is open. Diff work
+column. The chosen split is retained while the comparison view is open.
 An extra empty row at the bottom prevents horizontal overlay scrollbars from
 covering the last real line. A two-lane overview beside the vertical scrollbar
 marks local additions/changes in green and ancestor removals/changes in red;
 clicking a marker centers its first changed row in both columns. Contiguous
 changed blocks are grouped off the UI thread when the comparison is built.
-runs off the UI thread, uses bounded LCS with a bounded-window fallback for large
+Diff work runs off the UI thread, uses bounded LCS with a bounded-window fallback for large
 files, and virtualizes rows. Text previews remain limited to 1 MiB per file.
 The per-page ancestor cache holds at most 32 path/level results and is cleared by
 explicit refresh, save, or restoration. Select **Editar archivo** to use the
