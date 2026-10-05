@@ -32,6 +32,7 @@ pub struct InstanceOverwritesSubpage {
     ancestor_level: usize,
     ancestor_cache: BTreeMap<(String, usize), ProfileAncestorText>,
     diff_rows: Vec<DiffRow>,
+    diff_width: f32,
     diff_scroll: UniformListScrollHandle,
     editing: bool,
     _ancestor_read: Task<()>,
@@ -298,6 +299,7 @@ impl InstanceOverwritesSubpage {
             ancestor_level: 0,
             ancestor_cache: BTreeMap::new(),
             diff_rows: Vec::new(),
+            diff_width: 0.,
             diff_scroll: UniformListScrollHandle::new(),
             editing: false,
             _ancestor_read: Task::ready(()),
@@ -447,7 +449,20 @@ impl InstanceOverwritesSubpage {
                 receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()))
             };
             let right = result.as_ref().ok().and_then(|r| r.contents.clone()).unwrap_or_default();
-            let rows = cx.background_executor().spawn(async move { diff_lines(&local, &right) }).await;
+            let (rows, width) = cx
+                .background_executor()
+                .spawn(async move {
+                    let rows = diff_lines(&local, &right);
+                    let width = rows
+                        .iter()
+                        .flat_map(|r| [&r.left, &r.right])
+                        .filter_map(|line| line.as_ref())
+                        .map(|(_, text)| text.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum::<usize>())
+                        .max()
+                        .unwrap_or(0);
+                    (rows, (width as f32 * 8.5 + 68.) * 2.)
+                })
+                .await;
             _ = page.update_in(cx, |page, _, cx| {
                 if page.selected.as_deref() != Some(&path) || page.ancestor_level != level {
                     return;
@@ -460,6 +475,7 @@ impl InstanceOverwritesSubpage {
                 }
                 page.ancestor = Some(result);
                 page.diff_rows = rows;
+                page.diff_width = width;
                 cx.notify();
             });
         });
@@ -481,6 +497,11 @@ impl InstanceOverwritesSubpage {
             .get(self.ancestor_level)
             .map(|name| format!("{} · {name}", ancestor_label(self.ancestor_level)))
             .unwrap_or_else(|| "Elegir antepasado".into());
+        let label = if label.chars().count() > 45 {
+            format!("{}…", label.chars().take(44).collect::<String>())
+        } else {
+            label
+        };
         let entity = cx.entity().downgrade();
         view = view.child(
             h_flex()
@@ -562,14 +583,6 @@ impl InstanceOverwritesSubpage {
                             .child("El archivo no está disponible en esta instancia."),
                     );
                 }
-                let width = self
-                    .diff_rows
-                    .iter()
-                    .flat_map(|r| [&r.left, &r.right])
-                    .filter_map(|line| line.as_ref())
-                    .map(|(_, text)| text.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum::<usize>())
-                    .max()
-                    .unwrap_or(0);
                 view = view.child(
                     h_flex()
                         .flex_1()
@@ -598,7 +611,7 @@ impl InstanceOverwritesSubpage {
                                 )
                                 .w_full()
                                 .h_full()
-                                .min_w(px((width as f32 * 8.5 + 68.) * 2.))
+                                .min_w(px(self.diff_width))
                                 .track_scroll(&self.diff_scroll),
                             ),
                         )
