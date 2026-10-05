@@ -577,6 +577,30 @@ impl InstanceOverwritesSubpage {
                 )
             },
             Some(Ok(result)) => {
+                view = view.child(
+                    h_flex()
+                        .items_center()
+                        .gap_3()
+                        .child(div().flex_1().text_sm().text_color(muted).child(if self.diff_hunks.is_empty() {
+                            "Sin diferencias con el antepasado seleccionado. Puedes elegir otro en el selector."
+                                .to_string()
+                        } else {
+                            format!(
+                                "{} bloques de cambios · pulsa sus marcas verdes y rojas junto al scroll",
+                                self.diff_hunks.len()
+                            )
+                        }))
+                        .when(!self.diff_hunks.is_empty(), |this| {
+                            this.child(Button::new("first-diff-change").small().label("Ir al primer cambio").on_click(
+                                cx.listener(|page, _, _, cx| {
+                                    if let Some(&(start, _, _, _)) = page.diff_hunks.first() {
+                                        page.diff_scroll.scroll_to_item(start, ScrollStrategy::Center);
+                                        cx.notify();
+                                    }
+                                }),
+                            ))
+                        }),
+                );
                 if result.contents.is_none() {
                     view =
                         view.child(div().text_sm().text_color(muted).child("El archivo no existe en este antepasado."));
@@ -643,7 +667,14 @@ impl InstanceOverwritesSubpage {
                     );
                 }
                 let total = (self.diff_rows.len() + 1) as f32;
-                let mut overview = div().relative().w(px(12.)).h_full().bg(secondary.opacity(0.25));
+                let mut overview = div()
+                    .relative()
+                    .w(px(16.))
+                    .flex_none()
+                    .h_full()
+                    .border_x_1()
+                    .border_color(border)
+                    .bg(secondary.opacity(0.6));
                 for &(start, count, local, parent) in &self.diff_hunks {
                     overview = overview.child(
                         h_flex()
@@ -653,10 +684,26 @@ impl InstanceOverwritesSubpage {
                             .w_full()
                             .top(relative(start as f32 / total))
                             .h(relative(count as f32 / total))
-                            .min_h(px(3.))
+                            .min_h(px(4.))
                             .cursor_pointer()
-                            .child(div().w_1_2().h_full().when(local, |this| this.bg(rgb(0x2ea043))))
-                            .child(div().w_1_2().h_full().when(parent, |this| this.bg(rgb(0xf85149))))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .top_0()
+                                    .bottom_0()
+                                    .w(px(7.))
+                                    .when(local, |this| this.bg(rgb(0x3fb950))),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .right_0()
+                                    .top_0()
+                                    .bottom_0()
+                                    .w(px(7.))
+                                    .when(parent, |this| this.bg(rgb(0xff6b63))),
+                            )
                             .on_click(cx.listener(move |page, _, _, cx| {
                                 page.diff_scroll.scroll_to_item(start, ScrollStrategy::Center);
                                 cx.notify();
@@ -671,7 +718,7 @@ impl InstanceOverwritesSubpage {
                         .border_color(border)
                         .child(div().flex_1().min_w_0().h_full().child(panels))
                         .child(
-                            v_flex().h_full().flex_shrink_0().pt(px(44.)).child(
+                            v_flex().w(px(28.)).h_full().flex_none().pt(px(44.)).child(
                                 h_flex()
                                     .flex_1()
                                     .min_h_0()

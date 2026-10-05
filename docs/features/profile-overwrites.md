@@ -74,6 +74,10 @@ covering the last real line. A two-lane overview beside the vertical scrollbar
 marks local additions/changes in green and ancestor removals/changes in red;
 clicking a marker centers its first changed row in both columns. Contiguous
 changed blocks are grouped off the UI thread when the comparison is built.
+The overview has a fixed-width gutter and minimum-height colored marks. A status
+line reports the number of changed blocks for the selected ancestor, or explicitly
+states that there are no differences; the first-change button jumps to the first
+block. A file may differ from its global profile while matching its local mother.
 Diff work runs off the UI thread, uses bounded LCS with a bounded-window fallback for large
 files, and virtualizes rows. Text previews remain limited to 1 MiB per file.
 The per-page ancestor cache holds at most 32 path/level results and is cleared by
