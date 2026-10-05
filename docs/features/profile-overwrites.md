@@ -67,9 +67,9 @@ well as the initial cache paths. The persistent "Otras" checkbox controls an int
 folders and files outside the conventional modpack roots (`mods`, `config`,
 `defaultconfigs`, `resourcepacks`, `shaderpacks`, `datapacks`, `kubejs`,
 `scripts`, `openloader`, `global_packs`,
-`patchouli_books`, and common options/server files). Existing installs gain
+`patchouli_books`, and shader option files). Existing installs gain
 these defaults once through a versioned config migration; subsequent user
-removals are preserved. `fancymenu_data`, `options.txt`, and `optionsviveprofiles.txt`
+removals are preserved. `fancymenu_data`, `options.txt`, `optionsviveprofiles.txt`, and `servers.dat`
 are part of "Otras"; disabling its checkbox restores their visibility unless
 another explicit rule excludes them. The settings list grows with the window and scrolls
 when necessary.

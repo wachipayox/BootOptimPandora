@@ -71,6 +71,6 @@ fn is_conventional_modpack_root(root: &str) -> bool {
         "mods" | "config" | "defaultconfigs" | "resourcepacks" | "shaderpacks"
         | "datapacks" | "kubejs" | "scripts"
         | "openloader" | "global_packs" | "patchouli_books"
-        | "servers.dat" | "optionsof.txt" | "optionsshaders.txt"
+        | "optionsof.txt" | "optionsshaders.txt"
     )
 }

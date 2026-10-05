@@ -49,7 +49,7 @@ pub(super) fn create_page() -> SettingPage {
                                 .label("Ignorar Otras rutas").checked(other_enabled)
                                 .on_click(cx.listener(|root, enabled, _, cx| root.set_other_paths_ignored(*enabled, cx))))
                             .child(div().text_xs().text_color(muted)
-                                .child("Incluye fancymenu_data, options.txt, optionsviveprofiles.txt y otras rutas fuera del contenido habitual del modpack.")))
+                                .child("Incluye fancymenu_data, options.txt, optionsviveprofiles.txt, servers.dat y otras rutas fuera del contenido habitual del modpack.")))
                         .child(h_flex().w_full().gap_2().items_center()
                             .child(Input::new(&root.ignored_path_input).flex_1())
                             .child(Button::new("add-ignored-profile-path").label("Añadir ruta")
