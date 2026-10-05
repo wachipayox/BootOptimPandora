@@ -65,7 +65,10 @@ Only the selected ancestor's content object is downloaded, with signature/hash
 verification. Missing files are represented by an empty column.
 
 Line numbers and green/red backgrounds distinguish local and ancestor changes.
-Both columns scroll together; long lines have horizontal scrolling. Diff work
+Both columns scroll together vertically. Their draggable separator defaults to
+equal widths based on the viewport, independently of line length. Each column
+has its own horizontal scrolling for long lines, and headers resize with their
+column. The chosen split is retained while the comparison view is open. Diff work
 runs off the UI thread, uses bounded LCS with a bounded-window fallback for large
 files, and virtualizes rows. Text previews remain limited to 1 MiB per file.
 The per-page ancestor cache holds at most 32 path/level results and is cleared by

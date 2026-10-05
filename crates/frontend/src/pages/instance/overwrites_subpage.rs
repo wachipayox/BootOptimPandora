@@ -17,6 +17,7 @@ use gpui_component::{
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     menu::{ContextMenuExt, PopupMenuItem},
+    resizable::{h_resizable, resizable_panel},
     scroll::{ScrollableElement, Scrollbar},
     v_flex,
 };
@@ -157,7 +158,7 @@ fn diff_cell(line: &Option<(usize, String)>, changed: bool, left: bool, muted: H
         .map(|(n, t)| (n.to_string(), t.trim_end_matches(['\r', '\n']).replace('\t', "    ")))
         .unwrap_or_default();
     h_flex()
-        .w_1_2()
+        .w_full()
         .min_w_0()
         .h(px(24.))
         .bg(background)
@@ -524,38 +525,23 @@ impl InstanceOverwritesSubpage {
                         })),
                 ),
         );
-        view = view.child(
-            h_flex()
-                .w_full()
-                .rounded_t_md()
-                .bg(secondary)
-                .border_1()
-                .border_color(border)
-                .child(div().w_1_2().px_3().py_2().font_semibold().child("Esta instancia"))
-                .child(
-                    div().w_1_2().min_w_0().px_2().py_1().child(
-                        DropdownButton::new("comparison-ancestor")
-                            .small()
-                            .button(Button::new("ancestor-label").label(label))
-                            .dropdown_menu(move |mut menu, window, _| {
-                                for (level, name) in names.iter().enumerate() {
-                                    let Some(entity) = entity.upgrade() else {
-                                        break;
-                                    };
-                                    menu = menu.item(
-                                        PopupMenuItem::new(format!("{} · {name}", ancestor_label(level))).on_click(
-                                            window.listener_for(&entity, move |page: &mut Self, _, window, cx| {
-                                                page.ancestor_level = level;
-                                                page.load_ancestor(window, cx);
-                                            }),
-                                        ),
-                                    );
-                                }
-                                menu
-                            }),
-                    ),
-                ),
-        );
+        let ancestor_selector = DropdownButton::new("comparison-ancestor")
+            .small()
+            .button(Button::new("ancestor-label").label(label))
+            .dropdown_menu(move |mut menu, window, _| {
+                for (level, name) in names.iter().enumerate() {
+                    let Some(entity) = entity.upgrade() else {
+                        break;
+                    };
+                    menu = menu.item(PopupMenuItem::new(format!("{} · {name}", ancestor_label(level))).on_click(
+                        window.listener_for(&entity, move |page: &mut Self, _, window, cx| {
+                            page.ancestor_level = level;
+                            page.load_ancestor(window, cx);
+                        }),
+                    ));
+                }
+                menu
+            });
         match &self.ancestor {
             None => view = view.child(div().p_4().text_color(muted).child("Cargando comparación…")),
             Some(Err(error)) => {
@@ -583,39 +569,64 @@ impl InstanceOverwritesSubpage {
                             .child("El archivo no está disponible en esta instancia."),
                     );
                 }
+                let mut panels = h_resizable("config-comparison-split");
+                let mut selector = Some(ancestor_selector);
+                for left in [true, false] {
+                    let mut header = h_flex()
+                        .h(px(44.))
+                        .flex_shrink_0()
+                        .px_3()
+                        .items_center()
+                        .bg(secondary)
+                        .border_b_1()
+                        .border_color(border)
+                        .overflow_hidden();
+                    header = if left {
+                        header.child(div().font_semibold().child("Esta instancia"))
+                    } else {
+                        header.child(selector.take().unwrap())
+                    };
+                    let list = uniform_list(
+                        if left { "config-diff-left" } else { "config-diff-right" },
+                        self.diff_rows.len(),
+                        cx.processor(move |page, range: std::ops::Range<usize>, _, _| {
+                            range
+                                .map(|index| {
+                                    let row = &page.diff_rows[index];
+                                    div().w_full().h(px(24.)).font_family("Consolas").text_sm().child(diff_cell(
+                                        if left { &row.left } else { &row.right },
+                                        row.changed,
+                                        left,
+                                        muted,
+                                        border,
+                                    ))
+                                })
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .w_full()
+                    .h_full()
+                    .min_w(px(self.diff_width / 2.))
+                    .track_scroll(&self.diff_scroll);
+                    panels = panels.child(
+                        resizable_panel().size_range(px(180.)..px(10000.)).child(
+                            v_flex()
+                                .size_full()
+                                .min_w_0()
+                                .min_h_0()
+                                .child(header)
+                                .child(div().flex_1().min_h_0().w_full().overflow_x_scrollbar().child(list)),
+                        ),
+                    );
+                }
                 view = view.child(
                     h_flex()
                         .flex_1()
                         .min_h_0()
                         .border_1()
                         .border_color(border)
-                        .child(
-                            div().flex_1().min_w_0().h_full().overflow_x_scrollbar().child(
-                                uniform_list(
-                                    "config-diff-lines",
-                                    self.diff_rows.len(),
-                                    cx.processor(move |page, range: std::ops::Range<usize>, _, _| {
-                                        range
-                                            .map(|index| {
-                                                let row = &page.diff_rows[index];
-                                                h_flex()
-                                                    .w_full()
-                                                    .h(px(24.))
-                                                    .font_family("Consolas")
-                                                    .text_sm()
-                                                    .child(diff_cell(&row.left, row.changed, true, muted, border))
-                                                    .child(diff_cell(&row.right, row.changed, false, muted, border))
-                                            })
-                                            .collect::<Vec<_>>()
-                                    }),
-                                )
-                                .w_full()
-                                .h_full()
-                                .min_w(px(self.diff_width))
-                                .track_scroll(&self.diff_scroll),
-                            ),
-                        )
-                        .child(div().w_3().h_full().child(Scrollbar::vertical(&self.diff_scroll))),
+                        .child(div().flex_1().min_w_0().h_full().child(panels))
+                        .child(div().w_3().h_full().pt(px(44.)).child(Scrollbar::vertical(&self.diff_scroll))),
                 );
             },
         }
