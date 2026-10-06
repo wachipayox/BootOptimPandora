@@ -60,3 +60,11 @@ https://developer.android.com/reference/android/app/ApplicationExitInfo
 https://developer.android.com/topic/performance/issues/lmk
 
 [Previous build evidence](BUILD-0.1.3.md).
+
+## Subsequent phone evidence
+
+The user exported the diagnostic ZIP on Vivo / Android 13. Recovery and sharing
+worked; the repeated game restart is explicitly attributed to Android
+LOW_MEMORY, with a matching game session PID and timestamp. The app remains
+subject to that memory problem; this build is not a memory optimization.
+See [incident and next gate](diagnostics/LOW-MEMORY-2026-10-07.md).
