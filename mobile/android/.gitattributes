@@ -1,0 +1,2 @@
+# Preserve patch context and line endings when cloning on Windows.
+wachiland.patch -text -whitespace
