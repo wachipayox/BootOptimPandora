@@ -1,4 +1,4 @@
-# Wachiland Launcher for Android — 0.1.1 alpha
+# Wachiland Launcher for Android — 0.1.2 alpha
 
 First mobile prototype, based on a pinned FCL / HMCL / Amethyst Android engine.
 This is a companion client for the same Distribution server. It is not an Android
@@ -75,7 +75,7 @@ The phone uses `https://welite.ddns.net` on public HTTPS port 443. The server mu
 install the prepared read-only Nginx routes; see
 [deployment instructions](deployment/NETWORK.md) and
 [installer](deployment/install-public-api.sh). The original 8444 listener stays
-private. Version 0.1.1 updates 0.1.0 in place when signed with the delivery key.
+private. Version 0.1.2 updates 0.1.0 in place when signed with the delivery key.
 
 ## Installation / first run
 
