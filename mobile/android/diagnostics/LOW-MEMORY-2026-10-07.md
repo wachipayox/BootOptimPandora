@@ -89,3 +89,10 @@ Alpha 0.1.5 implements the next instrumentation gate, separating embedded
 OpenJDK, ART, process and system counters. It does not identify an allocation
 culprit or fix the memory pressure before phone evidence. See
 [sampling design and limits](MEMORY-SAMPLING-2026-10-07.md).
+
+The first physical-phone 0.1.5 export is now analysed in
+[memory samples and attribution limits](VIVO-MEMORY-SAMPLES-2026-10-07.md).
+Both samplers worked and survived the kill/manual stop. Android ART remained
+around 30 MiB while game heap, native allocations and graphics grew. No specific
+mod/native allocation owner is established; repeated smaps collection cost is
+recorded for future instrumentation changes.
