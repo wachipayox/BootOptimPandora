@@ -56,6 +56,28 @@ Veil shader/framebuffer errors, EMF repeated-model warnings, loot/tag/recipe
 errors are present but do not establish the LMK allocation source. Do not remove
 mods based solely on the last log line.
 
+## Follow-up: 3 GiB also terminated by Android
+
+Second user-exported ZIP, `wachiland-android-diagnostic (1).zip`, confirms
+MobileGlues and `-Xmx3072m -Xms3072m`. Session marker PID 18327, start
+`2026-10-06T22:45:50.008Z`; same-process matching exit at
+`2026-10-06T22:56:54.788Z`: explicit LOW_MEMORY (3), status 0, importance 100,
+no JVM completion callback. The log reaches title screen and ends after the
+menu/startup messages; there is no Java heap OOM or native signal report.
+
+Vendor samples: RSS 4,744,100 KiB (~4.52 GiB), PSS 5,242,282 KiB (~5.00 GiB).
+Again PSS exceeds RSS; they do not establish a coherent simultaneous memory
+breakdown. The smaller PSS compared with the 4 GiB attempt is not an A/B memory
+win: sample timing and workload differ. The explicit OS reason establishes LMK.
+
+The 3,072 MiB gate therefore failed. Do not repeat the same trial or assume the
+pack fits by moving the heap slider again. The next attribution needs separate
+embedded OpenJDK live/committed heap, native/graphics and Android UI memory.
+Android Runtime.getRuntime() only measures ART, not the embedded game JVM.
+EMF repetition remains a suspect signal, not a proven leak. Changing the minimum
+heap or reducing native/render allocations would still require phone evidence;
+no memory fix has been implemented or validated by these diagnostics.
+
 References:
 https://developer.android.com/reference/android/app/ApplicationExitInfo
 https://developer.android.com/topic/performance/issues/lmk
