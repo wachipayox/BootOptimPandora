@@ -2,6 +2,13 @@
 
 Work in progress
 
+## Android prototype
+
+A landscape Android companion installs the same Distribution profiles and uses
+FCL / HMCL / Amethyst for mobile Java, rendering, Microsoft authentication and
+touch controls. See [mobile build, source and scope](mobile/android/README.md).
+Desktop branches, save groups and the diff editor are not yet ported to mobile.
+
 ## Command line
 
 - `pandora --run-instance "Instance name"` opens the launcher and starts the named instance with full asset verification. This remains the behavior used by existing instance shortcuts.

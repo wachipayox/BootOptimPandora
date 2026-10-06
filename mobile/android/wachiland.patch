@@ -1,0 +1,1208 @@
+diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
+index 8463609..b798871 100644
+--- a/FCL/build.gradle.kts
++++ b/FCL/build.gradle.kts
+@@ -53,9 +53,9 @@ android {
+ 
+     signingConfigs {
+         create("FCLKey") {
+-            storeFile = file("../key-store.jks")
++            storeFile = file(System.getenv("WACHILAND_KEYSTORE") ?: "../wachiland.jks")
+             storePassword = pwd
+-            keyAlias = "FCL-Key"
++            keyAlias = "wachiland"
+             keyPassword = pwd
+         }
+         create("FCLDebugKey") {
+@@ -67,11 +67,11 @@ android {
+     }
+ 
+     defaultConfig {
+-        applicationId = "com.tungsten.fcl"
++        applicationId = "net.wachiland.launcher"
+         minSdk = libs.versions.minSdk.get().toInt()
+         targetSdk = libs.versions.targetSdk.get().toInt()
+-        versionCode = 1337
+-        versionName = "1.3.3.7"
++        versionCode = 1
++        versionName = "0.1.0-alpha"
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+         externalNativeBuild {
+             cmake {
+@@ -261,6 +261,8 @@ ksp {
+ }
+ 
+ dependencies {
++    implementation("org.bouncycastle:bcprov-jdk18on:1.80")
++    implementation("io.github.erdtman:java-json-canonicalization:1.1")
+     coreLibraryDesugaring(libs.desugar.jdk.libs)
+     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
+     implementation(project(":ZipFileSystem"))
+diff --git a/FCL/src/main/AndroidManifest.xml b/FCL/src/main/AndroidManifest.xml
+index d977e1e..0c13527 100644
+--- a/FCL/src/main/AndroidManifest.xml
++++ b/FCL/src/main/AndroidManifest.xml
+@@ -7,18 +7,11 @@
+         android:name="android.hardware.type.pc"
+         android:required="false" />
+ 
+-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+-    <uses-permission
+-        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+-        tools:ignore="ScopedStorage" />
+     <uses-permission android:name="android.permission.INTERNET" />
+     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+     <uses-permission android:name="android.permission.WAKE_LOCK" />
+     <uses-permission android:name="android.permission.VIBRATE" />
+-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+-    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+@@ -30,20 +23,20 @@
+ 
+     <application
+         android:name=".FCLApp"
+-        android:allowBackup="true"
++        android:allowBackup="false"
+         android:allowNativeHeapPointerTagging="false"
+         android:appCategory="game"
+         android:dataExtractionRules="@xml/data_extraction_rules"
+         android:fullBackupContent="@xml/backup_rules"
+         android:hasFragileUserData="true"
+-        android:icon="@mipmap/ic_launcher"
++        android:icon="@drawable/wachiland_launcher"
+         android:isGame="true"
+         android:label="@string/app_name"
+         android:largeHeap="true"
+         android:networkSecurityConfig="@xml/network_security_config"
+         android:preserveLegacyExternalStorage="true"
+         android:requestLegacyExternalStorage="true"
+-        android:roundIcon="@mipmap/ic_launcher"
++        android:roundIcon="@drawable/wachiland_launcher"
+         android:supportsRtl="true"
+         android:theme="@style/Theme.FoldCraftLauncher"
+         android:usesCleartextTraffic="true"
+@@ -110,7 +103,7 @@
+         <activity
+             android:name=".activity.ShellActivity"
+             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
+-            android:screenOrientation="sensorPortrait"
++            android:screenOrientation="sensorLandscape"
+             android:windowSoftInputMode="adjustResize"
+             tools:ignore="LockedOrientationActivity" />
+         <activity
+@@ -123,7 +116,7 @@
+             android:name=".activity.JVMCrashActivity"
+             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
+             android:process=":crash"
+-            android:screenOrientation="sensor" />
++            android:screenOrientation="sensorLandscape" />
+         <activity
+             android:name="com.tungsten.fcllibrary.browser.FileBrowserActivity"
+             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
+@@ -131,7 +124,7 @@
+         <activity
+             android:name="com.tungsten.fcllibrary.crash.CrashReportActivity"
+             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
+-            android:screenOrientation="sensor" />
++            android:screenOrientation="sensorLandscape" />
+ 
+         <service
+             android:name="com.tungsten.fclcore.download.ProcessService"
+@@ -190,4 +183,4 @@
+             <action android:name="android.intent.action.TTS_SERVICE" />
+         </intent>
+     </queries>
+-</manifest>
+\ No newline at end of file
++</manifest>
+diff --git a/FCL/src/main/assets/eula.txt b/FCL/src/main/assets/eula.txt
+index 7969bb0..80c1893 100644
+--- a/FCL/src/main/assets/eula.txt
++++ b/FCL/src/main/assets/eula.txt
+@@ -1,20 +1,9 @@
+-Fold Craft Launcher end-user license agreements
++Wachiland Launcher para Android — prototipo privado 0.1.0
+ 
+-Before you using the software, please read the eula first.
+-The software is developed by FCL-Team.
++Interfaz adaptada de Wachiland/Pandora y cliente de Wachiland Distribution.
++Motor de ejecución: Fold Craft Launcher, HMCL y Amethyst/Pojav, con sus avisos de copyright y licencias originales (GPLv3 y licencias de componentes).
++El código fuente correspondiente se entrega junto a la APK.
+ 
+-1. User's obligations
+-1) Get a qualified device, FCL requires Android 8.0 or higher.
+-2) Pay for the cost of Internet access and other services.
+-3) Take responsibility for all the consequences of your own use of the software.
++La cuenta de Minecraft se autentica en Microsoft a través de tu navegador. La aplicación guarda los datos de sesión dentro de su almacenamiento privado. No incluye Minecraft: el juego se descarga al crear una instancia.
+ 
+-2. Disclaimer
+-1) The risk caused by the user's use of this software shall be borne by the user.
+-2) The software is not guaranteed to meet all user needs.
+-3) The software is not responsible for the correctness, security, legality, etc. of these third-party services.
+-4) The developer is not responsible for any problems caused by users' use of third-party services, and will not and cannot assume any legal responsibility.
+-
+-3. Copyright
+-1) The copyright, patent rights and other intellectual property rights of the software are owned by the developer or the designated copyright owner.
+-2) The third-party components used by the software are owned by the relevant copyright owners.
+-3) The software is fully open source, please follow the open source license of the software.
++Esta versión está preparada para probar perfiles globales en Android, en horizontal. Todavía no incluye las ramas locales, grupos de mundos o visor de diferencias de Pandora. El funcionamiento del modpack en tu móvil aún debe comprobarse.
+diff --git a/FCL/src/main/java/com/tungsten/fcl/FCLApp.java b/FCL/src/main/java/com/tungsten/fcl/FCLApp.java
+index e4ebff4..2ee02aa 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/FCLApp.java
++++ b/FCL/src/main/java/com/tungsten/fcl/FCLApp.java
+@@ -28,6 +28,7 @@ public class FCLApp extends Application implements Application.ActivityLifecycle
+     public void onCreate() {
+         // enabledStrictMode();
+         super.onCreate();
++        com.tungsten.fclauncher.utils.FCLPath.loadPaths(this);
+         this.registerActivityLifecycleCallbacks(this);
+ //        PerfUtil.install();
+     }
+diff --git a/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt b/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt
+index cd8d3b8..86f57d7 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt
++++ b/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt
+@@ -310,7 +310,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+                     startActivity(Intent(this@MainActivity, ShellActivity::class.java))
+                     true
+                 }
+-                UpdateChecker.getInstance().checkAuto(this@MainActivity).start()
++                // Private Wachiland builds are updated by their own distributor.
+                 if (!checkNotificationPermission() && getSharedPreferences(
+                         "launcher",
+                         MODE_PRIVATE
+@@ -334,6 +334,9 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+                 setupAccountDisplay()
+                 setupVersionDisplay()
+                 playAnim()
++                background.setBackgroundColor(android.graphics.Color.rgb(10,10,10))
++                videoView.visibility = View.GONE
++                title.visibility = View.GONE
+                 // 引导在入场动画播完后弹出；动画时长随 animationSpeed 缩放，最末组延迟 700ms。
+                 // 顺序按视觉动线：右侧（账户/版本卡片/启动）→ 左侧菜单自上而下；
+                 // account 步骤仅在没有账户时展示（添加过账户的用户无需引导）
+@@ -606,7 +609,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+         // 记录皮肤当前宽度（隐藏后内容区扩展，用于固定皮肤位置）
+         val ui = UIManager.instance.currentUI
+         if (ui is MainUI) {
+-            skinViewerWidth = ui.contentView.findViewById<View>(R.id.skin_viewer).width
++            skinViewerWidth = ui.contentView.findViewById<View>(R.id.skin_viewer)?.width ?: 0
+         }
+         menu.animate().translationX(rightMenuWidth.toFloat()).setDuration(200).withEndAction {
+             menu.visibility = View.GONE
+@@ -622,7 +625,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+     private fun fixSkinViewerPosition(fix: Boolean) {
+         val ui = UIManager.instance.currentUI
+         if (ui !is MainUI) return
+-        val skin = ui.contentView.findViewById<View>(R.id.skin_viewer)
++        val skin = ui.contentView.findViewById<View>(R.id.skin_viewer) ?: return
+         val params = skin.layoutParams as ConstraintLayout.LayoutParams
+         if (fix) {
+             params.width = skinViewerWidth
+@@ -757,14 +760,18 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+      * 启动指定版本（null 表示当前选中版本，与启动按钮一致）；
+      * 控制器未初始化时提示并晃动启动按钮
+      */
+-    private fun launchVersion(versionId: String?) {
++    fun launchVersion(versionId: String?) {
++        if (versionId != null && java.io.File(Profiles.getSelectedProfile().repository.getVersionRoot(versionId), ".wachiland-installing").exists()) {
++            android.widget.Toast.makeText(this, "La instalación de esta instancia está incompleta", android.widget.Toast.LENGTH_LONG).show()
++            return
++        }
+         if (!Controllers.isInitialized()) {
+             binding.title.setTextWithAnim(getString(R.string.message_loading_controllers))
+             AnimUtil.playTranslationX(binding.start, 700, 0f, 50f, -50f, 50f, -50f, 0f)
+                 .interpolator(OvershootInterpolator()).start()
+             return
+         }
+-        QuarkPromo.interceptLaunch(this) {
++        run { // No advertising/promotion interception in Wachiland.
+             val selectedProfile = Profiles.getSelectedProfile()
+             DriverPlugin.selected = runCatching {
+                 DriverPlugin.driverList.find {
+diff --git a/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt b/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt
+index e982188..079f4f8 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt
++++ b/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt
+@@ -86,7 +86,7 @@ class SplashActivity : FCLActivity() {
+     }
+ 
+     private fun checkPermission() {
+-        if (hasPermission()) {
++        if (true) { // Wachiland uses app-scoped storage; no all-files permission.
+             init()
+             return
+         }
+diff --git a/FCL/src/main/java/com/tungsten/fcl/ui/account/CreateAccountDialog.kt b/FCL/src/main/java/com/tungsten/fcl/ui/account/CreateAccountDialog.kt
+index aa3ffff..ae05207 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/ui/account/CreateAccountDialog.kt
++++ b/FCL/src/main/java/com/tungsten/fcl/ui/account/CreateAccountDialog.kt
+@@ -261,7 +261,7 @@ private class MicrosoftDetails(private val context: Context) : Details {
+     val progressCallback: LoginStageTextBinder =
+         LoginStageTextBinder(context, binding.loginProgress.progressText)
+ 
+-    var useExternalBrowser = false
++    var useExternalBrowser = true
+ 
+     // 强引用注册（register），对话框关闭时经 release() 注销，避免残留监听重复打开登录页
+     private val deviceCodeListener = Consumer { event: OAuthServer.GrantDeviceCodeEvent? ->
+diff --git a/FCL/src/main/java/com/tungsten/fcl/ui/account/OAuthAccountLoginDialog.java b/FCL/src/main/java/com/tungsten/fcl/ui/account/OAuthAccountLoginDialog.java
+index b7f0163..27a2143 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/ui/account/OAuthAccountLoginDialog.java
++++ b/FCL/src/main/java/com/tungsten/fcl/ui/account/OAuthAccountLoginDialog.java
+@@ -45,7 +45,7 @@ public class OAuthAccountLoginDialog extends FCLDialog implements View.OnClickLi
+ 
+     // 强引用注册（register），dismiss 时注销，避免对话框关闭后残留监听重复打开登录页
+     private final Consumer<OAuthServer.GrantDeviceCodeEvent> deviceCodeListener = deviceCode::set;
+-    private boolean useExternalBrowser = false;
++    private boolean useExternalBrowser = true;
+     private final Consumer<OAuthServer.OpenBrowserEvent> openBrowserListener = event -> {
+         if (useExternalBrowser) {
+             AndroidUtilKt.openLink(getContext(), event.getUrl());
+diff --git a/FCL/src/main/java/com/tungsten/fcl/ui/main/MainUI.java b/FCL/src/main/java/com/tungsten/fcl/ui/main/MainUI.java
+index f793373..3368628 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/ui/main/MainUI.java
++++ b/FCL/src/main/java/com/tungsten/fcl/ui/main/MainUI.java
+@@ -1,207 +1,17 @@
+ package com.tungsten.fcl.ui.main;
+-
+-import android.app.Activity;
+ import android.content.Context;
+ import android.view.View;
+-
+-import androidx.annotation.NonNull;
+-import androidx.appcompat.widget.LinearLayoutCompat;
+-
+-import com.mio.skin.AnimationDialog;
+-import com.mio.skin.SkinAnimations;
+-import com.mio.skin.SkinRenderer;
+-import com.mio.skin.SkinTextureLoader;
+-import com.mio.skin.SkinViewer;
+-
+-import static com.mio.skin.SkinAnimationsKt.restoreSkinSettings;
+-import static com.mio.skin.SkinAnimationsKt.saveSkinSettings;
+-import com.tungsten.fcl.R;
+-import com.tungsten.fcl.setting.Accounts;
+ import com.tungsten.fclcore.auth.Account;
+-import com.tungsten.fclcore.fakefx.beans.InvalidationListener;
+-import com.tungsten.fclcore.task.Schedulers;
+ import com.tungsten.fclcore.task.Task;
+-import com.tungsten.fclcore.util.Logging;
+-import com.tungsten.fclcore.util.io.HttpRequest;
+-import com.tungsten.fcllibrary.component.dialog.FCLAlertDialog;
+-import com.tungsten.fcllibrary.component.theme.ThemeEngine;
+ import com.tungsten.fcllibrary.component.ui.FCLCommonUI;
+-import com.tungsten.fcllibrary.component.view.FCLButton;
+-import com.tungsten.fcllibrary.component.view.FCLTextView;
+-import com.tungsten.fcllibrary.util.LocaleUtils;
+-
+-import java.util.logging.Level;
+-
+-public class MainUI extends FCLCommonUI implements View.OnClickListener {
+-
+-    public static final String ANNOUNCEMENT_URL = "https://raw.githubusercontent.com/FCL-Team/FCL-Repo/refs/heads/main/res/announcement_v2.txt";
+-    public static final String ANNOUNCEMENT_URL_CN = "https://gitee.com/fcl-team/FCL-Repo/raw/main/res/announcement_v2.txt";
+-
+-    private LinearLayoutCompat announcementContainer;
+-    private LinearLayoutCompat announcementLayout;
+-    private FCLTextView title;
+-    private FCLTextView announcementView;
+-    private FCLTextView date;
+-    private FCLButton hide;
+-    private Announcement announcement = null;
+-
+-    private SkinViewer skinViewer;
+-    private SkinRenderer renderer;
+-    private SkinTextureLoader skinLoader;
+-
+-    /** 选中账户变化时重载皮肤（attach 时注册、detach 时注销） */
+-    private final InvalidationListener accountListener = o ->
+-            skinLoader.load(Accounts.getSelectedAccount(), false);
+-
+-    public MainUI(Context context, int id) {
+-        super(context, id);
+-    }
+-
+-    @Override
+-    public void onCreate() {
+-        super.onCreate();
+-        announcementContainer = findViewById(R.id.announcement_container);
+-        announcementLayout = findViewById(R.id.announcement_layout);
+-        title = findViewById(R.id.title);
+-        announcementView = findViewById(R.id.announcement);
+-        date = findViewById(R.id.date);
+-        hide = findViewById(R.id.hide);
+-        ThemeEngine.getInstance().registerEvent(announcementLayout, () -> announcementLayout.getBackground().setTint(ThemeEngine.getInstance().getTheme().getColor()));
+-        hide.setOnClickListener(this);
+-
+-        skinViewer = findViewById(R.id.skin_viewer);
+-        renderer = new SkinRenderer(getContext());
+-        skinViewer.setRenderer(renderer, 5f);
+-        skinLoader = new SkinTextureLoader(renderer);
+-        skinLoader.load(Accounts.getSelectedAccount(), false);
+-        // 恢复上次选择的动画与 3D 皮肤层开关
+-        restoreSkinSettings(getContext(), renderer);
+-        // 双击模型弹出皮肤模型设置窗口
+-        skinViewer.setOnDoubleClick(() -> {
+-            Context context = getContext();
+-            if (context instanceof Activity && !((Activity) context).isDestroyed() && !((Activity) context).isFinishing()) {
+-                new AnimationDialog(context, renderer.getAnimationId(), renderer.getSolidLayerEnabled(), renderer.getUpperBodySeparated(), clipId -> {
+-                    renderer.playAnimation(clipId);
+-                    saveSkinSettings(context, renderer);
+-                }, enabled -> {
+-                    renderer.setSolidLayerEnabled(enabled);
+-                    saveSkinSettings(context, renderer);
+-                }, separated -> {
+-                    renderer.setUpperBodySeparated(separated);
+-                    saveSkinSettings(context, renderer);
+-                }).show();
+-            }
+-        });
+-        checkAnnouncement();
+-
+-        // 皮肤渲染随页面挂载/回收恢复与暂停（替代原 onStart/onStop 生命周期）
+-        getContentView().addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+-            @Override
+-            public void onViewAttachedToWindow(@NonNull View v) {
+-                if (skinViewer != null) {
+-                    if (!ThemeEngine.getInstance().getTheme().isCloseSkinModel()) {
+-                        skinViewer.setVisibility(View.VISIBLE);
+-                        skinViewer.onResume();
+-                        // 纹理由渲染线程 onSurfaceCreated 从 renderer.texture 自行重建，
+-                        // 此处不重喂纹理；同账户已在 onCreate 加载过，load 会自动跳过
+-                    } else {
+-                        skinViewer.onPause();
+-                        skinViewer.setVisibility(View.GONE);
+-                    }
+-                }
+-                if (skinLoader != null) {
+-                    // detach 期间选中的账户可能已切换（监听已注销），重新对齐一次
+-                    Accounts.selectedAccountProperty().addListener(accountListener);
+-                    skinLoader.load(Accounts.getSelectedAccount(), false);
+-                }
+-            }
+-
+-            @Override
+-            public void onViewDetachedFromWindow(@NonNull View v) {
+-                Accounts.selectedAccountProperty().removeListener(accountListener);
+-                if (skinLoader != null) {
+-                    skinLoader.release();
+-                }
+-                if (skinViewer != null) {
+-                    skinViewer.onPause();
+-                    skinViewer.setVisibility(View.GONE);
+-                }
+-            }
+-        });
+-    }
+-
+-    @Override
+-    public void onPause() {
+-        super.onPause();
+-        if (skinViewer != null) {
+-            skinViewer.onPause();
+-            skinViewer.setVisibility(View.GONE);
+-        }
+-    }
+-
+-    @Override
+-    public void onResume() {
+-        super.onResume();
+-        if (skinViewer != null && isShowing() && !ThemeEngine.getInstance().getTheme().isCloseSkinModel()) {
+-            skinViewer.setVisibility(View.VISIBLE);
+-            skinViewer.onResume();
+-        }
+-    }
+-
+-    @Override
+-    public Task<?> refresh(Object... param) {
+-        return Task.runAsync(() -> {
+-
+-        });
+-    }
+-
+-    private void checkAnnouncement() {
+-        try {
+-            String url = LocaleUtils.isChinese(getContext()) ? ANNOUNCEMENT_URL_CN : ANNOUNCEMENT_URL;
+-            Task.supplyAsync(() -> HttpRequest.HttpGetRequest.GET(url).getJson(Announcement.class))
+-                    .thenAcceptAsync(Schedulers.androidUIThread(), announcement -> {
+-                        this.announcement = announcement;
+-                        if (!announcement.shouldDisplay(getContext()))
+-                            return;
+-                        announcementContainer.setVisibility(View.VISIBLE);
+-                        title.setText(getContext().getString(R.string.announcement, announcement.getDisplayTitle(getContext())));
+-                        announcementView.setText(announcement.getDisplayContent(getContext()));
+-                        date.setText(getContext().getString(R.string.update_date, announcement.getDate()));
+-                    }).start();
+-        } catch (Exception e) {
+-            Logging.LOG.log(Level.WARNING, "Failed to get announcement!", e);
+-        }
+-    }
+-
+-    private void hideAnnouncement() {
+-        announcementContainer.setVisibility(View.GONE);
+-        if (announcement != null) {
+-            announcement.hide(getContext());
+-        }
+-    }
+-
+-    public void refreshSkin(Account account) {
+-        Schedulers.androidUIThread().execute(() -> {
+-            if (skinLoader != null) {
+-                skinLoader.load(account, true);
+-            }
+-        });
+-    }
+-
+-    @Override
+-    public void onClick(View view) {
+-        if (view == hide) {
+-            if (announcement != null && announcement.isSignificant()) {
+-                FCLAlertDialog.Builder builder = new FCLAlertDialog.Builder(getContext());
+-                builder.setAlertLevel(FCLAlertDialog.AlertLevel.ALERT);
+-                builder.setCancelable(false);
+-                builder.setMessage(getContext().getString(R.string.announcement_significant));
+-                builder.setPositiveButton(this::hideAnnouncement);
+-                builder.setNegativeButton(null);
+-                builder.create().show();
+-            } else {
+-                hideAnnouncement();
+-            }
+-        }
+-    }
++import net.wachiland.launcher.WachilandDashboard;
++/** Wachiland mobile home. FCL provides the native game integration. GPLv3. */
++public class MainUI extends FCLCommonUI {
++    private WachilandDashboard dashboard;
++    public MainUI(Context context,int id) { super(context,id); }
++    @Override public void onCreate() { super.onCreate(); dashboard=new WachilandDashboard(getContext()); }
++    @Override public View getContentView() { return dashboard==null ? super.getContentView() : dashboard; }
++    @Override public Task<?> refresh(Object... param) { if(dashboard!=null) dashboard.refresh(); return Task.runAsync(()->{}); }
++    @Override public void onResume() { super.onResume(); if(dashboard!=null) dashboard.refresh(); }
++    public void refreshSkin(Account account) { if(dashboard!=null) dashboard.refresh(); }
+ }
+diff --git a/FCL/src/main/java/com/tungsten/fcl/upgrade/UpdateChecker.java b/FCL/src/main/java/com/tungsten/fcl/upgrade/UpdateChecker.java
+index 70ca430..96bae08 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/upgrade/UpdateChecker.java
++++ b/FCL/src/main/java/com/tungsten/fcl/upgrade/UpdateChecker.java
+@@ -49,7 +49,7 @@ public class UpdateChecker {
+     }
+ 
+     public Task<?> checkManually(Context context) {
+-        return check(context, true, true);
++        return privateBuildNotice(context);
+     }
+ 
+     /**
+@@ -80,7 +80,12 @@ public class UpdateChecker {
+     }
+ 
+     public Task<?> checkAuto(Context context) {
+-        return check(context, false, false);
++        return Task.runAsync(() -> {});
++    }
++
++    private Task<?> privateBuildNotice(Context context) {
++        return Task.runAsync(() -> Schedulers.androidUIThread().execute(() ->
++            Toast.makeText(context, "Las actualizaciones de esta APK las distribuye Wachiland.", Toast.LENGTH_LONG).show()));
+     }
+ 
+     public Task<?> check(Context context, boolean showBeta, boolean showAlert) {
+diff --git a/FCL/src/main/java/com/tungsten/fclauncher/utils/FCLPath.java b/FCL/src/main/java/com/tungsten/fclauncher/utils/FCLPath.java
+index ebd7fa0..bc003e0 100644
+--- a/FCL/src/main/java/com/tungsten/fclauncher/utils/FCLPath.java
++++ b/FCL/src/main/java/com/tungsten/fclauncher/utils/FCLPath.java
+@@ -46,7 +46,7 @@ public class FCLPath {
+     public static void loadPaths(Context context) {
+         NATIVE_LIB_DIR = context.getApplicationInfo().nativeLibraryDir;
+ 
+-        LOG_DIR = Environment.getExternalStorageDirectory().getAbsolutePath() + "/FCL/log";
++        LOG_DIR = new File(context.getExternalFilesDir(null) != null ? context.getExternalFilesDir(null) : context.getFilesDir(), "logs").getAbsolutePath();
+         CACHE_DIR = context.getCacheDir() + "/fclauncher";
+ 
+         RUNTIME_DIR = context.getDir("runtime", 0).getAbsolutePath();
+@@ -66,13 +66,14 @@ public class FCLPath {
+         PLUGIN_DIR = FILES_DIR + "/plugins";
+         BACKGROUND_DIR = FILES_DIR + "/background";
+         SKIN_DIR = FILES_DIR + "/skin";
+-        CONTROLLER_DIR = Environment.getExternalStorageDirectory().getAbsolutePath() + "/FCL/control";
+-        SHARE_DIR = Environment.getExternalStorageDirectory().getAbsolutePath() + "/FCL/share";
++        CONTROLLER_DIR = FILES_DIR + "/control";
++        SHARE_DIR = FILES_DIR + "/share";
+         File externalFilesDir = context.getExternalFilesDir(null);
+         if (externalFilesDir == null) {
+-            externalFilesDir = new File(Environment.getExternalStorageDirectory(), "Android/data/" + context.getPackageName() + "/files");
++            externalFilesDir = new File(context.getFilesDir(), "games");
+         }
+         PRIVATE_COMMON_DIR = new File(externalFilesDir, ".minecraft").getAbsolutePath();
++        SHARED_COMMON_DIR = new File(externalFilesDir, "instances").getAbsolutePath();
+ 
+         AUTHLIB_INJECTOR_PATH = PLUGIN_DIR + "/authlib-injector.jar";
+         LIB_PATCHER_PATH = PLUGIN_DIR + "/MioLibPatcher.jar";
+diff --git a/FCL/src/main/java/com/tungsten/fcllibrary/component/FCLActivity.java b/FCL/src/main/java/com/tungsten/fcllibrary/component/FCLActivity.java
+index 6447ac6..bca75d2 100644
+--- a/FCL/src/main/java/com/tungsten/fcllibrary/component/FCLActivity.java
++++ b/FCL/src/main/java/com/tungsten/fcllibrary/component/FCLActivity.java
+@@ -50,7 +50,7 @@ public class FCLActivity extends AppCompatActivity {
+         } else {
+             hasPermission = ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+         }
+-        if (hasPermission) {
++        if (true) { // All Wachiland paths are app-scoped.
+             FCLPath.loadPaths(this);
+         }
+         fileLauncher = new FileBrowserLauncher(this);
+@@ -72,7 +72,7 @@ public class FCLActivity extends AppCompatActivity {
+     }
+ 
+     protected void applySavedNightMode() {
+-        int themeMode = getSharedPreferences("launcher", MODE_PRIVATE).getInt("themeMode", 0);
++        int themeMode = getSharedPreferences("launcher", MODE_PRIVATE).getInt("themeMode", 2);
+         int mode = AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM;
+         if (themeMode != 0) {
+             mode = themeMode == 1 ? AppCompatDelegate.MODE_NIGHT_NO : AppCompatDelegate.MODE_NIGHT_YES;
+diff --git a/FCL/src/main/java/com/tungsten/fcllibrary/component/theme/ThemePreference.kt b/FCL/src/main/java/com/tungsten/fcllibrary/component/theme/ThemePreference.kt
+index 01f9a04..b5534c9 100644
+--- a/FCL/src/main/java/com/tungsten/fcllibrary/component/theme/ThemePreference.kt
++++ b/FCL/src/main/java/com/tungsten/fcllibrary/component/theme/ThemePreference.kt
+@@ -16,11 +16,11 @@ import java.io.OutputStream
+ @OptIn(kotlinx.serialization.InternalSerializationApi::class)
+ @Serializable
+ data class ThemePreference(
+-    val color: Int = 0xFF7797CF.toInt(),
+-    val colorDark: Int = 0xFF4E77C1.toInt(),
+-    val color2: Int = 0xFF000000.toInt(),
++    val color: Int = 0xFF171717.toInt(),
++    val colorDark: Int = 0xFF171717.toInt(),
++    val color2: Int = 0xFFF4F4F4.toInt(),
+     val color2Dark: Int = 0xFFFFFFFF.toInt(),
+-    val fullscreen: Boolean = false,
++    val fullscreen: Boolean = true,
+     val closeSkinModel: Boolean = false,
+     val animationSpeed: Int = 8,
+     /** 派生色（ltColor/dkColor）透明度，0 完全透明 ~ 255 完全不透明，独立于主要主题色的 alpha */
+diff --git a/FCL/src/main/java/net/wachiland/launcher/ConfigRules.java b/FCL/src/main/java/net/wachiland/launcher/ConfigRules.java
+new file mode 100644
+index 0000000..463268e
+--- /dev/null
++++ b/FCL/src/main/java/net/wachiland/launcher/ConfigRules.java
+@@ -0,0 +1,68 @@
++package net.wachiland.launcher;
++
++import com.google.gson.*;
++import java.io.*;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.util.*;
++import java.util.regex.*;
++
++/** Conservative initial-install rules. Unsupported syntax fails rather than corrupting a config. */
++final class ConfigRules {
++    static void apply(File root, JsonObject rule) throws IOException {
++        String path=rule.get("path").getAsString(); DistributionClient.validatePath(path);
++        File file=new File(root,path); DistributionClient.safeDestination(root,file);
++        if (!file.isFile() || file.length()>4*1024*1024) throw new IOException("Configuración ausente o demasiado grande: "+path);
++        String format=rule.get("format").getAsString(), key=rule.get("key").getAsString();
++        String policy=rule.get("policy").getAsString();
++        if (!Set.of("enforced","default_once").contains(policy)) throw new IOException("Política de configuración incompatible");
++        String text=new String(Files.readAllBytes(file.toPath()),StandardCharsets.UTF_8);
++        String newline=text.contains("\r\n") ? "\r\n" : "\n";
++        List<String> lines=new ArrayList<>(Arrays.asList(text.split("\\r?\\n",-1)));
++        JsonElement value=rule.get("value"); boolean changed=false;
++        if (format.equals("text_lines")) {
++            int line;
++            try { line=Integer.parseInt(key.startsWith("line:")?key.substring(5):key); } catch (NumberFormatException e) { throw new IOException("Número de línea TXT incompatible",e); }
++            if (line<1 || line>lines.size() || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) throw new IOException("Regla TXT incompatible");
++            String replacement=value.getAsString(); if (replacement.contains("\n") || replacement.contains("\r")) throw new IOException("La regla TXT debe ser una sola línea");
++            lines.set(line-1,replacement); changed=true;
++        } else if (format.equals("properties")) {
++            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) throw new IOException("Regla properties incompatible");
++            String replacement=value.getAsString().replace("\\","\\\\").replace("\n","\\n").replace("\r","\\r");
++            for(int i=0;i<lines.size();i++) {
++                String s=lines.get(i).trim(); if(s.startsWith("#") || s.startsWith("!")) continue;
++                Matcher matcher=Pattern.compile("^\\s*([^:=\\s]+)\\s*[:=]\\s*.*$").matcher(lines.get(i));
++                if(matcher.matches() && matcher.group(1).equals(key)) { if(changed) throw new IOException("Clave duplicada: "+key); lines.set(i,key+"="+replacement); changed=true; }
++            }
++            if(!changed) { lines.add(key+"="+replacement); changed=true; }
++        } else if (format.equals("toml")) {
++            // Validate the input and only edit ordinary dotted keys/table assignments.
++            if(org.tomlj.Toml.parse(text).hasErrors()) throw new IOException("TOML inválido: "+path);
++            String table=""; int lastDot=key.lastIndexOf('.');
++            String wantedTable=lastDot<0 ? "" : key.substring(0,lastDot), leaf=lastDot<0 ? key : key.substring(lastDot+1);
++            if (!key.matches("[A-Za-z0-9_.-]+")) throw new IOException("Esta clave TOML necesita el editor completo: "+key);
++            String replacement=toml(value);
++            for(int i=0;i<lines.size();i++) {
++                String s=lines.get(i).trim();
++                if(s.startsWith("[") && s.endsWith("]")) table=s.substring(1,s.length()-1).trim();
++                Matcher matcher=Pattern.compile("^\\s*([A-Za-z0-9_.-]+)\\s*=.*$").matcher(lines.get(i));
++                if(matcher.matches() && ((table.isEmpty()?"":table+".")+matcher.group(1)).equals(key)) {
++                    if(changed) throw new IOException("Clave TOML duplicada: "+key);
++                    if(s.contains("\"\"\"") || s.contains("'''")) throw new IOException("Valor TOML multilínea no compatible en el prototipo");
++                    lines.set(i,matcher.group(1)+" = "+replacement); changed=true;
++                }
++            }
++            if(!changed) {
++                lines.add(""); if(!wantedTable.isEmpty()) lines.add("["+wantedTable+"]");
++                lines.add(leaf+" = "+replacement); changed=true;
++            }
++            if(org.tomlj.Toml.parse(String.join(newline,lines)).hasErrors()) throw new IOException("La regla genera un TOML inválido: "+key);
++        } else throw new IOException("Formato de reglas no compatible: "+format);
++        if(changed) Files.write(file.toPath(),String.join(newline,lines).getBytes(StandardCharsets.UTF_8));
++    }
++    private static String toml(JsonElement value) throws IOException {
++        if(value.isJsonPrimitive()) return value.toString();
++        if(value.isJsonArray()) { List<String> result=new ArrayList<>(); for(JsonElement item:value.getAsJsonArray()) result.add(toml(item)); return "["+String.join(", ",result)+"]"; }
++        throw new IOException("Valor TOML no compatible en el prototipo");
++    }
++}
+diff --git a/FCL/src/main/java/net/wachiland/launcher/DistributionClient.java b/FCL/src/main/java/net/wachiland/launcher/DistributionClient.java
+new file mode 100644
+index 0000000..3c55546
+--- /dev/null
++++ b/FCL/src/main/java/net/wachiland/launcher/DistributionClient.java
+@@ -0,0 +1,253 @@
++package net.wachiland.launcher;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.util.Base64;
++import com.google.gson.*;
++import org.erdtman.jcs.JsonCanonicalizer;
++import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters;
++import org.bouncycastle.crypto.signers.Ed25519Signer;
++import java.io.*;
++import java.net.*;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.*;
++import java.security.MessageDigest;
++import java.util.*;
++import java.util.zip.ZipFile;
++
++/** Android transport for the same pinned Distribution protocol as Pandora.
++ * This prototype only installs fresh instances; it never reconciles an existing tree. */
++public final class DistributionClient {
++    public static final String DEFAULT_SERVER = "https://welite.ddns.net:8444";
++    private final Context context;
++    private final String origin;
++    private JsonObject keys;
++    public interface Progress { void update(String path, long done, long total); }
++    public static final class Plan {
++        public JsonObject profile, manifest;
++        public final Map<String, JsonObject> files = new TreeMap<>();
++        public final Map<String, JsonObject> settings = new LinkedHashMap<>();
++        public long bytes;
++    }
++    public DistributionClient(Context context) throws IOException {
++        this.context = context.getApplicationContext();
++        origin = this.context.getSharedPreferences("wachiland", 0).getString("server", DEFAULT_SERVER);
++        URI uri = URI.create(origin);
++        if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getUserInfo() != null
++                || uri.getQuery() != null || uri.getFragment() != null || !uri.getPath().isEmpty())
++            throw new IOException("La dirección de Distribution debe ser un origen HTTPS sin ruta.");
++    }
++    private HttpURLConnection connect(String path) throws IOException {
++        HttpURLConnection c = (HttpURLConnection) new URL(origin + path).openConnection();
++        c.setInstanceFollowRedirects(false);
++        c.setConnectTimeout(15000); c.setReadTimeout(30000);
++        c.setRequestProperty("User-Agent", "Wachiland-Android/0.1.0");
++        if (c.getResponseCode() != 200) {
++            int code = c.getResponseCode(); c.disconnect();
++            throw new IOException("Distribution HTTP " + code + " en " + path);
++        }
++        return c;
++    }
++    private JsonObject json(String path) throws IOException {
++        HttpURLConnection c = connect(path);
++        try (InputStream in = c.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
++            byte[] buffer = new byte[16384]; int n;
++            while ((n = in.read(buffer)) >= 0) {
++                if (out.size() + n > 4*1024*1024) throw new IOException("Respuesta JSON demasiado grande");
++                out.write(buffer, 0, n);
++            }
++            return JsonParser.parseString(out.toString("UTF-8")).getAsJsonObject();
++        } catch (RuntimeException e) { throw new IOException("Respuesta JSON inválida", e); }
++        finally { c.disconnect(); }
++    }
++    public List<JsonObject> catalog() throws IOException {
++        JsonObject response = json("/v1/profiles");
++        if (response.get("schema_version").getAsInt() != 1 || response.get("protocol_version").getAsInt() != 1
++                || response.has("truncated") && response.get("truncated").getAsBoolean())
++            throw new IOException("Catálogo incompatible o incompleto");
++        List<JsonObject> result = new ArrayList<>(); Set<String> seen = new HashSet<>();
++        for (JsonElement e : response.getAsJsonArray("profiles")) {
++            JsonObject p = e.getAsJsonObject(); identifier(p.get("profile_id").getAsString(), "profile_");
++            if (!seen.add(p.get("profile_id").getAsString())) throw new IOException("Perfil duplicado");
++            result.add(p);
++        }
++        return result;
++    }
++    private JsonObject revision(String id, JsonObject ref) throws Exception {
++        identifier(id, "profile_");
++        String revision = ref.get("revision_id").getAsString(); identifier(revision, "rev_");
++        String expected = ref.get("manifest_sha256").getAsString(); digest(expected);
++        JsonObject response = json("/v1/profiles/"+id+"/revisions/"+revision);
++        if (response.get("schema_version").getAsInt()!=1 || response.get("protocol_version").getAsInt()!=1)
++            throw new IOException("Protocolo de revisión incompatible");
++        JsonObject env = response.getAsJsonObject("envelope"), sig = env.getAsJsonObject("signature");
++        JsonObject m = env.getAsJsonObject("manifest");
++        byte[] canonical = new JsonCanonicalizer(m.toString()).getEncodedUTF8();
++        if (!"RFC8785-JCS".equals(env.get("canonicalization").getAsString())
++                || !"Ed25519".equals(sig.get("algorithm").getAsString())
++                || !expected.equals(env.get("manifest_sha256").getAsString())
++                || !expected.equals(hex(MessageDigest.getInstance("SHA-256").digest(canonical))))
++            throw new IOException("La revisión no coincide con su hash firmado");
++        if (keys == null) keys = json("/v1/signing-keys").getAsJsonObject("keys");
++        String keyId = sig.get("key_id").getAsString();
++        if (!keys.has(keyId)) throw new IOException("Identidad de firma desconocida");
++        String encoded = keys.get(keyId).getAsString();
++        SharedPreferences trust = context.getSharedPreferences("wachiland-signers", 0);
++        String saved = trust.getString(origin + "|" + keyId, encoded);
++        if (!saved.equals(encoded)) throw new IOException("La identidad de firma del servidor ha cambiado");
++        Ed25519Signer verifier = new Ed25519Signer();
++        verifier.init(false, new Ed25519PublicKeyParameters(decode(encoded), 0));
++        verifier.update(canonical, 0, canonical.length);
++        if (!verifier.verifySignature(decode(sig.get("value").getAsString())))
++            throw new IOException("Firma de revisión inválida");
++        trust.edit().putString(origin + "|" + keyId, encoded).apply();
++        if (!id.equals(m.getAsJsonObject("profile").get("id").getAsString())
++                || !revision.equals(m.getAsJsonObject("revision").get("id").getAsString())
++                || ref.has("sequence") && ref.get("sequence").getAsLong()!=m.getAsJsonObject("revision").get("sequence").getAsLong()
++                || m.get("schema_version").getAsInt()<1 || m.get("schema_version").getAsInt()>2)
++            throw new IOException("Identidad o esquema de revisión incompatible");
++        return m;
++    }
++    public Plan resolve(JsonObject profile) throws Exception {
++        Plan plan = new Plan(); plan.profile = profile.deepCopy();
++        String id = profile.get("profile_id").getAsString(); JsonObject ref = profile.getAsJsonObject("latest_revision");
++        List<JsonObject> chain = new ArrayList<>(); Set<String> seen = new HashSet<>();
++        while (true) {
++            if (chain.size() >= 9 || !seen.add(id+":"+ref.get("revision_id").getAsString()))
++                throw new IOException("La herencia contiene un ciclo o más de ocho madres");
++            JsonObject m = revision(id, ref); chain.add(m);
++            if (!m.has("base") || m.get("base").isJsonNull()) break;
++            ref = m.getAsJsonObject("base"); id = ref.get("profile_id").getAsString();
++        }
++        plan.manifest = chain.get(0);
++        if (chain.size()-1 > plan.manifest.getAsJsonObject("permissions").get("max_inheritance_depth").getAsInt())
++            throw new IOException("La herencia excede el límite firmado");
++        Map<String,String> identities = new HashMap<>();
++        JsonObject previousPermissions = null;
++        for (int i=chain.size()-1; i>=0; i--) {
++            JsonObject m = chain.get(i);
++            if (!m.get("game").equals(plan.manifest.get("game"))) throw new IOException("Las madres usan otra versión de Minecraft");
++            for (String collection : new String[]{"mods", "configs", "objects"}) {
++                for (JsonElement e : array(m, collection)) {
++                    JsonObject entry = e.getAsJsonObject(); String path = entry.get("path").getAsString(); validatePath(path);
++                    String identity = collection+":"+(collection.equals("configs") ? path : entry.get("id").getAsString());
++                    String old = identities.get(identity);
++                    if (entry.has("expect_base_object_sha256") && !entry.get("expect_base_object_sha256").isJsonNull()) {
++                        if (old==null || !plan.files.get(old).getAsJsonObject("object").get("sha256").equals(entry.get("expect_base_object_sha256")))
++                            throw new IOException("El archivo base no coincide: "+path);
++                    }
++                    if (old!=null && !old.equals(path)) plan.files.remove(old);
++                    if (plan.files.containsKey(path) && (old==null || !old.equals(path)))
++                        throw new IOException("Dos identidades intentan escribir "+path);
++                    JsonObject object = entry.getAsJsonObject("object"); validateObject(object);
++                    plan.files.put(path, entry); identities.put(identity,path);
++                }
++            }
++            for (String collection : new String[]{"remove_mods", "remove_configs"}) {
++                for (JsonElement e : array(m, collection)) {
++                    JsonObject entry=e.getAsJsonObject();
++                    String identity = collection.equals("remove_mods") ? "mods:"+entry.get("id").getAsString() : "configs:"+entry.get("path").getAsString();
++                    String path = identities.remove(identity);
++                    if (path==null || !plan.files.get(path).getAsJsonObject("object").get("sha256").equals(entry.get("expect_base_object_sha256")))
++                        throw new IOException("La eliminación no coincide con la madre");
++                    plan.files.remove(path);
++                    final String removed = path; plan.settings.entrySet().removeIf(item -> item.getValue().get("path").getAsString().equals(removed));
++                }
++            }
++            for (JsonElement e : array(m,"config_settings")) {
++                if (m.get("schema_version").getAsInt()!=2) throw new IOException("Reglas de configuración incompatibles");
++                JsonObject rule=e.getAsJsonObject(); validatePath(rule.get("path").getAsString());
++                String identity=rule.get("path").getAsString()+"\0"+rule.get("key").getAsString();
++                if (plan.settings.containsKey(identity)) {
++                    String policy=plan.settings.get(identity).get("policy").getAsString();
++                    if (previousPermissions==null || !previousPermissions.getAsJsonObject("configs").get("override_"+policy).getAsBoolean())
++                        throw new IOException("La madre no permite cambiar esta regla");
++                }
++                plan.settings.put(identity,rule);
++            }
++            previousPermissions=m.getAsJsonObject("permissions");
++        }
++        for (JsonObject entry : plan.files.values()) plan.bytes += entry.getAsJsonObject("object").get("size").getAsLong();
++        return plan;
++    }
++    public File object(JsonObject ref, Progress progress) throws Exception {
++        validateObject(ref); String digest=ref.get("sha256").getAsString(); long size=ref.get("size").getAsLong();
++        File dir=new File(context.getFilesDir(), "distribution-cas"); if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("No se puede crear la caché");
++        File output=new File(dir,digest);
++        if (output.isFile() && output.length()==size && digest.equals(hash(output))) return output;
++        File temporary=File.createTempFile("download-", ".part",dir);
++        HttpURLConnection c=connect("/v1/objects/sha256/"+digest);
++        try (InputStream in=c.getInputStream(); FileOutputStream out=new FileOutputStream(temporary)) {
++            MessageDigest sha=MessageDigest.getInstance("SHA-256"); byte[] buffer=new byte[65536]; long count=0; int n;
++            while ((n=in.read(buffer))>=0) {
++                if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Descarga cancelada");
++                count+=n; if (count>size) throw new IOException("El objeto supera el tamaño firmado");
++                sha.update(buffer,0,n); out.write(buffer,0,n); progress.update(digest,count,size);
++            }
++            if (count!=size || !digest.equals(hex(sha.digest()))) throw new IOException("Hash o tamaño incorrectos: "+digest);
++            out.getFD().sync();
++        } catch (Exception e) { temporary.delete(); throw e; } finally { c.disconnect(); }
++        Files.move(temporary.toPath(),output.toPath(),StandardCopyOption.REPLACE_EXISTING);
++        return output;
++    }
++    public void install(Plan plan, File directory, File icon, Progress progress) throws Exception {
++        long done=0;
++        for (Map.Entry<String,JsonObject> item : plan.files.entrySet()) {
++            String path=item.getKey(); long before=done;
++            File source=object(item.getValue().getAsJsonObject("object"),(p,d,t)->progress.update(path,before+d,plan.bytes));
++            if (path.startsWith("mods/") && path.endsWith(".jar")) try (ZipFile ignored=new ZipFile(source)) { }
++            File destination=new File(directory,path); safeDestination(directory,destination);
++            File parent=destination.getParentFile(); if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException("No se puede crear "+path);
++            if (destination.exists()) throw new IOException("La instancia nueva ya contiene "+path);
++            Files.copy(source.toPath(),destination.toPath());
++            done+=source.length(); progress.update(path,done,plan.bytes);
++        }
++        for (JsonObject setting : plan.settings.values()) ConfigRules.apply(directory,setting);
++        JsonObject art=presentationIcon(plan.profile,plan.manifest);
++        if (art!=null) { validateIcon(art); Files.copy(object(art,(p,d,t)->{}).toPath(),icon.toPath(),StandardCopyOption.REPLACE_EXISTING); }
++        File pin=new File(directory,".wachiland-profile.json");
++        Files.write(pin.toPath(),plan.profile.toString().getBytes(StandardCharsets.UTF_8));
++    }
++    public static JsonObject presentationIcon(JsonObject p, JsonObject m) {
++        if (p.has("presentation") && !p.get("presentation").isJsonNull()) {
++            JsonObject art=p.getAsJsonObject("presentation");
++            if (art.has("icon") && !art.get("icon").isJsonNull()) return art.getAsJsonObject("icon");
++        }
++        if (m!=null && m.getAsJsonObject("profile").has("icon") && !m.getAsJsonObject("profile").get("icon").isJsonNull())
++            return m.getAsJsonObject("profile").getAsJsonObject("icon");
++        return null;
++    }
++    public static void validateIcon(JsonObject ref) throws IOException {
++        validateObject(ref);
++        if (ref.get("size").getAsLong()>2*1024*1024 || !"image/png".equals(ref.get("media_type").getAsString())) throw new IOException("Icono inválido");
++    }
++    static void safeDestination(File root,File file) throws IOException {
++        if (!file.getCanonicalPath().startsWith(root.getCanonicalPath()+File.separator)) throw new IOException("Ruta fuera de la instancia");
++        File parent=file;
++        while (parent!=null && !parent.equals(root)) { if (Files.isSymbolicLink(parent.toPath())) throw new IOException("Enlace no permitido durante la instalación"); parent=parent.getParentFile(); }
++    }
++    static void validatePath(String path) throws IOException {
++        if (path.isEmpty() || path.startsWith("/") || path.contains("\\") || path.contains(":") || path.indexOf('\0')>=0)
++            throw new IOException("Ruta insegura: "+path);
++        for (String part:path.split("/",-1)) if (part.isEmpty() || part.equals(".") || part.equals("..")) throw new IOException("Ruta insegura: "+path);
++        String first=path.split("/",2)[0].toLowerCase(Locale.ROOT);
++        if (Set.of("saves","screenshots","logs","crash-reports",".pandora-layout-v1",".wachiland-profile.json").contains(first))
++            throw new IOException("El perfil intenta administrar datos del jugador: "+path);
++    }
++    private static void identifier(String value,String prefix) throws IOException {
++        if (!value.startsWith(prefix) || !value.matches("[A-Za-z0-9_-]{1,160}")) throw new IOException("Identificador inválido");
++    }
++    private static void digest(String value) throws IOException { if (!value.matches("[0-9a-f]{64}")) throw new IOException("SHA-256 inválido"); }
++    private static void validateObject(JsonObject object) throws IOException {
++        digest(object.get("sha256").getAsString()); long size=object.get("size").getAsLong();
++        if (size<0 || size>2L*1024*1024*1024) throw new IOException("Tamaño de objeto inválido");
++    }
++    private static JsonArray array(JsonObject m,String key) { return m.has(key) ? m.getAsJsonArray(key) : new JsonArray(); }
++    private static byte[] decode(String s) { return Base64.decode(s,Base64.URL_SAFE|Base64.NO_WRAP|Base64.NO_PADDING); }
++    private static String hash(File file) throws Exception {
++        MessageDigest sha=MessageDigest.getInstance("SHA-256");
++        try(InputStream in=new FileInputStream(file)) { byte[] b=new byte[65536]; int n; while ((n=in.read(b))>=0) sha.update(b,0,n); }
++        return hex(sha.digest());
++    }
++    private static String hex(byte[] bytes) { StringBuilder result=new StringBuilder(); for(byte b:bytes) result.append(String.format(Locale.ROOT,"%02x",b&255)); return result.toString(); }
++}
+diff --git a/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
+new file mode 100644
+index 0000000..b9d44d5
+--- /dev/null
++++ b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
+@@ -0,0 +1,213 @@
++package net.wachiland.launcher;
++
++import android.content.*;
++import android.graphics.*;
++import android.graphics.drawable.GradientDrawable;
++import android.view.*;
++import android.view.inputmethod.EditorInfo;
++import android.widget.*;
++import androidx.appcompat.app.AlertDialog;
++import com.google.gson.*;
++import com.tungsten.fcl.activity.MainActivity;
++import com.tungsten.fcl.game.FCLGameRepository;
++import com.tungsten.fcl.setting.*;
++import com.tungsten.fcl.ui.TaskDialog;
++import com.tungsten.fcl.ui.UIManager;
++import com.tungsten.fcl.ui.account.CreateAccountDialog;
++import com.tungsten.fcl.util.TaskCancellationAction;
++import com.tungsten.fclcore.auth.Account;
++import com.tungsten.fclcore.fakefx.beans.InvalidationListener;
++import com.tungsten.fclcore.task.*;
++import java.io.*;
++import java.nio.file.Files;
++import java.util.*;
++import java.util.concurrent.*;
++import java.util.function.Consumer;
++
++/** Landscape, touch-sized Wachiland home. Native FCL pages provide runtime/settings tools. */
++public final class WachilandDashboard extends LinearLayout {
++    private static final ExecutorService IO=Executors.newFixedThreadPool(3);
++    private static final int BG=Color.rgb(10,10,10), PANEL=Color.rgb(16,16,16), BORDER=Color.rgb(42,42,42);
++    private static final int WHITE=Color.rgb(244,244,244), MUTED=Color.rgb(155,163,172);
++    private static final int GREEN=Color.rgb(62,215,133), CYAN=Color.rgb(28,210,230);
++    private final MainActivity activity;
++    private final LinearLayout globalCards, instances;
++    private final TextView account, status;
++    private boolean working=false, attached=false, loaded=false;
++    private final Consumer<Profile> versionsListener=p->post(this::renderInstances);
++    private final InvalidationListener accountListener=p->post(this::renderAccount);
++
++    public WachilandDashboard(Context context) {
++        super(context); activity=(MainActivity)context;
++        setOrientation(VERTICAL); setPadding(dp(18),dp(12),dp(18),0); setBackgroundColor(BG);
++        LinearLayout header=row(); TextView brand=text("◇  Wachiland Launcher",21,WHITE); brand.setTypeface(null,Typeface.BOLD);
++        header.addView(brand,new LayoutParams(0,dp(48),1));
++        account=button("Microsoft",CYAN,()->new CreateAccountDialog(activity,Accounts.FACTORY_MICROSOFT).show());
++        header.addView(account,new LayoutParams(LayoutParams.WRAP_CONTENT,dp(48))); addView(header);
++        ScrollView scroll=new ScrollView(context); scroll.setFillViewport(true); scroll.setClipToPadding(false);
++        addView(scroll,new LayoutParams(LayoutParams.MATCH_PARENT,0,1));
++        LinearLayout body=column(); body.setPadding(0,dp(6),0,dp(24)); scroll.addView(body);
++        LinearLayout globalsTitle=row(); globalsTitle.addView(text("Perfiles globales",18,WHITE),new LayoutParams(0,dp(44),1));
++        globalsTitle.addView(button("Actualizar",CYAN,this::loadCatalog),new LayoutParams(LayoutParams.WRAP_CONTENT,dp(44))); body.addView(globalsTitle);
++        status=text("Conectando con Wachiland Distribution…",12,MUTED); body.addView(status);
++        HorizontalScrollView carousel=new HorizontalScrollView(context); carousel.setHorizontalScrollBarEnabled(false);
++        globalCards=row(); globalCards.setGravity(Gravity.TOP); carousel.addView(globalCards); body.addView(carousel);
++        LinearLayout localTitle=row(); localTitle.setPadding(0,dp(14),0,0);
++        localTitle.addView(text("Mis instancias",18,WHITE),new LayoutParams(0,dp(44),1));
++        localTitle.addView(button("Instalar Minecraft",CYAN,()->UIManager.getInstance().switchUI(UIManager.getInstance().getDownloadUI())));
++        body.addView(localTitle); instances=column(); body.addView(instances);
++        TextView footer=text("Android · 0.1.0 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
++        footer.setPadding(0,dp(14),0,dp(8)); footer.setOnClickListener(v->about()); body.addView(footer);
++    }
++    @Override protected void onAttachedToWindow() {
++        super.onAttachedToWindow(); attached=true;
++        Profiles.registerVersionsListener(versionsListener); Accounts.selectedAccountProperty().addListener(accountListener);
++        renderAccount(); renderInstances(); if(!loaded) loadCatalog();
++    }
++    @Override protected void onDetachedFromWindow() {
++        attached=false; Profiles.unregisterVersionsListener(versionsListener); Accounts.selectedAccountProperty().removeListener(accountListener);
++        super.onDetachedFromWindow();
++    }
++    public void refresh() { renderAccount(); renderInstances(); }
++    private void renderAccount() {
++        Account selected=Accounts.getSelectedAccount(); account.setText(selected==null ? "Iniciar sesión · Microsoft" : selected.getUsername()+"  ▾");
++        account.setOnClickListener(v->{ if(selected==null) new CreateAccountDialog(activity,Accounts.FACTORY_MICROSOFT).show();
++            else UIManager.getInstance().switchUI(UIManager.getInstance().getAccountUI()); });
++    }
++    private void loadCatalog() {
++        if(working) return; status.setText("Conectando con Wachiland Distribution…");
++        IO.execute(()->{
++            try {
++                DistributionClient client=new DistributionClient(activity); List<JsonObject> catalog=client.catalog();
++                post(()->{ if(!attached) return; loaded=true; globalCards.removeAllViews(); status.setText(catalog.size()+" perfiles disponibles · toca uno para instalarlo");
++                    for(JsonObject profile:catalog) globalCard(client,profile); });
++            } catch(Exception e) { post(()->{ if(attached) status.setText("No se pudo cargar el catálogo: "+message(e)); }); }
++        });
++    }
++    private static String name(JsonObject p) {
++        if(p.has("presentation")&&!p.get("presentation").isJsonNull()) return p.getAsJsonObject("presentation").get("name").getAsString();
++        return p.get("name").getAsString();
++    }
++    private static String description(JsonObject p) {
++        if(p.has("presentation")&&!p.get("presentation").isJsonNull()) return p.getAsJsonObject("presentation").get("description").getAsString();
++        return "Perfil de Wachiland Distribution";
++    }
++    private void globalCard(DistributionClient client,JsonObject profile) {
++        LinearLayout card=panel(); card.setMinimumHeight(dp(158)); LayoutParams lp=new LayoutParams(dp(270),LayoutParams.WRAP_CONTENT); lp.setMargins(0,dp(10),dp(12),dp(8)); globalCards.addView(card,lp);
++        LinearLayout top=row(); ImageView icon=icon(null); top.addView(icon,new LayoutParams(dp(50),dp(50)));
++        TextView title=text(name(profile),16,WHITE); title.setTypeface(null,Typeface.BOLD); title.setMaxLines(2); title.setPadding(dp(10),0,0,0);
++        top.addView(title,new LayoutParams(0,dp(50),1)); card.addView(top);
++        TextView detail=text(description(profile),12,MUTED); detail.setMaxLines(2); detail.setPadding(0,dp(8),0,dp(8)); card.addView(detail);
++        card.addView(button("Ver perfil  →",CYAN,()->profileDialog(profile)));
++        card.setOnClickListener(v->profileDialog(profile));
++        IO.execute(()->{ try { DistributionClient.Plan plan=client.resolve(profile); JsonObject art=DistributionClient.presentationIcon(profile,plan.manifest);
++            if(art!=null) { DistributionClient.validateIcon(art); File file=client.object(art,(p,d,t)->{}); Bitmap bitmap=decodeIcon(file);
++                post(()->{if(attached) icon.setImageBitmap(bitmap);}); }
++            post(()->{if(attached && description(profile).equals("Perfil de Wachiland Distribution")) {
++                String d=plan.manifest.getAsJsonObject("profile").get("description").getAsString(); detail.setText(d.isEmpty()?"Minecraft "+plan.manifest.getAsJsonObject("game").get("minecraft").getAsString():d);
++            }});
++        } catch(Exception ignored) { /* Installation surfaces verification/network failures. */ } });
++    }
++    private void profileDialog(JsonObject profile) {
++        if(working) return;
++        LinearLayout content=column(); content.setPadding(dp(20),dp(12),dp(20),dp(12));
++        content.addView(text(description(profile),14,MUTED));
++        TextView label=text("Nombre de la instancia",13,WHITE); label.setPadding(0,dp(16),0,dp(6)); content.addView(label);
++        EditText input=new EditText(activity); input.setText(name(profile)); input.setTextColor(WHITE); input.setSingleLine(true);
++        input.setImeOptions(EditorInfo.IME_ACTION_DONE); input.setSelectAllOnFocus(true); input.setBackground(background(PANEL));
++        input.setPadding(dp(12),0,dp(12),0); content.addView(input,new LayoutParams(LayoutParams.MATCH_PARENT,dp(48)));
++        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(name(profile)).setView(content)
++            .setNegativeButton("Cancelar",null).setPositiveButton("Crear instancia",null).create();
++        dialog.setOnShowListener(v->{styleDialog(dialog); dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b->{
++            String value=input.getText().toString().trim();
++            if(value.isEmpty() || value.length()>70 || !FCLGameRepository.isValidVersionId(value)) {input.setError("Elige un nombre válido");return;}
++            Profile storage=Profiles.getSelectedProfile();
++            if(storage.getRepository().versionIdConflicts(value)) {input.setError("Ya existe una instancia con ese nombre");return;}
++            dialog.dismiss(); install(profile,value,storage);
++        });});
++        input.setOnEditorActionListener((v,action,event)->{ if(action==EditorInfo.IME_ACTION_DONE || event!=null&&event.getKeyCode()==KeyEvent.KEYCODE_ENTER&&event.getAction()==KeyEvent.ACTION_UP) {
++            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();return true;}return false;});
++        dialog.show();
++    }
++    private void install(JsonObject summary,String id,Profile storage) {
++        working=true; renderInstances();
++        File root=storage.getRepository().getVersionRoot(id), marker=new File(root,".wachiland-installing");
++        Task<?> task=Task.supplyAsync(()->new DistributionClient(activity).resolve(summary)).setName("Comprobando el perfil y sus madres")
++            .thenComposeAsync(plan->{
++                if(!root.isDirectory()&&!root.mkdirs()) throw new IOException("No se pudo crear la instancia");
++                Files.write(marker.toPath(),summary.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
++                com.tungsten.fclcore.download.GameBuilder builder=storage.getDependency().gameBuilder().name(id)
++                    .gameVersion(plan.manifest.getAsJsonObject("game").get("minecraft").getAsString());
++                String loader=plan.manifest.getAsJsonObject("game").get("neoforge").getAsString();
++                if(!loader.isEmpty()) builder.version("neoforge",loader);
++                return builder.buildAsync().thenComposeAsync(()->new Task<Void>() {
++                    { setName("Descargando archivos del modpack"); }
++                    @Override public void execute() throws Exception {
++                        // getVersionSetting resolves the freshly installed version; force private run directory.
++                        storage.getRepository().refreshVersions();
++                        VersionSetting setting=storage.getVersionSetting(id); setting.setUsesGlobal(false); setting.setIsolateGameDir(true);
++                        File gameDirectory=storage.getRepository().getRunDirectory(id);
++                        new DistributionClient(activity).install(plan,gameDirectory,storage.getRepository().getVersionIconFile(id),(path,done,total)->{
++                            updateMessage(path); updateProgress(done,Math.max(1,total));
++                        });
++                        if(!marker.delete()&&marker.exists()) throw new IOException("No se puede finalizar la instalación");
++                    }
++                });
++            });
++        TaskDialog dialog=new TaskDialog(activity,new TaskCancellationAction(d->{}));
++        dialog.setTitle("Creando instancia · "+id);
++        TaskExecutor executor=task.executor(new TaskListener() {
++            @Override public void onStop(boolean success,TaskExecutor executor) { post(()->{
++                working=false; storage.getRepository().refreshVersionsAsync().start();
++                if(success) { storage.setSelectedVersion(id); status.setText("Instancia creada. Ya puedes iniciar el juego."); }
++                else if(executor.getException()!=null) error("No se pudo instalar el perfil",executor.getException());
++                else status.setText("Instalación cancelada. La instancia incompleta no puede iniciarse.");
++                renderInstances();
++            }); }
++        });
++        dialog.setExecutor(executor); dialog.show(); executor.start();
++    }
++    private void renderInstances() {
++        instances.removeAllViews(); Profile storage=Profiles.getSelectedProfile();
++        List<com.tungsten.fclcore.game.Version> list=storage.getRepository().getDisplayVersions().collect(java.util.stream.Collectors.toList());
++        if(list.isEmpty()) {TextView empty=text("Todavía no hay instancias. Elige un perfil global para descargar el modpack.",14,MUTED); empty.setPadding(0,dp(12),0,dp(18)); instances.addView(empty);return;}
++        LinearLayout current=null; int count=0;
++        for(com.tungsten.fclcore.game.Version version:list) {
++            if(count++%2==0) {current=row(); current.setGravity(Gravity.TOP); instances.addView(current);}
++            String id=version.getId(); LinearLayout card=panel(); LayoutParams lp=new LayoutParams(0,LayoutParams.WRAP_CONTENT,1); lp.setMargins(0,dp(6),dp(10),dp(6)); current.addView(card,lp);
++            LinearLayout info=row(); info.addView(icon(storage.getRepository().getVersionIconFile(id)),new LayoutParams(dp(46),dp(46)));
++            TextView title=text(id,16,WHITE); title.setMaxLines(2);title.setPadding(dp(10),0,0,0); info.addView(title,new LayoutParams(0,dp(46),1));card.addView(info);
++            boolean incomplete=new File(storage.getRepository().getVersionRoot(id),".wachiland-installing").exists();
++            LinearLayout actions=row(); TextView start=button(incomplete?"Incompleta":"▶  Iniciar",GREEN,()->{
++                if(Accounts.getSelectedAccount()==null){new CreateAccountDialog(activity,Accounts.FACTORY_MICROSOFT).show();return;}
++                storage.setSelectedVersion(id); activity.launchVersion(id);
++            }); start.setEnabled(!working&&!incomplete); start.setAlpha(start.isEnabled()?1f:.4f);
++            LayoutParams buttonLp=new LayoutParams(0,dp(44),1);buttonLp.setMargins(0,dp(10),dp(6),0);actions.addView(start,buttonLp);
++            TextView manage=button("Ver",CYAN,()->{storage.setSelectedVersion(id); UIManager.getInstance().getManageUI().setVersion(id,storage);UIManager.getInstance().switchUI(UIManager.getInstance().getManageUI());});
++            LayoutParams viewLp=new LayoutParams(0,dp(44),1);viewLp.setMargins(0,dp(10),0,0);actions.addView(manage,viewLp);card.addView(actions);
++        }
++        if(count%2!=0) current.addView(new View(activity),new LayoutParams(0,1,1));
++    }
++    private void about() {
++        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Wachiland Launcher · Android")
++            .setMessage("Prototipo 0.1.0, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
++            .setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog);
++    }
++    private void error(String title,Throwable e) { AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title).setMessage(message(e)).setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog); }
++    private static String message(Throwable e) { while(e.getCause()!=null&&e.getCause()!=e)e=e.getCause();return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage(); }
++    private void styleDialog(AlertDialog d) { if(d.getWindow()!=null){d.getWindow().setBackgroundDrawable(background(PANEL));d.getWindow().setLayout(Math.min(dp(580),getResources().getDisplayMetrics().widthPixels-dp(60)),LayoutParams.WRAP_CONTENT);} }
++    private ImageView icon(File file) { ImageView image=new ImageView(activity);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setBackground(background(PANEL));
++        if(file!=null&&file.isFile()) {try{image.setImageBitmap(decodeIcon(file));}catch(IOException ignored){}} else image.setImageResource(com.tungsten.fcl.R.drawable.wachiland_launcher);return image; }
++    private static Bitmap decodeIcon(File file) throws IOException {
++        BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeFile(file.getAbsolutePath(),bounds);
++        if(bounds.outWidth<1||bounds.outHeight<1||bounds.outWidth>1024||bounds.outHeight>1024)throw new IOException("Tamaño de icono inválido");
++        Bitmap bitmap=BitmapFactory.decodeFile(file.getAbsolutePath());if(bitmap==null)throw new IOException("PNG inválido");return bitmap;
++    }
++    private LinearLayout panel(){LinearLayout v=column();v.setPadding(dp(12),dp(12),dp(12),dp(12));v.setBackground(background(PANEL));return v;}
++    private LinearLayout column(){LinearLayout v=new LinearLayout(activity);v.setOrientation(VERTICAL);return v;}
++    private LinearLayout row(){LinearLayout v=new LinearLayout(activity);v.setOrientation(HORIZONTAL);v.setGravity(Gravity.CENTER_VERTICAL);return v;}
++    private TextView text(String value,int size,int color){TextView v=new TextView(activity);v.setText(value);v.setTextSize(size);v.setTextColor(color);v.setGravity(Gravity.CENTER_VERTICAL);return v;}
++    private TextView button(String value,int accent,Runnable click){TextView v=text(value,14,accent);v.setGravity(Gravity.CENTER);v.setMinHeight(dp(44));v.setPadding(dp(14),0,dp(14),0);v.setBackground(background(accent==GREEN?Color.rgb(20,49,34):accent==CYAN?Color.rgb(14,39,44):PANEL));v.setOnClickListener(w->click.run());v.setFocusable(true);return v;}
++    private GradientDrawable background(int color){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(8));d.setStroke(dp(1),BORDER);return d;}
++    private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
++}
+diff --git a/FCL/src/main/res/drawable/wachiland_launcher.xml b/FCL/src/main/res/drawable/wachiland_launcher.xml
+new file mode 100644
+index 0000000..3bf8a1a
+--- /dev/null
++++ b/FCL/src/main/res/drawable/wachiland_launcher.xml
+@@ -0,0 +1,5 @@
++<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
++<path android:fillColor="#101010" android:pathData="M0,0H108V108H0Z"/>
++<path android:fillColor="@android:color/transparent" android:strokeColor="#FFFFFF" android:strokeWidth="3" android:strokeLineJoin="round" android:pathData="M54,23L80,38L80,69L54,84L28,69L28,38Z M28,38L54,53L80,38 M54,53V84"/>
++<path android:fillColor="#3ED785" android:pathData="M77,77h8v8h-8Z"/>
++</vector>
+\ No newline at end of file
+diff --git a/FCL/src/main/res/values-vi/strings.xml b/FCL/src/main/res/values-vi/strings.xml
+index 0e42839..ddf3872 100644
+--- a/FCL/src/main/res/values-vi/strings.xml
++++ b/FCL/src/main/res/values-vi/strings.xml
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <string name="app_name" translatable="false">Fold Craft Launcher</string>
++    <string name="app_name" translatable="false">Wachiland Launcher</string>
+     <string name="app_name_import">Cài đặt Modpack</string>
+     <string name="splash_agreement">FCL yêu cầu quyền lưu trữ để quản lý và đọc các tệp trò chơi. FCL hoàn toàn mã nguồn mở trên GitHub, vì vậy bạn hãy yên tâm về an toàn dữ liệu của mình. Quyền này chỉ nhằm mục đích để trò chơi hoạt động bình thường và không gây ra rủi ro về bảo mật.</string>
+     <string name="splash_permission_msg">Không có quyền lưu trữ, vui lòng cấp quyền cho Fold Craft Launcher.</string>
+diff --git a/FCL/src/main/res/values/strings.xml b/FCL/src/main/res/values/strings.xml
+index 71ee17a..f2e5087 100644
+--- a/FCL/src/main/res/values/strings.xml
++++ b/FCL/src/main/res/values/strings.xml
+@@ -1,5 +1,5 @@
+ <resources>
+-    <string name="app_name" translatable="false">Fold Craft Launcher</string>
++    <string name="app_name" translatable="false">Wachiland Launcher</string>
+     <string name="app_name_import">Install Modpack</string>
+ 
+     <string name="splash_agreement">FCL requires storage permission to manage and read game files. FCL is fully open-source on GitHub, so please rest assured about your data security. The permission is solely for the game to operate properly and poses no security risks.</string>
+@@ -1527,7 +1527,7 @@
+     <string name="jar_executor_warn">Note! This feature is not for installing mods. If you are installing mods, please use the launcher\'s download function or add them in "Manage Mods".</string>
+ 
+     <!-- 原 FCLLibrary 模块字符串（模块已并入 FCL） -->
+-    <string name="file_browser_provider" translatable="false">com.tungsten.fcl.provider</string>
++    <string name="file_browser_provider" translatable="false">net.wachiland.launcher.provider</string>
+     <string name="file_browser_title">File Browser</string>
+     <string name="file_browser_back">Back</string>
+     <string name="file_browser_close">Exit</string>
+diff --git a/FCL/src/main/res/values/themes.xml b/FCL/src/main/res/values/themes.xml
+index 1b046c0..9a051e5 100644
+--- a/FCL/src/main/res/values/themes.xml
++++ b/FCL/src/main/res/values/themes.xml
+@@ -14,15 +14,18 @@
+         <!-- Customize your theme here. -->
+         <item name="android:windowNoTitle">true</item>
+         <item name="android:windowContentOverlay">@null</item>
++        <item name="android:windowBackground">#0A0A0A</item>
++        <item name="android:textColorPrimary">#F4F4F4</item>
++        <item name="android:textColorSecondary">#9BA3AC</item>
+         <item name="android:windowFullscreen">true</item>
+         <item name="android:windowTranslucentNavigation">true</item>
+     </style>
+ 
+     <style name="Theme.Splash" parent="@style/Theme.SplashScreen">
+         <item name="postSplashScreenTheme">@style/Theme.FoldCraftLauncher</item>
+-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
++        <item name="windowSplashScreenAnimatedIcon">@drawable/wachiland_launcher</item>
+         <item name="windowSplashScreenAnimationDuration">200</item>
+-        <item name="windowSplashScreenBackground">@color/white</item>
++        <item name="windowSplashScreenBackground">#0A0A0A</item>
+     </style>
+ 
+     <style name="TabTextAppearance">

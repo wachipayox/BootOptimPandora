@@ -1,0 +1,6 @@
+.engine/
+out/
+*.apk
+*.jks
+*.password
+local.properties
