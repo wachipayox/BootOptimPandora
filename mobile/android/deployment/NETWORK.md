@@ -29,6 +29,16 @@ The local read endpoint and panel must remain unchanged. Confirm the public
 catalog returns protocol JSON over verified TLS before changing the mobile
 client's default URL to `https://welite.ddns.net` (port 443).
 
-The Nginx configuration has not been applied. SSH with BatchMode rejected the
-agent's identity, so the actual server block is pending user-provided configuration.
+The user provided `nginx -T`: public 443 is the HTTPS server block in
+`/etc/nginx/sites-enabled/pterodactyl.conf`, with the existing Certbot key directive
+and no conflicting `/v1/` location. `install-public-api.sh` adds the include after
+that directive. It resolves the enabled-site symlink, backs up original files to
+`/var/backups/wachiland-nginx`, checks syntax before and after editing, and reloads
+Nginx. Failure restores the prior files. Backups are outside included configuration
+directories so a regular file in sites-enabled cannot create duplicate servers.
+
+The configuration has not yet been applied. SSH with BatchMode rejected the
+agent's identity, so the operator must execute this one-time installer on Linux.
+The Android 0.1.1 default uses port 443. It recognizes an HTML website response
+as an API deployment error rather than reporting only a JSON parser exception.
 Do not disable certificate checking or expand administrator CIDRs as a workaround.
