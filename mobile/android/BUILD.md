@@ -1,39 +1,55 @@
-# Android 0.1.2 crash fix — 2026-10-06
+# Android 0.1.3 prelaunch storage fix — 2026-10-06
 
 ## Confirmed cause
 
-The user supplied an Android crash report from Vivo V2041 / Android 13 (SDK 33),
-version 0.1.1-alpha. The NPE originates at `WachilandDashboard.java:107`, in the
-posted global-card completion callback reading `profile.description` without
-checking whether it exists. The signed manifest schema explicitly makes this
-field optional (`internal/revision/types.go`, `docs/PROFILE_PROTOCOL.md` in
-BootOptimDistribution). Public JSON inspection confirmed absent descriptions
-in the E2E root and child manifests; the E2E root also has no presentation object.
-The background worker's catch cannot intercept an exception thrown later by
-an Android UI callback.
+Three user screenshots show a prelaunch FileSystemException, not a Minecraft
+mod crash. The stack is GameAssetDownloadTask.execute:112 →
+CacheRepository.tryCacheFile:122 → FileUtils.copyFile:388 → Android
+UnixCopyFile.copyFile:258. The existing asset in app-scoped shared storage
+(/storage/emulated/0/Android/data/net.wachiland.launcher/files/instances/assets)
+cannot be copied into the private SHA-1 cache under /data/user/0/.../cache by
+the native Files.copy operation: "Operation not supported on transport endpoint".
+The exact failing native syscall is not established by these screenshots.
+The failure occurs before mod loading; it does not implicate Sable Android or
+the global parent/child manifest.
 
-## Change
+## Changes and invariants
 
-`ProfilePresentation` handles absent/null/wrong-type optional strings and objects.
-Title falls back to catalog title, profile ID and then generic text. Description
-uses current presentation, optional signed text, then Minecraft version or a
-generic label. Explicitly empty current descriptions do not restore stale text.
-Resolved description is computed before posting to the UI; the callback only
-sets a prepared string. The creation dialog reuses the displayed description.
-This fixes the specific crash rather than catching arbitrary UI exceptions.
+- Both core FileUtils.copyFile overloads share a staged copy implementation.
+  Native copying remains the first attempt. IOException/unsupported operations
+  retry using a bounded 64 KiB read/write buffer, including recreation of a
+  staging file removed by failed native copying.
+- Each staging file resides beside the destination. The destination is published
+  by same-directory rename after successful copying and closing both streams.
+  Atomic rename falls back to ordinary rename if unsupported; a failed copy
+  cannot publish a partial cache entry or overwrite an existing destination.
+- Previously truncated/empty cache entries are replaced when their size differs
+  from the source. Existing checksum verification on cache reuse remains intact.
+- Caching an already installed asset is optional. Cache write IOException is
+  logged at FINE and cannot abort launch; missing game assets still require
+  successful downloading and normal integrity checks.
+- Android FCLCacheRepository.restore retains the verified original. It no longer
+  deletes that original before attempting a hard link across shared/private
+  storage, which cannot work on this storage layout.
+- Package remains net.wachiland.launcher, version code 4, ARM64/API 26+,
+  landscape. The delivery certificate is reused for an in-place update.
 
-## Build evidence
+Engine commit: f704bbf658fcccd874dabe991401e0f66590e24b.
+Upstream pin remains 5e76d7485d6ca34fe2adf86b31156f2714f5ccd9.
 
-- Engine commit: `933f7a3a11a071919d03f146ceaaf00b237ddaf0`.
-- `:FCL:assembleDebug -Darch=arm64`: successful in 1m11s; 86 tasks,
-  22 executed / 64 up to date. No tests added or run.
-- APK: `Wachiland-Launcher-Android-0.1.2-alpha-arm64.apk`, 182,528,922 bytes.
-- SHA-256: `f9ed66a766d19eb01b6325be5431b4b7e86e0066305b4398f9cabc263802cbb3`.
-- Signature verifies; unchanged certificate SHA-256 fingerprint:
+## Validation scope
+
+- `:FCL:assembleDebug -Darch=arm64`: BUILD SUCCESSFUL in 1m33s,
+  86 tasks (21 executed / 65 up to date).
+- APK: `Wachiland-Launcher-Android-0.1.3-alpha-arm64.apk`, 182,529,686 bytes.
+- SHA-256: `c3d0bd9eb1f8ce9580b5515e905bc92de3f8313372ba865beeb186022c90ca7c`.
+- APK signature verifies. Certificate SHA-256 remains
   `dc1a10e59f3fd7d74a09cc8eeaaed41b080da89eaa31c86f4ab32c7937020406`.
-- Same package `net.wachiland.launcher`, version code 3, Android API 26+, ARM64.
-- Public HTTPS origin remains port 443. Nginx/server changes are unnecessary.
-- No phone is attached to the agent host. The fix is traced to the supplied stack,
-  compiled and inspected; on-device confirmation is pending the user's upgrade.
+- Manifest confirms `net.wachiland.launcher`, code 4, `0.1.3-alpha`,
+  min API 26, target API 34, native ABI `arm64-v8a`.
 
-[Previous build and public API deployment](BUILD-0.1.1.md).
+No tests were added or run. No phone is attached. Device confirmation must come
+from retrying the existing Android profile after installing the APK over 0.1.2.
+This change does not claim that all the modpack's mods run on Android.
+
+[Previous build evidence](BUILD-0.1.2.md).

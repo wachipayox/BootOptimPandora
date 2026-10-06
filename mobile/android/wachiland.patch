@@ -1,5 +1,5 @@
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index 8463609..4daacad 100644
+index 8463609..8d1879b 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
 @@ -53,9 +53,9 @@ android {
@@ -24,8 +24,8 @@ index 8463609..4daacad 100644
          targetSdk = libs.versions.targetSdk.get().toInt()
 -        versionCode = 1337
 -        versionName = "1.3.3.7"
-+        versionCode = 3
-+        versionName = "0.1.2-alpha"
++        versionCode = 4
++        versionName = "0.1.3-alpha"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
              cmake {
@@ -244,6 +244,33 @@ index e982188..079f4f8 100644
              init()
              return
          }
+diff --git a/FCL/src/main/java/com/tungsten/fcl/game/FCLCacheRepository.java b/FCL/src/main/java/com/tungsten/fcl/game/FCLCacheRepository.java
+index 16c0c3e..6bbab19 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/game/FCLCacheRepository.java
++++ b/FCL/src/main/java/com/tungsten/fcl/game/FCLCacheRepository.java
+@@ -20,11 +20,22 @@ package com.tungsten.fcl.game;
+ import com.tungsten.fclcore.download.DefaultCacheRepository;
+ import com.tungsten.fclcore.fakefx.beans.property.SimpleStringProperty;
+ import com.tungsten.fclcore.fakefx.beans.property.StringProperty;
++import com.tungsten.fclcore.util.function.ExceptionalSupplier;
+ 
++import java.io.IOException;
++import java.nio.file.Path;
+ import java.nio.file.Paths;
+ 
+ public class FCLCacheRepository extends DefaultCacheRepository {
+ 
++    @Override
++    protected Path restore(Path original, ExceptionalSupplier<Path, ? extends IOException> cacheSupplier)
++            throws IOException {
++        // Android shared storage cannot hard-link to the private cache. Keep the
++        // verified original instead of deleting it before a failing createLink.
++        return cacheSupplier.get();
++    }
++
+     private final StringProperty directory = new SimpleStringProperty();
+ 
+     public FCLCacheRepository() {
 diff --git a/FCL/src/main/java/com/tungsten/fcl/ui/account/CreateAccountDialog.kt b/FCL/src/main/java/com/tungsten/fcl/ui/account/CreateAccountDialog.kt
 index aa3ffff..ae05207 100644
 --- a/FCL/src/main/java/com/tungsten/fcl/ui/account/CreateAccountDialog.kt
@@ -550,6 +577,95 @@ index ebd7fa0..bc003e0 100644
  
          AUTHLIB_INJECTOR_PATH = PLUGIN_DIR + "/authlib-injector.jar";
          LIB_PATCHER_PATH = PLUGIN_DIR + "/MioLibPatcher.jar";
+diff --git a/FCL/src/main/java/com/tungsten/fclcore/download/game/GameAssetDownloadTask.java b/FCL/src/main/java/com/tungsten/fclcore/download/game/GameAssetDownloadTask.java
+index 865da6b..2800126 100644
+--- a/FCL/src/main/java/com/tungsten/fclcore/download/game/GameAssetDownloadTask.java
++++ b/FCL/src/main/java/com/tungsten/fclcore/download/game/GameAssetDownloadTask.java
+@@ -109,7 +109,13 @@ public final class GameAssetDownloadTask extends Task<Void> {
+                 task.setCaching(true);
+                 dependencies.add(task.withCounter("fcl.install.assets"));
+             } else {
+-                dependencyManager.getCacheRepository().tryCacheFile(file, CacheRepository.SHA1, assetObject.getHash());
++                try {
++                    dependencyManager.getCacheRepository().tryCacheFile(file, CacheRepository.SHA1, assetObject.getHash());
++                } catch (IOException e) {
++                    // The game asset already exists. An optional cache write
++                    // must not prevent launch (e.g. an unavailable/full cache).
++                    Logging.LOG.log(Level.FINE, "Unable to cache existing game asset " + file, e);
++                }
+             }
+ 
+             updateProgress(++progress, index.getObjects().size());
+diff --git a/FCL/src/main/java/com/tungsten/fclcore/util/CacheRepository.java b/FCL/src/main/java/com/tungsten/fclcore/util/CacheRepository.java
+index 25eca65..93b8db1 100644
+--- a/FCL/src/main/java/com/tungsten/fclcore/util/CacheRepository.java
++++ b/FCL/src/main/java/com/tungsten/fclcore/util/CacheRepository.java
+@@ -118,7 +118,8 @@ public class CacheRepository {
+ 
+     public void tryCacheFile(Path path, String algorithm, String hash) throws IOException {
+         Path cache = getFile(algorithm, hash);
+-        if (Files.isRegularFile(cache)) return;
++        // Older failed native copies could leave an empty/truncated cache file.
++        if (Files.isRegularFile(cache) && Files.size(cache) == Files.size(path)) return;
+         FileUtils.copyFile(path, cache);
+     }
+ 
+diff --git a/FCL/src/main/java/com/tungsten/fclcore/util/io/FileUtils.java b/FCL/src/main/java/com/tungsten/fclcore/util/io/FileUtils.java
+index b7266c0..683d98f 100644
+--- a/FCL/src/main/java/com/tungsten/fclcore/util/io/FileUtils.java
++++ b/FCL/src/main/java/com/tungsten/fclcore/util/io/FileUtils.java
+@@ -369,7 +369,7 @@ public final class FileUtils {
+         if (destFile.exists() && !destFile.canWrite())
+             throw new IOException("Destination '" + destFile + "' exists but is read-only");
+ 
+-        Files.copy(srcFile.toPath(), destFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
++        copyFile(srcFile.toPath(), destFile.toPath());
+     }
+ 
+     public static void copyFile(Path srcFile, Path destFile)
+@@ -380,12 +380,41 @@ public final class FileUtils {
+             throw new FileNotFoundException("Source '" + srcFile + "' does not exist");
+         if (Files.isDirectory(srcFile))
+             throw new IOException("Source '" + srcFile + "' exists but is a directory");
++        destFile = destFile.toAbsolutePath();
++        if (Files.exists(destFile) && Files.isSameFile(srcFile, destFile))
++            return;
+         Path parentFile = destFile.getParent();
+         Files.createDirectories(parentFile);
+         if (Files.exists(destFile) && !Files.isWritable(destFile))
+             throw new IOException("Destination '" + destFile + "' exists but is read-only");
+ 
+-        Files.copy(srcFile, destFile, StandardCopyOption.REPLACE_EXISTING);
++        // Android shared storage can reject the native Files.copy operation
++        // (EOPNOTSUPP), including copies into the private download cache. Stage
++        // beside the destination so retries cannot expose a partial cache entry.
++        Path staged = Files.createTempFile(parentFile, ".wachiland-copy-", ".tmp");
++        try {
++            try {
++                Files.copy(srcFile, staged, StandardCopyOption.REPLACE_EXISTING);
++            } catch (IOException | UnsupportedOperationException nativeFailure) {
++                try (InputStream input = Files.newInputStream(srcFile);
++                     OutputStream output = Files.newOutputStream(staged,
++                             StandardOpenOption.WRITE, StandardOpenOption.CREATE,
++                             StandardOpenOption.TRUNCATE_EXISTING)) {
++                    IOUtils.copyTo(input, output, new byte[64 * 1024]);
++                } catch (IOException streamFailure) {
++                    streamFailure.addSuppressed(nativeFailure);
++                    throw streamFailure;
++                }
++            }
++            try {
++                Files.move(staged, destFile, StandardCopyOption.ATOMIC_MOVE,
++                        StandardCopyOption.REPLACE_EXISTING);
++            } catch (AtomicMoveNotSupportedException e) {
++                Files.move(staged, destFile, StandardCopyOption.REPLACE_EXISTING);
++            }
++        } finally {
++            Files.deleteIfExists(staged);
++        }
+     }
+ 
+     public static void moveFile(File srcFile, File destFile) throws IOException {
 diff --git a/FCL/src/main/java/com/tungsten/fcllibrary/component/FCLActivity.java b/FCL/src/main/java/com/tungsten/fcllibrary/component/FCLActivity.java
 index 6447ac6..bca75d2 100644
 --- a/FCL/src/main/java/com/tungsten/fcllibrary/component/FCLActivity.java
@@ -668,7 +784,7 @@ index 0000000..463268e
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/DistributionClient.java b/FCL/src/main/java/net/wachiland/launcher/DistributionClient.java
 new file mode 100644
-index 0000000..74b912e
+index 0000000..a02319b
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/DistributionClient.java
 @@ -0,0 +1,257 @@
@@ -715,7 +831,7 @@ index 0000000..74b912e
 +        HttpURLConnection c = (HttpURLConnection) new URL(origin + path).openConnection();
 +        c.setInstanceFollowRedirects(false);
 +        c.setConnectTimeout(15000); c.setReadTimeout(30000);
-+        c.setRequestProperty("User-Agent", "Wachiland-Android/0.1.2");
++        c.setRequestProperty("User-Agent", "Wachiland-Android/0.1.3");
 +        if (c.getResponseCode() != 200) {
 +            int code = c.getResponseCode(); c.disconnect();
 +            throw new IOException("Distribution HTTP " + code + " en " + path);
@@ -975,7 +1091,7 @@ index 0000000..bdc354d
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 new file mode 100644
-index 0000000..b687b2a
+index 0000000..3968cee
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 @@ -0,0 +1,210 @@
@@ -1037,7 +1153,7 @@ index 0000000..b687b2a
 +        localTitle.addView(text("Mis instancias",18,WHITE),new LayoutParams(0,dp(44),1));
 +        localTitle.addView(button("Instalar Minecraft",CYAN,()->UIManager.getInstance().switchUI(UIManager.getInstance().getDownloadUI())));
 +        body.addView(localTitle); instances=column(); body.addView(instances);
-+        TextView footer=text("Android · 0.1.2 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
++        TextView footer=text("Android · 0.1.3 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
 +        footer.setPadding(0,dp(14),0,dp(8)); footer.setOnClickListener(v->about()); body.addView(footer);
 +    }
 +    @Override protected void onAttachedToWindow() {
@@ -1168,7 +1284,7 @@ index 0000000..b687b2a
 +    }
 +    private void about() {
 +        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Wachiland Launcher · Android")
-+            .setMessage("Prototipo 0.1.2, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
++            .setMessage("Prototipo 0.1.3, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
 +            .setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog);
 +    }
 +    private void error(String title,Throwable e) { AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title).setMessage(message(e)).setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog); }
