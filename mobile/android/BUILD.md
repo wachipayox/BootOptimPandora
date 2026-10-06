@@ -1,43 +1,50 @@
-# Android 0.1.5 memory attribution diagnostics — 2026-10-07
+# Android 0.1.6 heap headroom candidate — 2026-10-07
 
 ## Scope
 
-User requested diagnosis of memory outside Minecraft's Java heap after two
-confirmed Android LOW_MEMORY kills. Added separate embedded OpenJDK, Android ART,
-whole-process and system sampling to the existing launcher, not a separate app.
-No RAM/renderer/modpack setting change or claimed memory fix.
+User requested the simplest credible solution after the physical phone repeatedly
+exhausted available RAM. Default Java minimum is now 512 MiB instead of being
+forced equal to the selected maximum. Explicit minimum/JVM overrides remain
+supported. Maximum policy, mods, renderer and visual quality are unchanged.
+Diagnostics are lighter, with optional G1 old/young occupancy counters.
 
-See [mechanism, bounds and next phone gate](diagnostics/MEMORY-SAMPLING-2026-10-07.md)
-and [confirmed 4/3 GiB incidents](diagnostics/LOW-MEMORY-2026-10-07.md).
+See [evidence, implementation, alternatives and phone gate](diagnostics/ANDROID-HEAP-HEADROOM-2026-10-07.md).
+This candidate is not yet a proven memory fix or a claim that the pack fits.
 
 ## Build / artifact inspection
 
-Engine commit: `411419dc4b33c17638a77eab2fcb66334aa2f3c4`.
+Engine commit: `6b9df7460a58b59e3472af9d6d9a3e88b62e4918`.
 Pinned upstream FCL base: `5e76d7485d6ca34fe2adf86b31156f2714f5ccd9`.
 
-- `:FCL:assembleDebug -Darch=arm64`: BUILD SUCCESSFUL in 1m51s,
-  89 tasks, 10 executed / 79 up to date.
-- APK `Wachiland-Launcher-Android-0.1.5-alpha-arm64.apk`, 182,562,562 bytes.
-- SHA-256 `7c20f0d93c65d1e7147f52f2222a947132f363b073b3e8ac943737916d1a0c14`.
+- `:FCL:assembleDebug -Darch=arm64`: BUILD SUCCESSFUL in 1m31s,
+  89 tasks, 25 executed / 64 up to date.
+- APK `Wachiland-Launcher-Android-0.1.6-alpha-arm64.apk`, 182,563,118 bytes.
+- SHA-256 `8fb2e332b72ae0d5766f388b2144081ecb0dd8c2362a2cb8f658919a7846664c`.
 - Signature verifies; same delivery certificate SHA-256
   `dc1a10e59f3fd7d74a09cc8eeaaed41b080da89eaa31c86f4ab32c7937020406`.
-- Manifest: `net.wachiland.launcher`, code 6, version `0.1.5-alpha`,
+- Manifest: `net.wachiland.launcher`, code 7, version `0.1.6-alpha`,
   min API 26, target 34, ARM64 only. In-place upgrade preserves instances/accounts.
-- Packaged `assets/game/wachiland-memory-probe.jar` present, 5,232 bytes.
-  Main class inspected with javap: classfile version 52 (Java 8).
-  Probe is regular OpenJDK bytecode, not Android DEX.
+- Embedded-JVM probe javap inspection: classfile version 52 (Java 8), CSV schema 2.
+  Regular OpenJDK bytecode, not Android DEX.
+- Complete source patch reverse check succeeds against the committed engine.
 
-No tests added/run; no physical device attached. Runtime wrapper compatibility,
-vendor memory categories and collection cost need the next phone export. A green
-build does not establish attribution or that the modpack fits in physical RAM.
+No tests added/run and no Android device connected. Compilation and static
+artifact inspection do not prove phone startup, lower RSS or world usability.
+Desktop exact-pack startup CI cannot reproduce this Android runtime/driver gate.
+Candidate remains separate from production integration pending physical evidence.
 
-## Use
+## Use / decision gate
 
-Install over the existing launcher. Memory recording is enabled by default; its
-checkbox is in Diagnóstico. Keep current MobileGlues / 3072 MiB / pack unchanged
-for one instrumented run. Reproduce, reopen launcher after termination, then
-Diagnóstico → Compartir diagnóstico. Export before further launches; only two
-memory sessions retained. ZIP includes paired JVM CSV and Android/process/system
-JSONL records alongside existing exit report, saved game log and retained traces.
+Install over the existing APK. Keep MobileGlues and 3072 MiB maximum, the same
+pack and enabled memory recording. Effective command should contain Xms512m and
+Xmx3072m unless an explicit user override exists. Try menu plus representative
+world if it reaches the menu. After failure/success, Diagnóstico → Compartir
+diagnóstico before more launches overwrite the retained last two sessions.
 
-[Previous build evidence](BUILD-0.1.4.md).
+Compare process-origin elapsed times and resource phases, not launcher setup or
+nonmatching sample instants. Check occupied/committed heap, RSS, available system
+RAM and Android exit reason. If still LOW_MEMORY, use the G1 occupied counters
+and native/graphics trends to choose the next allocation owner to investigate;
+raising Xmx is not the default response.
+
+[Previous build evidence](BUILD-0.1.5.md).

@@ -84,6 +84,15 @@ BUILD.md. On-phone wrapper compatibility, available counters, sampling overhead
 and attribution are unvalidated until the next exported ZIP. Optional sampling
 cost is recorded; this build makes no performance or reduced-memory claim.
 
+## 0.1.6 supersession
+
+The 0.1.5 design above is historical. On-phone evidence validated collection but
+showed expensive full scans; 0.1.6 retains basic ten-second sampling, collects
+Debug.MemoryInfo every thirty seconds and one initial smaps summary only.
+JVM CSV schema 2 adds optional G1 old/young occupied bytes. Missing categories
+between detailed samples are intentional. See
+[headroom candidate and device gate](ANDROID-HEAP-HEADROOM-2026-10-07.md).
+
 Primary references:
 
 - https://developer.android.com/reference/android/os/Debug.MemoryInfo
