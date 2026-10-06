@@ -37,8 +37,10 @@ that directive. It resolves the enabled-site symlink, backs up original files to
 Nginx. Failure restores the prior files. Backups are outside included configuration
 directories so a regular file in sites-enabled cannot create duplicate servers.
 
-The configuration has not yet been applied. SSH with BatchMode rejected the
-agent's identity, so the operator must execute this one-time installer on Linux.
+The operator applied the installer successfully on 2026-10-06. Nginx syntax
+checks and reload succeeded. Public-IP curl checks now return catalog, signing
+keys, signed revision metadata and verified icon bytes. SSH access remains
+unavailable to the agent; deployment was performed by the operator.
 The Android 0.1.1 default uses port 443. It recognizes an HTML website response
 as an API deployment error rather than reporting only a JSON parser exception.
 Do not disable certificate checking or expand administrator CIDRs as a workaround.
