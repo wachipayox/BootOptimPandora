@@ -1,5 +1,5 @@
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index 8463609..f832e29 100644
+index 8463609..e29d813 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
 @@ -53,9 +53,9 @@ android {
@@ -24,12 +24,48 @@ index 8463609..f832e29 100644
          targetSdk = libs.versions.targetSdk.get().toInt()
 -        versionCode = 1337
 -        versionName = "1.3.3.7"
-+        versionCode = 5
-+        versionName = "0.1.4-alpha"
++        versionCode = 6
++        versionName = "0.1.5-alpha"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
              cmake {
-@@ -261,6 +261,8 @@ ksp {
+@@ -162,6 +162,27 @@ abstract class FilterJreAssets : Sync() {
+     abstract val outputDir: DirectoryProperty
+ }
+ 
++// Separate bytecode for the embedded OpenJDK. Never pass these classes through D8/ART.
++val compileMemoryProbe = tasks.register<JavaCompile>("compileMemoryProbe") {
++    source(fileTree("memory-probe/src/main/java") { include("**/*.java") })
++    classpath = files()
++    options.release.set(8)
++    destinationDirectory.set(layout.buildDirectory.dir("memory-probe/classes"))
++}
++val jarMemoryProbe = tasks.register<Jar>("jarMemoryProbe") {
++    dependsOn(compileMemoryProbe)
++    from(compileMemoryProbe.flatMap { it.destinationDirectory })
++    archiveFileName.set("wachiland-memory-probe.jar")
++    destinationDirectory.set(layout.buildDirectory.dir("memory-probe/jar"))
++    isPreserveFileTimestamps = false
++    isReproducibleFileOrder = true
++}
++val memoryProbeAssets = tasks.register<FilterJreAssets>("memoryProbeAssets") {
++    from(jarMemoryProbe) { into("game") }
++    outputDir.set(layout.buildDirectory.dir("generated/memory-probe-assets"))
++    into(outputDir)
++}
++
+ val filterJreAssets = tasks.register<FilterJreAssets>("filterJreAssets") {
+     val arch = System.getProperty("arch", "all")
+     // Copy/Sync 的 up-to-date 检查不包含 copy spec 的过滤规则，必须显式声明 arch 输入，
+@@ -176,6 +197,7 @@ val filterJreAssets = tasks.register<FilterJreAssets>("filterJreAssets") {
+ 
+ androidComponents {
+     onVariants { variant ->
++        variant.sources.assets?.addGeneratedSourceDirectory(memoryProbeAssets) { it.outputDir }
+         variant.outputs.forEach { output ->
+             if (output is com.android.build.api.variant.impl.VariantOutputImpl) {
+                 (output.getFilter(ABI)?.identifier ?: "all").let { abi ->
+@@ -261,6 +283,8 @@ ksp {
  }
  
  dependencies {
@@ -38,12 +74,103 @@ index 8463609..f832e29 100644
      coreLibraryDesugaring(libs.desugar.jdk.libs)
      implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
      implementation(project(":ZipFileSystem"))
-@@ -338,4 +340,4 @@ tasks.register("updateMap") {
+@@ -338,4 +362,4 @@ tasks.register("updateMap") {
          }
          mapFile.writeText(list.joinToString("\n"), Charsets.UTF_8)
      }
 -}
 \ No newline at end of file
++}
+diff --git a/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java b/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java
+new file mode 100644
+index 0000000..de961ed
+--- /dev/null
++++ b/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java
+@@ -0,0 +1,85 @@
++package net.wachiland.diagnostics;
++
++import java.io.File;
++import java.io.FileWriter;
++import java.lang.management.BufferPoolMXBean;
++import java.lang.management.GarbageCollectorMXBean;
++import java.lang.management.ManagementFactory;
++import java.lang.management.MemoryUsage;
++import java.lang.reflect.InvocationTargetException;
++
++/** Runs in embedded OpenJDK, never in Android ART. No transforms or forced GC. */
++public final class MemoryMain {
++    private static final String HEADER = "epoch_ms,session_elapsed_ms,heap_used_bytes,heap_committed_bytes,heap_max_bytes,nonheap_used_bytes,nonheap_committed_bytes,direct_used_bytes,mapped_used_bytes,gc_count,gc_time_ms,threads,sample_duration_ms\n";
++
++    public static void main(String[] args) throws Throwable {
++        try { start(); } catch (Throwable e) {
++            System.err.println("[Wachiland memory] Optional probe unavailable: " + e.getClass().getName());
++        }
++        // Keep the upstream wrapper and its launch/error handling intact.
++        try {
++            Class.forName("mio.Wrapper").getMethod("main", String[].class).invoke(null, (Object) args);
++        } catch (InvocationTargetException e) { throw e.getCause(); }
++    }
++
++    private static void start() throws Exception {
++        final File csv = new File(System.getProperty("wachiland.memory.file"));
++        final long origin = Long.parseLong(System.getProperty("wachiland.memory.origin"));
++        write(csv, HEADER, false);
++        write(new File(csv.getParentFile(), csv.getName().replace("jvm.csv", "jvm-info.txt")),
++                "Runtime: embedded OpenJDK, not Android ART\njava.version=" + System.getProperty("java.version") +
++                "\njava.vm.name=" + System.getProperty("java.vm.name") + "\norigin_epoch_ms=" + origin +
++                "\nUnits: bytes except times/counts. Heap committed is not resident memory.\n" +
++                "Direct buffers do not include all LWJGL/mod/driver allocations. Missing metrics = -1.\n", false);
++        Thread sampler = new Thread(new Runnable() {
++            @Override public void run() {
++                // Bounded to three hours; retain flushed partial data on SIGKILL.
++                for (int i = 0; i < 1080; i++) {
++                    try { sample(csv, origin); }
++                    catch (Throwable e) {
++                        try { write(new File(csv.getParentFile(), csv.getName().replace("jvm.csv", "jvm-errors.txt")),
++                                System.currentTimeMillis() + " " + e.getClass().getName() + "\n", true); }
++                        catch (Throwable ignored) { }
++                        return;
++                    }
++                    try { Thread.sleep(10000); } catch (InterruptedException e) { return; }
++                }
++            }
++        }, "Wachiland-game-memory");
++        sampler.setDaemon(true);
++        sampler.setPriority(Thread.MIN_PRIORITY);
++        sampler.start();
++        System.out.println("[Wachiland memory] Embedded JVM recording enabled, 10 s interval; no heap/settings changes.");
++    }
++
++    private static void sample(File csv, long origin) throws Exception {
++        long tick = System.nanoTime();
++        long epoch = System.currentTimeMillis();
++        Runtime runtime = Runtime.getRuntime();
++        long committed = runtime.totalMemory(), used = committed - runtime.freeMemory();
++        long nonheap = -1, nonheapCommitted = -1, direct = -1, mapped = -1, gc = -1, gcTime = -1, threads = -1;
++        // Some mobile runtimes omit java.management; Runtime heap sampling still works.
++        try {
++            MemoryUsage usage = ManagementFactory.getMemoryMXBean().getNonHeapMemoryUsage();
++            nonheap = usage.getUsed(); nonheapCommitted = usage.getCommitted();
++            for (BufferPoolMXBean pool : ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class)) {
++                if (pool.getName().equals("direct")) direct = pool.getMemoryUsed();
++                if (pool.getName().equals("mapped")) mapped = pool.getMemoryUsed();
++            }
++            gc = 0; gcTime = 0;
++            for (GarbageCollectorMXBean collector : ManagementFactory.getGarbageCollectorMXBeans()) {
++                if (collector.getCollectionCount() >= 0) gc += collector.getCollectionCount();
++                if (collector.getCollectionTime() >= 0) gcTime += collector.getCollectionTime();
++            }
++            threads = ManagementFactory.getThreadMXBean().getThreadCount();
++        } catch (Throwable ignored) { }
++        if (csv.length() > 4 * 1024 * 1024) return;
++        write(csv, epoch + "," + (epoch - origin) + "," + used + "," + committed + "," + runtime.maxMemory() +
++                "," + nonheap + "," + nonheapCommitted + "," + direct + "," + mapped + "," + gc + "," + gcTime +
++                "," + threads + "," + ((System.nanoTime() - tick) / 1000000) + "\n", true);
++    }
++
++    private static void write(File file, String text, boolean append) throws Exception {
++        try (FileWriter out = new FileWriter(file, append)) { out.write(text); }
++    }
 +}
 diff --git a/FCL/src/main/AndroidManifest.xml b/FCL/src/main/AndroidManifest.xml
 index d977e1e..0c13527 100644
@@ -574,10 +701,27 @@ index 70ca430..96bae08 100644
  
      public Task<?> check(Context context, boolean showBeta, boolean showAlert) {
 diff --git a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
-index c0546b9..706eec4 100644
+index c0546b9..7e500de 100644
 --- a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
 +++ b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
-@@ -539,6 +539,9 @@ public class FCLauncher {
+@@ -487,12 +487,15 @@ public class FCLauncher {
+         printTaskTitle(bridge, task + " Arguments");
+         String libraryPath = getLibraryPath(config.getContext(), config.getJavaPath(), config.getRenderer().getPath(), config.getLwjglVersion());
+         String[] args = rebaseArgs(config, libraryPath);
++        if (task.equals("Minecraft")) {
++            args = net.wachiland.launcher.MemoryDiagnostics.prepareGameArgs(config.getContext(), args);
++        }
+         boolean javaArgs = true;
+         int mainClass = 0;
+         boolean isToken = false;
+         for (String arg : args) {
+             if (javaArgs)
+-                javaArgs = !arg.equals("mio.Wrapper");
++                javaArgs = !arg.equals("mio.Wrapper") && !arg.equals("net.wachiland.diagnostics.MemoryMain");
+             String title = task.equals("Minecraft") ? javaArgs ? "Java" : task : task;
+             String prefix = title + " argument: ";
+             if (task.equals("Minecraft") && !javaArgs && mainClass < 2) {
+@@ -539,6 +542,9 @@ public class FCLauncher {
          bridge.setLogPath(config.getLogDir() + "/" + logName);
          Thread thread = new Thread(() -> {
              try {
@@ -1086,12 +1230,201 @@ index 0000000..a02319b
 +    }
 +    private static String hex(byte[] bytes) { StringBuilder result=new StringBuilder(); for(byte b:bytes) result.append(String.format(Locale.ROOT,"%02x",b&255)); return result.toString(); }
 +}
+diff --git a/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
+new file mode 100644
+index 0000000..a3471d3
+--- /dev/null
++++ b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
+@@ -0,0 +1,183 @@
++package net.wachiland.launcher
++
++import android.app.ActivityManager
++import android.content.ComponentCallbacks2
++import android.content.Context
++import android.content.res.Configuration
++import android.os.Debug
++import android.os.Process
++import android.os.SystemClock
++import org.json.JSONObject
++import java.io.File
++import java.nio.file.Files
++import java.nio.file.StandardCopyOption.REPLACE_EXISTING
++import java.util.concurrent.atomic.AtomicBoolean
++
++/** ART/process probe. Embedded OpenJDK has a separate companion sampler. */
++object MemoryDiagnostics {
++    private const val PREFS = "wachiland_process_diagnostics"
++    private val active = AtomicBoolean(false)
++    @Volatile private var session: String? = null
++    @Volatile private var origin = 0L
++    @Volatile private var callbacks: ComponentCallbacks2? = null
++    @Volatile private var thread: Thread? = null
++    private fun dir(context: Context) = File(context.filesDir, "exit-diagnostics").apply { mkdirs() }
++    @JvmStatic fun enabled(context: Context) = context.getSharedPreferences(PREFS, 0).getBoolean("memory_enabled", true)
++    fun setEnabled(context: Context, enabled: Boolean) { context.getSharedPreferences(PREFS, 0).edit().putBoolean("memory_enabled", enabled).apply() }
++
++    @JvmStatic fun begin(context: Context, renderer: String) {
++        if (!enabled(context) || !active.compareAndSet(false, true)) return
++        val app = context.applicationContext
++        try {
++            origin = System.currentTimeMillis()
++            val prefix = "memory-${origin}-${Process.myPid()}"
++            session = prefix
++            // Keep two sessions, including both sides of the same session.
++            val directory = dir(app)
++            val sessions = directory.listFiles().orEmpty().filter { it.name.startsWith("memory-") }
++                .mapNotNull { Regex("memory-\\d+-\\d+").find(it.name)?.value }.distinct().sortedDescending()
++            directory.listFiles().orEmpty().filter { file -> sessions.drop(1).any { file.name.startsWith("$it-") } }.forEach { it.delete() }
++            File(directory, "$prefix-info.txt").writeText("""
++                Session=$prefix; PID=${Process.myPid()}; origin_epoch_ms=$origin; renderer=$renderer
++                Android samples every 10 seconds; mappings every 60 seconds; maximum 3 hours.
++                Android JSON memory values in KiB except explicitly named *_bytes. Missing metrics absent/-1.
++                Runtime on Android measures ART only. The companion jvm.csv measures embedded OpenJDK.
++                PSS, RSS, private memory, heap used/committed and buffer counters overlap: DO NOT ADD THEM.
++                Heap used/committed is logical JVM memory, not its resident share. No exact subtraction from RSS.
++                summary.java-heap is ART classification, not Minecraft's heap. Anonymous mappings remain unattributed.
++                Graphics attribution is vendor dependent: absent or zero does not prove no GPU memory.
++                System available memory includes reclaimable pages. Total minus available is not other-app usage.
++                Other apps cannot be enumerated reliably without privileges. No root/USB required or attempted.
++                Proc mapping labels are heuristic categories; library file mappings do not include all its mallocs.
++                No forced GC, heap dumps, stack walks, NMT, uploads, mod/renderer/heap setting changes.
++            """.trimIndent() + "\n")
++            val callback = object : ComponentCallbacks2 {
++                override fun onTrimMemory(level: Int) { event(app, prefix, "trim_memory", level) }
++                override fun onLowMemory() { event(app, prefix, "low_memory", -1) }
++                override fun onConfigurationChanged(configuration: Configuration) = Unit
++            }
++            callbacks = callback
++            app.registerComponentCallbacks(callback)
++            thread = Thread({
++                runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
++                for (index in 0 until 1080) {
++                    if (!active.get()) break
++                    runCatching { sample(app, prefix, index % 6 == 0) }.onFailure {
++                        runCatching { event(app, prefix, "sample_error_${it.javaClass.simpleName}", -1) }
++                    }
++                    try { Thread.sleep(10000) } catch (_: InterruptedException) { break }
++                }
++            }, "Wachiland-android-memory").apply { isDaemon = true; start() }
++        } catch (_: Exception) { stop(app) }
++    }
++
++    @JvmStatic fun stop(context: Context) {
++        active.set(false)
++        thread?.interrupt(); thread = null
++        callbacks?.let { runCatching { context.applicationContext.unregisterComponentCallbacks(it) } }
++        callbacks = null
++    }
++
++    /** Add a ordinary classpath wrapper, avoiding instrument-agent native dependencies. */
++    @JvmStatic fun prepareGameArgs(context: Context, original: Array<String>): Array<String> {
++        val prefix = session ?: return original
++        if (!active.get()) return original
++        return try {
++            val args = original.toMutableList()
++            val main = args.indexOf("mio.Wrapper")
++            val cp = args.indexOfFirst { it == "-cp" || it == "-classpath" || it == "--class-path" }
++            if (main < 0 || cp < 0 || cp + 1 >= main) return original
++            val jar = File(context.filesDir, "wachiland-memory-probe.jar")
++            val staged = File(context.filesDir, "wachiland-memory-probe.tmp")
++            try {
++                context.assets.open("game/wachiland-memory-probe.jar").use { input -> staged.outputStream().use { input.copyTo(it) } }
++                Files.move(staged.toPath(), jar.toPath(), REPLACE_EXISTING)
++            } finally { staged.delete() }
++            args[cp + 1] += ":${jar.absolutePath}"
++            args[main] = "net.wachiland.diagnostics.MemoryMain"
++            args.addAll(main, listOf("-Dwachiland.memory.file=${File(dir(context), "$prefix-jvm.csv").absolutePath}", "-Dwachiland.memory.origin=$origin"))
++            args.toTypedArray()
++        } catch (e: Exception) {
++            runCatching { event(context, prefix, "jvm_probe_unavailable_${e.javaClass.simpleName}", -1) }
++            original
++        }
++    }
++
++    private fun event(context: Context, prefix: String, name: String, level: Int) = append(
++        File(dir(context), "$prefix-events.jsonl"), JSONObject().put("epoch_ms", System.currentTimeMillis())
++            .put("event", name).put("level", level).toString())
++
++    private fun sample(context: Context, prefix: String, mappings: Boolean) {
++        val tick = SystemClock.elapsedRealtime()
++        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
++        val system = ActivityManager.MemoryInfo().also(manager::getMemoryInfo)
++        val runtime = Runtime.getRuntime() // Android ART, NOT game JVM.
++        val row = JSONObject().put("epoch_ms", System.currentTimeMillis()).put("pid", Process.myPid())
++            .put("session_elapsed_ms", System.currentTimeMillis() - origin)
++            .put("android_elapsed_ms", tick)
++            .put("system_total_bytes", system.totalMem).put("system_available_bytes", system.availMem)
++            .put("system_low_threshold_bytes", system.threshold).put("system_low_memory", system.lowMemory)
++            .put("art_heap_used_bytes", runtime.totalMemory() - runtime.freeMemory())
++            .put("art_heap_committed_bytes", runtime.totalMemory()).put("art_heap_max_bytes", runtime.maxMemory())
++            .put("bionic_native_heap_allocated_bytes", Debug.getNativeHeapAllocatedSize())
++            .put("bionic_native_heap_size_bytes", Debug.getNativeHeapSize())
++        runCatching {
++            val info = Debug.MemoryInfo().also(Debug::getMemoryInfo)
++            row.put("android_meminfo_kib", JSONObject(info.memoryStats)).put("process_pss_kib", info.totalPss)
++                .put("process_private_dirty_kib", info.totalPrivateDirty).put("process_private_clean_kib", info.totalPrivateClean)
++        }.onFailure { row.put("android_meminfo_error", it.javaClass.simpleName) }
++        readFields(File("/proc/self/status"), setOf("VmRSS", "VmHWM", "VmSize", "RssAnon", "RssFile", "RssShmem", "VmSwap", "Threads")).forEach { (k,v) -> row.put("proc_$k", v) }
++        readFields(File("/proc/meminfo"), setOf("MemAvailable", "MemFree", "Cached", "SwapTotal", "SwapFree", "Shmem", "Slab", "SReclaimable", "SUnreclaim", "PageTables", "KernelStack")).forEach { (k,v) -> row.put("system_$k", v) }
++        runCatching { row.put("memory_psi", File("/proc/pressure/memory").readText().take(512)) }
++        runCatching { row.put("oom_score_adj", File("/proc/self/oom_score_adj").readText().trim()) }
++        runCatching { row.put("oom_score", File("/proc/self/oom_score").readText().trim()) }
++        row.put("sample_duration_ms", SystemClock.elapsedRealtime() - tick)
++        append(File(dir(context), "$prefix-android.jsonl"), row.toString())
++        if (mappings) mappingSummary(context, prefix)
++    }
++
++    private fun readFields(file: File, wanted: Set<String>): Map<String, String> = runCatching {
++        val result = linkedMapOf<String, String>()
++        file.useLines { lines -> lines.forEach { line ->
++            val key = line.substringBefore(':'); if (key in wanted) result[key] = line.substringAfter(':').trim()
++        } }; result
++    }.getOrDefault(emptyMap())
++
++    private fun mappingSummary(context: Context, prefix: String) {
++        val tick = SystemClock.elapsedRealtime()
++        val totals = linkedMapOf<String, LongArray>()
++        val names = listOf("Rss", "Pss", "Private_Clean", "Private_Dirty", "Swap", "SwapPss")
++        val header = Regex("^[0-9a-f]+-[0-9a-f]+\\s")
++        var category = "anonymous-unattributed"
++        val result = JSONObject().put("epoch_ms", System.currentTimeMillis())
++        runCatching {
++            File("/proc/self/smaps").useLines { lines -> lines.forEach { line ->
++                if (header.containsMatchIn(line)) {
++                    val path = line.trim().split(Regex("\\s+"), limit = 6).getOrNull(5).orEmpty()
++                    category = when {
++                        path.contains("dalvik", true) || path.contains("art-", true) -> "android-art-mappings"
++                        path.contains("mali", true) || path.contains("kgsl", true) || path.contains("dmabuf", true) || path.contains("gpu", true) -> "gpu-labelled-mappings"
++                        path.contains("stack") -> "stack-labelled-mappings"
++                        path.endsWith(".so") -> "library-file:${File(path).name}"
++                        path.contains("/") -> "other-file-mappings"
++                        path.contains("heap") -> "native-heap-labelled-mappings"
++                        else -> "anonymous-unattributed"
++                    }
++                } else {
++                    val index = names.indexOf(line.substringBefore(':'))
++                    if (index >= 0) {
++                        val value = line.substringAfter(':').trim().substringBefore(' ').toLongOrNull() ?: 0
++                        totals.getOrPut(category) { LongArray(names.size) }[index] += value
++                    }
++                }
++            } }
++            val groups = JSONObject()
++            totals.forEach { (group, values) -> val obj = JSONObject(); names.forEachIndexed { i, key -> obj.put("${key}_kib", values[i]) }; groups.put(group, obj) }
++            result.put("mapping_groups", groups)
++        }.onFailure { result.put("unavailable", it.javaClass.simpleName) }
++        result.put("sample_duration_ms", SystemClock.elapsedRealtime() - tick)
++        append(File(dir(context), "$prefix-mappings.jsonl"), result.toString())
++    }
++
++    private fun append(file: File, text: String) { if (file.length() < 4 * 1024 * 1024) file.appendText("$text\n") }
++}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
 new file mode 100644
-index 0000000..fc10d7e
+index 0000000..b0dd6ad
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
-@@ -0,0 +1,243 @@
+@@ -0,0 +1,261 @@
 +package net.wachiland.launcher
 +
 +import android.annotation.SuppressLint
@@ -1103,6 +1436,10 @@ index 0000000..fc10d7e
 +import android.os.Build
 +import android.os.Process
 +import android.widget.Toast
++import android.widget.CheckBox
++import android.widget.LinearLayout
++import android.widget.ScrollView
++import android.widget.TextView
 +import androidx.appcompat.app.AlertDialog
 +import androidx.core.content.FileProvider
 +import androidx.lifecycle.lifecycleScope
@@ -1121,7 +1458,7 @@ index 0000000..fc10d7e
 +import java.util.zip.ZipEntry
 +import java.util.zip.ZipOutputStream
 +
-+/** Recovery only: no polling, renderer changes, heap changes or uploads during play. */
++/** Exit recovery plus optional bounded, local memory sampling. */
 +object ProcessExitDiagnostics {
 +    private const val PREFS = "wachiland_process_diagnostics"
 +    private const val MAX_LOG = 8L * 1024 * 1024
@@ -1139,11 +1476,13 @@ index 0000000..fc10d7e
 +                .putLong("game_started", System.currentTimeMillis()).putString("game_renderer", renderer)
 +                .putBoolean("game_completed", false).commit()
 +        }
++        MemoryDiagnostics.begin(context, renderer)
 +        Unit
 +    }
 +
 +    @JvmStatic
 +    fun gameExited(context: Context, code: Int) = synchronized(lock) {
++        MemoryDiagnostics.stop(context)
 +        runCatching { preferences(context).edit().putBoolean("game_completed", true)
 +            .putInt("game_exit_code", code).commit() }
 +        Unit
@@ -1170,7 +1509,18 @@ index 0000000..fc10d7e
 +    }
 +
 +    private fun dialog(activity: MainActivity, title: String, message: String) {
-+        AlertDialog.Builder(activity).setTitle(title).setMessage(message)
++        val panel = LinearLayout(activity).apply {
++            orientation = LinearLayout.VERTICAL
++            val padding = (24 * resources.displayMetrics.density).toInt()
++            setPadding(padding, padding / 2, padding, 0)
++            addView(TextView(activity).apply { text = "$message\n\nLa recogida de memoria registra el heap de Minecraft, el de la interfaz Android, el proceso y la memoria disponible del teléfono cada 10 segundos. No cambia la RAM asignada. Después del cierre, comparte el diagnóstico antes de hacer otra prueba." })
++            addView(CheckBox(activity).apply {
++                text = "Registrar memoria durante las partidas"
++                isChecked = MemoryDiagnostics.enabled(activity)
++                setOnCheckedChangeListener { _, checked -> MemoryDiagnostics.setEnabled(activity, checked) }
++            })
++        }
++        AlertDialog.Builder(activity).setTitle(title).setView(ScrollView(activity).apply { addView(panel) })
 +            .setPositiveButton("Compartir diagnóstico") { _, _ -> share(activity) }
 +            .setNegativeButton("Cerrar", null).show()
 +    }
@@ -1311,7 +1661,8 @@ index 0000000..fc10d7e
 +                        try {
 +                            ZipOutputStream(FileOutputStream(staged)).use { archive ->
 +                                dir.listFiles()?.filter { it.name == "android-exit-diagnostics.txt" ||
-+                                    it.name == "previous-game.log" || it.name.startsWith("trace-") && it.extension in setOf("pb", "txt") }
++                                    it.name == "previous-game.log" || it.name.startsWith("memory-") && it.extension in setOf("csv", "jsonl", "txt") ||
++                                    it.name.startsWith("trace-") && it.extension in setOf("pb", "txt") }
 +                                    ?.forEach { file ->
 +                                        archive.putNextEntry(ZipEntry(file.name))
 +                                        file.inputStream().use { it.copyTo(archive) }
@@ -1381,7 +1732,7 @@ index 0000000..bdc354d
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 new file mode 100644
-index 0000000..f9a0581
+index 0000000..6b143a6
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 @@ -0,0 +1,214 @@
@@ -1444,7 +1795,7 @@ index 0000000..f9a0581
 +        localTitle.addView(button("Instalar Minecraft",CYAN,()->UIManager.getInstance().switchUI(UIManager.getInstance().getDownloadUI())));
 +        body.addView(localTitle); instances=column(); body.addView(instances);
 +        LinearLayout footerRow=row();
-+        TextView footer=text("Android · 0.1.4 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
++        TextView footer=text("Android · 0.1.5 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
 +        footer.setPadding(0,dp(14),0,dp(8)); footer.setOnClickListener(v->about());
 +        footerRow.addView(footer,new LayoutParams(0,LayoutParams.WRAP_CONTENT,1));
 +        footerRow.addView(button("Diagnóstico",CYAN,()->ProcessExitDiagnostics.show(activity)));
@@ -1578,7 +1929,7 @@ index 0000000..f9a0581
 +    }
 +    private void about() {
 +        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Wachiland Launcher · Android")
-+            .setMessage("Prototipo 0.1.4, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
++            .setMessage("Prototipo 0.1.5, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
 +            .setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog);
 +    }
 +    private void error(String title,Throwable e) { AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title).setMessage(message(e)).setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog); }

@@ -82,3 +82,10 @@ References:
 https://developer.android.com/reference/android/app/ApplicationExitInfo
 https://developer.android.com/topic/performance/issues/lmk
 https://docs.oracle.com/en/java/javase/21/docs/specs/man/java.html
+
+## New attribution build
+
+Alpha 0.1.5 implements the next instrumentation gate, separating embedded
+OpenJDK, ART, process and system counters. It does not identify an allocation
+culprit or fix the memory pressure before phone evidence. See
+[sampling design and limits](MEMORY-SAMPLING-2026-10-07.md).
