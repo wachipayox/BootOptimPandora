@@ -1,5 +1,5 @@
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index 8463609..8d1879b 100644
+index 8463609..f832e29 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
 @@ -53,9 +53,9 @@ android {
@@ -24,8 +24,8 @@ index 8463609..8d1879b 100644
          targetSdk = libs.versions.targetSdk.get().toInt()
 -        versionCode = 1337
 -        versionName = "1.3.3.7"
-+        versionCode = 4
-+        versionName = "0.1.3-alpha"
++        versionCode = 5
++        versionName = "0.1.4-alpha"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
              cmake {
@@ -170,10 +170,18 @@ index e4ebff4..2ee02aa 100644
  //        PerfUtil.install();
      }
 diff --git a/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt b/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt
-index cd8d3b8..86f57d7 100644
+index cd8d3b8..851448c 100644
 --- a/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt
 +++ b/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt
-@@ -310,7 +310,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+@@ -149,6 +149,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
++        net.wachiland.launcher.ProcessExitDiagnostics.recover(this)
+         modpackHandled = savedInstanceState?.getBoolean("modpack_handled") ?: false
+         instance = WeakReference(this)
+         binding = ActivityMainBinding.inflate(layoutInflater)
+@@ -310,7 +311,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
                      startActivity(Intent(this@MainActivity, ShellActivity::class.java))
                      true
                  }
@@ -182,7 +190,7 @@ index cd8d3b8..86f57d7 100644
                  if (!checkNotificationPermission() && getSharedPreferences(
                          "launcher",
                          MODE_PRIVATE
-@@ -334,6 +334,9 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+@@ -334,6 +335,9 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
                  setupAccountDisplay()
                  setupVersionDisplay()
                  playAnim()
@@ -192,7 +200,7 @@ index cd8d3b8..86f57d7 100644
                  // 引导在入场动画播完后弹出；动画时长随 animationSpeed 缩放，最末组延迟 700ms。
                  // 顺序按视觉动线：右侧（账户/版本卡片/启动）→ 左侧菜单自上而下；
                  // account 步骤仅在没有账户时展示（添加过账户的用户无需引导）
-@@ -606,7 +609,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+@@ -606,7 +610,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
          // 记录皮肤当前宽度（隐藏后内容区扩展，用于固定皮肤位置）
          val ui = UIManager.instance.currentUI
          if (ui is MainUI) {
@@ -201,7 +209,7 @@ index cd8d3b8..86f57d7 100644
          }
          menu.animate().translationX(rightMenuWidth.toFloat()).setDuration(200).withEndAction {
              menu.visibility = View.GONE
-@@ -622,7 +625,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+@@ -622,7 +626,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
      private fun fixSkinViewerPosition(fix: Boolean) {
          val ui = UIManager.instance.currentUI
          if (ui !is MainUI) return
@@ -210,7 +218,7 @@ index cd8d3b8..86f57d7 100644
          val params = skin.layoutParams as ConstraintLayout.LayoutParams
          if (fix) {
              params.width = skinViewerWidth
-@@ -757,14 +760,18 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+@@ -757,14 +761,18 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
       * 启动指定版本（null 表示当前选中版本，与启动按钮一致）；
       * 控制器未初始化时提示并晃动启动按钮
       */
@@ -231,6 +239,13 @@ index cd8d3b8..86f57d7 100644
              val selectedProfile = Profiles.getSelectedProfile()
              DriverPlugin.selected = runCatching {
                  DriverPlugin.driverList.find {
+@@ -1186,4 +1194,4 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
+         DisplayUtil.screenWidth = binding.root.width
+         DisplayUtil.screenHeight = binding.root.height
+     }
+-}
+\ No newline at end of file
++}
 diff --git a/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt b/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt
 index e982188..079f4f8 100644
 --- a/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt
@@ -244,6 +259,18 @@ index e982188..079f4f8 100644
              init()
              return
          }
+diff --git a/FCL/src/main/java/com/tungsten/fcl/control/GameMenu.java b/FCL/src/main/java/com/tungsten/fcl/control/GameMenu.java
+index a8c8b49..5bd2896 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/control/GameMenu.java
++++ b/FCL/src/main/java/com/tungsten/fcl/control/GameMenu.java
+@@ -961,6 +961,7 @@ public class GameMenu implements MenuCallback, FCLBridgeCallback {
+ 
+     @Override
+     public void onExit(int exitCode) {
++        net.wachiland.launcher.ProcessExitDiagnostics.gameExited(activity, exitCode);
+         if (exitCode != 0 && fclBridge != null) {
+             JVMCrashActivity.startCrashActivity(true, activity, exitCode, fclBridge.getLogPath());
+             Logging.LOG.log(Level.INFO, "JVM crashed, start jvm crash activity to show errors now!");
 diff --git a/FCL/src/main/java/com/tungsten/fcl/game/FCLCacheRepository.java b/FCL/src/main/java/com/tungsten/fcl/game/FCLCacheRepository.java
 index 16c0c3e..6bbab19 100644
 --- a/FCL/src/main/java/com/tungsten/fcl/game/FCLCacheRepository.java
@@ -546,6 +573,20 @@ index 70ca430..96bae08 100644
      }
  
      public Task<?> check(Context context, boolean showBeta, boolean showAlert) {
+diff --git a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
+index c0546b9..706eec4 100644
+--- a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
++++ b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
+@@ -539,6 +539,9 @@ public class FCLauncher {
+         bridge.setLogPath(config.getLogDir() + "/" + logName);
+         Thread thread = new Thread(() -> {
+             try {
++                if (task.equals("Minecraft")) {
++                    net.wachiland.launcher.ProcessExitDiagnostics.beginGame(config.getContext(), config.getRenderer().getName());
++                }
+                 logStartInfo(config, bridge, task);
+                 if (logModList) {
+                     logModList(bridge);
 diff --git a/FCL/src/main/java/com/tungsten/fclauncher/utils/FCLPath.java b/FCL/src/main/java/com/tungsten/fclauncher/utils/FCLPath.java
 index ebd7fa0..bc003e0 100644
 --- a/FCL/src/main/java/com/tungsten/fclauncher/utils/FCLPath.java
@@ -1045,6 +1086,255 @@ index 0000000..a02319b
 +    }
 +    private static String hex(byte[] bytes) { StringBuilder result=new StringBuilder(); for(byte b:bytes) result.append(String.format(Locale.ROOT,"%02x",b&255)); return result.toString(); }
 +}
+diff --git a/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
+new file mode 100644
+index 0000000..fc10d7e
+--- /dev/null
++++ b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
+@@ -0,0 +1,243 @@
++package net.wachiland.launcher
++
++import android.annotation.SuppressLint
++import android.app.ActivityManager
++import android.app.ApplicationExitInfo
++import android.content.ClipData
++import android.content.Context
++import android.content.Intent
++import android.os.Build
++import android.os.Process
++import android.widget.Toast
++import androidx.appcompat.app.AlertDialog
++import androidx.core.content.FileProvider
++import androidx.lifecycle.lifecycleScope
++import com.tungsten.fcl.BuildConfig
++import com.tungsten.fcl.activity.MainActivity
++import com.tungsten.fclauncher.utils.FCLPath
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
++import java.io.File
++import java.io.FileOutputStream
++import java.io.RandomAccessFile
++import java.nio.file.Files
++import java.nio.file.StandardCopyOption.REPLACE_EXISTING
++import java.time.Instant
++import java.util.zip.ZipEntry
++import java.util.zip.ZipOutputStream
++
++/** Recovery only: no polling, renderer changes, heap changes or uploads during play. */
++object ProcessExitDiagnostics {
++    private const val PREFS = "wachiland_process_diagnostics"
++    private const val MAX_LOG = 8L * 1024 * 1024
++    private const val MAX_TRACE = 4L * 1024 * 1024
++    private val lock = Any()
++    private val token = Regex("(?i)(--accessToken(?:\\s+|\\s*=\\s*)|Minecraft argument: --accessToken\\s*\\nMinecraft argument: )\\S+")
++    private fun directory(context: Context) = File(context.filesDir, "exit-diagnostics").apply { mkdirs() }
++    private fun preferences(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
++
++    @JvmStatic
++    fun beginGame(context: Context, renderer: String) = synchronized(lock) {
++        // Persist before native code: abrupt process death cannot run a callback.
++        runCatching {
++            preferences(context).edit().putInt("game_pid", Process.myPid())
++                .putLong("game_started", System.currentTimeMillis()).putString("game_renderer", renderer)
++                .putBoolean("game_completed", false).commit()
++        }
++        Unit
++    }
++
++    @JvmStatic
++    fun gameExited(context: Context, code: Int) = synchronized(lock) {
++        runCatching { preferences(context).edit().putBoolean("game_completed", true)
++            .putInt("game_exit_code", code).commit() }
++        Unit
++    }
++
++    @JvmStatic
++    fun recover(activity: MainActivity) {
++        activity.lifecycleScope.launch {
++            val result = withContext(Dispatchers.IO) { collect(activity.applicationContext) }
++            if (activity.isFinishing || activity.isDestroyed || result.notification == null) return@launch
++            val prefs = preferences(activity)
++            if (prefs.getLong("notified_exit", 0) >= result.exitTimestamp) return@launch
++            dialog(activity, "Diagnóstico del cierre anterior", result.notification)
++            prefs.edit().putLong("notified_exit", result.exitTimestamp).apply()
++        }
++    }
++
++    @JvmStatic
++    fun show(activity: MainActivity) {
++        activity.lifecycleScope.launch {
++            val result = withContext(Dispatchers.IO) { collect(activity.applicationContext) }
++            if (!activity.isFinishing && !activity.isDestroyed) dialog(activity, "Diagnóstico de Android", result.summary)
++        }
++    }
++
++    private fun dialog(activity: MainActivity, title: String, message: String) {
++        AlertDialog.Builder(activity).setTitle(title).setMessage(message)
++            .setPositiveButton("Compartir diagnóstico") { _, _ -> share(activity) }
++            .setNegativeButton("Cerrar", null).show()
++    }
++
++    private data class Result(val summary: String, val notification: String? = null, val exitTimestamp: Long = 0)
++
++    @SuppressLint("NewApi") // Every use of an exit record is behind the API 30 history gate.
++    private fun collect(context: Context): Result = synchronized(lock) {
++        val dir = directory(context)
++        val report = File(dir, "android-exit-diagnostics.txt")
++        try {
++            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
++            val memory = ActivityManager.MemoryInfo().also(manager::getMemoryInfo)
++            val prefs = preferences(context)
++            val pid = prefs.getInt("game_pid", -1)
++            val started = prefs.getLong("game_started", 0)
++            val completed = prefs.getBoolean("game_completed", false)
++            val entries = if (Build.VERSION.SDK_INT >= 30)
++                manager.getHistoricalProcessExitReasons(context.packageName, 0, 16)
++                    .sortedByDescending { it.timestamp }.take(8) else emptyList()
++            val gameExit = entries.firstOrNull { it.processName == context.packageName &&
++                it.pid == pid && it.timestamp >= started && started > 0 }
++            val mainExit = gameExit ?: entries.firstOrNull { it.processName == context.packageName }
++            val reason = if (mainExit != null) describe(mainExit) else if (Build.VERSION.SDK_INT < 30)
++                "Este Android no ofrece el historial de cierres (requiere Android 11 o posterior)."
++                else "Android todavía no proporciona un registro de cierre para este launcher."
++            val text = buildString {
++                appendLine("Wachiland — diagnóstico de terminación Android")
++                appendLine("Recogido: ${Instant.now()}")
++                appendLine("Aplicación: ${context.packageName} ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
++                appendLine("Dispositivo: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT}")
++                appendLine("RAM física actual: ${memory.totalMem / 1048576} MiB; disponible al recoger: ${memory.availMem / 1048576} MiB")
++                appendLine("Esta lectura es posterior al cierre; no mide el consumo en el instante del fallo.")
++                appendLine("Última sesión: PID=$pid, inicio=${if (started > 0) Instant.ofEpochMilli(started) else "no registrado"}, renderer=${prefs.getString("game_renderer", "no registrado")}")
++                appendLine("Callback de salida JVM: $completed; código=${if (completed) prefs.getInt("game_exit_code", 0) else "no disponible"}")
++                appendLine("Correlación con sesión del juego: ${gameExit != null}")
++                appendLine("Último cierre principal: $reason")
++                if (Build.VERSION.SDK_INT >= 30) appendLine("Android distingue LMK explícito: ${ActivityManager.isLowMemoryKillReportSupported()}")
++                appendLine("RSS/PSS son muestras previas de Android, no el pico ni el tamaño del heap Java.")
++                appendLine()
++                val traceEntries = entries.filter { it.reason == ApplicationExitInfo.REASON_CRASH_NATIVE ||
++                    it.reason == ApplicationExitInfo.REASON_ANR }.take(2)
++                for (entry in entries) {
++                    appendLine("${Instant.ofEpochMilli(entry.timestamp)} | proceso=${entry.processName} | PID=${entry.pid}")
++                    appendLine("${reasonName(entry.reason)} (${entry.reason}), status=${entry.status}, importance=${entry.importance}, RSS=${entry.rss} KiB, PSS=${entry.pss} KiB")
++                    appendLine("Descripción Android: ${entry.description ?: "no disponible"}")
++                    if (entry in traceEntries && (entry.reason == ApplicationExitInfo.REASON_ANR || Build.VERSION.SDK_INT >= 31)) {
++                        val extension = if (entry.reason == ApplicationExitInfo.REASON_CRASH_NATIVE) "pb" else "txt"
++                        val trace = File(dir, "trace-${entry.timestamp}-${entry.pid}.$extension")
++                        try {
++                            if (!trace.exists()) entry.traceInputStream?.use { input ->
++                                val staged = File(dir, "${trace.name}.tmp")
++                                try {
++                                    FileOutputStream(staged).use { output ->
++                                        val buffer = ByteArray(32768)
++                                        var count = 0L
++                                        while (true) {
++                                            val n = input.read(buffer)
++                                            if (n < 0) break
++                                            count += n
++                                            check(count <= MAX_TRACE) { "Traza supera 4 MiB; omitida" }
++                                            output.write(buffer, 0, n)
++                                        }
++                                    }
++                                    Files.move(staged.toPath(), trace.toPath(), REPLACE_EXISTING)
++                                } finally { staged.delete() }
++                            }
++                            appendLine("Traza: ${if (trace.isFile) trace.name else "no disponible en Android"}")
++                        } catch (e: Exception) { appendLine("Recogida de traza: ${e.javaClass.simpleName}: ${e.message}") }
++                    }
++                    appendLine()
++                }
++                appendLine("SIGKILL solo no confirma falta de memoria; también puede ser una terminación intencionada.")
++                appendLine("Android puede no conservar todos los registros/trazas. Un cierre sin registro queda sin determinar.")
++                appendLine("Las trazas nativas .pb son protobuf; no son archivos de texto.")
++            }
++            val staged = File(dir, "report.tmp")
++            staged.writeText(text)
++            Files.move(staged.toPath(), report.toPath(), REPLACE_EXISTING)
++            val latest = FCLPath.getLatestGameLog()
++            // Lock also guards beginGame: another launch cannot truncate this log while capturing it.
++            if (latest.isFile && (gameExit == null || latest.lastModified() <= gameExit.timestamp + 5000) &&
++                prefs.getLong("copied_log_time", -1) != latest.lastModified()) {
++                val logTime = latest.lastModified()
++                File(dir, "previous-game.log").writeText("Último log disponible; correlación con sesión: ${gameExit != null}\n" + maskedTail(latest))
++                prefs.edit().putLong("copied_log_time", logTime).apply()
++            }
++            dir.listFiles()?.filter { it.name.startsWith("trace-") && it.extension in setOf("pb", "txt") }
++                ?.sortedByDescending { it.name }?.drop(8)?.forEach { it.delete() }
++            val unexpected = mainExit != null && (!completed || gameExit == null) && mainExit.reason in
++                setOf(3, 4, 5, 6, 9, 2)
++            val summary = "$reason\n\nEl informe incluye el historial de Android, las muestras de memoria disponibles y el último log del juego. Se guarda localmente; solo se comparte al pulsar el botón."
++            Result(summary, if (unexpected) summary else null, mainExit?.timestamp ?: 0)
++        } catch (e: Exception) {
++            val message = "No se pudo consultar el historial: ${e.javaClass.simpleName}: ${e.message}"
++            // Optional diagnostics must not stop startup or erase an earlier successful report.
++            if (!report.exists()) runCatching { report.writeText(message) }
++            Result(message)
++        }
++    }
++
++    private fun reasonName(reason: Int): String = when (reason) {
++        0 -> "UNKNOWN"; 1 -> "EXIT_SELF"; 2 -> "SIGNALED"; 3 -> "LOW_MEMORY"
++        4 -> "CRASH"; 5 -> "CRASH_NATIVE"; 6 -> "ANR"; 7 -> "INITIALIZATION_FAILURE"
++        8 -> "PERMISSION_CHANGE"; 9 -> "EXCESSIVE_RESOURCE_USAGE"; 10 -> "USER_REQUESTED"
++        11 -> "USER_STOPPED"; 12 -> "DEPENDENCY_DIED"; 13 -> "OTHER"; 14 -> "FREEZER"
++        15 -> "PACKAGE_STATE_CHANGE"; 16 -> "PACKAGE_UPDATED"; else -> "REASON_$reason"
++    }
++
++    @SuppressLint("NewApi")
++    private fun describe(entry: ApplicationExitInfo): String = when (entry.reason) {
++        3 -> "Android cerró el proceso por presión de memoria (LOW_MEMORY)."
++        5 -> "Android registró un fallo nativo (CRASH_NATIVE)."
++        4 -> "Android registró una excepción de la aplicación (CRASH)."
++        6 -> "Android registró que la aplicación dejó de responder (ANR)."
++        2 -> "El proceso recibió la señal ${entry.status}. La señal sola no identifica la causa."
++        else -> "Android registró ${reasonName(entry.reason)}, estado ${entry.status}."
++    }
++
++    private fun maskedTail(file: File): String = RandomAccessFile(file, "r").use { input ->
++        val offset = (input.length() - MAX_LOG).coerceAtLeast(0)
++        input.seek(offset)
++        if (offset > 0) input.readLine() // Discard a partial UTF-8 line.
++        val data = ByteArray((input.length() - input.filePointer).toInt())
++        input.readFully(data)
++        (if (offset > 0) "[Solo los últimos 8 MiB del log]\n" else "") +
++            token.replace(data.toString(Charsets.UTF_8)) { "${it.groupValues[1]}***" }
++    }
++
++    private fun share(activity: MainActivity) {
++        activity.lifecycleScope.launch {
++            try {
++                val zip = withContext(Dispatchers.IO) {
++                    synchronized(lock) {
++                        val dir = directory(activity)
++                        val output = File(activity.cacheDir, "wachiland-android-diagnostic.zip")
++                        val staged = File(activity.cacheDir, "wachiland-android-diagnostic.tmp")
++                        try {
++                            ZipOutputStream(FileOutputStream(staged)).use { archive ->
++                                dir.listFiles()?.filter { it.name == "android-exit-diagnostics.txt" ||
++                                    it.name == "previous-game.log" || it.name.startsWith("trace-") && it.extension in setOf("pb", "txt") }
++                                    ?.forEach { file ->
++                                        archive.putNextEntry(ZipEntry(file.name))
++                                        file.inputStream().use { it.copyTo(archive) }
++                                        archive.closeEntry()
++                                    }
++                            }
++                            Files.move(staged.toPath(), output.toPath(), REPLACE_EXISTING)
++                        } finally { staged.delete() }
++                        output
++                    }
++                }
++                if (activity.isDestroyed || activity.isFinishing) return@launch
++                val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.provider", zip)
++                val intent = Intent(Intent.ACTION_SEND).setType("application/zip")
++                    .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
++                intent.clipData = ClipData.newRawUri("Diagnóstico Wachiland", uri)
++                activity.startActivity(Intent.createChooser(intent, "Compartir diagnóstico"))
++            } catch (e: Exception) {
++                Toast.makeText(activity, "No se pudo compartir: ${e.message}", Toast.LENGTH_LONG).show()
++            }
++        }
++    }
++}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/ProfilePresentation.java b/FCL/src/main/java/net/wachiland/launcher/ProfilePresentation.java
 new file mode 100644
 index 0000000..bdc354d
@@ -1091,10 +1381,10 @@ index 0000000..bdc354d
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 new file mode 100644
-index 0000000..3968cee
+index 0000000..f9a0581
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,214 @@
 +package net.wachiland.launcher;
 +
 +import android.content.*;
@@ -1153,8 +1443,12 @@ index 0000000..3968cee
 +        localTitle.addView(text("Mis instancias",18,WHITE),new LayoutParams(0,dp(44),1));
 +        localTitle.addView(button("Instalar Minecraft",CYAN,()->UIManager.getInstance().switchUI(UIManager.getInstance().getDownloadUI())));
 +        body.addView(localTitle); instances=column(); body.addView(instances);
-+        TextView footer=text("Android · 0.1.3 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
-+        footer.setPadding(0,dp(14),0,dp(8)); footer.setOnClickListener(v->about()); body.addView(footer);
++        LinearLayout footerRow=row();
++        TextView footer=text("Android · 0.1.4 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
++        footer.setPadding(0,dp(14),0,dp(8)); footer.setOnClickListener(v->about());
++        footerRow.addView(footer,new LayoutParams(0,LayoutParams.WRAP_CONTENT,1));
++        footerRow.addView(button("Diagnóstico",CYAN,()->ProcessExitDiagnostics.show(activity)));
++        body.addView(footerRow);
 +    }
 +    @Override protected void onAttachedToWindow() {
 +        super.onAttachedToWindow(); attached=true;
@@ -1284,7 +1578,7 @@ index 0000000..3968cee
 +    }
 +    private void about() {
 +        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Wachiland Launcher · Android")
-+            .setMessage("Prototipo 0.1.3, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
++            .setMessage("Prototipo 0.1.4, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
 +            .setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog);
 +    }
 +    private void error(String title,Throwable e) { AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title).setMessage(message(e)).setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog); }

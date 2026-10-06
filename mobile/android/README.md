@@ -1,4 +1,4 @@
-# Wachiland Launcher for Android — 0.1.3 alpha
+# Wachiland Launcher for Android — 0.1.4 alpha
 
 First mobile prototype, based on a pinned FCL / HMCL / Amethyst Android engine.
 This is a companion client for the same Distribution server. It is not an Android
@@ -15,6 +15,8 @@ compilation of GPUI or the desktop Rust binary.
 - Minecraft / NeoForge installation through the engine, installation progress and
   normal native game launch. Each installed pack uses an isolated game directory.
 - Incomplete installations cannot start; launcher folders use app scoped storage.
+- Recovery-time Android process exit history, last game log snapshot and optional
+  native/ANR traces, with a touch accessible local diagnostic sharing button.
 - Separate app ID `net.wachiland.launcher`, persistent private signing certificate,
   no original engine automatic updater or prelaunch advertisements.
 
@@ -75,7 +77,7 @@ The phone uses `https://welite.ddns.net` on public HTTPS port 443. The server mu
 install the prepared read-only Nginx routes; see
 [deployment instructions](deployment/NETWORK.md) and
 [installer](deployment/install-public-api.sh). The original 8444 listener stays
-private. Version 0.1.3 updates 0.1.0 in place when signed with the delivery key.
+private. Version 0.1.4 updates earlier alphas in place when signed with the delivery key.
 
 ## Installation / first run
 
@@ -88,6 +90,27 @@ Allocate enough free storage for the game, full modpack and download cache. Logs
 are under the application's scoped `files/logs` folder and can be obtained with
 the engine's log / crash export tools. Do not uninstall to troubleshoot a crash
 before exporting worlds: Android uninstallation removes app scoped files.
+
+## Android exit diagnostics
+
+After an abrupt restart, open the launcher before launching Minecraft again.
+The launcher queries Android's own recent process exit records in the background
+(Android 11/API 30+). It records reason, signal/exit status, timestamps, process,
+sampled RSS/PSS, a snapshot of current available physical memory and the last
+game log. Native tombstones, when retained by Android 12+, are saved as protobuf
+`.pb` files; retained ANR traces are saved separately as text.
+
+Use **Diagnóstico** at the bottom of the Wachiland home, then **Compartir
+diagnóstico**, to share `wachiland-android-diagnostic.zip`. Recovery may also
+show the last abnormal exit with that same sharing action. Collection is local;
+no automatic uploads or permission prompts are added. Logs mask access tokens.
+The collection runs on recovery/on request, not continuously during play.
+
+The first installation of this feature can read older records if Android kept
+them, but cannot correlate those runs with its new durable game session marker.
+Some devices report memory kills as SIGKILL; that signal alone is inconclusive.
+RSS/PSS are sampled values, not peaks. A missing record/trace is reported as
+unavailable, never classified as a proven memory or mod crash. See `BUILD.md`.
 
 ## Evidence recorded for this build
 
