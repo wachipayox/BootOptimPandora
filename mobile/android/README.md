@@ -1,4 +1,4 @@
-# Wachiland Launcher for Android — 0.1.5 alpha
+# Wachiland Launcher for Android — 0.1.6 alpha
 
 First mobile prototype, based on a pinned FCL / HMCL / Amethyst Android engine.
 This is a companion client for the same Distribution server. It is not an Android
@@ -77,7 +77,7 @@ The phone uses `https://welite.ddns.net` on public HTTPS port 443. The server mu
 install the prepared read-only Nginx routes; see
 [deployment instructions](deployment/NETWORK.md) and
 [installer](deployment/install-public-api.sh). The original 8444 listener stays
-private. Version 0.1.5 updates earlier alphas in place when signed with the delivery key.
+private. Version 0.1.6 updates earlier alphas in place when signed with the delivery key.
 
 ## Installation / first run
 
@@ -104,7 +104,7 @@ Use **Diagnóstico** at the bottom of the Wachiland home, then **Compartir
 diagnóstico**, to share `wachiland-android-diagnostic.zip`. Recovery may also
 show the last abnormal exit with that same sharing action. Collection is local;
 no automatic uploads or permission prompts are added. Logs mask access tokens.
-Exit history is collected on recovery/on request. Optional memory recording is enabled by default in 0.1.5 and can be disabled with the checkbox in Diagnóstico; it runs every 10 seconds during the game (three-hour cap), with mapping summaries every 60 seconds. The ZIP includes the last two memory sessions. It never forces GC, changes the heap/renderer/modpack or uploads automatically. See diagnostics/MEMORY-SAMPLING-2026-10-07.md for metric boundaries.
+Exit history is collected on recovery/on request. Optional memory recording is enabled by default in 0.1.6 and can be disabled with the checkbox in Diagnóstico; it runs every 10 seconds during the game (three-hour cap), with Debug.MemoryInfo every 30 seconds and one initial mapping summary. Missing detailed fields between full samples are intentional. The ZIP includes the last two memory sessions. It never forces GC, changes the renderer/modpack or uploads automatically. Version 0.1.6 defaults the minimum Java heap to 512 MiB while preserving the selected maximum and explicit minimum overrides; this is a memory-headroom candidate awaiting phone validation. See diagnostics/MEMORY-SAMPLING-2026-10-07.md for metric boundaries.
 
 The first installation of this feature can read older records if Android kept
 them, but cannot correlate those runs with its new durable game session marker.
