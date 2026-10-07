@@ -172,6 +172,10 @@ reported~1FPS. JEI first-join initialization took4.569min, thermal headroom was
 high and memory remained tight. See
 [world-entry/performance evidence](diagnostics/VIVO-WORLD-ENTRY-2026-10-07.md).
 
+Visual-mod reduction trial retained~1FPS and ended in Android LOW_MEMORY during
+resource reload. FancyMenu logged only one active panorama; see
+[reload memory evidence and attribution limits](diagnostics/VIVO-RELOAD-LMK-2026-10-07.md).
+
 ## Build evidence
 
 Compilation and APK signature/manifest inspection are recorded in `BUILD.md`.
