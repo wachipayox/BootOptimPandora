@@ -1,5 +1,5 @@
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index 8463609..3886f8d 100644
+index 8463609..80eae7c 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
 @@ -53,9 +53,9 @@ android {
@@ -24,8 +24,8 @@ index 8463609..3886f8d 100644
          targetSdk = libs.versions.targetSdk.get().toInt()
 -        versionCode = 1337
 -        versionName = "1.3.3.7"
-+        versionCode = 8
-+        versionName = "0.1.7-alpha"
++        versionCode = 9
++        versionName = "0.1.8-alpha"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
              cmake {
@@ -484,6 +484,59 @@ index e4ebff4..2ee02aa 100644
          this.registerActivityLifecycleCallbacks(this);
  //        PerfUtil.install();
      }
+diff --git a/FCL/src/main/java/com/tungsten/fcl/activity/JVMActivity.java b/FCL/src/main/java/com/tungsten/fcl/activity/JVMActivity.java
+index c434d2a..e94d4e9 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/activity/JVMActivity.java
++++ b/FCL/src/main/java/com/tungsten/fcl/activity/JVMActivity.java
+@@ -35,6 +35,7 @@ import com.tungsten.fclauncher.bridge.FCLBridge;
+ import com.tungsten.fclauncher.keycodes.FCLKeycodes;
+ import com.tungsten.fclauncher.keycodes.LwjglGlfwKeycode;
+ import com.tungsten.fclcore.util.Logging;
++import net.wachiland.launcher.ThermalDiagnostics;
+ import com.tungsten.fcllibrary.component.FCLActivity;
+ 
+ import org.libsdl.app.SDLActivity;
+@@ -70,6 +71,11 @@ public class JVMActivity extends FCLActivity implements TextureView.SurfaceTextu
+             return;
+         }
+ 
++        if (menuType == MenuType.GAME) {
++            ThermalDiagnostics.configureWindow(this);
++            ThermalDiagnostics.recordOptions(fclBridge.getGameDir());
++        }
++
+         menu = menuType == MenuType.GAME ? new GameMenu() : new JarExecutorMenu();
+         menu.setup(this, fclBridge);
+         textureView = findViewById(R.id.texture_view);
+@@ -111,6 +117,12 @@ public class JVMActivity extends FCLActivity implements TextureView.SurfaceTextu
+      */
+     private void voteMaxDisplayRefreshRate(Surface surface) {
+         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return;
++        if (menuType == MenuType.GAME && ThermalDiagnostics.thermalModeForWindow()) {
++            surface.setFrameRate(60f, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
++                    Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
++            ThermalDiagnostics.recordSurfaceVote(60f);
++            return;
++        }
+         float maxRefreshRate = 120f;
+         for (float rate : getDisplay().getMode().getAlternativeRefreshRates()) {
+             maxRefreshRate = Math.max(maxRefreshRate, rate);
+@@ -120,6 +132,7 @@ public class JVMActivity extends FCLActivity implements TextureView.SurfaceTextu
+                 Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                 Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS
+         );
++        if (menuType == MenuType.GAME) ThermalDiagnostics.recordSurfaceVote(maxRefreshRate);
+     }
+ 
+     @Override
+@@ -303,6 +316,7 @@ public class JVMActivity extends FCLActivity implements TextureView.SurfaceTextu
+ 
+     @Override
+     protected void onDestroy() {
++        if (menuType == MenuType.GAME) ThermalDiagnostics.releaseWindow(this);
+         Terracotta.setWaiting(this, true);
+         CallbackBridge.resetInputState();
+         SdlBridge.reset();
 diff --git a/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt b/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt
 index cd8d3b8..851448c 100644
 --- a/FCL/src/main/java/com/tungsten/fcl/activity/MainActivity.kt
@@ -1456,10 +1509,10 @@ index 0000000..a02319b
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
 new file mode 100644
-index 0000000..bd8d13d
+index 0000000..7557259
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,231 @@
 +package net.wachiland.launcher
 +
 +import android.app.ActivityManager
@@ -1528,6 +1581,7 @@ index 0000000..bd8d13d
 +                Basic mode: no forced GC, heap dumps, stack walks, NMT, uploads or mod/renderer/heap setting changes.
 +                Deep attribution armed for this session: $deep. If true, see heap-status.txt for JFR/census cost and outcomes.
 +            """.trimIndent() + "\n")
++            ThermalDiagnostics.begin(app, prefix)
 +            val callback = object : ComponentCallbacks2 {
 +                override fun onTrimMemory(level: Int) { event(app, prefix, "trim_memory", level) }
 +                override fun onLowMemory() { event(app, prefix, "low_memory", -1) }
@@ -1549,6 +1603,7 @@ index 0000000..bd8d13d
 +    }
 +
 +    @JvmStatic fun stop(context: Context) {
++        ThermalDiagnostics.stop()
 +        active.set(false)
 +        thread?.interrupt(); thread = null
 +        callbacks?.let { runCatching { context.applicationContext.unregisterComponentCallbacks(it) } }
@@ -1691,10 +1746,10 @@ index 0000000..bd8d13d
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
 new file mode 100644
-index 0000000..ace6789
+index 0000000..271b403
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,286 @@
 +package net.wachiland.launcher
 +
 +import android.annotation.SuppressLint
@@ -1783,9 +1838,17 @@ index 0000000..ace6789
 +            orientation = LinearLayout.VERTICAL
 +            val padding = (24 * resources.displayMetrics.density).toInt()
 +            setPadding(padding, padding / 2, padding, 0)
-+            addView(TextView(activity).apply { text = "$message\n\nLa recogida de memoria registra el heap de Minecraft, el de la interfaz Android, el proceso y la memoria disponible del teléfono cada 10 segundos. No cambia la RAM asignada. Después del cierre, comparte el diagnóstico antes de hacer otra prueba." })
++            addView(TextView(activity).apply { text = "$message\n\nLa recogida registra memoria, carga de CPU, batería y señales térmicas de Android cada 10 segundos. La temperatura de batería no es la del procesador. Después de la partida, comparte el diagnóstico antes de hacer otra prueba." })
++            addView(CheckBox(activity).apply {
++                text = "Modo térmico en la próxima partida"
++                isChecked = ThermalDiagnostics.modeEnabled(activity)
++                setOnCheckedChangeListener { _, checked -> ThermalDiagnostics.setModeEnabled(activity, checked) }
++            })
++            addView(TextView(activity).apply {
++                text = "Pide una pantalla de 60 Hz y rendimiento sostenido al sistema (${if (ThermalDiagnostics.sustainedSupported(activity)) "disponible" else "no disponible en este dispositivo"}). Conserva resolución y gráficos. Puede reducir la velocidad máxima; la respuesta depende del móvil. No limita por sí solo los FPS del juego ni desactiva la protección térmica."
++            })
 +            val basic = CheckBox(activity).apply {
-+                text = "Registrar memoria durante las partidas"
++                text = "Registrar memoria, temperatura y CPU durante las partidas"
 +                isChecked = MemoryDiagnostics.enabled(activity)
 +                setOnCheckedChangeListener { _, checked -> MemoryDiagnostics.setEnabled(activity, checked) }
 +            }
@@ -1799,7 +1862,7 @@ index 0000000..ace6789
 +                }
 +            })
 +            addView(TextView(activity).apply {
-+                text = "El diagnóstico profundo registra clases y lugares de creación de objetos. Al llegar al menú puede pausar el juego para contar objetos vivos tras una recogida de basura, si queda margen de memoria. Solo se activa para una partida y se incluye en el ZIP. No es una prueba de rendimiento."
++                text = "Para investigar temperatura, deja el diagnóstico profundo desactivado. Registra clases y lugares de creación de objetos y puede pausar el juego para contar objetos vivos. Solo se activa para una partida y se incluye en el ZIP."
 +            })
 +        }
 +        AlertDialog.Builder(activity).setTitle(title).setView(ScrollView(activity).apply { addView(panel) })
@@ -1892,9 +1955,11 @@ index 0000000..ace6789
 +            }
 +            dir.listFiles()?.filter { it.name.startsWith("trace-") && it.extension in setOf("pb", "txt") }
 +                ?.sortedByDescending { it.name }?.drop(8)?.forEach { it.delete() }
-+            val unexpected = mainExit != null && (!completed || gameExit == null) && mainExit.reason in
-+                setOf(3, 4, 5, 6, 9, 2)
-+            val summary = "$reason\n\nEl informe incluye el historial de Android, las muestras de memoria disponibles y el último log del juego. Se guarda localmente; solo se comparte al pulsar el botón."
++            val vivoPowerStop = gameExit != null && mainExit?.reason == 10 &&
++                mainExit.description?.contains("com.vivo.pem") == true
++            val unexpected = mainExit != null && (!completed || gameExit == null) &&
++                (mainExit.reason in setOf(3, 4, 5, 6, 9, 2) || vivoPowerStop)
++            val summary = "$reason\n\nEl informe incluye el historial de Android, memoria, CPU, batería, señales térmicas disponibles y el último log del juego. Se guarda localmente; solo se comparte al pulsar el botón."
 +            Result(summary, if (unexpected) summary else null, mainExit?.timestamp ?: 0)
 +        } catch (e: Exception) {
 +            val message = "No se pudo consultar el historial: ${e.javaClass.simpleName}: ${e.message}"
@@ -1919,6 +1984,9 @@ index 0000000..ace6789
 +        4 -> "Android registró una excepción de la aplicación (CRASH)."
 +        6 -> "Android registró que la aplicación dejó de responder (ANR)."
 +        2 -> "El proceso recibió la señal ${entry.status}. La señal sola no identifica la causa."
++        10 -> if (entry.description?.contains("com.vivo.pem") == true)
++            "El gestor de energía de Vivo detuvo la aplicación. Las muestras térmicas ayudarán a investigar el motivo."
++            else "Android registró USER_REQUESTED, estado ${entry.status}."
 +        else -> "Android registró ${reasonName(entry.reason)}, estado ${entry.status}."
 +    }
 +
@@ -2012,9 +2080,195 @@ index 0000000..bdc354d
 +                ? value.getAsString() : null;
 +    }
 +}
+diff --git a/FCL/src/main/java/net/wachiland/launcher/ThermalDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/ThermalDiagnostics.kt
+new file mode 100644
+index 0000000..e9de530
+--- /dev/null
++++ b/FCL/src/main/java/net/wachiland/launcher/ThermalDiagnostics.kt
+@@ -0,0 +1,180 @@
++package net.wachiland.launcher
++
++import android.app.Activity
++import android.content.Context
++import android.content.Intent
++import android.content.IntentFilter
++import android.os.BatteryManager
++import android.os.Build
++import android.os.PowerManager
++import android.os.Process
++import android.os.SystemClock
++import android.view.WindowManager
++import org.json.JSONObject
++import java.io.File
++import java.util.concurrent.Executors
++import java.util.concurrent.ScheduledExecutorService
++import java.util.concurrent.TimeUnit
++
++/** Android policy and cheap, independent thermal telemetry; never controls game threads or GL. */
++object ThermalDiagnostics {
++    private const val PREFS = "wachiland_process_diagnostics"
++    @Volatile private var executor: ScheduledExecutorService? = null
++    private var listener: PowerManager.OnThermalStatusChangedListener? = null
++    private var power: PowerManager? = null
++    @Volatile private var requested = false
++    @Volatile private var supported = false
++    @Volatile private var applied = false
++    @Volatile private var windowError: String? = null
++    @Volatile private var displayHz = 0f
++    @Volatile private var surfaceVoteHz = 0f
++    @Volatile private var gameOptions = JSONObject()
++
++    @JvmStatic fun modeEnabled(context: Context) = context.getSharedPreferences(PREFS, 0)
++        .getBoolean("thermal_mode", true)
++    fun setModeEnabled(context: Context, enabled: Boolean) {
++        context.getSharedPreferences(PREFS, 0).edit().putBoolean("thermal_mode", enabled).apply()
++    }
++    @JvmStatic fun sustainedSupported(context: Context) = runCatching {
++        (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isSustainedPerformanceModeSupported
++    }.getOrDefault(false)
++
++    /** Called on the game Activity's UI thread, before its surface starts the JVM. */
++    @JvmStatic fun configureWindow(activity: Activity) {
++        requested = modeEnabled(activity)
++        supported = sustainedSupported(activity)
++        applied = false
++        windowError = null
++        surfaceVoteHz = 0f
++        gameOptions = JSONObject()
++        runCatching {
++            activity.window.setSustainedPerformanceMode(requested && supported)
++            applied = requested && supported // API request accepted, not proof of frequency/heat reduction.
++        }.onFailure { windowError = it.javaClass.simpleName }
++        recordDisplay(activity)
++    }
++    @JvmStatic fun thermalModeForWindow() = requested
++    @JvmStatic fun recordSurfaceVote(rate: Float) { surfaceVoteHz = rate }
++    @JvmStatic fun recordDisplay(activity: Activity) {
++        runCatching {
++            @Suppress("DEPRECATION")
++            displayHz = activity.windowManager.defaultDisplay.refreshRate
++        }
++    }
++    @JvmStatic fun releaseWindow(activity: Activity) {
++        runCatching { activity.window.setSustainedPerformanceMode(false) }
++        applied = false
++    }
++    @JvmStatic fun recordOptions(gameDir: String?) {
++        if (gameDir == null) { gameOptions = JSONObject(); return }
++        gameOptions = runCatching {
++            val file = File(gameDir, "options.txt")
++            val result = JSONObject()
++            if (file.isFile && file.length() <= 1024 * 1024) file.useLines { lines ->
++                lines.forEach { line ->
++                    val key = line.substringBefore(':')
++                    if (key in setOf("maxFps", "enableVsync", "renderDistance", "simulationDistance"))
++                        result.put(key, line.substringAfter(':').take(80))
++                }
++            }
++            result
++        }.getOrDefault(JSONObject()) // Read-only allowlist; never records credentials or edits options.
++    }
++
++    @Synchronized fun begin(context: Context, prefix: String) {
++        stop()
++        val app = context.applicationContext
++        val file = File(app.filesDir, "exit-diagnostics/$prefix-thermal.jsonl")
++        val service = Executors.newSingleThreadScheduledExecutor { task ->
++            Thread({
++                runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
++                task.run()
++            }, "Wachiland-thermal").apply { isDaemon = true }
++        }
++        executor = service
++        val manager = app.getSystemService(Context.POWER_SERVICE) as? PowerManager
++        power = manager
++        var previousWall = SystemClock.elapsedRealtime()
++        var previousCpu = Process.getElapsedCpuTime()
++        val origin = previousWall
++        if (Build.VERSION.SDK_INT >= 29 && manager != null) runCatching {
++            val callback = PowerManager.OnThermalStatusChangedListener { status ->
++                append(file, JSONObject().put("event", "thermal_status_changed")
++                    .put("epoch_ms", System.currentTimeMillis()).put("elapsed_ms", SystemClock.elapsedRealtime())
++                    .put("thermal_status", status).put("thermal_status_name", statusName(status)))
++            }
++            listener = callback
++            manager.addThermalStatusListener(service, callback)
++        }.onFailure {
++            append(file, JSONObject().put("event", "thermal_listener_unavailable")
++                .put("epoch_ms", System.currentTimeMillis()).put("error", it.javaClass.simpleName))
++        }
++        service.scheduleWithFixedDelay({
++            runCatching {
++                val tick = SystemClock.elapsedRealtime()
++                runCatching {
++                    @Suppress("DEPRECATION")
++                    displayHz = (app.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.refreshRate
++                }
++                val cpu = Process.getElapsedCpuTime()
++                val wallDelta = tick - previousWall
++                val cpuDelta = (cpu - previousCpu).coerceAtLeast(0)
++                previousWall = tick; previousCpu = cpu
++                val row = JSONObject().put("event", "sample").put("epoch_ms", System.currentTimeMillis())
++                    .put("elapsed_ms", tick).put("session_elapsed_ms", tick - origin).put("pid", Process.myPid())
++                    .put("reported_cpu_count", Runtime.getRuntime().availableProcessors())
++                    .put("cpu_interval_ms", wallDelta).put("process_cpu_delta_ms", cpuDelta)
++                    .put("thermal_mode_requested", requested).put("sustained_supported", supported)
++                    .put("sustained_window_request_accepted", applied).put("display_refresh_hz", displayHz)
++                    .put("surface_refresh_vote_hz", surfaceVoteHz).put("options_at_launch", gameOptions)
++                if (wallDelta >= 1000) row.put("process_cpu_core_equivalents", cpuDelta.toDouble() / wallDelta)
++                windowError?.let { row.put("window_policy_error", it) }
++                if (manager != null) {
++                    row.put("power_save_mode", manager.isPowerSaveMode)
++                    if (Build.VERSION.SDK_INT >= 29) runCatching {
++                        val status = manager.currentThermalStatus
++                        row.put("thermal_status", status).put("thermal_status_name", statusName(status))
++                    }.onFailure { row.put("thermal_status_error", it.javaClass.simpleName) }
++                    if (Build.VERSION.SDK_INT >= 30) runCatching {
++                        val headroom = manager.getThermalHeadroom(0)
++                        row.put("thermal_headroom_available", headroom.isFinite())
++                        if (headroom.isFinite()) row.put("thermal_headroom", headroom.toDouble())
++                    }.onFailure { row.put("thermal_headroom_error", it.javaClass.simpleName) }
++                }
++                runCatching {
++                    app.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.let { battery ->
++                        for (key in listOf(BatteryManager.EXTRA_TEMPERATURE, BatteryManager.EXTRA_PLUGGED,
++                            BatteryManager.EXTRA_STATUS, BatteryManager.EXTRA_LEVEL, BatteryManager.EXTRA_SCALE,
++                            BatteryManager.EXTRA_HEALTH, BatteryManager.EXTRA_VOLTAGE))
++                            if (battery.hasExtra(key)) row.put("battery_$key", battery.getIntExtra(key, -1))
++                        if (battery.hasExtra(BatteryManager.EXTRA_TEMPERATURE))
++                            row.put("battery_temperature_c", battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) / 10.0)
++                    }
++                }.onFailure { row.put("battery_error", it.javaClass.simpleName) }
++                row.put("sample_duration_ms", SystemClock.elapsedRealtime() - tick)
++                append(file, row)
++            }.onFailure {
++                append(file, JSONObject().put("event", "sample_error").put("epoch_ms", System.currentTimeMillis())
++                    .put("error", it.javaClass.simpleName))
++            }
++        }, 0, 10, TimeUnit.SECONDS) // Thermal headroom must never be polled faster than every 10s.
++        service.schedule({ stopIfCurrent(service) }, 3, TimeUnit.HOURS)
++    }
++    @Synchronized private fun stopIfCurrent(service: ScheduledExecutorService) {
++        if (executor === service) stop()
++    }
++    @Synchronized fun stop() {
++        if (Build.VERSION.SDK_INT >= 29) listener?.let { callback ->
++            runCatching { power?.removeThermalStatusListener(callback) }
++        }
++        listener = null; power = null
++        executor?.shutdownNow(); executor = null
++    }
++    private fun append(file: File, row: JSONObject) {
++        runCatching { if (file.length() < 1024 * 1024) file.appendText(row.toString() + "\n") }
++    }
++    private fun statusName(status: Int) = when (status) {
++        0 -> "NONE"; 1 -> "LIGHT"; 2 -> "MODERATE"; 3 -> "SEVERE"; 4 -> "CRITICAL"
++        5 -> "EMERGENCY"; 6 -> "SHUTDOWN"; else -> "UNKNOWN_$status"
++    }
++}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 new file mode 100644
-index 0000000..544a263
+index 0000000..d1dbff5
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 @@ -0,0 +1,214 @@
@@ -2077,7 +2331,7 @@ index 0000000..544a263
 +        localTitle.addView(button("Instalar Minecraft",CYAN,()->UIManager.getInstance().switchUI(UIManager.getInstance().getDownloadUI())));
 +        body.addView(localTitle); instances=column(); body.addView(instances);
 +        LinearLayout footerRow=row();
-+        TextView footer=text("Android · 0.1.7 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
++        TextView footer=text("Android · 0.1.8 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
 +        footer.setPadding(0,dp(14),0,dp(8)); footer.setOnClickListener(v->about());
 +        footerRow.addView(footer,new LayoutParams(0,LayoutParams.WRAP_CONTENT,1));
 +        footerRow.addView(button("Diagnóstico",CYAN,()->ProcessExitDiagnostics.show(activity)));
@@ -2211,7 +2465,7 @@ index 0000000..544a263
 +    }
 +    private void about() {
 +        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Wachiland Launcher · Android")
-+            .setMessage("Prototipo 0.1.7, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
++            .setMessage("Prototipo 0.1.8, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
 +            .setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog);
 +    }
 +    private void error(String title,Throwable e) { AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title).setMessage(message(e)).setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog); }

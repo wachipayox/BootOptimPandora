@@ -1,4 +1,4 @@
-# Wachiland Launcher for Android — 0.1.7 alpha
+# Wachiland Launcher for Android — 0.1.8 alpha
 
 First mobile prototype, based on a pinned FCL / HMCL / Amethyst Android engine.
 This is a companion client for the same Distribution server. It is not an Android
@@ -77,7 +77,7 @@ The phone uses `https://welite.ddns.net` on public HTTPS port 443. The server mu
 install the prepared read-only Nginx routes; see
 [deployment instructions](deployment/NETWORK.md) and
 [installer](deployment/install-public-api.sh). The original 8444 listener stays
-private. Version 0.1.7 updates earlier alphas in place when signed with the delivery key.
+private. Version 0.1.8 updates earlier alphas in place when signed with the delivery key.
 
 ## Installation / first run
 
@@ -147,6 +147,20 @@ java mobile/android/tools/HeapAttributionReport.java path/to/memory-session-allo
 ```
 
 See [diagnostic design and evidence](diagnostics/JAVA-OBJECT-ATTRIBUTION-2026-10-07.md) and the [physical Vivo JFR/OEM-stop result](diagnostics/VIVO-JFR-THERMAL-2026-10-07.md). The phone produced valid JFR; the live census was skipped for insufficient headroom.
+
+## Thermal candidate and recording (0.1.8)
+
+**Diagnóstico → Modo térmico en la próxima partida** defaults on. It requests
+sustained performance if the platform supports it and replaces the engine's
+maximum-refresh request with60Hz on Android12+. Resolution, renderer and game
+settings are preserved. This is an OS request, not a game FPS limiter or a proven
+fix for overheating. The checkbox restores the prior policy when switched off.
+
+Basic recording now includes an independent10s thermal/battery/charging/process
+CPU sampler and thermal-status change events in the local ZIP. Battery temperature
+is not the CPU/GPU temperature, and absent thermal data is not proof the phone is
+cool. Leave deep Java attribution **off** for thermal trials. See
+[design, boundaries and phone gate](diagnostics/ANDROID-THERMAL-2026-10-07.md).
 
 ## Build evidence
 

@@ -165,3 +165,8 @@ Disposition: physical JFR capture gate passed, full live/root ownership pending;
 world gate failed due to OEM stop, thermal threshold unmeasured. Keep diagnostic
 PR#83 separate from production claims. Preserve old failed-memory evidence and
 the user's FancyMenu update decision; no mod/server changes during this analysis.
+
+Follow-up decision: user prioritized temperature and froze BootOptim pending
+another agent. Android0.1.8 adds bounded thermal telemetry and a reversible
+platform window policy; see ANDROID-THERMAL-2026-10-07.md. This does not turn the
+0.1.7 OEM record into a measured thermal threshold or validate the new policy.
