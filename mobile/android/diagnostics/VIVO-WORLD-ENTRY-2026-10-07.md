@@ -78,7 +78,8 @@ Veil4.1.4 reports incomplete framebuffer attachment for veil:light at20:54:39Z,
 before menu. Kerria reports fast uploads/animated caches unsupported by current
 GL capabilities. These are compatibility/performance fronts, not proof they
 cause the measured/user-reported1FPS. The game recovers far enough to enter/save.
-No GPU profiler, frame counter, shader state or render-time ownership is present.
+Iris explicitly reports shaders disabled at startup (enableShaders=false).
+No GPU profiler, frame counter or render-time ownership is present.
 Do not promise renderer changes or heat/FPS fixes from these logs alone.
 
 Next: compare the user's current visual-mod trial with this same scene/settings
