@@ -1,5 +1,5 @@
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index 8463609..4a0d65e 100644
+index 8463609..3886f8d 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
 @@ -53,9 +53,9 @@ android {
@@ -24,8 +24,8 @@ index 8463609..4a0d65e 100644
          targetSdk = libs.versions.targetSdk.get().toInt()
 -        versionCode = 1337
 -        versionName = "1.3.3.7"
-+        versionCode = 7
-+        versionName = "0.1.6-alpha"
++        versionCode = 8
++        versionName = "0.1.7-alpha"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
              cmake {
@@ -81,12 +81,189 @@ index 8463609..4a0d65e 100644
 -}
 \ No newline at end of file
 +}
+diff --git a/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/HeapAttribution.java b/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/HeapAttribution.java
+new file mode 100644
+index 0000000..3548242
+--- /dev/null
++++ b/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/HeapAttribution.java
+@@ -0,0 +1,171 @@
++package net.wachiland.diagnostics;
++
++import java.io.File;
++import java.io.FileWriter;
++import java.lang.management.ManagementFactory;
++import java.lang.reflect.InvocationTargetException;
++import java.nio.file.Files;
++import java.nio.file.StandardCopyOption;
++import java.util.HashMap;
++import java.util.Map;
++import javax.management.ObjectName;
++
++/** Explicit one-session diagnostic, not a production optimization or a heap dump. */
++final class HeapAttribution {
++    private final File csv;
++    private final File status;
++    private Object recording;
++    private Class<?> recordingClass;
++    private boolean menuHandled;
++
++    private HeapAttribution(File csv) {
++        this.csv = csv;
++        status = file("heap-status.txt");
++    }
++
++    static void start(final File csv) {
++        if (!Boolean.getBoolean("wachiland.memory.deep")) return;
++        final HeapAttribution probe = new HeapAttribution(csv);
++        Thread worker = new Thread(new Runnable() {
++            @Override public void run() { probe.run(); }
++        }, "Wachiland-Java-object-attribution");
++        worker.setDaemon(true);
++        worker.setPriority(Thread.MIN_PRIORITY);
++        worker.start();
++    }
++
++    private void run() {
++        note("Diagnostic only. Allocation samples/old-object samples are not a complete retained-owner graph. " +
++                "Histograms count shallow bytes, not per-mod retained size. Live census requests one full GC; " +
++                "this changes timing/occupancy and may pause the game. No cache removal, heap dump or root traversal.");
++        try {
++            startRecording();
++            long deadline = System.nanoTime() + 20L * 60 * 1000000000L;
++            int tick = 0;
++            while (System.nanoTime() < deadline) {
++                Thread.sleep(5000);
++                if (++tick % 6 == 0) snapshot();
++                File request = file("menu.request");
++                if (!menuHandled && request.isFile()) {
++                    menuHandled = true; // No retry after a partial/high-impact operation.
++                    note("Menu request received: " + new String(Files.readAllBytes(request.toPath()), "UTF-8"));
++                    if (hasHeadroom()) {
++                        histogram("occupied", new String[] { "-all", "-parallel=1" });
++                        if (hasHeadroom()) histogram("live", new String[] { "-parallel=1" });
++                        else note("Live census skipped: fresh headroom guard failed after occupied census.");
++                    } else note("Menu census skipped: no fresh Android headroom guard (requires >=768 MiB available).");
++                    snapshot();
++                }
++            }
++            snapshot();
++            note("20-minute diagnostic window ended.");
++        } catch (InterruptedException ignored) {
++            Thread.currentThread().interrupt();
++        } catch (Throwable e) {
++            note("Optional attribution stopped: " + cause(e));
++        } finally {
++            if (recording != null) try { recordingClass.getMethod("close").invoke(recording); }
++            catch (Throwable ignored) { }
++        }
++    }
++
++    private void startRecording() {
++        long start = System.nanoTime();
++        try {
++            recordingClass = Class.forName("jdk.jfr.Recording");
++            Map<String, String> settings = new HashMap<String, String>();
++            settings.put("jdk.ObjectAllocationSample#enabled", "true");
++            settings.put("jdk.ObjectAllocationSample#stackTrace", "true");
++            settings.put("jdk.ObjectAllocationSample#throttle", "20/s");
++            settings.put("jdk.OldObjectSample#enabled", "true");
++            settings.put("jdk.OldObjectSample#stackTrace", "true");
++            settings.put("jdk.OldObjectSample#cutoff", "0 ns"); // No expensive path-to-root traversal.
++            settings.put("jdk.GarbageCollection#enabled", "true");
++            settings.put("jdk.GCHeapSummary#enabled", "true");
++            settings.put("jdk.G1HeapSummary#enabled", "true");
++            recording = recordingClass.getConstructor(Map.class).newInstance(settings);
++            recordingClass.getMethod("setName", String.class).invoke(recording, "Wachiland Java object attribution");
++            recordingClass.getMethod("setToDisk", boolean.class).invoke(recording, true);
++            recordingClass.getMethod("setMaxSize", long.class).invoke(recording, 16L * 1024 * 1024);
++            recordingClass.getMethod("start").invoke(recording);
++            note("JFR active: allocation target 20/s, old-object stacks, cutoff=0 (no roots), " +
++                    "repository rolling target 16 MiB. Snapshot every 30 s. Initialization_ms=" + elapsed(start));
++        } catch (Throwable e) {
++            note("JFR unavailable: " + cause(e) + "; census remains independently available.");
++            if (recording != null) try { recordingClass.getMethod("close").invoke(recording); }
++            catch (Throwable ignored) { }
++            recording = null;
++        }
++    }
++
++    private void snapshot() {
++        if (recording == null) return;
++        File staged = file("allocation.jfr.tmp");
++        long start = System.nanoTime();
++        try {
++            recordingClass.getMethod("dump", java.nio.file.Path.class).invoke(recording, staged.toPath());
++            // JFR's repository limit is chunk based, not a hard byte limit on a snapshot.
++            if (staged.length() > 32L * 1024 * 1024) {
++                note("Snapshot exceeds 32 MiB; retaining previous complete snapshot and stopping JFR.");
++                recordingClass.getMethod("close").invoke(recording);
++                recording = null;
++                return;
++            }
++            publish(staged, file("allocation.jfr"));
++            note("JFR snapshot complete; duration_ms=" + elapsed(start) + "; bytes=" + file("allocation.jfr").length());
++        } catch (Throwable e) { note("JFR snapshot unavailable: " + cause(e)); }
++        finally { staged.delete(); }
++    }
++
++    private boolean hasHeadroom() {
++        try {
++            String[] guard = new String(Files.readAllBytes(file("headroom.guard").toPath()), "UTF-8").trim().split(",");
++            long age = System.currentTimeMillis() - Long.parseLong(guard[0]);
++            return age >= 0 && age <= 15000 && Long.parseLong(guard[1]) >= 768L * 1024 * 1024 && "false".equals(guard[2]);
++        } catch (Throwable ignored) { return false; }
++    }
++
++    private void histogram(String kind, String[] options) {
++        long start = System.nanoTime();
++        Runtime runtime = Runtime.getRuntime();
++        long before = runtime.totalMemory() - runtime.freeMemory();
++        File staged = file("histogram-" + kind + ".txt.tmp");
++        note("Histogram " + kind + " beginning; heap_used_before_bytes=" + before);
++        try {
++            Object result = ManagementFactory.getPlatformMBeanServer().invoke(
++                    new ObjectName("com.sun.management:type=DiagnosticCommand"), "gcClassHistogram",
++                    new Object[] { options }, new String[] { "[Ljava.lang.String;" });
++            String text = String.valueOf(result);
++            if (text.length() > 2 * 1024 * 1024) throw new IllegalStateException("Histogram text exceeds 2 MiB");
++            long after = runtime.totalMemory() - runtime.freeMemory();
++            try (FileWriter out = new FileWriter(staged)) {
++                out.write("epoch_ms=" + System.currentTimeMillis() + "; kind=" + kind + "; duration_ms=" + elapsed(start) +
++                        "; heap_before_bytes=" + before + "; heap_after_bytes=" + after + "\n");
++                out.write(kind.equals("live") ? "One requested full GC, then live-class census. Diagnostic changes workload.\n" :
++                        "Includes unreachable objects (-all); not retained/live bytes.\n");
++                out.write("Bytes are shallow object sizes; arrays cannot be assigned to an owner from this table alone.\n");
++                out.write(text);
++            }
++            publish(staged, file("histogram-" + kind + ".txt"));
++            note("Histogram " + kind + " complete; duration_ms=" + elapsed(start) + "; heap_after_bytes=" + after);
++        } catch (Throwable e) { note("Histogram " + kind + " unavailable: " + cause(e)); }
++        finally { staged.delete(); }
++    }
++
++    private File file(String suffix) { return new File(csv.getParentFile(), csv.getName().replace("jvm.csv", suffix)); }
++    private static long elapsed(long start) { return (System.nanoTime() - start) / 1000000; }
++    private static String cause(Throwable e) {
++        if (e instanceof InvocationTargetException && e.getCause() != null) e = e.getCause();
++        return e.getClass().getName() + ": " + String.valueOf(e.getMessage());
++    }
++    private void note(String message) {
++        try {
++            if (status.length() > 128 * 1024) return;
++            try (FileWriter out = new FileWriter(status, true)) { out.write(System.currentTimeMillis() + " " + message + "\n"); }
++        } catch (Throwable ignored) { }
++    }
++    private static void publish(File staged, File target) throws Exception {
++        try { Files.move(staged.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
++        catch (java.nio.file.AtomicMoveNotSupportedException e) { Files.move(staged.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING); }
++    }
++}
 diff --git a/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java b/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java
 new file mode 100644
-index 0000000..ee57958
+index 0000000..6e9a339
 --- /dev/null
 +++ b/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,96 @@
 +package net.wachiland.diagnostics;
 +
 +import java.io.File;
@@ -98,7 +275,7 @@ index 0000000..ee57958
 +import java.lang.management.MemoryPoolMXBean;
 +import java.lang.reflect.InvocationTargetException;
 +
-+/** Runs in embedded OpenJDK, never in Android ART. No transforms or forced GC. */
++/** Runs in embedded OpenJDK, never in Android ART. No transforms; basic sampling never forces GC. Deep attribution is opt-in. */
 +public final class MemoryMain {
 +    private static final String HEADER = "epoch_ms,session_elapsed_ms,heap_used_bytes,heap_committed_bytes,heap_max_bytes,nonheap_used_bytes,nonheap_committed_bytes,direct_used_bytes,mapped_used_bytes,gc_count,gc_time_ms,threads,sample_duration_ms,g1_old_used_bytes,g1_young_used_bytes\n";
 +
@@ -140,6 +317,7 @@ index 0000000..ee57958
 +        sampler.setDaemon(true);
 +        sampler.setPriority(Thread.MIN_PRIORITY);
 +        sampler.start();
++        HeapAttribution.start(csv);
 +        System.out.println("[Wachiland memory] Embedded JVM recording enabled, 10 s interval; no heap/settings changes.");
 +    }
 +
@@ -1278,10 +1456,10 @@ index 0000000..a02319b
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
 new file mode 100644
-index 0000000..c1b1aa6
+index 0000000..bd8d13d
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,229 @@
 +package net.wachiland.launcher
 +
 +import android.app.ActivityManager
@@ -1291,8 +1469,10 @@ index 0000000..c1b1aa6
 +import android.os.Debug
 +import android.os.Process
 +import android.os.SystemClock
++import com.tungsten.fclauncher.utils.FCLPath
 +import org.json.JSONObject
 +import java.io.File
++import java.io.RandomAccessFile
 +import java.nio.file.Files
 +import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 +import java.util.concurrent.atomic.AtomicBoolean
@@ -1305,9 +1485,15 @@ index 0000000..c1b1aa6
 +    @Volatile private var origin = 0L
 +    @Volatile private var callbacks: ComponentCallbacks2? = null
 +    @Volatile private var thread: Thread? = null
++    @Volatile private var deep = false
++    private var logCursor = 0L
++    private var menuRequested = false
++    private var logSessionVerified = false
 +    private fun dir(context: Context) = File(context.filesDir, "exit-diagnostics").apply { mkdirs() }
 +    @JvmStatic fun enabled(context: Context) = context.getSharedPreferences(PREFS, 0).getBoolean("memory_enabled", true)
 +    fun setEnabled(context: Context, enabled: Boolean) { context.getSharedPreferences(PREFS, 0).edit().putBoolean("memory_enabled", enabled).apply() }
++    fun deepArmed(context: Context) = context.getSharedPreferences(PREFS, 0).getBoolean("heap_attribution_next", false)
++    fun armDeep(context: Context, armed: Boolean) { context.getSharedPreferences(PREFS, 0).edit().putBoolean("heap_attribution_next", armed).apply() }
 +
 +    @JvmStatic fun begin(context: Context, renderer: String) {
 +        if (!enabled(context) || !active.compareAndSet(false, true)) return
@@ -1316,6 +1502,11 @@ index 0000000..c1b1aa6
 +            origin = System.currentTimeMillis()
 +            val prefix = "memory-${origin}-${Process.myPid()}"
 +            session = prefix
++            deep = deepArmed(app)
++            if (deep) armDeep(app, false) // Explicitly armed for one launch only, not every benchmark.
++            logCursor = 0L
++            menuRequested = false
++            logSessionVerified = false
 +            // Keep two sessions, including both sides of the same session.
 +            val directory = dir(app)
 +            val sessions = directory.listFiles().orEmpty().filter { it.name.startsWith("memory-") }
@@ -1334,7 +1525,8 @@ index 0000000..c1b1aa6
 +                System available memory includes reclaimable pages. Total minus available is not other-app usage.
 +                Other apps cannot be enumerated reliably without privileges. No root/USB required or attempted.
 +                Proc mapping labels are heuristic categories; library file mappings do not include all its mallocs.
-+                No forced GC, heap dumps, stack walks, NMT, uploads, mod/renderer/heap setting changes.
++                Basic mode: no forced GC, heap dumps, stack walks, NMT, uploads or mod/renderer/heap setting changes.
++                Deep attribution armed for this session: $deep. If true, see heap-status.txt for JFR/census cost and outcomes.
 +            """.trimIndent() + "\n")
 +            val callback = object : ComponentCallbacks2 {
 +                override fun onTrimMemory(level: Int) { event(app, prefix, "trim_memory", level) }
@@ -1380,7 +1572,7 @@ index 0000000..c1b1aa6
 +            } finally { staged.delete() }
 +            args[cp + 1] += ":${jar.absolutePath}"
 +            args[main] = "net.wachiland.diagnostics.MemoryMain"
-+            args.addAll(main, listOf("-Dwachiland.memory.file=${File(dir(context), "$prefix-jvm.csv").absolutePath}", "-Dwachiland.memory.origin=$origin"))
++            args.addAll(main, listOf("-Dwachiland.memory.file=${File(dir(context), "$prefix-jvm.csv").absolutePath}", "-Dwachiland.memory.origin=$origin", "-Dwachiland.memory.deep=$deep"))
 +            args.toTypedArray()
 +        } catch (e: Exception) {
 +            runCatching { event(context, prefix, "jvm_probe_unavailable_${e.javaClass.simpleName}", -1) }
@@ -1419,7 +1611,37 @@ index 0000000..c1b1aa6
 +        runCatching { row.put("oom_score", File("/proc/self/oom_score").readText().trim()) }
 +        row.put("sample_duration_ms", SystemClock.elapsedRealtime() - tick)
 +        append(File(dir(context), "$prefix-android.jsonl"), row.toString())
++        if (deep) runCatching { attributionCheckpoint(context, prefix, system) }.onFailure {
++            event(context, prefix, "attribution_checkpoint_error_${it.javaClass.simpleName}", -1)
++        }
 +        if (mappings) mappingSummary(context, prefix)
++    }
++
++    private fun attributionCheckpoint(context: Context, prefix: String, memory: ActivityManager.MemoryInfo) {
++        val directory = dir(context)
++        val staged = File(directory, "$prefix-headroom.tmp")
++        try {
++            staged.writeText("${System.currentTimeMillis()},${memory.availMem},${memory.lowMemory}")
++            Files.move(staged.toPath(), File(directory, "$prefix-headroom.guard").toPath(), REPLACE_EXISTING)
++        } finally { staged.delete() }
++        if (menuRequested) return
++        val log = FCLPath.getLatestGameLog()
++        if (!log.isFile || log.lastModified() < origin) return
++        val text = RandomAccessFile(log, "r").use { input ->
++            if (input.length() < logCursor) { logCursor = 0; logSessionVerified = false }
++            input.seek((logCursor - 512).coerceAtLeast(0)) // Retain overlap for a split marker line.
++            val bytes = ByteArray(minOf(65536L, input.length() - input.filePointer).toInt())
++            input.readFully(bytes)
++            logCursor = input.filePointer
++            bytes.toString(Charsets.UTF_8)
++        }
++        if (text.contains("-Dwachiland.memory.origin=$origin")) logSessionVerified = true
++        if (!logSessionVerified) return // Reject stale game logs, even if their timestamp changed.
++        val marker = text.lineSequence().firstOrNull { it.contains("ModernFix") &&
++            Regex("Game took [0-9.]+ seconds to start").containsMatchIn(it) } ?: return
++        menuRequested = true
++        File(directory, "$prefix-menu.request").writeText("epoch_ms=${System.currentTimeMillis()}; marker=${marker.take(512)}\n")
++        event(context, prefix, "modernfix_menu_attribution_requested", -1)
 +    }
 +
 +    private fun readFields(file: File, wanted: Set<String>): Map<String, String> = runCatching {
@@ -1469,10 +1691,10 @@ index 0000000..c1b1aa6
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
 new file mode 100644
-index 0000000..b0dd6ad
+index 0000000..ace6789
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,273 @@
 +package net.wachiland.launcher
 +
 +import android.annotation.SuppressLint
@@ -1562,10 +1784,22 @@ index 0000000..b0dd6ad
 +            val padding = (24 * resources.displayMetrics.density).toInt()
 +            setPadding(padding, padding / 2, padding, 0)
 +            addView(TextView(activity).apply { text = "$message\n\nLa recogida de memoria registra el heap de Minecraft, el de la interfaz Android, el proceso y la memoria disponible del teléfono cada 10 segundos. No cambia la RAM asignada. Después del cierre, comparte el diagnóstico antes de hacer otra prueba." })
-+            addView(CheckBox(activity).apply {
++            val basic = CheckBox(activity).apply {
 +                text = "Registrar memoria durante las partidas"
 +                isChecked = MemoryDiagnostics.enabled(activity)
 +                setOnCheckedChangeListener { _, checked -> MemoryDiagnostics.setEnabled(activity, checked) }
++            }
++            addView(basic)
++            addView(CheckBox(activity).apply {
++                text = "Investigar objetos Java en la próxima partida"
++                isChecked = MemoryDiagnostics.deepArmed(activity)
++                setOnCheckedChangeListener { _, checked ->
++                    MemoryDiagnostics.armDeep(activity, checked)
++                    if (checked) basic.isChecked = true
++                }
++            })
++            addView(TextView(activity).apply {
++                text = "El diagnóstico profundo registra clases y lugares de creación de objetos. Al llegar al menú puede pausar el juego para contar objetos vivos tras una recogida de basura, si queda margen de memoria. Solo se activa para una partida y se incluye en el ZIP. No es una prueba de rendimiento."
 +            })
 +        }
 +        AlertDialog.Builder(activity).setTitle(title).setView(ScrollView(activity).apply { addView(panel) })
@@ -1709,7 +1943,7 @@ index 0000000..b0dd6ad
 +                        try {
 +                            ZipOutputStream(FileOutputStream(staged)).use { archive ->
 +                                dir.listFiles()?.filter { it.name == "android-exit-diagnostics.txt" ||
-+                                    it.name == "previous-game.log" || it.name.startsWith("memory-") && it.extension in setOf("csv", "jsonl", "txt") ||
++                                    it.name == "previous-game.log" || it.name.startsWith("memory-") && it.extension in setOf("csv", "jsonl", "txt", "jfr") && it.length() <= 32L * 1024 * 1024 ||
 +                                    it.name.startsWith("trace-") && it.extension in setOf("pb", "txt") }
 +                                    ?.forEach { file ->
 +                                        archive.putNextEntry(ZipEntry(file.name))
@@ -1780,7 +2014,7 @@ index 0000000..bdc354d
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 new file mode 100644
-index 0000000..e08f87f
+index 0000000..544a263
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 @@ -0,0 +1,214 @@
@@ -1843,7 +2077,7 @@ index 0000000..e08f87f
 +        localTitle.addView(button("Instalar Minecraft",CYAN,()->UIManager.getInstance().switchUI(UIManager.getInstance().getDownloadUI())));
 +        body.addView(localTitle); instances=column(); body.addView(instances);
 +        LinearLayout footerRow=row();
-+        TextView footer=text("Android · 0.1.6 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
++        TextView footer=text("Android · 0.1.7 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
 +        footer.setPadding(0,dp(14),0,dp(8)); footer.setOnClickListener(v->about());
 +        footerRow.addView(footer,new LayoutParams(0,LayoutParams.WRAP_CONTENT,1));
 +        footerRow.addView(button("Diagnóstico",CYAN,()->ProcessExitDiagnostics.show(activity)));
@@ -1977,7 +2211,7 @@ index 0000000..e08f87f
 +    }
 +    private void about() {
 +        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Wachiland Launcher · Android")
-+            .setMessage("Prototipo 0.1.6, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
++            .setMessage("Prototipo 0.1.7, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
 +            .setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog);
 +    }
 +    private void error(String title,Throwable e) { AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title).setMessage(message(e)).setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog); }
