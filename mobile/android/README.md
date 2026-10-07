@@ -146,7 +146,7 @@ For offline analysis on a PC with JDK 21:
 java mobile/android/tools/HeapAttributionReport.java path/to/memory-session-allocation.jfr
 ```
 
-See [diagnostic design and evidence](diagnostics/JAVA-OBJECT-ATTRIBUTION-2026-10-07.md).
+See [diagnostic design and evidence](diagnostics/JAVA-OBJECT-ATTRIBUTION-2026-10-07.md) and the [physical Vivo JFR/OEM-stop result](diagnostics/VIVO-JFR-THERMAL-2026-10-07.md). The phone produced valid JFR; the live census was skipped for insufficient headroom.
 
 ## Build evidence
 

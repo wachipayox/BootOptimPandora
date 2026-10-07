@@ -38,7 +38,7 @@ Do not interpret USER_REQUESTED as the human necessarily pressing force-stop.
 - JFR contains4199 allocation samples,2124 old-object sample events and53GC
   events. It also includes114 Minecraft ServerTickTime events published by the
   game. Presence is not a CPU execution profile or a complete heap graph.
-- JFR initialization1918ms.28dump completions sum11398ms background inclusive
+- JFR initialization1918ms.28dump completions sum11768ms background inclusive
   operation duration, max1123ms; these are not measured critical-path overhead.
 - Basic Android operation sum28400ms, max3286ms. No claim of negligible overhead.
 - Menu request received19:12:24.620Z, but census skipped by the fresh >=768MiB
