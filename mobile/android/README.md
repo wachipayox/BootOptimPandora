@@ -1,4 +1,4 @@
-# Wachiland Launcher for Android — 0.1.6 alpha
+# Wachiland Launcher for Android — 0.1.7 alpha
 
 First mobile prototype, based on a pinned FCL / HMCL / Amethyst Android engine.
 This is a companion client for the same Distribution server. It is not an Android
@@ -77,7 +77,7 @@ The phone uses `https://welite.ddns.net` on public HTTPS port 443. The server mu
 install the prepared read-only Nginx routes; see
 [deployment instructions](deployment/NETWORK.md) and
 [installer](deployment/install-public-api.sh). The original 8444 listener stays
-private. Version 0.1.6 updates earlier alphas in place when signed with the delivery key.
+private. Version 0.1.7 updates earlier alphas in place when signed with the delivery key.
 
 ## Installation / first run
 
@@ -104,7 +104,7 @@ Use **Diagnóstico** at the bottom of the Wachiland home, then **Compartir
 diagnóstico**, to share `wachiland-android-diagnostic.zip`. Recovery may also
 show the last abnormal exit with that same sharing action. Collection is local;
 no automatic uploads or permission prompts are added. Logs mask access tokens.
-Exit history is collected on recovery/on request. Optional memory recording is enabled by default in 0.1.6 and can be disabled with the checkbox in Diagnóstico; it runs every 10 seconds during the game (three-hour cap), with Debug.MemoryInfo every 30 seconds and one initial mapping summary. Missing detailed fields between full samples are intentional. The ZIP includes the last two memory sessions. It never forces GC, changes the renderer/modpack or uploads automatically. Version 0.1.6 defaults the minimum Java heap to 512 MiB while preserving the selected maximum and explicit minimum overrides; this is a memory-headroom candidate awaiting phone validation. See diagnostics/MEMORY-SAMPLING-2026-10-07.md for metric boundaries.
+Exit history is collected on recovery/on request. Optional memory recording is enabled by default in 0.1.7 and can be disabled with the checkbox in Diagnóstico; it runs every 10 seconds during the game (three-hour cap), with Debug.MemoryInfo every 30 seconds and one initial mapping summary. Missing detailed fields between full samples are intentional. The ZIP includes the last two memory sessions. Basic recording never forces GC, changes the renderer/modpack or uploads automatically. Optional deep attribution explicitly requests one live census and full GC after the ModernFix menu marker; see the next section. The 0.1.6 default minimum of 512 MiB is preserved with selected maximum and explicit minimum overrides; its phone gate showed this alone was insufficient to prevent LOW_MEMORY. See diagnostics/MEMORY-SAMPLING-2026-10-07.md for metric boundaries.
 
 The first installation of this feature can read older records if Android kept
 them, but cannot correlate those runs with its new durable game session marker.
@@ -112,7 +112,43 @@ Some devices report memory kills as SIGKILL; that signal alone is inconclusive.
 RSS/PSS are sampled values, not peaks. A missing record/trace is reported as
 unavailable, never classified as a proven memory or mod crash. See `BUILD.md`.
 
-## Evidence recorded for this build
+## Optional Java object attribution (0.1.7)
+
+Open **Diagnóstico**, enable **Investigar objetos Java en la próxima partida**,
+then start the game. The checkbox is consumed by one launch and is off by default.
+It also enables basic memory recording. Stay at the main menu for at least 30
+seconds before attempting world creation, then share the normal diagnostic ZIP.
+
+The optional recording samples allocation stacks (20/s target), old-object
+allocation stacks and GC events for at most 20 minutes. Complete JFR snapshots
+replace the previous snapshot every 30 seconds; an abrupt kill preserves the
+latest complete file. The rolling repository target is 16 MiB, export cap 32 MiB
+per snapshot. JFR does not record argument/system-property events or object values.
+
+After the current-session ModernFix menu marker, one occupied-class histogram
+and one live-class histogram are requested. The live census requests a full GC
+and can pause the game. A recent Android sample must show at least 768 MiB
+available and no low-memory flag, otherwise that census is skipped. This margin
+is a diagnostic guard, not a guarantee against Android termination. If the marker
+or HotSpot diagnostic facility is unavailable, no substitute forced census is
+run; `heap-status.txt` describes outcomes and operation durations.
+
+Allocation weights are traffic estimates, not retained bytes. Histograms report
+shallow sizes; an array's owner cannot be inferred from its class alone. Old-object
+samples can identify creation sites of surviving objects, but this first pass
+does not request expensive reference paths to GC roots. Missing samples are not
+proof that a mod retains nothing. These runs are not startup timing benchmarks
+or proof of a memory improvement. No mod/cache/renderer/quality changes are made.
+
+For offline analysis on a PC with JDK 21:
+
+```powershell
+java mobile/android/tools/HeapAttributionReport.java path/to/memory-session-allocation.jfr
+```
+
+See [diagnostic design and evidence](diagnostics/JAVA-OBJECT-ATTRIBUTION-2026-10-07.md).
+
+## Build evidence
 
 Compilation and APK signature/manifest inspection are recorded in `BUILD.md`.
 No physical Android device was attached during implementation. Microsoft's device
