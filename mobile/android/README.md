@@ -167,6 +167,11 @@ on the Vivo, and world entry failed with Java heap exhaustion during WorldEdit
 initialization followed by a later signal35 exit. See the
 [WorldEdit and thermal result](diagnostics/VIVO-WORLDEDIT-THERMAL-2026-10-07.md).
 
+Next run without WorldEdit/SableEdit entered and saved a world, but the user
+reported~1FPS. JEI first-join initialization took4.569min, thermal headroom was
+high and memory remained tight. See
+[world-entry/performance evidence](diagnostics/VIVO-WORLD-ENTRY-2026-10-07.md).
+
 ## Build evidence
 
 Compilation and APK signature/manifest inspection are recorded in `BUILD.md`.
