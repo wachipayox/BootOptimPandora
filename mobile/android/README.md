@@ -162,6 +162,11 @@ is not the CPU/GPU temperature, and absent thermal data is not proof the phone i
 cool. Leave deep Java attribution **off** for thermal trials. See
 [design, boundaries and phone gate](diagnostics/ANDROID-THERMAL-2026-10-07.md).
 
+Physical0.1.8 follow-up: thermal capture worked, sustained mode is unsupported
+on the Vivo, and world entry failed with Java heap exhaustion during WorldEdit
+initialization followed by a later signal35 exit. See the
+[WorldEdit and thermal result](diagnostics/VIVO-WORLDEDIT-THERMAL-2026-10-07.md).
+
 ## Build evidence
 
 Compilation and APK signature/manifest inspection are recorded in `BUILD.md`.

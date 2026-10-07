@@ -105,3 +105,8 @@ before claiming improvement. No physical thermal result exists for0.1.8 yet.
 
 Disposition: separate Android diagnostic/policy candidate; no BootOptim/mod,
 server or pack changes; compile/static gates only, thermal effectiveness pending.
+
+Physical follow-up: see VIVO-WORLDEDIT-THERMAL-2026-10-07.md. Temperature/CPU capture
+works; sustained policy unsupported on this Vivo; world entry failed at WorldEdit
+Java heap exhaustion. The later exit is SIGNALED35, cause unresolved. This is not
+a successful world gate or demonstrated heat reduction. Keep this PR diagnostic.
