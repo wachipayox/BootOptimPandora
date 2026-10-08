@@ -1,4 +1,4 @@
-# Wachiland Launcher for Android — 0.1.8 alpha
+# Wachiland Launcher for Android — 0.1.9 alpha
 
 First mobile prototype, based on a pinned FCL / HMCL / Amethyst Android engine.
 This is a companion client for the same Distribution server. It is not an Android
@@ -77,7 +77,7 @@ The phone uses `https://welite.ddns.net` on public HTTPS port 443. The server mu
 install the prepared read-only Nginx routes; see
 [deployment instructions](deployment/NETWORK.md) and
 [installer](deployment/install-public-api.sh). The original 8444 listener stays
-private. Version 0.1.8 updates earlier alphas in place when signed with the delivery key.
+private. Version 0.1.9 updates earlier alphas in place when signed with the delivery key.
 
 ## Installation / first run
 
@@ -104,7 +104,7 @@ Use **Diagnóstico** at the bottom of the Wachiland home, then **Compartir
 diagnóstico**, to share `wachiland-android-diagnostic.zip`. Recovery may also
 show the last abnormal exit with that same sharing action. Collection is local;
 no automatic uploads or permission prompts are added. Logs mask access tokens.
-Exit history is collected on recovery/on request. Optional memory recording is enabled by default in 0.1.7 and can be disabled with the checkbox in Diagnóstico; it runs every 10 seconds during the game (three-hour cap), with Debug.MemoryInfo every 30 seconds and one initial mapping summary. Missing detailed fields between full samples are intentional. The ZIP includes the last two memory sessions. Basic recording never forces GC, changes the renderer/modpack or uploads automatically. Optional deep attribution explicitly requests one live census and full GC after the ModernFix menu marker; see the next section. The 0.1.6 default minimum of 512 MiB is preserved with selected maximum and explicit minimum overrides; its phone gate showed this alone was insufficient to prevent LOW_MEMORY. See diagnostics/MEMORY-SAMPLING-2026-10-07.md for metric boundaries.
+Exit history is collected on recovery/on request. Optional memory recording is enabled by default in 0.1.7 and can be disabled with the checkbox in Diagnóstico; it runs every 10 seconds during the game (three-hour cap), with Debug.MemoryInfo every 30 seconds and one initial mapping summary. Missing detailed fields between full samples are intentional. The ZIP includes two older memory sessions plus the current one. Basic recording never forces GC, changes the renderer/modpack or uploads automatically. Optional deep attribution explicitly requests one live census and full GC after the ModernFix menu marker; see the next section. The 0.1.6 default minimum of 512 MiB is preserved with selected maximum and explicit minimum overrides; its phone gate showed this alone was insufficient to prevent LOW_MEMORY. See diagnostics/MEMORY-SAMPLING-2026-10-07.md for metric boundaries.
 
 The first installation of this feature can read older records if Android kept
 them, but cannot correlate those runs with its new durable game session marker.
@@ -175,6 +175,24 @@ high and memory remained tight. See
 Visual-mod reduction trial retained~1FPS and ended in Android LOW_MEMORY during
 resource reload. FancyMenu logged only one active panorama; see
 [reload memory evidence and attribution limits](diagnostics/VIVO-RELOAD-LMK-2026-10-07.md).
+
+## Optional frame investigation (0.1.9)
+
+**Diagnostico -> Investigar FPS en la proxima partida** initially arms one automatic
+capture in this diagnostic APK. Enter a world, let JEI finish, then remain in the
+same scene for about four minutes. Exit normally and share the usual diagnostic
+ZIP. Do not run Spark or deep Java attribution during this capture. Rearm the
+checkbox to repeat a comparison without transferring another APK or mod.
+
+The agent records frame/tick/upload/render/presentation wall durations, selected
+thread CPU/stacks, effective Kerria state, and matched memory/GC/thermal series.
+It changes no graphics settings. Inclusive wall metrics overlap and do not measure
+GPU execution directly. Missing hooks are reported explicitly. Java 17+ and the
+runtime instrumentation library are required; unsupported runtimes skip the agent.
+Physical phone validation and performance conclusions remain pending. See
+[design and interpretation](diagnostics/ANDROID-FRAME-DIAGNOSTICS-2026-10-08.md),
+[Spark baseline](diagnostics/VIVO-SPARK-CLIENT-2026-10-08.md), and
+[optimization-mod audit](diagnostics/ANDROID-OPTIMIZATION-MOD-AUDIT-2026-10-08.md).
 
 ## Build evidence
 

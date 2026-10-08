@@ -1,5 +1,5 @@
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index 8463609..80eae7c 100644
+index 8463609..bfa36c6 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
 @@ -53,9 +53,9 @@ android {
@@ -24,12 +24,12 @@ index 8463609..80eae7c 100644
          targetSdk = libs.versions.targetSdk.get().toInt()
 -        versionCode = 1337
 -        versionName = "1.3.3.7"
-+        versionCode = 9
-+        versionName = "0.1.8-alpha"
++        versionCode = 10
++        versionName = "0.1.9-alpha"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
              cmake {
-@@ -162,6 +162,27 @@ abstract class FilterJreAssets : Sync() {
+@@ -162,6 +162,59 @@ abstract class FilterJreAssets : Sync() {
      abstract val outputDir: DirectoryProperty
  }
  
@@ -48,8 +48,40 @@ index 8463609..80eae7c 100644
 +    isPreserveFileTimestamps = false
 +    isReproducibleFileOrder = true
 +}
++val compilePerformanceProbe = tasks.register<JavaCompile>("compilePerformanceProbe") {
++    source(fileTree("performance-probe/src/main/java") { include("**/*.java") })
++    classpath = files()
++    sourceCompatibility = "17"
++    targetCompatibility = "17"
++    options.compilerArgs.addAll(listOf(
++        "--add-exports", "java.base/jdk.internal.org.objectweb.asm=ALL-UNNAMED",
++        "--add-exports", "java.base/jdk.internal.org.objectweb.asm.commons=ALL-UNNAMED",
++        "--add-exports", "java.base/jdk.internal.org.objectweb.asm.util=ALL-UNNAMED"))
++    destinationDirectory.set(layout.buildDirectory.dir("performance-probe/classes"))
++}
++val jarPerformanceProbe = tasks.register<Jar>("jarPerformanceProbe") {
++    dependsOn(compilePerformanceProbe)
++    from(compilePerformanceProbe.flatMap { it.destinationDirectory })
++    exclude("**/PerformanceCounters*.class")
++    manifest.attributes("Premain-Class" to "net.wachiland.performance.PerformanceAgent")
++    archiveFileName.set("wachiland-performance-probe.jar")
++    destinationDirectory.set(layout.buildDirectory.dir("performance-probe/jar"))
++    isPreserveFileTimestamps = false
++    isReproducibleFileOrder = true
++}
++val jarPerformanceCounters = tasks.register<Jar>("jarPerformanceCounters") {
++    dependsOn(compilePerformanceProbe)
++    from(compilePerformanceProbe.flatMap { it.destinationDirectory })
++    include("**/PerformanceCounters*.class")
++    archiveFileName.set("wachiland-performance-counters.jar")
++    destinationDirectory.set(layout.buildDirectory.dir("performance-probe/jar"))
++    isPreserveFileTimestamps = false
++    isReproducibleFileOrder = true
++}
 +val memoryProbeAssets = tasks.register<FilterJreAssets>("memoryProbeAssets") {
 +    from(jarMemoryProbe) { into("game") }
++    from(jarPerformanceProbe) { into("game") }
++    from(jarPerformanceCounters) { into("game") }
 +    outputDir.set(layout.buildDirectory.dir("generated/memory-probe-assets"))
 +    into(outputDir)
 +}
@@ -57,7 +89,7 @@ index 8463609..80eae7c 100644
  val filterJreAssets = tasks.register<FilterJreAssets>("filterJreAssets") {
      val arch = System.getProperty("arch", "all")
      // Copy/Sync 的 up-to-date 检查不包含 copy spec 的过滤规则，必须显式声明 arch 输入，
-@@ -176,6 +197,7 @@ val filterJreAssets = tasks.register<FilterJreAssets>("filterJreAssets") {
+@@ -176,6 +229,7 @@ val filterJreAssets = tasks.register<FilterJreAssets>("filterJreAssets") {
  
  androidComponents {
      onVariants { variant ->
@@ -65,7 +97,7 @@ index 8463609..80eae7c 100644
          variant.outputs.forEach { output ->
              if (output is com.android.build.api.variant.impl.VariantOutputImpl) {
                  (output.getFilter(ABI)?.identifier ?: "all").let { abi ->
-@@ -261,6 +283,8 @@ ksp {
+@@ -261,6 +315,8 @@ ksp {
  }
  
  dependencies {
@@ -74,7 +106,7 @@ index 8463609..80eae7c 100644
      coreLibraryDesugaring(libs.desugar.jdk.libs)
      implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
      implementation(project(":ZipFileSystem"))
-@@ -338,4 +362,4 @@ tasks.register("updateMap") {
+@@ -338,4 +394,4 @@ tasks.register("updateMap") {
          }
          mapFile.writeText(list.joinToString("\n"), Charsets.UTF_8)
      }
@@ -358,6 +390,289 @@ index 0000000..6e9a339
 +
 +    private static void write(File file, String text, boolean append) throws Exception {
 +        try (FileWriter out = new FileWriter(file, append)) { out.write(text); }
++    }
++}
+diff --git a/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java
+new file mode 100644
+index 0000000..9df3b7d
+--- /dev/null
++++ b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java
+@@ -0,0 +1,220 @@
++package net.wachiland.performance;
++
++import java.io.File;
++import java.io.FileWriter;
++import java.io.PrintWriter;
++import java.io.StringWriter;
++import java.lang.instrument.ClassFileTransformer;
++import java.lang.instrument.Instrumentation;
++import java.lang.management.ManagementFactory;
++import java.lang.management.ThreadInfo;
++import java.lang.management.ThreadMXBean;
++import java.lang.reflect.Field;
++import java.security.ProtectionDomain;
++import java.util.Collections;
++import java.util.HashSet;
++import java.util.Set;
++import java.util.jar.JarFile;
++import jdk.internal.org.objectweb.asm.ClassReader;
++import jdk.internal.org.objectweb.asm.ClassVisitor;
++import jdk.internal.org.objectweb.asm.ClassWriter;
++import jdk.internal.org.objectweb.asm.Label;
++import jdk.internal.org.objectweb.asm.MethodVisitor;
++import jdk.internal.org.objectweb.asm.Opcodes;
++import jdk.internal.org.objectweb.asm.Type;
++import jdk.internal.org.objectweb.asm.commons.AdviceAdapter;
++import jdk.internal.org.objectweb.asm.commons.Method;
++import jdk.internal.org.objectweb.asm.util.CheckClassAdapter;
++
++/** Optional, bounded diagnostic agent; never changes game/GL arguments or results. */
++public final class PerformanceAgent {
++    private static File base;
++    private static Instrumentation agent;
++    private static Field kerriaConfig;
++    private static final Set<String> TARGETS = Set.of("net/minecraft/client/Minecraft", "net/minecraft/client/renderer/texture/TextureManager", "com/mojang/blaze3d/platform/NativeImage", "org/lwjgl/opengl/GL11C", "org/lwjgl/glfw/GLFW", "net/minecraft/client/renderer/GameRenderer", "net/minecraft/client/multiplayer/ClientLevel", "net/createmod/catnip/placement/PlacementClient", "neoforge/fun/qu_an/minecraft/asyncparticles/client/particle/AsyncTickBehavior", "fun/qu_an/minecraft/asyncparticles/client/particle/AsyncTickBehavior", "org/lwjgl/opengl/GL32C");
++
++    public static void premain(String ignored, Instrumentation instrumentation) {
++        try {
++            base = new File(System.getProperty("wachiland.performance.base"));
++            agent = instrumentation;
++            instrumentation.appendToBootstrapClassLoaderSearch(new JarFile(System.getProperty("wachiland.performance.bootstrap")));
++            // Resolve counters after append, so every transformed loader shares bootstrap counters.
++            Class.forName("net.wachiland.performance.PerformanceCounters", true, null);
++            write("status.txt", "epoch_ms=" + System.currentTimeMillis() + "\nagent_ready=true\nJava 17+ diagnostic. Wall-call durations include waits, scheduling and native work; not GPU execution time. Inclusive metrics overlap. Histograms have bucket upper bounds, not exact quantiles.\n", false);
++            instrumentation.addTransformer(new ClassFileTransformer() {
++                @Override public byte[] transform(Module module, ClassLoader loader, String name, Class<?> redefining, ProtectionDomain domain, byte[] bytes) {
++                    if (!TARGETS.contains(name)) return null;
++                    try {
++                        if (module != null && module.isNamed()) instrumentation.redefineModule(module, Set.of(PerformanceCounters.class.getModule()), Collections.emptyMap(), Collections.emptyMap(), Collections.emptySet(), Collections.emptyMap());
++                        ClassReader reader = new ClassReader(bytes);
++                        // Resolve actual loader types; abort instrumentation rather than guess frames.
++                        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
++                            @Override protected String getCommonSuperClass(String a, String b) {
++                                try {
++                                    Class<?> ca = Class.forName(a.replace('/', '.'), false, loader), cb = Class.forName(b.replace('/', '.'), false, loader);
++                                    if (ca.isAssignableFrom(cb)) return a;
++                                    if (cb.isAssignableFrom(ca)) return b;
++                                    if (ca.isInterface() || cb.isInterface()) return "java/lang/Object";
++                                    do { ca = ca.getSuperclass(); } while (!ca.isAssignableFrom(cb));
++                                    return ca.getName().replace('.', '/');
++                                } catch (Throwable error) { throw new IllegalStateException("Unresolved frame hierarchy", error); }
++                            }
++                        };
++                        int[] hooked = {0};
++                        reader.accept(new ClassVisitor(Opcodes.ASM8, writer) {
++                            @Override public MethodVisitor visitMethod(int access, String method, String descriptor, String signature, String[] exceptions) {
++                                MethodVisitor visitor = super.visitMethod(access, method, descriptor, signature, exceptions);
++                                int metric = metric(name, method, descriptor);
++                                if (metric < 0 || (access & (Opcodes.ACC_NATIVE | Opcodes.ACC_ABSTRACT)) != 0) return visitor;
++                                hooked[0]++;
++                                return new AdviceAdapter(Opcodes.ASM8, visitor, access, method, descriptor) {
++                                    final Type counter = Type.getObjectType("net/wachiland/performance/PerformanceCounters");
++                                    final Label start = new Label(), end = new Label(), handler = new Label();
++                                    int stamp;
++                                    void finish() { push(metric); loadLocal(stamp); invokeStatic(counter, new Method("exit", "(IJ)V")); }
++                                    @Override protected void onMethodEnter() {
++                                        push(metric); invokeStatic(counter, new Method("enter", "(I)J"));
++                                        stamp = newLocal(Type.LONG_TYPE); storeLocal(stamp);
++                                        if (metric == 4 && descriptor.equals("(IIIIIIIIJ)V")) { loadArg(4); loadArg(5); invokeStatic(counter, new Method("pixels", "(II)V")); }
++                                        mark(start);
++                                    }
++                                    @Override protected void onMethodExit(int opcode) { if (opcode != ATHROW) finish(); }
++                                    @Override public void visitMaxs(int stack, int locals) {
++                                        mark(end); visitTryCatchBlock(start, end, handler, "java/lang/Throwable"); mark(handler);
++                                        int error = newLocal(Type.getType(Throwable.class)); storeLocal(error); finish(); loadLocal(error); throwException();
++                                        super.visitMaxs(stack, locals);
++                                    }
++                                };
++                            }
++                        }, ClassReader.EXPAND_FRAMES);
++                        if (hooked[0] == 0) return null;
++                        byte[] transformed = writer.toByteArray();
++                        StringWriter errors = new StringWriter();
++                        CheckClassAdapter.verify(new ClassReader(transformed), loader, false, new PrintWriter(errors));
++                        if (!errors.toString().isBlank()) {
++                            note("transform_skipped_verification " + name);
++                            return null;
++                        }
++                        write("hooks.txt", name + " verified_methods=" + hooked[0] + "\n", true);
++                        return transformed;
++                    } catch (Throwable error) {
++                        note("transform_skipped " + name + " " + error.getClass().getSimpleName());
++                        return null;
++                    }
++                }
++            }, false);
++            Thread worker = new Thread(PerformanceAgent::capture, "Wachiland-performance");
++            worker.setDaemon(true); worker.setPriority(Thread.MIN_PRIORITY); worker.start();
++            System.out.println("[Wachiland performance] Ready; one automatic 120 s capture after world/JEI readiness.");
++        } catch (Throwable error) { note("agent_unavailable " + error.getClass().getSimpleName()); }
++    }
++
++    private static int metric(String owner, String name, String desc) {
++        if (owner.endsWith("/Minecraft")) return name.equals("runTick") && desc.equals("(Z)V") ? 0 : name.equals("tick") && desc.equals("()V") ? 1 : -1;
++        if (owner.endsWith("/TextureManager") && name.equals("tick") && desc.equals("()V")) return 2;
++        if (owner.endsWith("/NativeImage") && name.equals("_upload")) return 3;
++        if (owner.endsWith("/GL11C") && name.equals("glTexSubImage2D")) return 4;
++        if (owner.endsWith("/GLFW") && name.equals("glfwSwapBuffers")) return 5;
++        if (owner.endsWith("/GameRenderer") && name.equals("renderLevel")) return 6;
++        if (owner.endsWith("/ClientLevel") && name.equals("animateTick")) return 7;
++        if (owner.endsWith("/PlacementClient") && name.equals("checkHelpers")) return 8;
++        if (owner.endsWith("/AsyncTickBehavior") && name.equals("postTick")) return 9;
++        if (owner.endsWith("/GL32C") && name.equals("glMultiDrawElementsBaseVertex")) return 10;
++        return -1;
++    }
++
++    private static void capture() {
++        try {
++            File request = new File(base + "-request.txt");
++            long deadline = System.currentTimeMillis() + 3 * 60 * 60 * 1000;
++            String reason = null;
++            while (System.currentTimeMillis() < deadline) {
++                if (request.isFile()) { reason = "launcher_world_and_jei_marker"; break; }
++                if (PerformanceCounters.firstWorld > 0 && System.currentTimeMillis() - PerformanceCounters.firstWorld >= 90000) { reason = "90s_after_first_world_render_fallback"; break; }
++                Thread.sleep(2000);
++            }
++            if (reason == null) { note("capture_not_started_no_world_marker"); return; }
++            // Give JEI completion and the loading overlay 20 seconds to settle.
++            Thread.sleep(20000);
++            long origin = System.currentTimeMillis();
++            write("calls.csv", "epoch_ms,elapsed_ms,metric,calls_total,wall_ns_total,pixels_total,histogram_total\n", false);
++            write("threads.csv", "epoch_ms,thread_id,name,state,cpu_ns_total,stack\n", false);
++            note("capture_start epoch_ms=" + origin + " reason=" + reason + " duration_s=120");
++            for (Class<?> type : agent.getAllLoadedClasses()) if (type.getName().equals("me.decce.kerria.Kerria")) {
++                try {
++                    Module mod = type.getModule();
++                    if (mod.isNamed()) agent.redefineModule(mod, Collections.emptySet(), Collections.emptyMap(), Collections.singletonMap(type.getPackageName(), Set.of(PerformanceAgent.class.getModule())), Collections.emptySet(), Collections.emptyMap());
++                    kerriaConfig = type.getDeclaredField("config"); kerriaConfig.setAccessible(true);
++                } catch (Throwable error) { note("kerria_effective_config_unavailable " + error.getClass().getSimpleName()); }
++            }
++            write("effective-settings.csv", "epoch_ms,kerria_loaded,kerria_enabled,cache,fastUpload,fastLightTextureUpload\n", false);
++            PerformanceCounters.active = true;
++            ThreadMXBean bean = ManagementFactory.getThreadMXBean();
++            try { if (bean.isThreadCpuTimeSupported() && !bean.isThreadCpuTimeEnabled()) bean.setThreadCpuTimeEnabled(true); }
++            catch (Throwable error) { note("thread_cpu_unavailable " + error.getClass().getSimpleName()); }
++            long end = System.nanoTime() + 120000000000L;
++            long nextRows = 0;
++            long[] ids = new long[0];
++            while (System.nanoTime() < end) {
++                long tick = System.nanoTime(), epoch = System.currentTimeMillis();
++                if (epoch >= nextRows) {
++                    rows(epoch, origin);
++                    effectiveSettings(epoch);
++                    Set<Long> selected = new HashSet<>();
++                    for (ThreadInfo info : bean.getThreadInfo(bean.getAllThreadIds(), 0)) if (info != null && (info.getThreadName().equals("Render thread") || info.getThreadName().equals("Server thread"))) selected.add(info.getThreadId());
++                    ids = selected.stream().mapToLong(Long::longValue).toArray();
++                    nextRows = epoch + 1000;
++                }
++                // Two selected stacks every 500 ms, never walk all mod-worker stacks.
++                StringBuilder stacks = new StringBuilder();
++                for (ThreadInfo info : bean.getThreadInfo(ids, 20)) if (info != null) {
++                    long cpu = -1;
++                    try { if (bean.isThreadCpuTimeSupported() && bean.isThreadCpuTimeEnabled()) cpu = bean.getThreadCpuTime(info.getThreadId()); } catch (Throwable ignored) { }
++                    stacks.append(epoch).append(',').append(info.getThreadId()).append(',').append(info.getThreadName()).append(',').append(info.getThreadState()).append(',').append(cpu).append(',');
++                    for (StackTraceElement frame : info.getStackTrace()) stacks.append(frame.getClassName()).append('.').append(frame.getMethodName()).append(':').append(frame.getLineNumber()).append('|');
++                    stacks.append('\n');
++                }
++                write("threads.csv", stacks.toString(), true);
++                write("sampler.csv", epoch + "," + (System.nanoTime() - tick) + "\n", true);
++                Thread.sleep(500);
++            }
++            PerformanceCounters.active = false;
++            rows(System.currentTimeMillis(), origin);
++            note("capture_complete epoch_ms=" + System.currentTimeMillis());
++        } catch (Throwable error) { note("capture_error " + error.getClass().getSimpleName()); }
++        finally { PerformanceCounters.active = false; }
++    }
++
++    private static void effectiveSettings(long epoch) {
++        try {
++            Object config = kerriaConfig == null ? null : kerriaConfig.get(null);
++            StringBuilder out = new StringBuilder().append(epoch).append(',').append(kerriaConfig != null);
++            for (String key : new String[] {"enabled", "cache", "fastUpload", "fastLightTextureUpload"}) {
++                out.append(',');
++                try { out.append(config == null ? "unknown" : config.getClass().getField(key).get(config)); }
++                catch (Throwable error) { out.append("unknown"); }
++            }
++            write("effective-settings.csv", out.append('\n').toString(), true);
++        } catch (Throwable error) { note("settings_sample_unavailable " + error.getClass().getSimpleName()); }
++    }
++
++    private static void rows(long epoch, long origin) throws Exception {
++        StringBuilder out = new StringBuilder();
++        for (int metric = 0; metric < PerformanceCounters.NAMES.length; metric++) {
++            out.append(epoch).append(',').append(epoch - origin).append(',').append(PerformanceCounters.NAMES[metric]).append(',').append(PerformanceCounters.COUNT[metric]).append(',').append(PerformanceCounters.NANOS[metric]).append(',').append(PerformanceCounters.PIXELS[metric]).append(',');
++            for (int i = 0; i < PerformanceCounters.BOUNDS.length; i++) out.append(PerformanceCounters.HISTOGRAM[metric * PerformanceCounters.BOUNDS.length + i]).append('|');
++            out.append('\n');
++        }
++        write("calls.csv", out.toString(), true);
++    }
++
++    private static synchronized void write(String suffix, String text, boolean append) throws Exception {
++        File file = new File(base + "-" + suffix);
++        if (append && file.length() > 2 * 1024 * 1024) return;
++        try (FileWriter writer = new FileWriter(file, append)) { writer.write(text); }
++    }
++    private static void note(String message) {
++        try { write("status.txt", System.currentTimeMillis() + " " + message + "\n", true); }
++        catch (Throwable ignored) { System.err.println("[Wachiland performance] " + message); }
++    }
++}
+diff --git a/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceCounters.java b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceCounters.java
+new file mode 100644
+index 0000000..a1eae68
+--- /dev/null
++++ b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceCounters.java
+@@ -0,0 +1,51 @@
++package net.wachiland.performance;
++
++import java.util.concurrent.atomic.AtomicLong;
++
++/** Bootstrap-visible counters. No game, ASM, Android or GL dependencies. */
++public final class PerformanceCounters {
++    public static final String[] NAMES = {"frame", "client_tick", "texture_tick", "image_upload", "gl_texture_upload", "swap", "world_render", "ambient_tick", "placement_helpers", "async_post_tick", "terrain_draw"};
++    public static final long[] BOUNDS = {1000000, 2000000, 4000000, 8000000, 16000000, 33000000, 66000000, 125000000, 250000000, 500000000, 1000000000, 2000000000, Long.MAX_VALUE};
++    public static final AtomicLong[] COUNT = counters(NAMES.length);
++    public static final AtomicLong[] NANOS = counters(NAMES.length);
++    public static final AtomicLong[] PIXELS = counters(NAMES.length);
++    public static final AtomicLong[] HISTOGRAM = counters(NAMES.length * BOUNDS.length);
++    public static volatile boolean active;
++    public static volatile long firstWorld;
++    private static final ThreadLocal<int[]> DEPTH = ThreadLocal.withInitial(() -> new int[NAMES.length]);
++
++    private static AtomicLong[] counters(int size) {
++        AtomicLong[] values = new AtomicLong[size];
++        for (int i = 0; i < size; i++) values[i] = new AtomicLong();
++        return values;
++    }
++
++    public static long enter(int metric) {
++        try {
++            if (metric == 6 && firstWorld == 0) firstWorld = System.currentTimeMillis();
++            if (!active) return 0;
++            if (DEPTH.get()[metric]++ != 0) return -1;
++            return System.nanoTime();
++        } catch (Throwable ignored) { return 0; }
++    }
++
++    public static void exit(int metric, long start) {
++        try {
++            if (start == 0) return;
++            DEPTH.get()[metric]--;
++            if (start < 0) return;
++            long elapsed = Math.max(0, System.nanoTime() - start);
++            NANOS[metric].addAndGet(elapsed);
++            COUNT[metric].incrementAndGet();
++            int bucket = 0;
++            while (elapsed > BOUNDS[bucket]) bucket++;
++            HISTOGRAM[metric * BOUNDS.length + bucket].incrementAndGet();
++        } catch (Throwable ignored) { }
++    }
++
++    public static void pixels(int width, int height) {
++        try {
++            if (active && width > 0 && height > 0) PIXELS[4].addAndGet((long) width * height);
++        } catch (Throwable ignored) { }
 +    }
 +}
 diff --git a/FCL/src/main/AndroidManifest.xml b/FCL/src/main/AndroidManifest.xml
@@ -978,15 +1293,21 @@ index 70ca430..96bae08 100644
  
      public Task<?> check(Context context, boolean showBeta, boolean showAlert) {
 diff --git a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
-index c0546b9..7e500de 100644
+index c0546b9..62b959a 100644
 --- a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
 +++ b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
-@@ -487,12 +487,15 @@ public class FCLauncher {
+@@ -487,12 +487,21 @@ public class FCLauncher {
          printTaskTitle(bridge, task + " Arguments");
          String libraryPath = getLibraryPath(config.getContext(), config.getJavaPath(), config.getRenderer().getPath(), config.getLwjglVersion());
          String[] args = rebaseArgs(config, libraryPath);
 +        if (task.equals("Minecraft")) {
-+            args = net.wachiland.launcher.MemoryDiagnostics.prepareGameArgs(config.getContext(), args);
++            int major = 0;
++            try {
++                String version = readJREReleaseProperties(config.getJavaPath()).getOrDefault("JAVA_VERSION", "0");
++                major = Integer.parseInt(version.split("[.\\-+]")[0]);
++            } catch (IOException | NumberFormatException ignored) { /* Optional diagnostic fails open. */ }
++            boolean agentAvailable = major >= 17 && new File(config.getJavaPath(), "lib/libinstrument.so").isFile();
++            args = net.wachiland.launcher.MemoryDiagnostics.prepareGameArgs(config.getContext(), args, agentAvailable, new File(config.getWorkingDir()));
 +        }
          boolean javaArgs = true;
          int mainClass = 0;
@@ -998,7 +1319,7 @@ index c0546b9..7e500de 100644
              String title = task.equals("Minecraft") ? javaArgs ? "Java" : task : task;
              String prefix = title + " argument: ";
              if (task.equals("Minecraft") && !javaArgs && mainClass < 2) {
-@@ -539,6 +542,9 @@ public class FCLauncher {
+@@ -539,6 +548,9 @@ public class FCLauncher {
          bridge.setLogPath(config.getLogDir() + "/" + logName);
          Thread thread = new Thread(() -> {
              try {
@@ -1509,10 +1830,10 @@ index 0000000..a02319b
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
 new file mode 100644
-index 0000000..7557259
+index 0000000..3b4f184
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,247 @@
 +package net.wachiland.launcher
 +
 +import android.app.ActivityManager
@@ -1549,22 +1870,26 @@ index 0000000..7557259
 +    fun armDeep(context: Context, armed: Boolean) { context.getSharedPreferences(PREFS, 0).edit().putBoolean("heap_attribution_next", armed).apply() }
 +
 +    @JvmStatic fun begin(context: Context, renderer: String) {
-+        if (!enabled(context) || !active.compareAndSet(false, true)) return
++        val performance = PerformanceDiagnostics.armed(context)
++        if ((!enabled(context) && !performance) || !active.compareAndSet(false, true)) return
 +        val app = context.applicationContext
 +        try {
 +            origin = System.currentTimeMillis()
 +            val prefix = "memory-${origin}-${Process.myPid()}"
 +            session = prefix
-+            deep = deepArmed(app)
++            deep = deepArmed(app) && !performance // Avoid stacking heavy heap probes on frame timing.
++            PerformanceDiagnostics.begin(performance)
++            app.getSharedPreferences(PREFS, 0).edit().putString("game_telemetry_prefix", prefix)
++                .putBoolean("game_performance_requested", performance).commit()
 +            if (deep) armDeep(app, false) // Explicitly armed for one launch only, not every benchmark.
 +            logCursor = 0L
 +            menuRequested = false
 +            logSessionVerified = false
-+            // Keep two sessions, including both sides of the same session.
++            // Keep two older sessions plus the new one, including Android and JVM sides.
 +            val directory = dir(app)
 +            val sessions = directory.listFiles().orEmpty().filter { it.name.startsWith("memory-") }
 +                .mapNotNull { Regex("memory-\\d+-\\d+").find(it.name)?.value }.distinct().sortedDescending()
-+            directory.listFiles().orEmpty().filter { file -> sessions.drop(1).any { file.name.startsWith("$it-") } }.forEach { it.delete() }
++            directory.listFiles().orEmpty().filter { file -> sessions.drop(2).any { file.name.startsWith("$it-") } }.forEach { it.delete() }
 +            File(directory, "$prefix-info.txt").writeText("""
 +                Session=$prefix; PID=${Process.myPid()}; origin_epoch_ms=$origin; renderer=$renderer
 +                ART/native/status/system samples every 10 seconds; Debug.MemoryInfo every 30 seconds.
@@ -1599,7 +1924,10 @@ index 0000000..7557259
 +                    try { Thread.sleep(10000) } catch (_: InterruptedException) { break }
 +                }
 +            }, "Wachiland-android-memory").apply { isDaemon = true; start() }
-+        } catch (_: Exception) { stop(app) }
++        } catch (error: Exception) {
++            runCatching { File(dir(app), "${session ?: "memory-$origin-${Process.myPid()}"}-begin-error.txt").writeText(error.javaClass.name) }
++            stop(app)
++        }
 +    }
 +
 +    @JvmStatic fun stop(context: Context) {
@@ -1611,14 +1939,17 @@ index 0000000..7557259
 +    }
 +
 +    /** Add a ordinary classpath wrapper, avoiding instrument-agent native dependencies. */
-+    @JvmStatic fun prepareGameArgs(context: Context, original: Array<String>): Array<String> {
++    @JvmStatic fun prepareGameArgs(context: Context, original: Array<String>, java17: Boolean, gameDir: File): Array<String> {
 +        val prefix = session ?: return original
 +        if (!active.get()) return original
 +        return try {
 +            val args = original.toMutableList()
 +            val main = args.indexOf("mio.Wrapper")
 +            val cp = args.indexOfFirst { it == "-cp" || it == "-classpath" || it == "--class-path" }
-+            if (main < 0 || cp < 0 || cp + 1 >= main) return original
++            if (main < 0 || cp < 0 || cp + 1 >= main) {
++                event(context, prefix, "jvm_probe_skipped_wrapper_or_classpath_missing", -1)
++                return original
++            }
 +            val jar = File(context.filesDir, "wachiland-memory-probe.jar")
 +            val staged = File(context.filesDir, "wachiland-memory-probe.tmp")
 +            try {
@@ -1627,7 +1958,10 @@ index 0000000..7557259
 +            } finally { staged.delete() }
 +            args[cp + 1] += ":${jar.absolutePath}"
 +            args[main] = "net.wachiland.diagnostics.MemoryMain"
-+            args.addAll(main, listOf("-Dwachiland.memory.file=${File(dir(context), "$prefix-jvm.csv").absolutePath}", "-Dwachiland.memory.origin=$origin", "-Dwachiland.memory.deep=$deep"))
++            val optional = runCatching { PerformanceDiagnostics.prepare(context, prefix, java17, gameDir) }
++                .onFailure { event(context, prefix, "performance_prepare_error_${it.javaClass.simpleName}", -1) }.getOrDefault(emptyList())
++            args.addAll(main, listOf("-Dwachiland.memory.file=${File(dir(context), "$prefix-jvm.csv").absolutePath}", "-Dwachiland.memory.origin=$origin", "-Dwachiland.memory.deep=$deep") + optional)
++            event(context, prefix, "jvm_probe_arguments_prepared", -1)
 +            args.toTypedArray()
 +        } catch (e: Exception) {
 +            runCatching { event(context, prefix, "jvm_probe_unavailable_${e.javaClass.simpleName}", -1) }
@@ -1666,6 +2000,9 @@ index 0000000..7557259
 +        runCatching { row.put("oom_score", File("/proc/self/oom_score").readText().trim()) }
 +        row.put("sample_duration_ms", SystemClock.elapsedRealtime() - tick)
 +        append(File(dir(context), "$prefix-android.jsonl"), row.toString())
++        runCatching { PerformanceDiagnostics.checkpoint(context, prefix, origin) }.onFailure {
++            event(context, prefix, "performance_checkpoint_error_${it.javaClass.simpleName}", -1)
++        }
 +        if (deep) runCatching { attributionCheckpoint(context, prefix, system) }.onFailure {
 +            event(context, prefix, "attribution_checkpoint_error_${it.javaClass.simpleName}", -1)
 +        }
@@ -1744,12 +2081,118 @@ index 0000000..7557259
 +
 +    private fun append(file: File, text: String) { if (file.length() < 4 * 1024 * 1024) file.appendText("$text\n") }
 +}
+diff --git a/FCL/src/main/java/net/wachiland/launcher/PerformanceDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/PerformanceDiagnostics.kt
+new file mode 100644
+index 0000000..a5ecf18
+--- /dev/null
++++ b/FCL/src/main/java/net/wachiland/launcher/PerformanceDiagnostics.kt
+@@ -0,0 +1,100 @@
++package net.wachiland.launcher
++
++import android.content.Context
++import com.tungsten.fclauncher.utils.FCLPath
++import org.json.JSONObject
++import java.io.File
++import java.io.RandomAccessFile
++import java.nio.file.Files
++import java.nio.file.StandardCopyOption.REPLACE_EXISTING
++
++/** One armed launch, local files only. Independent of the deep heap/JFR experiment. */
++object PerformanceDiagnostics {
++    private const val PREFS = "wachiland_process_diagnostics"
++    private var cursor = 0L
++    private var verified = false
++    private var joined = false
++    private var jeiReady = false
++    private var requested = false
++    @Volatile private var enabledForSession = false
++    fun armed(context: Context) = context.getSharedPreferences(PREFS, 0).getBoolean("performance_next", true)
++    fun arm(context: Context, enabled: Boolean) { context.getSharedPreferences(PREFS, 0).edit().putBoolean("performance_next", enabled).apply() }
++    fun begin(enabled: Boolean) {
++        cursor = 0; verified = false; joined = false; jeiReady = false; requested = false
++        enabledForSession = enabled
++    }
++    fun prepare(context: Context, prefix: String, java17: Boolean, gameDir: File): List<String> {
++        if (!enabledForSession) return emptyList()
++        val dir = File(context.filesDir, "exit-diagnostics")
++        val base = File(dir, "$prefix-performance")
++        if (!java17) {
++            File("$base-status.txt").writeText("agent_skipped_runtime_below_17_unknown_or_instrument_library_missing\n")
++            enabledForSession = false
++            return emptyList()
++        }
++        val jar = File(context.filesDir, "wachiland-performance-probe.jar")
++        val bootstrap = File(context.filesDir, "wachiland-performance-counters.jar")
++        for (target in listOf(jar, bootstrap)) {
++            val staged = File(context.filesDir, target.name + ".tmp")
++            try {
++                context.assets.open("game/${target.name}").use { input -> staged.outputStream().use { input.copyTo(it) } }
++                Files.move(staged.toPath(), target.toPath(), REPLACE_EXISTING)
++            } finally { staged.delete() }
++        }
++        arm(context, false)
++        snapshot(gameDir, File("$base-settings.json"))
++        File("$base-status.txt").writeText("launcher_prepared=true\nepoch_ms=${System.currentTimeMillis()}\n")
++        return listOf("--add-exports=java.base/jdk.internal.org.objectweb.asm=ALL-UNNAMED",
++            "--add-exports=java.base/jdk.internal.org.objectweb.asm.commons=ALL-UNNAMED",
++            "--add-exports=java.base/jdk.internal.org.objectweb.asm.util=ALL-UNNAMED",
++            "-Dwachiland.performance.bootstrap=${bootstrap.absolutePath}", "-Dwachiland.performance.base=${base.absolutePath}",
++            "-javaagent:${jar.absolutePath}")
++    }
++    fun checkpoint(context: Context, prefix: String, origin: Long) {
++        if (!enabledForSession || requested) return
++        val log = FCLPath.getLatestGameLog()
++        if (!log.isFile || log.lastModified() < origin) return
++        val text = RandomAccessFile(log, "r").use { input ->
++            if (input.length() < cursor) { cursor = 0; verified = false; joined = false; jeiReady = false }
++            input.seek((cursor - 512).coerceAtLeast(0))
++            val bytes = ByteArray(minOf(131072L, input.length() - input.filePointer).toInt())
++            input.readFully(bytes); cursor = input.filePointer; bytes.toString(Charsets.UTF_8)
++        }
++        if (text.contains("-Dwachiland.memory.origin=$origin")) verified = true
++        if (!verified) return
++        if (text.contains(" logged in with entity id ")) joined = true
++        if (text.contains("Starting JEI took")) jeiReady = true
++        if (!joined || !jeiReady) return
++        val request = File(context.filesDir, "exit-diagnostics/$prefix-performance-request.txt")
++        request.writeText("epoch_ms=${System.currentTimeMillis()}; matched_origin=$origin; world_join_and_jei=true\n")
++        requested = true
++    }
++    private fun snapshot(gameDir: File, output: File) {
++        val result = JSONObject().put("epoch_ms", System.currentTimeMillis()).put("scope", "launch_only_allowlisted_settings")
++        val allowed = setOf("enabled", "cache", "fastUpload", "fastLightTextureUpload", "bufferSize", "tickAsync", "asyncTick", "renderAsync", "asyncRender", "deferredTextureTick", "animateTickAsync", "asyncAnimateTick", "threads", "parallelism", "animationTickMode", "particleTickMode", "particleRenderingMode", "gpuAcceleration", "particleLightCache", "parallelQueueRemoval", "parallelQueueEviction")
++        for (name in listOf("kerria.json", "asyncparticles/asyncparticles.json", "asyncparticles.json", "asyncparticles-config.json")) {
++            val file = File(gameDir, "config/$name")
++            val row = JSONObject().put("present", file.isFile)
++            if (file.isFile && file.length() <= 256 * 1024) runCatching {
++                val source = JSONObject(file.readText())
++                fun collect(obj: JSONObject, path: String) {
++                    for (key in obj.keys()) {
++                        val value = obj.opt(key)
++                        if (value is JSONObject) collect(value, "$path$key.")
++                        else if (key in allowed && (value is Boolean || value is Number || value is String)) row.put("$path$key", if (value is String) value.take(128) else value)
++                    }
++                }
++                collect(source, "")
++            }.onFailure { row.put("parse_error", it.javaClass.simpleName) }
++            result.put(name, row)
++        }
++        val options = File(gameDir, "options.txt")
++        val values = JSONObject()
++        if (options.isFile && options.length() <= 256 * 1024) options.useLines { lines -> lines.forEach { line ->
++            val key = line.substringBefore(':')
++            if (key in setOf("maxFps", "enableVsync", "renderDistance", "simulationDistance", "graphicsMode", "mipmapLevels")) values.put(key, line.substringAfter(':').take(128))
++        } }
++        result.put("options", values)
++        output.writeText(result.toString(2))
++    }
++}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
 new file mode 100644
-index 0000000..271b403
+index 0000000..4632dca
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,306 @@
 +package net.wachiland.launcher
 +
 +import android.annotation.SuppressLint
@@ -1800,6 +2243,9 @@ index 0000000..271b403
 +            preferences(context).edit().putInt("game_pid", Process.myPid())
 +                .putLong("game_started", System.currentTimeMillis()).putString("game_renderer", renderer)
 +                .putBoolean("game_completed", false).commit()
++            preferences(context).edit().remove("game_telemetry_prefix")
++                .putBoolean("game_memory_requested", MemoryDiagnostics.enabled(context))
++                .putBoolean("game_performance_requested", PerformanceDiagnostics.armed(context)).commit()
 +        }
 +        MemoryDiagnostics.begin(context, renderer)
 +        Unit
@@ -1854,6 +2300,14 @@ index 0000000..271b403
 +            }
 +            addView(basic)
 +            addView(CheckBox(activity).apply {
++                text = "Investigar FPS en la próxima partida (captura automática de 2 minutos)"
++                isChecked = PerformanceDiagnostics.armed(activity)
++                setOnCheckedChangeListener { _, checked -> PerformanceDiagnostics.arm(activity, checked) }
++            })
++            addView(TextView(activity).apply {
++                text = "Mide fotogramas, ticks y llamadas gráficas después de entrar al mundo y terminar JEI. Incluye memoria y temperatura aunque la casilla general esté apagada. No cambies gráficos durante la captura. No ejecutes Spark ni el diagnóstico profundo a la vez. Se desactiva tras preparar una partida; puedes marcarlo otra vez para comparar Kerria encendido y apagado."
++            })
++            addView(CheckBox(activity).apply {
 +                text = "Investigar objetos Java en la próxima partida"
 +                isChecked = MemoryDiagnostics.deepArmed(activity)
 +                setOnCheckedChangeListener { _, checked ->
@@ -1905,6 +2359,15 @@ index 0000000..271b403
 +                appendLine("Último cierre principal: $reason")
 +                if (Build.VERSION.SDK_INT >= 30) appendLine("Android distingue LMK explícito: ${ActivityManager.isLowMemoryKillReportSupported()}")
 +                appendLine("RSS/PSS son muestras previas de Android, no el pico ni el tamaño del heap Java.")
++                val prefix = prefs.getString("game_telemetry_prefix", null)
++                appendLine("Recogida solicitada: básica=${prefs.getBoolean("game_memory_requested", false)}, FPS=${prefs.getBoolean("game_performance_requested", false)}")
++                appendLine("Sesión de telemetría: ${prefix ?: "no preparada"}")
++                if (prefix != null) {
++                    for (suffix in listOf("android.jsonl", "thermal.jsonl", "jvm.csv", "performance-calls.csv", "performance-threads.csv")) {
++                        val file = File(dir, "$prefix-$suffix")
++                        appendLine("$suffix: ${if (file.isFile) "${file.length()} bytes" else "no recogido en esta sesión"}")
++                    }
++                }
 +                appendLine()
 +                val traceEntries = entries.filter { it.reason == ApplicationExitInfo.REASON_CRASH_NATIVE ||
 +                    it.reason == ApplicationExitInfo.REASON_ANR }.take(2)
@@ -2268,7 +2731,7 @@ index 0000000..e9de530
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 new file mode 100644
-index 0000000..d1dbff5
+index 0000000..d47852a
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 @@ -0,0 +1,214 @@
@@ -2331,7 +2794,7 @@ index 0000000..d1dbff5
 +        localTitle.addView(button("Instalar Minecraft",CYAN,()->UIManager.getInstance().switchUI(UIManager.getInstance().getDownloadUI())));
 +        body.addView(localTitle); instances=column(); body.addView(instances);
 +        LinearLayout footerRow=row();
-+        TextView footer=text("Android · 0.1.8 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
++        TextView footer=text("Android · 0.1.9 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
 +        footer.setPadding(0,dp(14),0,dp(8)); footer.setOnClickListener(v->about());
 +        footerRow.addView(footer,new LayoutParams(0,LayoutParams.WRAP_CONTENT,1));
 +        footerRow.addView(button("Diagnóstico",CYAN,()->ProcessExitDiagnostics.show(activity)));
@@ -2465,7 +2928,7 @@ index 0000000..d1dbff5
 +    }
 +    private void about() {
 +        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Wachiland Launcher · Android")
-+            .setMessage("Prototipo 0.1.8, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
++            .setMessage("Prototipo 0.1.9, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
 +            .setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog);
 +    }
 +    private void error(String title,Throwable e) { AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title).setMessage(message(e)).setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog); }
