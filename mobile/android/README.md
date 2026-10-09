@@ -1,4 +1,4 @@
-# Wachiland Launcher for Android — 0.1.10 alpha
+# Wachiland Launcher for Android — 0.1.11 alpha
 
 First mobile prototype, based on a pinned FCL / HMCL / Amethyst Android engine.
 This is a companion client for the same Distribution server. It is not an Android
@@ -77,7 +77,7 @@ The phone uses `https://welite.ddns.net` on public HTTPS port 443. The server mu
 install the prepared read-only Nginx routes; see
 [deployment instructions](deployment/NETWORK.md) and
 [installer](deployment/install-public-api.sh). The original 8444 listener stays
-private. Version 0.1.10 updates earlier alphas in place when signed with the delivery key.
+private. Version 0.1.11 updates earlier alphas in place when signed with the delivery key.
 
 ## Installation / first run
 
@@ -178,8 +178,8 @@ resource reload. FancyMenu logged only one active panorama; see
 
 ## Optional frame investigation (0.1.9)
 
-**Diagnostico -> Investigar FPS en la proxima partida** initially arms one automatic
-capture in this diagnostic APK. Enter a world, let JEI finish, then remain in the
+**Diagnostico -> Investigar FPS en la proxima partida** manually arms one automatic
+capture; fresh preferences default off from 0.1.11. Enter a world, let JEI finish, then remain in the
 same scene for about four minutes. Exit normally and share the usual diagnostic
 ZIP. Do not run Spark or deep Java attribution during this capture. Rearm the
 checkbox to repeat a comparison without transferring another APK or mod.
@@ -211,6 +211,12 @@ Finish any Spark trial with **FPS capture off, basic recording on**. For the
 separate frame trial, enable **Investigar FPS en la proxima partida** manually;
 the previous consumed/disabled preference is preserved across the update.
 Physical startup, hook coverage and observer cost remain pending.
+
+## Native profiler crash fix (0.1.11)
+
+The 0.1.10 first-attempt log identifies a native crash in dynamic bootstrap JAR
+append. Version 0.1.11 loads the counters using the startup bootstrap path and
+preserves Cacio entries. See [confirmed cause and device gate](diagnostics/ANDROID-PROFILER-NATIVE-CRASH-2026-10-09.md).
 
 ## Build evidence
 

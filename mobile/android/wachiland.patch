@@ -1,5 +1,5 @@
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index 8463609..f9bc25e 100644
+index 8463609..a515402 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
 @@ -53,9 +53,9 @@ android {
@@ -24,8 +24,8 @@ index 8463609..f9bc25e 100644
          targetSdk = libs.versions.targetSdk.get().toInt()
 -        versionCode = 1337
 -        versionName = "1.3.3.7"
-+        versionCode = 11
-+        versionName = "0.1.10-alpha"
++        versionCode = 12
++        versionName = "0.1.11-alpha"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
              cmake {
@@ -420,10 +420,10 @@ index 0000000..6b1f210
 +}
 diff --git a/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java
 new file mode 100644
-index 0000000..3782880
+index 0000000..3800d22
 --- /dev/null
 +++ b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,230 @@
 +package net.wachiland.performance;
 +
 +import java.io.File;
@@ -440,7 +440,6 @@ index 0000000..3782880
 +import java.util.Collections;
 +import java.util.HashSet;
 +import java.util.Set;
-+import java.util.jar.JarFile;
 +import jdk.internal.org.objectweb.asm.ClassReader;
 +import jdk.internal.org.objectweb.asm.ClassVisitor;
 +import jdk.internal.org.objectweb.asm.ClassWriter;
@@ -463,9 +462,13 @@ index 0000000..3782880
 +        try {
 +            base = new File(System.getProperty("wachiland.performance.base"));
 +            agent = instrumentation;
-+            instrumentation.appendToBootstrapClassLoaderSearch(new JarFile(System.getProperty("wachiland.performance.bootstrap")));
-+            // Resolve counters after append, so every transformed loader shares bootstrap counters.
-+            Class.forName("net.wachiland.performance.PerformanceCounters", true, null);
++            // Counters are placed on -Xbootclasspath/a before JVM startup. Dynamic
++            // append crashes this Android JRE's native iconv path (SIGSEGV), which
++            // Java's Throwable handler cannot recover from. Never retry via JNI.
++            Class<?> counters = Class.forName("net.wachiland.performance.PerformanceCounters", true, null);
++            if (counters != PerformanceCounters.class || counters.getClassLoader() != null)
++                throw new IllegalStateException("Performance counters must be bootstrap-owned");
++            note("counters_bootstrap_ready=true loading=startup_bootclasspath");
 +            write("status.txt", "epoch_ms=" + System.currentTimeMillis() + "\nagent_ready=true\nJava 17+ diagnostic. Wall-call durations include waits, scheduling and native work; not GPU execution time. Inclusive metrics overlap. Histograms have bucket upper bounds, not exact quantiles.\n", true);
 +            instrumentation.addTransformer(new ClassFileTransformer() {
 +                @Override public byte[] transform(Module module, ClassLoader loader, String name, Class<?> redefining, ProtectionDomain domain, byte[] bytes) {
@@ -1913,10 +1916,10 @@ index 0000000..a02319b
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
 new file mode 100644
-index 0000000..3b4f184
+index 0000000..4ad245a
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,258 @@
 +package net.wachiland.launcher
 +
 +import android.app.ActivityManager
@@ -2043,7 +2046,18 @@ index 0000000..3b4f184
 +            args[main] = "net.wachiland.diagnostics.MemoryMain"
 +            val optional = runCatching { PerformanceDiagnostics.prepare(context, prefix, java17, gameDir) }
 +                .onFailure { event(context, prefix, "performance_prepare_error_${it.javaClass.simpleName}", -1) }.getOrDefault(emptyList())
-+            args.addAll(main, listOf("-Dwachiland.memory.file=${File(dir(context), "$prefix-jvm.csv").absolutePath}", "-Dwachiland.memory.origin=$origin", "-Dwachiland.memory.deep=$deep") + optional)
++            val bootPrefix = "-Xbootclasspath/a:"
++            val bootExtra = optional.filter { it.startsWith(bootPrefix) }
++            val mergedOptional = optional.filterNot { it.startsWith(bootPrefix) }.toMutableList()
++            if (bootExtra.isNotEmpty()) {
++                // Preserve Cacio and any existing bootstrap entries in their order.
++                // Use one option; never replace the engine's AWT bootstrap path.
++                val originalBoot = args.take(main).filter { it.startsWith(bootPrefix) }
++                val paths = (originalBoot + bootExtra).flatMap { it.removePrefix(bootPrefix).split(File.pathSeparator) }.distinct()
++                for (index in main - 1 downTo 0) if (args[index].startsWith(bootPrefix)) args.removeAt(index)
++                mergedOptional.add(0, bootPrefix + paths.joinToString(File.pathSeparator))
++            }
++            args.addAll(args.indexOf("net.wachiland.diagnostics.MemoryMain"), listOf("-Dwachiland.memory.file=${File(dir(context), "$prefix-jvm.csv").absolutePath}", "-Dwachiland.memory.origin=$origin", "-Dwachiland.memory.deep=$deep") + mergedOptional)
 +            event(context, prefix, "jvm_probe_arguments_prepared", -1)
 +            args.toTypedArray()
 +        } catch (e: Exception) {
@@ -2166,10 +2180,10 @@ index 0000000..3b4f184
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/PerformanceDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/PerformanceDiagnostics.kt
 new file mode 100644
-index 0000000..3397838
+index 0000000..5846eb5
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/PerformanceDiagnostics.kt
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,101 @@
 +package net.wachiland.launcher
 +
 +import android.content.Context
@@ -2189,7 +2203,7 @@ index 0000000..3397838
 +    private var jeiReady = false
 +    private var requested = false
 +    @Volatile private var enabledForSession = false
-+    fun armed(context: Context) = context.getSharedPreferences(PREFS, 0).getBoolean("performance_next", true)
++    fun armed(context: Context) = context.getSharedPreferences(PREFS, 0).getBoolean("performance_next", false)
 +    fun arm(context: Context, enabled: Boolean) { context.getSharedPreferences(PREFS, 0).edit().putBoolean("performance_next", enabled).apply() }
 +    fun begin(enabled: Boolean) {
 +        cursor = 0; verified = false; joined = false; jeiReady = false; requested = false
@@ -2219,7 +2233,8 @@ index 0000000..3397838
 +        return listOf("--add-exports=java.base/jdk.internal.org.objectweb.asm=ALL-UNNAMED",
 +            "--add-exports=java.base/jdk.internal.org.objectweb.asm.commons=ALL-UNNAMED",
 +            "--add-exports=java.base/jdk.internal.org.objectweb.asm.util=ALL-UNNAMED",
-+            "-Dwachiland.performance.agent=${jar.absolutePath}", "-Dwachiland.performance.bootstrap=${bootstrap.absolutePath}", "-Dwachiland.performance.base=${base.absolutePath}",
++            "-Xbootclasspath/a:${bootstrap.absolutePath}",
++            "-Dwachiland.performance.agent=${jar.absolutePath}", "-Dwachiland.performance.base=${base.absolutePath}",
 +            "-javaagent:${jar.absolutePath}")
 +    }
 +    fun checkpoint(context: Context, prefix: String, origin: Long) {
@@ -2857,7 +2872,7 @@ index 0000000..e9de530
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 new file mode 100644
-index 0000000..44c4fda
+index 0000000..8e7d647
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 @@ -0,0 +1,214 @@
@@ -2920,7 +2935,7 @@ index 0000000..44c4fda
 +        localTitle.addView(button("Instalar Minecraft",CYAN,()->UIManager.getInstance().switchUI(UIManager.getInstance().getDownloadUI())));
 +        body.addView(localTitle); instances=column(); body.addView(instances);
 +        LinearLayout footerRow=row();
-+        TextView footer=text("Android · 0.1.10 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
++        TextView footer=text("Android · 0.1.11 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
 +        footer.setPadding(0,dp(14),0,dp(8)); footer.setOnClickListener(v->about());
 +        footerRow.addView(footer,new LayoutParams(0,LayoutParams.WRAP_CONTENT,1));
 +        footerRow.addView(button("Diagnóstico",CYAN,()->ProcessExitDiagnostics.show(activity)));
@@ -3054,7 +3069,7 @@ index 0000000..44c4fda
 +    }
 +    private void about() {
 +        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Wachiland Launcher · Android")
-+            .setMessage("Prototipo 0.1.10, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
++            .setMessage("Prototipo 0.1.11, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
 +            .setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog);
 +    }
 +    private void error(String title,Throwable e) { AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title).setMessage(message(e)).setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog); }
