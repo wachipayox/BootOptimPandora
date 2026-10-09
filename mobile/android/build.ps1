@@ -56,8 +56,8 @@ try {
     Remove-Item Env:FCL_KEYSTORE_PASSWORD -ErrorAction SilentlyContinue
 }
 [IO.Directory]::CreateDirectory($OutputDirectory) | Out-Null
-$apk = Join-Path $OutputDirectory 'Wachiland-Launcher-Android-0.1.8-alpha-arm64.apk'
-Copy-Item -LiteralPath (Join-Path $engine 'FCL/build/outputs/apk/debug/FCL-debug-0.1.8-alpha-arm64-v8a.apk') -Destination $apk
+$apk = Join-Path $OutputDirectory 'Wachiland-Launcher-Android-0.1.11-alpha-arm64.apk'
+Copy-Item -LiteralPath (Join-Path $engine 'FCL/build/outputs/apk/debug/FCL-debug-0.1.11-alpha-arm64-v8a.apk') -Destination $apk
 $hash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText((Join-Path $OutputDirectory 'SHA256.txt'), "$hash  $([IO.Path]::GetFileName($apk))`n")
 Write-Output "APK: $apk"
