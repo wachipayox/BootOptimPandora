@@ -1,0 +1,9 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "net.wachiland.atlasbatch.mixin",
+  "plugin": "net.wachiland.atlasbatch.AtlasBatchMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "client": ["MinecraftMixin", "GameRendererMixin", "TextureAtlasMixin", "SpriteContentsMixin", "SpriteUploadInvoker", "GlStateManagerMixin", "NativeImageMixin"],
+  "injectors": { "defaultRequire": 1 }
+}
