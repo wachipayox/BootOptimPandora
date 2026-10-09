@@ -12,7 +12,7 @@ This roadmap describes the private BootOptim launcher and pack updater. It does
 not target Modrinth/CurseForge pack expansion or general third-party modpack
 installation.
 
-## Integrated baseline (2026-09-28; `agent/integration-current` at `46836ec`)
+## Integrated baseline (2026-09-30; `agent/integration-current` at `98c75be5b`)
 
 - Pandora PR #66 is merged into `agent/integration-current` at
   `a4aae071d6062adae9bcffe592ca81c541650a82`. Each private instance keeps its
@@ -32,8 +32,15 @@ installation.
   updates for direct global instances. PRs #71/#72 add the Wachiland Launcher
   identity/data path, remove unused sandbox/file-sync settings, and make the
   HTTPS connection probe independent of local signing-key setup. All four are
-  merged into `agent/integration-current`. The end-to-end client flow has not
-  yet been runtime-validated against the configured server.
+  merged into `agent/integration-current`.
+- PR #76 integrates config-setting rules for TOML, `.properties`, and `.txt`
+  into revision resolution and persistent install/update transactions. The
+  live Distribution service is 0.2.14 (`d98d194`). Its signed synthetic root
+  and child revisions passed the Pandora backend E2E harness: six inherited
+  files resolved; all three formats merged on first install; inherited
+  mandatory rules replaced child rules; and `default_once` preserved local
+  edits on a later merge. This validates the signed API/client/backend path,
+  not the full graphical install/update flow.
 
 ## Product invariants
 
