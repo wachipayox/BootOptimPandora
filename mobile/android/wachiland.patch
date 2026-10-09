@@ -1,5 +1,5 @@
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index 8463609..bfa36c6 100644
+index 8463609..f9bc25e 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
 @@ -53,9 +53,9 @@ android {
@@ -24,8 +24,8 @@ index 8463609..bfa36c6 100644
          targetSdk = libs.versions.targetSdk.get().toInt()
 -        versionCode = 1337
 -        versionName = "1.3.3.7"
-+        versionCode = 10
-+        versionName = "0.1.9-alpha"
++        versionCode = 11
++        versionName = "0.1.10-alpha"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
              cmake {
@@ -63,7 +63,7 @@ index 8463609..bfa36c6 100644
 +    dependsOn(compilePerformanceProbe)
 +    from(compilePerformanceProbe.flatMap { it.destinationDirectory })
 +    exclude("**/PerformanceCounters*.class")
-+    manifest.attributes("Premain-Class" to "net.wachiland.performance.PerformanceAgent")
++    manifest.attributes("Premain-Class" to "net.wachiland.performance.PerformanceBootstrap")
 +    archiveFileName.set("wachiland-performance-probe.jar")
 +    destinationDirectory.set(layout.buildDirectory.dir("performance-probe/jar"))
 +    isPreserveFileTimestamps = false
@@ -292,10 +292,10 @@ index 0000000..3548242
 +}
 diff --git a/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java b/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java
 new file mode 100644
-index 0000000..6e9a339
+index 0000000..6b1f210
 --- /dev/null
 +++ b/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,122 @@
 +package net.wachiland.diagnostics;
 +
 +import java.io.File;
@@ -306,6 +306,8 @@ index 0000000..6e9a339
 +import java.lang.management.MemoryUsage;
 +import java.lang.management.MemoryPoolMXBean;
 +import java.lang.reflect.InvocationTargetException;
++import java.io.PrintWriter;
++import java.io.StringWriter;
 +
 +/** Runs in embedded OpenJDK, never in Android ART. No transforms; basic sampling never forces GC. Deep attribution is opt-in. */
 +public final class MemoryMain {
@@ -314,6 +316,30 @@ index 0000000..6e9a339
 +    public static void main(String[] args) throws Throwable {
 +        try { start(); } catch (Throwable e) {
 +            System.err.println("[Wachiland memory] Optional probe unavailable: " + e.getClass().getName());
++        }
++        // Resolve the optional Java17 profiler only after basic telemetry exists.
++        // A profiler linkage/initialization failure here cannot abort JVM agent startup.
++        String performance = System.getProperty("wachiland.performance.agent");
++        if (performance != null) {
++            try {
++                ClassLoader loader = ClassLoader.getSystemClassLoader();
++                Object instrumentation = Class.forName("net.wachiland.performance.PerformanceBootstrap", true, loader)
++                    .getMethod("getInstrumentation").invoke(null);
++                if (instrumentation == null) throw new IllegalStateException("Diagnostic bootstrap unavailable");
++                Class.forName("net.wachiland.performance.PerformanceAgent", true, loader)
++                    .getMethod("premain", String.class, Class.forName("java.lang.instrument.Instrumentation"))
++                    .invoke(null, null, instrumentation);
++            } catch (Throwable error) {
++                Throwable cause = error instanceof InvocationTargetException ? ((InvocationTargetException) error).getCause() : error;
++                try {
++                    StringWriter stack = new StringWriter();
++                    cause.printStackTrace(new PrintWriter(stack));
++                    String details = stack.toString();
++                    write(new File(System.getProperty("wachiland.performance.base") + "-status.txt"),
++                        System.currentTimeMillis() + " wrapper_agent_error=" + cause.getClass().getName() + "\n" + details.substring(0, Math.min(details.length(), 65536)), true);
++                } catch (Throwable ignored) { }
++                System.err.println("[Wachiland performance] Optional profiler unavailable: " + cause.getClass().getName());
++            }
 +        }
 +        // Keep the upstream wrapper and its launch/error handling intact.
 +        try {
@@ -394,10 +420,10 @@ index 0000000..6e9a339
 +}
 diff --git a/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java
 new file mode 100644
-index 0000000..9df3b7d
+index 0000000..3782880
 --- /dev/null
 +++ b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,227 @@
 +package net.wachiland.performance;
 +
 +import java.io.File;
@@ -440,7 +466,7 @@ index 0000000..9df3b7d
 +            instrumentation.appendToBootstrapClassLoaderSearch(new JarFile(System.getProperty("wachiland.performance.bootstrap")));
 +            // Resolve counters after append, so every transformed loader shares bootstrap counters.
 +            Class.forName("net.wachiland.performance.PerformanceCounters", true, null);
-+            write("status.txt", "epoch_ms=" + System.currentTimeMillis() + "\nagent_ready=true\nJava 17+ diagnostic. Wall-call durations include waits, scheduling and native work; not GPU execution time. Inclusive metrics overlap. Histograms have bucket upper bounds, not exact quantiles.\n", false);
++            write("status.txt", "epoch_ms=" + System.currentTimeMillis() + "\nagent_ready=true\nJava 17+ diagnostic. Wall-call durations include waits, scheduling and native work; not GPU execution time. Inclusive metrics overlap. Histograms have bucket upper bounds, not exact quantiles.\n", true);
 +            instrumentation.addTransformer(new ClassFileTransformer() {
 +                @Override public byte[] transform(Module module, ClassLoader loader, String name, Class<?> redefining, ProtectionDomain domain, byte[] bytes) {
 +                    if (!TARGETS.contains(name)) return null;
@@ -506,7 +532,14 @@ index 0000000..9df3b7d
 +            Thread worker = new Thread(PerformanceAgent::capture, "Wachiland-performance");
 +            worker.setDaemon(true); worker.setPriority(Thread.MIN_PRIORITY); worker.start();
 +            System.out.println("[Wachiland performance] Ready; one automatic 120 s capture after world/JEI readiness.");
-+        } catch (Throwable error) { note("agent_unavailable " + error.getClass().getSimpleName()); }
++        } catch (Throwable error) {
++            note("agent_unavailable " + error.getClass().getSimpleName());
++            try {
++                StringWriter stack = new StringWriter(); error.printStackTrace(new PrintWriter(stack));
++                String details = stack.toString();
++                write("status.txt", details.substring(0, Math.min(details.length(), 65536)), true);
++            } catch (Throwable ignoredError) { }
++        }
 +    }
 +
 +    private static int metric(String owner, String name, String desc) {
@@ -617,6 +650,32 @@ index 0000000..9df3b7d
 +        try { write("status.txt", System.currentTimeMillis() + " " + message + "\n", true); }
 +        catch (Throwable ignored) { System.err.println("[Wachiland performance] " + message); }
 +    }
++}
+diff --git a/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceBootstrap.java b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceBootstrap.java
+new file mode 100644
+index 0000000..97c0ca7
+--- /dev/null
++++ b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceBootstrap.java
+@@ -0,0 +1,20 @@
++package net.wachiland.performance;
++
++import java.io.File;
++import java.io.FileWriter;
++import java.lang.instrument.Instrumentation;
++
++/** Minimal premain: avoid resolving profiler/ASM dependencies in JVM agent startup. */
++public final class PerformanceBootstrap {
++    private static volatile Instrumentation instrumentation;
++
++    public static void premain(String ignored, Instrumentation value) {
++        instrumentation = value;
++        try (FileWriter out = new FileWriter(new File(System.getProperty("wachiland.performance.base") + "-status.txt"), true)) {
++            out.write(System.currentTimeMillis() + " bootstrap_ready=true\n");
++        } catch (Throwable ignoredError) { }
++    }
++
++    /** No reference to profiler/ASM classes in this bootstrap class. */
++    public static Object getInstrumentation() { return instrumentation; }
 +}
 diff --git a/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceCounters.java b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceCounters.java
 new file mode 100644
@@ -1293,7 +1352,7 @@ index 70ca430..96bae08 100644
  
      public Task<?> check(Context context, boolean showBeta, boolean showAlert) {
 diff --git a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
-index c0546b9..62b959a 100644
+index c0546b9..fa4a449 100644
 --- a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
 +++ b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
 @@ -487,12 +487,21 @@ public class FCLauncher {
@@ -1319,7 +1378,16 @@ index c0546b9..62b959a 100644
              String title = task.equals("Minecraft") ? javaArgs ? "Java" : task : task;
              String prefix = title + " argument: ";
              if (task.equals("Minecraft") && !javaArgs && mainClass < 2) {
-@@ -539,6 +548,9 @@ public class FCLauncher {
+@@ -517,6 +526,8 @@ public class FCLauncher {
+     }
+ 
+     public static FCLBridge launchMinecraft(FCLConfig config) {
++        // Archive before execute() redirects stdio and the callback truncates latest_game.log.
++        net.wachiland.launcher.ProcessExitDiagnostics.preservePreviousGameLog(config.getContext());
+         FCLBridge bridge = launchProcess(config, FCLPath.LATEST_GAME_LOG, "Minecraft", true, true, true);
+         // 标志先落在 bridge 实例上：launch 线程无 Looper，不能在此触碰 CallbackBridge（类初始化含 Choreographer）
+         bridge.setCleanroomActive(config.getInstalledModLoaders() != null
+@@ -539,6 +550,9 @@ public class FCLauncher {
          bridge.setLogPath(config.getLogDir() + "/" + logName);
          Thread thread = new Thread(() -> {
              try {
@@ -1491,6 +1559,21 @@ index 01f9a04..b5534c9 100644
      val closeSkinModel: Boolean = false,
      val animationSpeed: Int = 8,
      /** 派生色（ltColor/dkColor）透明度，0 完全透明 ~ 255 完全不透明，独立于主要主题色的 alpha */
+diff --git a/FCL/src/main/java/com/tungsten/fcllibrary/crash/CrashReportActivity.java b/FCL/src/main/java/com/tungsten/fcllibrary/crash/CrashReportActivity.java
+index 61412ab..1f1098d 100644
+--- a/FCL/src/main/java/com/tungsten/fcllibrary/crash/CrashReportActivity.java
++++ b/FCL/src/main/java/com/tungsten/fcllibrary/crash/CrashReportActivity.java
+@@ -63,7 +63,9 @@ public class CrashReportActivity extends FCLActivity implements View.OnClickList
+         share.setOnClickListener(this);
+ 
+         error = findViewById(R.id.error);
+-        error.setText(CrashReporter.getAllErrorDetailsFromIntent(this, getIntent()));
++        String details = CrashReporter.getAllErrorDetailsFromIntent(this, getIntent());
++        error.setText(details);
++        net.wachiland.launcher.ProcessExitDiagnostics.preserveCrashReport(this, details);
+     }
+ 
+     /** 解析当前生效主题的窗口背景色并设置到根布局，与主界面背景保持一致 */
 diff --git a/FCL/src/main/java/net/wachiland/launcher/ConfigRules.java b/FCL/src/main/java/net/wachiland/launcher/ConfigRules.java
 new file mode 100644
 index 0000000..463268e
@@ -2083,7 +2166,7 @@ index 0000000..3b4f184
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/PerformanceDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/PerformanceDiagnostics.kt
 new file mode 100644
-index 0000000..a5ecf18
+index 0000000..3397838
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/PerformanceDiagnostics.kt
 @@ -0,0 +1,100 @@
@@ -2136,7 +2219,7 @@ index 0000000..a5ecf18
 +        return listOf("--add-exports=java.base/jdk.internal.org.objectweb.asm=ALL-UNNAMED",
 +            "--add-exports=java.base/jdk.internal.org.objectweb.asm.commons=ALL-UNNAMED",
 +            "--add-exports=java.base/jdk.internal.org.objectweb.asm.util=ALL-UNNAMED",
-+            "-Dwachiland.performance.bootstrap=${bootstrap.absolutePath}", "-Dwachiland.performance.base=${base.absolutePath}",
++            "-Dwachiland.performance.agent=${jar.absolutePath}", "-Dwachiland.performance.bootstrap=${bootstrap.absolutePath}", "-Dwachiland.performance.base=${base.absolutePath}",
 +            "-javaagent:${jar.absolutePath}")
 +    }
 +    fun checkpoint(context: Context, prefix: String, origin: Long) {
@@ -2189,10 +2272,10 @@ index 0000000..a5ecf18
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
 new file mode 100644
-index 0000000..4632dca
+index 0000000..ed73032
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,349 @@
 +package net.wachiland.launcher
 +
 +import android.annotation.SuppressLint
@@ -2235,6 +2318,46 @@ index 0000000..4632dca
 +    private val token = Regex("(?i)(--accessToken(?:\\s+|\\s*=\\s*)|Minecraft argument: --accessToken\\s*\\nMinecraft argument: )\\S+")
 +    private fun directory(context: Context) = File(context.filesDir, "exit-diagnostics").apply { mkdirs() }
 +    private fun preferences(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
++
++    /** Called before the next bridge writes or redirects the previous game's log. */
++    @JvmStatic
++    fun preservePreviousGameLog(context: Context) = synchronized(lock) {
++        runCatching {
++            val prefs = preferences(context)
++            val started = prefs.getLong("game_started", 0)
++            val pid = prefs.getInt("game_pid", 0)
++            val latest = FCLPath.getLatestGameLog()
++            if (started <= 0 || pid <= 0 || !latest.isFile || latest.lastModified() < started) return@runCatching
++            val dir = directory(context)
++            val target = File(dir, "run-$started-$pid-game.log")
++            if (!target.isFile) {
++                val prefix = prefs.getString("game_telemetry_prefix", null)
++                val text = maskedTail(latest)
++                val origin = prefix?.let { Regex("memory-(\\d+)-\\d+").matchEntire(it)?.groupValues?.get(1) }
++                val matched = origin != null && text.contains("-Dwachiland.memory.origin=$origin")
++                val staged = File(dir, target.name + ".tmp")
++                try {
++                    staged.writeText("Prior attempt: started_epoch_ms=$started; PID=$pid; log_mtime=${latest.lastModified()}; exact_telemetry_origin_matched=$matched\n" + text)
++                    Files.move(staged.toPath(), target.toPath(), REPLACE_EXISTING)
++                } finally { staged.delete() }
++            }
++            dir.listFiles().orEmpty().filter { it.name.startsWith("run-") && it.name.endsWith("-game.log") }
++                .sortedByDescending { it.name }.drop(3).forEach { it.delete() }
++        }
++        Unit
++    }
++
++    /** Crash-page process persists the existing report; no extra work in the failing handler. */
++    @JvmStatic
++    fun preserveCrashReport(context: Context, details: String) {
++        runCatching {
++            val dir = directory(context)
++            val file = File(dir, "app-crash-${System.currentTimeMillis()}-${Process.myPid()}.txt")
++            file.writeText(token.replace(details.take(128 * 1024)) { "${it.groupValues[1]}***" })
++            dir.listFiles().orEmpty().filter { it.name.startsWith("app-crash-") && it.extension == "txt" }
++                .sortedByDescending { it.name }.drop(3).forEach { it.delete() }
++        }
++    }
 +
 +    @JvmStatic
 +    fun beginGame(context: Context, renderer: String) = synchronized(lock) {
@@ -2474,7 +2597,10 @@ index 0000000..4632dca
 +                        try {
 +                            ZipOutputStream(FileOutputStream(staged)).use { archive ->
 +                                dir.listFiles()?.filter { it.name == "android-exit-diagnostics.txt" ||
-+                                    it.name == "previous-game.log" || it.name.startsWith("memory-") && it.extension in setOf("csv", "jsonl", "txt", "jfr") && it.length() <= 32L * 1024 * 1024 ||
++                                    it.name == "previous-game.log" ||
++                                    it.name.startsWith("memory-") && (it.extension in setOf("csv", "jsonl", "txt", "jfr") || it.name.endsWith("-performance-settings.json")) && it.length() <= 32L * 1024 * 1024 ||
++                                    it.name.startsWith("run-") && it.name.endsWith("-game.log") && it.length() <= MAX_LOG + 1024 ||
++                                    it.name.startsWith("app-crash-") && it.extension == "txt" && it.length() <= 512L * 1024 ||
 +                                    it.name.startsWith("trace-") && it.extension in setOf("pb", "txt") }
 +                                    ?.forEach { file ->
 +                                        archive.putNextEntry(ZipEntry(file.name))
@@ -2731,7 +2857,7 @@ index 0000000..e9de530
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 new file mode 100644
-index 0000000..d47852a
+index 0000000..44c4fda
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/WachilandDashboard.java
 @@ -0,0 +1,214 @@
@@ -2794,7 +2920,7 @@ index 0000000..d47852a
 +        localTitle.addView(button("Instalar Minecraft",CYAN,()->UIManager.getInstance().switchUI(UIManager.getInstance().getDownloadUI())));
 +        body.addView(localTitle); instances=column(); body.addView(instances);
 +        LinearLayout footerRow=row();
-+        TextView footer=text("Android · 0.1.9 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
++        TextView footer=text("Android · 0.1.10 alpha   /   Motor FCL + Amethyst · GPLv3",11,MUTED);
 +        footer.setPadding(0,dp(14),0,dp(8)); footer.setOnClickListener(v->about());
 +        footerRow.addView(footer,new LayoutParams(0,LayoutParams.WRAP_CONTENT,1));
 +        footerRow.addView(button("Diagnóstico",CYAN,()->ProcessExitDiagnostics.show(activity)));
@@ -2928,7 +3054,7 @@ index 0000000..d47852a
 +    }
 +    private void about() {
 +        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Wachiland Launcher · Android")
-+            .setMessage("Prototipo 0.1.9, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
++            .setMessage("Prototipo 0.1.10, solo horizontal.\n\nInterfaz y conexión con Distribution: Wachiland. Motor de Minecraft: Fold Craft Launcher / HMCL / Amethyst, con sus licencias y avisos originales.\n\nEsta primera APK instala perfiles globales e inicia Minecraft con Microsoft. Las ramas locales, grupos y el visor de diferencias de Pandora aún no están portados.\n\nEl código fuente correspondiente se entrega junto a la APK.")
 +            .setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog);
 +    }
 +    private void error(String title,Throwable e) { AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title).setMessage(message(e)).setPositiveButton("Cerrar",null).create();dialog.show();styleDialog(dialog); }

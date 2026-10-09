@@ -99,3 +99,12 @@ Compile/package and signature inspection are necessary; actual phone startup,
 hook coverage, observer cost and diagnostic usefulness still require the user run.
 No end-to-end/FPS claim is justified by a successful APK build. Disable the FPS
 checkbox to restore the ordinary wrapper/thermal recording without the agent.
+
+## 0.1.10 follow-up
+
+The first armed0.1.9 attempt had only launcher_prepared and no JVM/agent output;
+its next unarmed attempt reached the world and exited normally. The cause remains
+unknown. See [diagnostic10 and hardening](VIVO-DIAGNOSTIC-10-2026-10-09.md).
+0.1.10 uses a minimal premain and starts heavy agent resolution from MemoryMain
+after basic telemetry exists, fixes settings JSON export and preserves prior
+attempt logs/crash-page reports. The existing capture design/boundaries remain.
