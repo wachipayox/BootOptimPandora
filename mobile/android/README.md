@@ -1,4 +1,4 @@
-# Wachiland Launcher for Android — 0.1.9 alpha
+# Wachiland Launcher for Android — 0.1.10 alpha
 
 First mobile prototype, based on a pinned FCL / HMCL / Amethyst Android engine.
 This is a companion client for the same Distribution server. It is not an Android
@@ -77,7 +77,7 @@ The phone uses `https://welite.ddns.net` on public HTTPS port 443. The server mu
 install the prepared read-only Nginx routes; see
 [deployment instructions](deployment/NETWORK.md) and
 [installer](deployment/install-public-api.sh). The original 8444 listener stays
-private. Version 0.1.9 updates earlier alphas in place when signed with the delivery key.
+private. Version 0.1.10 updates earlier alphas in place when signed with the delivery key.
 
 ## Installation / first run
 
@@ -193,6 +193,24 @@ Physical phone validation and performance conclusions remain pending. See
 [design and interpretation](diagnostics/ANDROID-FRAME-DIAGNOSTICS-2026-10-08.md),
 [Spark baseline](diagnostics/VIVO-SPARK-CLIENT-2026-10-08.md), and
 [optimization-mod audit](diagnostics/ANDROID-OPTIMIZATION-MOD-AUDIT-2026-10-08.md).
+
+## Diagnostic recovery hardening (0.1.10)
+
+The first0.1.9 armed attempt ended before JVM/profiler output; its cause is
+unknown because the next run overwrote its log. The later run exited normally
+with both collection switches off. See
+[diagnostic10 evidence](diagnostics/VIVO-DIAGNOSTIC-10-2026-10-09.md).
+
+0.1.10 stages a minimal premain bootstrap and activates the profiler from the
+ordinary wrapper after basic telemetry starts. Java profiler loading failures
+are caught and recorded; native failures/OS termination remain possible. The ZIP
+now includes the allowlisted launch-settings JSON, three prior attempt logs and
+three crash-page reports. Markers preserve each initialization stage.
+
+Finish any Spark trial with **FPS capture off, basic recording on**. For the
+separate frame trial, enable **Investigar FPS en la proxima partida** manually;
+the previous consumed/disabled preference is preserved across the update.
+Physical startup, hook coverage and observer cost remain pending.
 
 ## Build evidence
 
