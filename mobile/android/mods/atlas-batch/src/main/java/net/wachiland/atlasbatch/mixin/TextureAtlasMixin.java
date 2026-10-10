@@ -11,8 +11,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class TextureAtlasMixin {
     @WrapMethod(method="cycleAnimationFrames")
     private void wachiland$atlas(Operation<Void> original) {
+        TextureAtlas observed=AtlasBatch.observeAtlas((TextureAtlas)(Object)this);
         TextureAtlas previous=AtlasBatch.enterAtlas((TextureAtlas)(Object)this);
-        try { original.call(); } finally { AtlasBatch.leaveAtlas(previous); }
+        try { original.call(); } finally { AtlasBatch.leaveAtlas(previous); AtlasBatch.leaveObservedAtlas(observed); }
     }
     @Inject(method="clearTextureData",at=@At("HEAD"))
     private void wachiland$clear(CallbackInfo ci) { AtlasBatch.lifecycle(); }

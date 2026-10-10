@@ -3,7 +3,7 @@ plugins {
     id 'net.neoforged.moddev' version '2.0.144'
 }
 group = 'net.wachiland.atlasbatch'
-version = '0.1.0-experimental'
+version = '0.1.4-upload-order'
 base { archivesName = 'wachiland-atlas-batch-neoforge-1.21.1' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 neoForge {

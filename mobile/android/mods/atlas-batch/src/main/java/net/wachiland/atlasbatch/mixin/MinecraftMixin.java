@@ -13,7 +13,7 @@ abstract class MinecraftMixin {
     @WrapMethod(method="runTick")
     private void wachiland$frame(boolean renderLevel, Operation<Void> original) {
         AtlasBatch.begin((Minecraft)(Object)this,renderLevel);
-        try { original.call(renderLevel); } finally { AtlasBatch.end(); }
+        try { original.call(renderLevel); } finally { try { AtlasBatch.end(); } finally { AtlasBatch.endFrameProbe(); } }
     }
     @Inject(method="runTick", at=@At(value="INVOKE",target="Lcom/mojang/blaze3d/systems/RenderSystem;clear(IZ)V"))
     private void wachiland$beforeRender(boolean renderLevel, CallbackInfo ci) { AtlasBatch.end(); }

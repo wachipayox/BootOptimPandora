@@ -1,5 +1,10 @@
 # Android discrete atlas upload coalescing: experimental candidate
 
+2026-10-10 disposition update: the [bounded physical attribution run](VIVO-ATLAS-ATTRIBUTION-2026-10-10.md)
+observed 5068 original uploads and zero repeated keys. The 0.1.2 diagnostic
+therefore defaults batching off on Android as well as desktop. Earlier default
+enablement statements below describe the initial experimental artifact only.
+
 Follow-up: [first direct Vivo ADB trial](VIVO-ATLAS-BATCH-ADB-2026-10-10.md)
 confirms startup/world entry and applied hooks, but records zero queue replacements.
 It does not establish a performance win. The draft candidate requires further
