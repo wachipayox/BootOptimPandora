@@ -1,5 +1,10 @@
 # Android discrete atlas upload coalescing: experimental candidate
 
+Follow-up: [first direct Vivo ADB trial](VIVO-ATLAS-BATCH-ADB-2026-10-10.md)
+confirms startup/world entry and applied hooks, but records zero queue replacements.
+It does not establish a performance win. The draft candidate requires further
+coverage attribution and a matching control before promotion.
+
 ## Authority and origin
 
 Based on [physical capture 11](VIVO-FRAME-CAPTURE-11-2026-10-09.md), not on
