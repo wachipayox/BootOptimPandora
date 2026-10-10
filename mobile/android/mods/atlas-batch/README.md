@@ -1,8 +1,8 @@
-# Wachiland Android Support — 0.2.1 pixel validation
+# Wachiland Android Support â€” 0.2.1 pixel validation
 
 Separate client mod for the Android pack, currently NeoForge 1.21.1. The build
 directory retains the historical atlas-batch name; the new artifact is
-`wachiland-android-support-neoforge-1.21.1-0.2.1-pixel-validation.jar`, mod ID
+`wachiland-android-support-neoforge-1.21.1-0.2.4-jit-attribution.jar`, mod ID
 `wachiland_android_support`. Remove/disable the old atlas diagnostic JAR before
 installing this one. Staging has a measured FPS benefit on the reference Vivo;
 it remains experimental because reload and cross-GPU gates have not passed.
@@ -59,6 +59,24 @@ not a candidate performance measurement. The reference A/B/A measured 6.226 /
 28.926 / 9.011 FPS, with zero staging fallback; control drift and one scene/GPU
 limit interpretation. No controlled thermal gain is demonstrated. See
 [physical staging result](../../diagnostics/ANDROID-STAGED-UPLOAD-2026-10-10.md).
+
+## Follow-up candidates (not promoted)
+
+`experimental.directTerrainDraws=false`: version/capability-pinned alternative
+for Sodium 0.8.12-beta.1+mc1.21.1 with MobileGlues, preserving every accepted
+terrain draw and its order. Unknown versions, DrawID-capable contexts and shader
+packs retain stock. The physical A/B/A is promising but has control drift and
+incomplete cross-GPU/visual coverage. See [terrain results](../../diagnostics/ANDROID-TERRAIN-DRAW-2026-10-11.md).
+
+`experimental.frameWait=false`: replaces a proven empty Android GLFW wait with
+short parks while vanilla retains the frame deadline. Runtime bytecode must prove
+the original timeout implementation is empty. No graphics/frame-cap reduction.
+See [frame wait evidence and gates](../../diagnostics/ANDROID-FRAME-WAIT-2026-10-11.md).
+Both flags can be toggled by editing the properties and using reloadconfig.
+Explicit diagnostic commands in 0.2.4: `jitmap` exports the compiled Java address
+list without requesting GC, outside benchmark intervals; `testfpscap <10..120>`
+changes only the session cap for a bounded ceiling test. Restore the original cap
+when done. Neither command is called automatically.
 
 ## Historical diagnostics retained for experiments
 
@@ -125,7 +143,7 @@ See [research and acceptance gates](../../diagnostics/ANDROID-ATLAS-BATCH-2026-1
 2. Keep APK 0.1.11, MobileGlues, memory, thermal mode, resource packs and distances
    unchanged. Kerria must be absent; when loaded this candidate stays stock,
    including when Kerria's own setting is disabled.
-3. Arm **Investigar FPS en la próxima partida**; leave Spark and deep Java
+3. Arm **Investigar FPS en la prÃ³xima partida**; leave Spark and deep Java
    attribution off. Enter the same world and view the same scene. Wait for JEI
    initialization and remain in-world for about four minutes, then exit normally.
 4. Share the usual diagnostic ZIP and report whether animation/particles/textures
