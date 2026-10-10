@@ -20,8 +20,10 @@ New mod ID wachiland_android_support; standalone packaged JAR, no APK rebuild.
 Plain properties file, conservative defaults, runtime status/config reload and
 one-time GL vendor/renderer/version/capability report. On non-Android clients
 these mixins are skipped. Diagnostics default off; old queue prototype remains
-off. No validated new FPS optimization in this foundation yet. Its build gate
-is distinct from the older diagnostic's physical runtime results.
+off. Small staging uploads now have a physical FPS candidate result; they are
+not promoted because reload and broader correctness/GPU gates remain open.
+See ANDROID-STAGED-UPLOAD-2026-10-10.md. Compile and physical FPS evidence do not
+establish a production release.
 
 ## Evidence-driven order
 

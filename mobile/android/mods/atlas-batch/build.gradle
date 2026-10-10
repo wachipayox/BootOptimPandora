@@ -3,7 +3,7 @@ plugins {
     id 'net.neoforged.moddev' version '2.0.144'
 }
 group = 'net.wachiland.atlasbatch'
-version = '0.2.0-foundation'
+version = '0.2.1-pixel-validation'
 base { archivesName = 'wachiland-android-support-neoforge-1.21.1' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 neoForge {

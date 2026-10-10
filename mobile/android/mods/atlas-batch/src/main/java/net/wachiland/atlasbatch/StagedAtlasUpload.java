@@ -20,6 +20,7 @@ public final class StagedAtlasUpload {
     private static final ThreadLocal<Boolean> SCOPE=ThreadLocal.withInitial(() -> false);
     private static boolean tested, supported, failed;
     private static long uploads, fallbacks;
+    private static int verifiedMips;
     private static final int[] STORES={3317,3314,3315,3316,3333,3330,3331,3332};
 
     public static boolean enter(SpriteContents sprite,TextureAtlas atlas) {
@@ -36,7 +37,8 @@ public final class StagedAtlasUpload {
         return previous;
     }
     public static void leave(boolean previous) { SCOPE.set(previous); }
-    public static String status() { return "staged_uploads="+AndroidSupportConfig.stagedUploads+" self_test="+tested+" supported="+supported+" failed="+failed+" uploads="+uploads+" fallbacks="+fallbacks; }
+    public static String status() { return "staged_uploads="+AndroidSupportConfig.stagedUploads+" self_test="+tested+" supported="+supported+" failed="+failed+" verified_mips="+verifiedMips+" uploads="+uploads+" fallbacks="+fallbacks; }
+    public static void invalidatePixels() { if (RenderSystem.isOnRenderThread()) verifiedMips=0; }
 
     public static boolean upload(int target,int level,int x,int y,int width,int height,int format,int type,long pointer) {
         if (!SCOPE.get() || !RenderSystem.isOnRenderThread() || failed || target!=GL11C.GL_TEXTURE_2D || level<0 || level>15 || width<=0 || height<=0
@@ -61,7 +63,7 @@ public final class StagedAtlasUpload {
             allocate(width,height);
             GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER,framebuffer);
             GL30C.glFramebufferTexture2D(GL30C.GL_READ_FRAMEBUFFER,GL30C.GL_COLOR_ATTACHMENT0,target,texture,0);
-            if (GL30C.glCheckFramebufferStatus(GL30C.GL_READ_FRAMEBUFFER)!=GL30C.GL_FRAMEBUFFER_COMPLETE) return false;
+            if (GL30C.glCheckFramebufferStatus(GL30C.GL_READ_FRAMEBUFFER)!=GL30C.GL_FRAMEBUFFER_COMPLETE) { disable("staging framebuffer incomplete"); return false; }
             GL11C.glReadBuffer(GL30C.GL_COLOR_ATTACHMENT0);
             // Pixel store was set by NativeImage and remains intact, including frame offsets.
             GL11C.glTexSubImage2D(target,0,0,0,width,height,format,type,pointer);
@@ -69,6 +71,7 @@ public final class StagedAtlasUpload {
             GL11C.glCopyTexSubImage2D(target,level,x,y,0,0,width,height);
             complete=GL11C.glGetError()==GL11C.GL_NO_ERROR;
             if (!complete) disable("upload/copy GL error");
+            else if ((verifiedMips & (1<<level))==0) complete=verifyPixels(saved.texture,level,x,y,width,height,pointer);
         } catch (RuntimeException | LinkageError e) {
             disable("native route unavailable: "+e.getClass().getSimpleName());
         } finally {
@@ -90,6 +93,47 @@ public final class StagedAtlasUpload {
         LogUtils.getLogger().warn("[Wachiland Android support] Staging disabled; stock upload: {}",reason);
     }
 
+    /** Check the first real upload of each mip against the caller's CPU rectangle. */
+    private static boolean verifyPixels(int destination,int level,int x,int y,int width,int height,long pointer) {
+        int rowLength=GL11C.glGetInteger(GL11C.GL_UNPACK_ROW_LENGTH);
+        int skipRows=GL11C.glGetInteger(GL11C.GL_UNPACK_SKIP_ROWS);
+        int skipPixels=GL11C.glGetInteger(GL11C.GL_UNPACK_SKIP_PIXELS);
+        int alignment=GL11C.glGetInteger(GL11C.GL_UNPACK_ALIGNMENT);
+        if (rowLength<0 || skipRows<0 || skipPixels<0 || !(alignment==1 || alignment==2 || alignment==4 || alignment==8)) {
+            disable("unknown unpack layout"); return false;
+        }
+        long rowBytes=(long)(rowLength==0 ? width : rowLength)*4;
+        long stride=(rowBytes+alignment-1)/alignment*alignment;
+        long first=(long)skipRows*stride+(long)skipPixels*4;
+        int packBuffer=GL11C.glGetInteger(GL21C.GL_PIXEL_PACK_BUFFER_BINDING);
+        int[] packNames={GL11C.GL_PACK_ALIGNMENT,GL11C.GL_PACK_ROW_LENGTH,GL11C.GL_PACK_SKIP_ROWS,GL11C.GL_PACK_SKIP_PIXELS};
+        int[] packValues=new int[4];
+        for(int i=0;i<4;i++) packValues[i]=GL11C.glGetInteger(packNames[i]);
+        ByteBuffer actual=MemoryUtil.memAlloc(width*height*4);
+        boolean equal=false;
+        try {
+            GL15C.glBindBuffer(GL21C.GL_PIXEL_PACK_BUFFER,0);
+            for(int i=0;i<4;i++) GL11C.glPixelStorei(packNames[i],i==0 ? 1 : 0);
+            GL30C.glFramebufferTexture2D(GL30C.GL_READ_FRAMEBUFFER,GL30C.GL_COLOR_ATTACHMENT0,GL11C.GL_TEXTURE_2D,destination,level);
+            if (GL30C.glCheckFramebufferStatus(GL30C.GL_READ_FRAMEBUFFER)!=GL30C.GL_FRAMEBUFFER_COMPLETE) return false;
+            GL11C.glReadPixels(x,y,width,height,GL11C.GL_RGBA,GL11C.GL_UNSIGNED_BYTE,actual);
+            equal=GL11C.glGetError()==GL11C.GL_NO_ERROR;
+            for(int row=0;equal && row<height;row++) for(int col=0;col<width*4;col++) {
+                if (actual.get(row*width*4+col)!=MemoryUtil.memGetByte(pointer+first+row*stride+col)) { equal=false; break; }
+            }
+            if (equal) {
+                verifiedMips |= 1<<level;
+                LogUtils.getLogger().info("[Wachiland Android support] Real mip pixels passed level={} size={}x{} row_length={} skip_rows={} skip_pixels={}",level,width,height,rowLength,skipRows,skipPixels);
+            }
+        } finally {
+            GL15C.glBindBuffer(GL21C.GL_PIXEL_PACK_BUFFER,packBuffer);
+            for(int i=0;i<4;i++) GL11C.glPixelStorei(packNames[i],packValues[i]);
+            MemoryUtil.memFree(actual);
+            if (!equal) disable("real upload pixel verification failed");
+        }
+        return equal;
+    }
+
     private static void selfTest() {
         tested=true;
         var caps=GL.getCapabilities();
@@ -101,14 +145,17 @@ public final class StagedAtlasUpload {
         int unpackBuffer=GL11C.glGetInteger(GL21C.GL_PIXEL_UNPACK_BUFFER_BINDING);
         int packBuffer=GL11C.glGetInteger(GL21C.GL_PIXEL_PACK_BUFFER_BINDING);
         int source=0,destination=0,framebuffer=0;
-        ByteBuffer expected=MemoryUtil.memAlloc(16),actual=MemoryUtil.memAlloc(16);
+        ByteBuffer expected=MemoryUtil.memAlloc(64),actual=MemoryUtil.memAlloc(16);
         try {
-            for(int i=0;i<16;i++) expected.put(i,(byte)(17+i*13));
+            for(int i=0;i<64;i++) expected.put(i,(byte)(17+i*13));
             GL15C.glBindBuffer(GL21C.GL_PIXEL_UNPACK_BUFFER,0);
             GL15C.glBindBuffer(GL21C.GL_PIXEL_PACK_BUFFER,0);
             for(int i=0;i<STORES.length;i++) GL11C.glPixelStorei(STORES[i],i==0 || i==4 ? 1 : 0);
             source=GL11C.glGenTextures(); destination=GL11C.glGenTextures(); framebuffer=GL30C.glGenFramebuffers();
             GL11C.glBindTexture(GL11C.GL_TEXTURE_2D,source); allocate(2,2);
+            GL11C.glPixelStorei(GL11C.GL_UNPACK_ROW_LENGTH,4);
+            GL11C.glPixelStorei(GL11C.GL_UNPACK_SKIP_ROWS,1);
+            GL11C.glPixelStorei(GL11C.GL_UNPACK_SKIP_PIXELS,1);
             GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D,0,0,0,2,2,GL11C.GL_RGBA,GL11C.GL_UNSIGNED_BYTE,expected);
             GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER,framebuffer);
             GL30C.glFramebufferTexture2D(GL30C.GL_READ_FRAMEBUFFER,GL30C.GL_COLOR_ATTACHMENT0,GL11C.GL_TEXTURE_2D,source,0);
@@ -121,7 +168,7 @@ public final class StagedAtlasUpload {
             if (GL30C.glCheckFramebufferStatus(GL30C.GL_READ_FRAMEBUFFER)!=GL30C.GL_FRAMEBUFFER_COMPLETE) return;
             GL11C.glReadPixels(1,1,2,2,GL11C.GL_RGBA,GL11C.GL_UNSIGNED_BYTE,actual);
             supported=GL11C.glGetError()==GL11C.GL_NO_ERROR;
-            for(int i=0;i<16;i++) supported &= expected.get(i)==actual.get(i);
+            for(int row=0;row<2;row++) for(int col=0;col<8;col++) supported &= expected.get((row+1)*16+4+col)==actual.get(row*8+col);
         } catch (RuntimeException | LinkageError e) {
             disable("pixel self-test unavailable: "+e.getClass().getSimpleName());
         } finally {

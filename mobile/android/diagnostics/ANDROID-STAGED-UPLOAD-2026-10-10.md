@@ -35,14 +35,15 @@ upload inclusive wall time. A moved stall alone is not an optimization.
 
 Compile/package successful on JDK 21 / NeoForge 21.1.248. Physical trial prepared
 on Vivo V2041, MobileGlues, thermal mode, USB charging, same saved world. Runtime
-application, pixel self-test, reload, world correctness, A/B/A and native memory
-results are pending. No cross-GPU or production validation claimed.
+application, pixel self-test and A/B/A results are recorded below. Reload remains
+an unpassed gate; no cross-GPU or production validation claimed.
 
 First physical launch caught a packaging error before game initialization:
 the renamed mod metadata referenced a nonexistent renamed mixin JSON. Metadata
 now references the existing packaged JSON. Compile alone did not catch this;
 the failed launch is not a timing or performance result. Raw report retained in
-the local trial directory, outside Git. The corrected trial is being repeated.
+the local trial directory, outside Git. The corrected trial subsequently passed
+menu and world startup.
 
 ## Corrected physical A/B/A result
 
@@ -89,3 +90,36 @@ Raw evidence and analysis JSON remain outside Git at
 C:/BootOptimBench/android-device-support-staging-20261010. No user logs or phone
 preferences are committed. This is a successful candidate premise, not a merged
 production release. General defaults remain off for the unvalidated mechanism.
+
+The reload was stopped after more than six minutes to stop sustained heating.
+At the final snapshot, eight G1 GC workers each consumed roughly 69–86% of one
+CPU; process resident memory was around 4.2 GiB in top, battery 38.0 C, thermal
+service status 0. The reload did not return to the world and is an unpassed
+validation gate, not a successful reload or an observed Android crash. No model
+memory ownership is inferred from the GC thread names. Full raw state was saved;
+the launcher was then force-stopped (stationary world had autosaved) and reopened.
+The probe marker was removed; diagnostics=false and stagedUploads=true remain
+the explicit local trial config. General distributed defaults remain off.
+
+## 0.2.1 physical pixel validation
+
+Packaged JAR SHA-256:
+bf1e73a8ec512f3bc99eea48c6e36c5f6cacc544c5b4d587fd06e293c17e8d3f.
+Same Vivo/MobileGlues, enabled pack and saved snowy creative world. The existing
+APK bounded memory/JFR collector was armed; this is a correctness/attribution
+run, not a comparable FPS benchmark. No probe marker or diagnostic FPS hooks.
+
+Menu and world startup passed. At 23:25:08 the expanded synthetic test passed,
+then real destination bytes matched their CPU sources at mip 0/1/2: dimensions
+16x16 / 8x8 / 4x4, unpack row length 0 and skip rows 64 / 32 / 16. At 23:25:46,
+status reported verified_mips=7, uploads=4305, fallbacks=0, failed=false.
+The stationary world screenshot at 23:26 showed 30 FPS and no obvious terrain
+corruption. This does not prove all sprites, callbacks, scenes or GPU families.
+The pause screen remained slow because this prototype deliberately keeps stock
+uploads when a screen is open; extending eligibility is a separate test gate.
+
+The world was saved and exited normally at 23:27:26. No resource reload was
+repeated during this memory-constrained attribution run. The earlier reload gate
+remains unpassed. Java/memory observations and overlap checks are recorded in
+ANDROID-SUPPORT-MEMORY-2026-10-10.md. Raw logs, JFR and screenshots remain outside
+Git at C:/BootOptimBench/android-device-support-validation-20261010.

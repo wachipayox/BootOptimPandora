@@ -1,10 +1,11 @@
-# Wachiland Android Support — 0.2.0 foundation
+# Wachiland Android Support — 0.2.1 pixel validation
 
 Separate client mod for the Android pack, currently NeoForge 1.21.1. The build
 directory retains the historical atlas-batch name; the new artifact is
-`wachiland-android-support-neoforge-1.21.1-0.2.0-foundation.jar`, mod ID
+`wachiland-android-support-neoforge-1.21.1-0.2.1-pixel-validation.jar`, mod ID
 `wachiland_android_support`. Remove/disable the old atlas diagnostic JAR before
-installing this one. It is a foundation, not a demonstrated FPS optimization.
+installing this one. Staging has a measured FPS benefit on the reference Vivo;
+it remains experimental because reload and cross-GPU gates have not passed.
 
 Configuration: `config/wachiland-android-support.properties` in the instance
 game directory. Defaults `enabled=true`, `diagnostics=false`; no reduction in
@@ -36,7 +37,12 @@ call; no pixel pointer survives the call. Driver in-flight memory remains a
 measurement gate, not a guaranteed bound of one physical allocation.
 
 Before first use, a byte-exact 2x2 RGBA readback tests GPU copying to an offset in
-destination mip level 1. Capabilities alone cannot enable this route. A failed
+destination mip level 1, using nonzero source row/pixel skips and row length.
+Version 0.2.1 also compares the first real destination rectangle at each mip
+against the caller's CPU bytes with its actual unpack layout. This bounded
+readback is reset when atlas texture data is cleared. It is a correctness check,
+not exhaustive visual validation or a per-frame readback. Capabilities alone
+cannot enable this route. A failed
 self-test or runtime GL error disables it for the session. Texture binding and
 read framebuffer are restored; the self-test additionally restores pixel stores
 and pack/unpack PBO bindings. Native uploads retain the caller's unpack settings.
@@ -49,7 +55,10 @@ existing full-frame A/B/A recorder: 60 s warm-up, 60 s stock, 60 s staging, 60 s
 stock. It restores the original in-memory flag on completion or leaving the
 unobstructed world. Do not also create the render-ahead marker. Remove the marker
 and restore `diagnostics=false` after testing. A run where copying falls back is
-not a candidate performance measurement. No FPS or thermal gain is claimed yet.
+not a candidate performance measurement. The reference A/B/A measured 6.226 /
+28.926 / 9.011 FPS, with zero staging fallback; control drift and one scene/GPU
+limit interpretation. No controlled thermal gain is demonstrated. See
+[physical staging result](../../diagnostics/ANDROID-STAGED-UPLOAD-2026-10-10.md).
 
 ## Historical diagnostics retained for experiments
 
