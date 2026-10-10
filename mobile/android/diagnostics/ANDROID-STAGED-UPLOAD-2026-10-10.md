@@ -43,3 +43,49 @@ the renamed mod metadata referenced a nonexistent renamed mixin JSON. Metadata
 now references the existing packaged JSON. Compile alone did not catch this;
 the failed launch is not a timing or performance result. Raw report retained in
 the local trial directory, outside Git. The corrected trial is being repeated.
+
+## Corrected physical A/B/A result
+
+Source ffc2756c5; tested packaged JAR SHA-256
+ead1195d5eb377639dc5c2ea0ae1cdd3ba577912bd2494ea3f648eceb750d938.
+All seven hooks applied. MobileGlues reports Mali-G57 MC2 / GLES 3.2, desktop
+interface 4.0.0, framebuffer/copy available, immutable storage/image copy absent.
+Small-pattern RGBA byte readback at destination mip 1 and nonzero offset passed.
+
+Origin is the existing full Minecraft runTick wrapper in an unobstructed loaded
+world, not launcher preparation or process-start time. Same world, saved camera,
+mods, renderer and charging state. Start epoch 1791656496041; first 60.205 s are
+warm-up and excluded from the comparison. Each measured phase has its own
+begin/end boundary and full-frame count. No GPU-time interpretation of inclusive
+native wall durations; they are inside frame wall, never added to it.
+
+| Phase | Elapsed s | Frames | FPS | Inclusive upload wall s | Native upload calls |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Stock 1 | 59.911 | 373 | 6.226 | 36.077 | 3792 |
+| Staging | 59.912 | 1733 | 28.926 | 3.427 | 12468 |
+| Stock 2 | 60.039 | 541 | 9.011 | 35.169 | 5070 |
+
+Staging completed 12453 uploads with zero fallback; 15 other native uploads kept
+stock. Probe completed and restored original false flag. Both surrounding stock
+phases are substantially slower; control drift prevents an exact general speedup
+claim. Scene and visibility effects remain a limitation. No texture/animation
+setting was reduced. Stationary terrain screenshot showed no obvious corruption,
+but that is not exhaustive animated-sprite or cross-GPU validation.
+
+Phase-entry process RSS: 3480296 / 3506780 / 3547500 KiB; Swap: 1433324 / 1397032 /
+1381428 KiB; system MemAvailable: 432412 / 502252 / 455992 KiB. These are snapshots,
+not peak memory or GPU allocation measurements. Battery temperature 35.1 / 35.7 /
+35.8 C under USB charging. No controlled thermal improvement is demonstrated.
+
+Afterward config was reloaded to diagnostics=false, stagedUploads=true; the same
+scene displayed about 30 FPS. F3+T reload was explicitly requested at 20:27:45.
+Its resource preparation logged four corrupt/unknown-image decode failures and
+missing model warnings, before atlas upload. Reload completion/correctness is
+still pending; do not promote a production mechanism or claim reload equivalence
+from the successful short FPS trial. Root cause of the decode failures has not
+been assigned. The initial launch did not report those four decode failures.
+
+Raw evidence and analysis JSON remain outside Git at
+C:/BootOptimBench/android-device-support-staging-20261010. No user logs or phone
+preferences are committed. This is a successful candidate premise, not a merged
+production release. General defaults remain off for the unvalidated mechanism.
