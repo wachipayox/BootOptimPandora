@@ -174,10 +174,10 @@ From this directory, with JDK 21 and network access for initial dependencies:
 ./gradlew assemble --no-daemon
 ```
 
-The distributable is `build/libs/wachiland-atlas-batch-neoforge-1.21.1-0.1.0-experimental.jar`.
-`assemble` does not run tests. Compilation and static inspection passed; no
-Minecraft startup, mixin runtime, visual equivalence or FPS win has been
-validated locally. Those gates are pending the phone trial.
+The distributable is `build/libs/wachiland-android-support-neoforge-1.21.1-0.2.4-jit-attribution.jar`.
+`assemble` does not run tests. Compilation, physical startup and reference-world probes passed. General visual
+equivalence, resource reload and wider GPU gates remain open; see the current
+research entries above. Historical diagnostic gates do not imply promotion.
 
 GPL-3.0-only; see COPYING. The corresponding source ZIP includes this standalone
 build, wrapper and research record. It does not include Minecraft or NeoForge
