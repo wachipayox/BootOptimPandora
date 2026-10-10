@@ -17,6 +17,8 @@ final class AndroidSupportConfig {
     static volatile boolean diagnostics;
     static volatile boolean enabled=true;
     static volatile boolean stagedUploads;
+    static volatile boolean directTerrainDraws;
+    static volatile boolean frameWait;
     static void load() {
         Properties values=new Properties();
         Path file=FMLPaths.CONFIGDIR.get().resolve("wachiland-android-support.properties");
@@ -28,6 +30,8 @@ final class AndroidSupportConfig {
                 values.setProperty("enabled","true");
                 values.setProperty("diagnostics","false");
                 values.setProperty("experimental.stagedUploads","false");
+                values.setProperty("experimental.directTerrainDraws","false");
+                values.setProperty("experimental.frameWait","false");
                 try (Writer out=Files.newBufferedWriter(file,StandardCharsets.UTF_8)) {
                     values.store(out,"Android support foundation. Quality is unchanged. Diagnostics add measurement overhead. No automatic mod removal or unvalidated GPU optimization.");
                 }
@@ -35,8 +39,10 @@ final class AndroidSupportConfig {
             enabled=bool(values,"enabled",true);
             diagnostics=bool(values,"diagnostics",false);
             stagedUploads=bool(values,"experimental.stagedUploads",false);
+            directTerrainDraws=bool(values,"experimental.directTerrainDraws",false);
+            frameWait=bool(values,"experimental.frameWait",false);
         } catch (IOException | IllegalArgumentException e) {
-            enabled=false; diagnostics=false; stagedUploads=false;
+            enabled=false; diagnostics=false; stagedUploads=false; directTerrainDraws=false; frameWait=false;
             LogUtils.getLogger().warn("[Wachiland Android support] Configuration unavailable; stock behavior",e);
         }
     }

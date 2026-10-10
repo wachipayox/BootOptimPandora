@@ -4,6 +4,18 @@
   "package": "net.wachiland.atlasbatch.mixin",
   "plugin": "net.wachiland.atlasbatch.AtlasBatchMixinPlugin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["MinecraftMixin", "GameRendererMixin", "TextureAtlasMixin", "SpriteContentsMixin", "SpriteUploadInvoker", "GlStateManagerMixin", "NativeImageMixin"],
-  "injectors": { "defaultRequire": 1 }
+  "client": [
+    "MinecraftMixin",
+    "GameRendererMixin",
+    "TextureAtlasMixin",
+    "SpriteContentsMixin",
+    "SpriteUploadInvoker",
+    "GlStateManagerMixin",
+    "NativeImageMixin",
+    "SodiumTerrainDrawMixin",
+    "RenderSystemWaitMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
 }

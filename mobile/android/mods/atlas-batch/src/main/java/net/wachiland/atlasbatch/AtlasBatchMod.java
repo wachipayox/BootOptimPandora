@@ -1,6 +1,8 @@
 package net.wachiland.atlasbatch;
 
 import com.mojang.brigadier.Command;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import net.minecraft.client.Minecraft;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
@@ -13,8 +15,18 @@ public final class AtlasBatchMod {
     public AtlasBatchMod() { AndroidSupportConfig.load(); NeoForge.EVENT_BUS.addListener(AtlasBatchMod::commands); }
     private static void commands(RegisterClientCommandsEvent event) {
         event.getDispatcher().register(Commands.literal("wachilandandroid")
+            .then(Commands.literal("jitmap").executes(c -> {
+                c.getSource().sendSuccess(() -> Component.literal(JavaCodeMap.dump()),false);
+                return Command.SINGLE_SUCCESS;
+            }))
+            .then(Commands.literal("testfpscap").then(Commands.argument("fps",IntegerArgumentType.integer(10,120)).executes(c -> {
+                int fps=IntegerArgumentType.getInteger(c,"fps");
+                Minecraft.getInstance().options.framerateLimit().set(fps);
+                c.getSource().sendSuccess(() -> Component.literal("Temporary FPS cap="+fps+"; no other graphics settings changed."),false);
+                return Command.SINGLE_SUCCESS;
+            })))
             .then(Commands.literal("status").executes(c -> {
-                c.getSource().sendSuccess(() -> Component.literal("Android="+AndroidSupportConfig.ANDROID+" enabled="+AndroidSupportConfig.enabled+" diagnostics="+AndroidSupportConfig.diagnostics+" "+AndroidGraphicsProfile.status()+" "+StagedAtlasUpload.status()),false);
+                c.getSource().sendSuccess(() -> Component.literal("Android="+AndroidSupportConfig.ANDROID+" enabled="+AndroidSupportConfig.enabled+" diagnostics="+AndroidSupportConfig.diagnostics+" "+AndroidGraphicsProfile.status()+" "+StagedAtlasUpload.status()+" "+DirectTerrainDraw.status()+" "+AndroidFrameWait.status()),false);
                 return Command.SINGLE_SUCCESS;
             }))
             .then(Commands.literal("reloadconfig").executes(c -> {
