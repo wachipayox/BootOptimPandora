@@ -32,7 +32,7 @@ final class UploadAttribution {
     }
     static void begin(Minecraft mc,boolean renderLevel) {
         owner=Thread.currentThread(); frameStart=0; current=null; frameUploads=0;
-        boolean world=renderLevel && mc.level!=null && mc.screen==null && mc.getOverlay()==null;
+        boolean world=AndroidSupportConfig.observe() && renderLevel && mc.level!=null && mc.screen==null && mc.getOverlay()==null;
         long now=System.nanoTime();
         if (world && start==0) {
             start=now;

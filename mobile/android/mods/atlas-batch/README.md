@@ -1,4 +1,57 @@
-# Wachiland Atlas Batch — experimental 0.1.4 diagnostics
+# Wachiland Android Support — 0.2.0 foundation
+
+Separate client mod for the Android pack, currently NeoForge 1.21.1. The build
+directory retains the historical atlas-batch name; the new artifact is
+`wachiland-android-support-neoforge-1.21.1-0.2.0-foundation.jar`, mod ID
+`wachiland_android_support`. Remove/disable the old atlas diagnostic JAR before
+installing this one. It is a foundation, not a demonstrated FPS optimization.
+
+Configuration: `config/wachiland-android-support.properties` in the instance
+game directory. Defaults `enabled=true`, `diagnostics=false`; no reduction in
+resolution, textures, mipmaps, animation or simulation. Invalid/unreadable
+configuration disables the support mechanisms. Non-Android clients skip these
+mixins. GPU vendor names are reported, not used to enable unvalidated fixes.
+Defaults also include `experimental.stagedUploads=false`.
+Capability presence is also only evidence of availability, not proof of correct
+renderer implementation. No automatic mod removal or renderer change.
+
+`/wachilandandroid status` reports Android detection, flags and the graphics
+profile. `/wachilandandroid reloadconfig` reloads those flags and turns off the
+legacy batching experiment; restart Minecraft for a fresh diagnostic window.
+The profile logs vendor/renderer/version once on the render thread plus relevant
+framebuffer/copy/storage/sync entry points. Diagnostics and marker probes require
+explicit opt-in; diagnostic counters are not shipping performance claims.
+
+Roadmap and mod audit: [Android support program](../../diagnostics/ANDROID-SUPPORT-PROGRAM-2026-10-10.md).
+
+## Experimental staging route (not promoted)
+
+Opt-in `experimental.stagedUploads=true` tests CPU upload into a temporary RGBA8
+texture followed by a GPU framebuffer copy into the original atlas. It preserves
+the uploaded rectangle, alpha, mip level and animation; it does not replace the
+atlas or compress textures. Only exact vanilla SpriteContents/TextureAtlas in
+unobstructed world frames, no Kerria, no legacy batching and no PBO are eligible.
+Dimensions above 256 pixels keep stock. The texture/FBO are deleted in the same
+call; no pixel pointer survives the call. Driver in-flight memory remains a
+measurement gate, not a guaranteed bound of one physical allocation.
+
+Before first use, a byte-exact 2x2 RGBA readback tests GPU copying to an offset in
+destination mip level 1. Capabilities alone cannot enable this route. A failed
+self-test or runtime GL error disables it for the session. Texture binding and
+read framebuffer are restored; the self-test additionally restores pixel stores
+and pack/unpack PBO bindings. Native uploads retain the caller's unpack settings.
+The prototype queries GL errors and consumes any pre-existing error while
+disabling itself: this diagnostic boundary is one reason it is not production.
+Unknown modified callback contracts have not been validated across packs.
+
+With `diagnostics=true`, a local `wachiland-staging-probe.txt` marker reuses the
+existing full-frame A/B/A recorder: 60 s warm-up, 60 s stock, 60 s staging, 60 s
+stock. It restores the original in-memory flag on completion or leaving the
+unobstructed world. Do not also create the render-ahead marker. Remove the marker
+and restore `diagnostics=false` after testing. A run where copying falls back is
+not a candidate performance measurement. No FPS or thermal gain is claimed yet.
+
+## Historical diagnostics retained for experiments
 
 Version 0.1.4 adds per-mipmap wall time and attribution of the first managed
 upload in each frame. It records the Linux render-owner TID once for system

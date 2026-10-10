@@ -22,7 +22,7 @@ final class AtlasDiagnostics {
     static void begin(Minecraft mc, boolean renderLevel) {
         SEEN.clear();
         owner=Thread.currentThread();
-        boolean world=renderLevel && mc.level!=null && mc.screen==null && mc.getOverlay()==null;
+        boolean world=AndroidSupportConfig.observe() && renderLevel && mc.level!=null && mc.screen==null && mc.getOverlay()==null;
         long now=System.nanoTime();
         if (world && started==0) { started=now; settings=readSettings(); }
         active=world && started!=0 && now-started<WINDOW_NS && !RenderAheadProbe.isRequested();

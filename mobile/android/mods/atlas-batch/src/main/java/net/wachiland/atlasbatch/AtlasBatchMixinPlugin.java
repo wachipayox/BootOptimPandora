@@ -17,7 +17,7 @@ public final class AtlasBatchMixinPlugin implements IMixinConfigPlugin {
 
     @Override public void onLoad(String mixinPackage) { }
     @Override public String getRefMapperConfig() { return null; }
-    @Override public boolean shouldApplyMixin(String targetClassName, String mixinClassName) { return true; }
+    @Override public boolean shouldApplyMixin(String targetClassName, String mixinClassName) { return AndroidSupportConfig.ANDROID; }
     @Override public void acceptTargets(Set<String> myTargets, Set<String> otherTargets) { }
     @Override public List<String> getMixins() { return null; }
     @Override public void preApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) { }
