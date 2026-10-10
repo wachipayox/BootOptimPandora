@@ -42,6 +42,7 @@ public final class AtlasBatch {
         flush();
         owner=Thread.currentThread(); atlas=null;
         observedAtlas=null;
+        AndroidGraphicsProfile.inspect();
         RenderAheadProbe.begin(mc,renderLevel);
         UploadAttribution.begin(mc,renderLevel);
         AtlasDiagnostics.begin(mc,renderLevel);
@@ -52,7 +53,7 @@ public final class AtlasBatch {
             if (!compatible) LOG.warn("[Wachiland atlas batch] Stock fallback: Kerria is loaded");
         }
         batching=false;
-        eligible=enabled && compatible && AtlasBatchMixinPlugin.ready() && renderLevel && mc.level!=null && mc.screen==null && mc.getOverlay()==null && RenderSystem.isOnRenderThread();
+        eligible=AndroidSupportConfig.enabled && AndroidSupportConfig.ANDROID && enabled && compatible && AtlasBatchMixinPlugin.ready() && renderLevel && mc.level!=null && mc.screen==null && mc.getOverlay()==null && RenderSystem.isOnRenderThread();
         report(false);
     }
     public static void tickCount(int ticks) { batching=eligible && ticks>1; if (batching) frames++; }
@@ -68,6 +69,7 @@ public final class AtlasBatch {
     public static void leaveAtlas(TextureAtlas previous) { if (Thread.currentThread()==owner) atlas=previous; }
     public static TextureAtlas observeAtlas(TextureAtlas value) { TextureAtlas previous=observedAtlas; if (Thread.currentThread()==owner) observedAtlas=value; return previous; }
     public static void leaveObservedAtlas(TextureAtlas previous) { if (Thread.currentThread()==owner) observedAtlas=previous; }
+    public static TextureAtlas observedAtlas() { return Thread.currentThread()==owner && !enabled ? observedAtlas : null; }
     public static void endFrameProbe() { RenderAheadProbe.endFrame(); UploadAttribution.endFrame(); }
     public static long beginUploadProbe() { return RenderAheadProbe.beginUpload(); }
     public static void endUploadProbe(long began,int width,int height) { RenderAheadProbe.endUpload(began,width,height); }
@@ -141,6 +143,7 @@ public final class AtlasBatch {
     public static void setEnabled(boolean value) { end(); enabled=value; report(true); }
     public static String status() { return "Wachiland atlas: enabled="+enabled+" compatible="+compatible+" hooks_ready="+AtlasBatchMixinPlugin.ready()+" frames="+frames+" deferred="+deferred+" replaced="+replaced+" submitted="+submitted+" pending="+PENDING.size(); }
     private static void report(boolean force) {
+        if (!force && !AndroidSupportConfig.observe()) return;
         long now=System.currentTimeMillis();
         if (force || now-lastReport>=30000) { lastReport=now; LOG.info("[Wachiland atlas batch] {} flushes={} limit_fallbacks={}",status(),flushes,limitFallbacks); LOG.info("[Wachiland atlas attribution] {}",AtlasDiagnostics.summary()); }
     }

@@ -3,6 +3,7 @@ import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.wachiland.atlasbatch.AtlasBatch;
+import net.wachiland.atlasbatch.StagedAtlasUpload;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -16,5 +17,5 @@ abstract class TextureAtlasMixin {
         try { original.call(); } finally { AtlasBatch.leaveAtlas(previous); AtlasBatch.leaveObservedAtlas(observed); }
     }
     @Inject(method="clearTextureData",at=@At("HEAD"))
-    private void wachiland$clear(CallbackInfo ci) { AtlasBatch.lifecycle(); }
+    private void wachiland$clear(CallbackInfo ci) { AtlasBatch.lifecycle(); StagedAtlasUpload.invalidatePixels(); }
 }

@@ -2,20 +2,20 @@ modLoader="javafml"
 loaderVersion="[4,)"
 license="GPL-3.0-only"
 [[mods]]
-modId="wachiland_atlas_batch"
-version="0.1.4-upload-order"
-displayName="Wachiland Atlas Batch (experimental)"
+modId="wachiland_android_support"
+version="0.2.1-pixel-validation"
+displayName="Wachiland Android Support (experimental)"
 authors="Wachiland"
-description='''Experimental Android discrete atlas upload coalescing. No resolution, animation clock, mipmap or game-tick changes. Requires physical visual validation.'''
+description='''Android compatibility and performance support foundation. GPU capability profile and optional diagnostics. Quality unchanged by default; experimental mechanisms are not validated optimizations.'''
 [[mixins]]
 config="wachiland_atlas_batch.mixins.json"
-[[dependencies.wachiland_atlas_batch]]
+[[dependencies.wachiland_android_support]]
 modId="neoforge"
 type="required"
 versionRange="[21.1.248,21.2)"
 ordering="NONE"
 side="CLIENT"
-[[dependencies.wachiland_atlas_batch]]
+[[dependencies.wachiland_android_support]]
 modId="minecraft"
 type="required"
 versionRange="[1.21.1]"

@@ -3,12 +3,12 @@ plugins {
     id 'net.neoforged.moddev' version '2.0.144'
 }
 group = 'net.wachiland.atlasbatch'
-version = '0.1.4-upload-order'
-base { archivesName = 'wachiland-atlas-batch-neoforge-1.21.1' }
+version = '0.2.1-pixel-validation'
+base { archivesName = 'wachiland-android-support-neoforge-1.21.1' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 neoForge {
     version = '21.1.248'
-    mods { wachiland_atlas_batch { sourceSet(sourceSets.main) } }
+    mods { wachiland_android_support { sourceSet(sourceSets.main) } }
 }
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
 tasks.named('jar') {

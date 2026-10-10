@@ -1,14 +1,21 @@
 package net.wachiland.atlasbatch.mixin;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.mojang.blaze3d.platform.GlStateManager;
 import net.wachiland.atlasbatch.AtlasBatch;
+import net.wachiland.atlasbatch.StagedAtlasUpload;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(GlStateManager.class)
 abstract class GlStateManagerMixin {
+    @WrapOperation(method="_texSubImage2D",at=@At(value="INVOKE",target="Lorg/lwjgl/opengl/GL11;glTexSubImage2D(IIIIIIIIJ)V"))
+    private static void wachiland$stageUpload(int target,int level,int x,int y,int width,int height,int format,int type,long pointer,Operation<Void> original) {
+        if (!StagedAtlasUpload.upload(target,level,x,y,width,height,format,type,pointer))
+            original.call(target,level,x,y,width,height,format,type,pointer);
+    }
     @WrapMethod(method="_texSubImage2D")
     private static void wachiland$measureUpload(int target,int level,int x,int y,int width,int height,int format,int type,long pointer,Operation<Void> original) {
         long started=AtlasBatch.beginUploadProbe();
