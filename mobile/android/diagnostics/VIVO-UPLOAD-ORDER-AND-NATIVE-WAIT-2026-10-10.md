@@ -113,3 +113,9 @@ promotion, as are tests on other GPU vendors.
 All raw recordings remain local under android-device-upload-order-20261010.
 Diagnostic-only source and documentation remain on draft PR #88; no BootOptim
 or production launcher change and no performance win claimed.
+
+Cleanup confirmed: saved the world, exited via Quit Game (EGLBridge termination),
+renamed the exact 0.1.4 diagnostic JAR to .jar.disabled and reopened the launcher.
+Original Sodium limit 3 and thermal mode retained. Device page size confirmed
+4096 bytes: snapshot pswpin/pswpout deltas correspond to ~319.1/392.9 MiB,
+system-wide over the snapshot interval, not necessarily storage IO bytes.
