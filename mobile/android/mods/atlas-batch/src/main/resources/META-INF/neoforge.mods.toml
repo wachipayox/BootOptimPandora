@@ -1,0 +1,23 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="GPL-3.0-only"
+[[mods]]
+modId="wachiland_atlas_batch"
+version="0.1.4-upload-order"
+displayName="Wachiland Atlas Batch (experimental)"
+authors="Wachiland"
+description='''Experimental Android discrete atlas upload coalescing. No resolution, animation clock, mipmap or game-tick changes. Requires physical visual validation.'''
+[[mixins]]
+config="wachiland_atlas_batch.mixins.json"
+[[dependencies.wachiland_atlas_batch]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.248,21.2)"
+ordering="NONE"
+side="CLIENT"
+[[dependencies.wachiland_atlas_batch]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="CLIENT"

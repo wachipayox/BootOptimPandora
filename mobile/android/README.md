@@ -218,6 +218,16 @@ The 0.1.10 first-attempt log identifies a native crash in dynamic bootstrap JAR
 append. Version 0.1.11 loads the counters using the startup bootstrap path and
 preserves Cacio entries. See [confirmed cause and device gate](diagnostics/ANDROID-PROFILER-NATIVE-CRASH-2026-10-09.md).
 
+## Experimental animated-atlas candidate (separate mod)
+
+The complete [Vivo frame capture 11](diagnostics/VIVO-FRAME-CAPTURE-11-2026-10-09.md)
+identifies repeated animated-atlas uploads as the largest measured frame front.
+[Wachiland Atlas Batch](mods/atlas-batch/README.md) is an isolated experimental
+client JAR usable with APK 0.1.11. It retains the latest dirty discrete upload
+before rendering, preserving logical ticks and keeping interpolation immediate.
+It has runtime on/off commands and phone validation remains pending. See the
+[mechanism, limits and decision gate](diagnostics/ANDROID-ATLAS-BATCH-2026-10-09.md).
+
 ## Build evidence
 
 Compilation and APK signature/manifest inspection are recorded in `BUILD.md`.
