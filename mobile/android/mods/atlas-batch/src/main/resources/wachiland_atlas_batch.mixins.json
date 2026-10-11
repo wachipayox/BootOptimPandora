@@ -17,7 +17,9 @@
     "TextureManagerAccess",
     "NativeImageAccess",
     "ModelBakeryAccess",
-    "SimpleModelAccess"
+    "SimpleModelAccess",
+    "FlywheelCompilationMixin",
+    "ParticleRainBiomeMixin"
   ],
   "injectors": {
     "defaultRequire": 1

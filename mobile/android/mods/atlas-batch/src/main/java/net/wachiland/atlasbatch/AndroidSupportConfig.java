@@ -19,6 +19,8 @@ final class AndroidSupportConfig {
     static volatile boolean stagedUploads;
     static volatile boolean directTerrainDraws;
     static volatile boolean frameWait;
+    static volatile boolean flywheelExplicitOutputs;
+    static volatile boolean rainBiomeMemo;
     static void load() {
         Properties values=new Properties();
         Path file=FMLPaths.CONFIGDIR.get().resolve("wachiland-android-support.properties");
@@ -32,6 +34,8 @@ final class AndroidSupportConfig {
                 values.setProperty("experimental.stagedUploads","false");
                 values.setProperty("experimental.directTerrainDraws","false");
                 values.setProperty("experimental.frameWait","false");
+                values.setProperty("experimental.flywheelExplicitOutputs","false");
+                values.setProperty("experimental.rainBiomeMemo","false");
                 try (Writer out=Files.newBufferedWriter(file,StandardCharsets.UTF_8)) {
                     values.store(out,"Android support foundation. Quality is unchanged. Diagnostics add measurement overhead. No automatic mod removal or unvalidated GPU optimization.");
                 }
@@ -41,8 +45,10 @@ final class AndroidSupportConfig {
             stagedUploads=bool(values,"experimental.stagedUploads",false);
             directTerrainDraws=bool(values,"experimental.directTerrainDraws",false);
             frameWait=bool(values,"experimental.frameWait",false);
+            flywheelExplicitOutputs=bool(values,"experimental.flywheelExplicitOutputs",false);
+            rainBiomeMemo=bool(values,"experimental.rainBiomeMemo",false);
         } catch (IOException | IllegalArgumentException e) {
-            enabled=false; diagnostics=false; stagedUploads=false; directTerrainDraws=false; frameWait=false;
+            enabled=false; diagnostics=false; stagedUploads=false; directTerrainDraws=false; frameWait=false; flywheelExplicitOutputs=false; rainBiomeMemo=false;
             LogUtils.getLogger().warn("[Wachiland Android support] Configuration unavailable; stock behavior",e);
         }
     }

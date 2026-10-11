@@ -15,6 +15,10 @@ public final class AtlasBatchMod {
     public AtlasBatchMod() { AndroidSupportConfig.load(); NeoForge.EVENT_BUS.addListener(AtlasBatchMod::commands); }
     private static void commands(RegisterClientCommandsEvent event) {
         event.getDispatcher().register(Commands.literal("wachilandandroid")
+            .then(Commands.literal("rainmemo")
+                .then(Commands.literal("on").executes(c -> { AndroidSupportConfig.rainBiomeMemo=true; c.getSource().sendSuccess(() -> Component.literal(ParticleRainBiomeMemo.status()),false); return 1; }))
+                .then(Commands.literal("off").executes(c -> { AndroidSupportConfig.rainBiomeMemo=false; c.getSource().sendSuccess(() -> Component.literal(ParticleRainBiomeMemo.status()),false); return 1; }))
+                .then(Commands.literal("status").executes(c -> { c.getSource().sendSuccess(() -> Component.literal(ParticleRainBiomeMemo.status()),false); return 1; })))
             .then(Commands.literal("memoryheap").executes(c -> {
                 c.getSource().sendSuccess(() -> Component.literal(GuardedHeapRequest.request()),false);
                 return Command.SINGLE_SUCCESS;
