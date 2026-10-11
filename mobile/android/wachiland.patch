@@ -1,5 +1,5 @@
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index 8463609..a515402 100644
+index 8463609..9719936 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
 @@ -53,9 +53,9 @@ android {
@@ -24,8 +24,8 @@ index 8463609..a515402 100644
          targetSdk = libs.versions.targetSdk.get().toInt()
 -        versionCode = 1337
 -        versionName = "1.3.3.7"
-+        versionCode = 12
-+        versionName = "0.1.11-alpha"
++        versionCode = 13
++        versionName = "0.1.12-alpha"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
              cmake {
@@ -292,10 +292,10 @@ index 0000000..3548242
 +}
 diff --git a/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java b/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java
 new file mode 100644
-index 0000000..6b1f210
+index 0000000..4ecabec
 --- /dev/null
 +++ b/FCL/memory-probe/src/main/java/net/wachiland/diagnostics/MemoryMain.java
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,125 @@
 +package net.wachiland.diagnostics;
 +
 +import java.io.File;
@@ -314,7 +314,10 @@ index 0000000..6b1f210
 +    private static final String HEADER = "epoch_ms,session_elapsed_ms,heap_used_bytes,heap_committed_bytes,heap_max_bytes,nonheap_used_bytes,nonheap_committed_bytes,direct_used_bytes,mapped_used_bytes,gc_count,gc_time_ms,threads,sample_duration_ms,g1_old_used_bytes,g1_young_used_bytes\n";
 +
 +    public static void main(String[] args) throws Throwable {
-+        try { start(); } catch (Throwable e) {
++        try {
++            if (Boolean.parseBoolean(System.getProperty("wachiland.memory.sample", "true"))) start();
++            else System.out.println("[Wachiland memory] Memory sampler disabled for performance-only capture.");
++        } catch (Throwable e) {
 +            System.err.println("[Wachiland memory] Optional probe unavailable: " + e.getClass().getName());
 +        }
 +        // Resolve the optional Java17 profiler only after basic telemetry exists.
@@ -420,10 +423,10 @@ index 0000000..6b1f210
 +}
 diff --git a/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java
 new file mode 100644
-index 0000000..3800d22
+index 0000000..20eaaac
 --- /dev/null
 +++ b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceAgent.java
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,247 @@
 +package net.wachiland.performance;
 +
 +import java.io.File;
@@ -573,6 +576,7 @@ index 0000000..3800d22
 +            // Give JEI completion and the loading overlay 20 seconds to settle.
 +            Thread.sleep(20000);
 +            long origin = System.currentTimeMillis();
++            long originNanos = System.nanoTime();
 +            write("calls.csv", "epoch_ms,elapsed_ms,metric,calls_total,wall_ns_total,pixels_total,histogram_total\n", false);
 +            write("threads.csv", "epoch_ms,thread_id,name,state,cpu_ns_total,stack\n", false);
 +            note("capture_start epoch_ms=" + origin + " reason=" + reason + " duration_s=120");
@@ -616,9 +620,25 @@ index 0000000..3800d22
 +            }
 +            PerformanceCounters.active = false;
 +            rows(System.currentTimeMillis(), origin);
++            frameTrace(origin, originNanos);
 +            note("capture_complete epoch_ms=" + System.currentTimeMillis());
 +        } catch (Throwable error) { note("capture_error " + error.getClass().getSimpleName()); }
 +        finally { PerformanceCounters.active = false; }
++    }
++
++    private static void frameTrace(long origin, long originNanos) throws Exception {
++        int count = PerformanceCounters.traceCount;
++        StringBuilder out = new StringBuilder("end_epoch_ms,end_elapsed_ns,duration_ns,client_ticks,client_tick_wall_ns,world_render_wall_ns\n");
++        for (int i = 0; i < count; i++) {
++            long relative = PerformanceCounters.FRAME_END[i] - originNanos;
++            out.append(origin + relative / 1000000).append(',').append(relative).append(',')
++                .append(PerformanceCounters.FRAME_DURATION[i]).append(',').append(PerformanceCounters.FRAME_TICKS[i]).append(',')
++                .append(PerformanceCounters.FRAME_TICK_WALL[i]).append(',').append(PerformanceCounters.FRAME_WORLD_WALL[i]).append('\n');
++        }
++        write("frames.csv", out.toString(), false);
++        note("frame_trace_rows=" + count + " overflow=" + PerformanceCounters.traceOverflow +
++            " origin_epoch_ms=" + origin + " origin_monotonic_ns=" + originNanos +
++            " completed_runTick_not_display_presentation=true inclusive_metrics_overlap=true");
 +    }
 +
 +    private static void effectiveSettings(long epoch) {
@@ -682,10 +702,10 @@ index 0000000..97c0ca7
 +}
 diff --git a/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceCounters.java b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceCounters.java
 new file mode 100644
-index 0000000..a1eae68
+index 0000000..17eb2d3
 --- /dev/null
 +++ b/FCL/performance-probe/src/main/java/net/wachiland/performance/PerformanceCounters.java
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,75 @@
 +package net.wachiland.performance;
 +
 +import java.util.concurrent.atomic.AtomicLong;
@@ -700,6 +720,16 @@ index 0000000..a1eae68
 +    public static final AtomicLong[] HISTOGRAM = counters(NAMES.length * BOUNDS.length);
 +    public static volatile boolean active;
 +    public static volatile long firstWorld;
++    // One capture, single Render-thread writer. Files are emitted only after capture.
++    public static final int TRACE_CAPACITY = 16384;
++    public static final long[] FRAME_END = new long[TRACE_CAPACITY];
++    public static final long[] FRAME_DURATION = new long[TRACE_CAPACITY];
++    public static final long[] FRAME_TICKS = new long[TRACE_CAPACITY];
++    public static final long[] FRAME_TICK_WALL = new long[TRACE_CAPACITY];
++    public static final long[] FRAME_WORLD_WALL = new long[TRACE_CAPACITY];
++    public static volatile int traceCount;
++    public static volatile long traceOverflow;
++    private static long frameTicks, frameTickWall, frameWorldWall;
 +    private static final ThreadLocal<int[]> DEPTH = ThreadLocal.withInitial(() -> new int[NAMES.length]);
 +
 +    private static AtomicLong[] counters(int size) {
@@ -713,6 +743,9 @@ index 0000000..a1eae68
 +            if (metric == 6 && firstWorld == 0) firstWorld = System.currentTimeMillis();
 +            if (!active) return 0;
 +            if (DEPTH.get()[metric]++ != 0) return -1;
++            if (metric == 0) {
++                frameTicks = COUNT[1].get(); frameTickWall = NANOS[1].get(); frameWorldWall = NANOS[6].get();
++            }
 +            return System.nanoTime();
 +        } catch (Throwable ignored) { return 0; }
 +    }
@@ -722,12 +755,23 @@ index 0000000..a1eae68
 +            if (start == 0) return;
 +            DEPTH.get()[metric]--;
 +            if (start < 0) return;
-+            long elapsed = Math.max(0, System.nanoTime() - start);
++            long ended = System.nanoTime();
++            long elapsed = Math.max(0, ended - start);
 +            NANOS[metric].addAndGet(elapsed);
 +            COUNT[metric].incrementAndGet();
 +            int bucket = 0;
 +            while (elapsed > BOUNDS[bucket]) bucket++;
 +            HISTOGRAM[metric * BOUNDS.length + bucket].incrementAndGet();
++            if (metric == 0) {
++                int index = traceCount;
++                if (index < TRACE_CAPACITY) {
++                    FRAME_END[index] = ended; FRAME_DURATION[index] = elapsed;
++                    FRAME_TICKS[index] = COUNT[1].get() - frameTicks;
++                    FRAME_TICK_WALL[index] = NANOS[1].get() - frameTickWall;
++                    FRAME_WORLD_WALL[index] = NANOS[6].get() - frameWorldWall;
++                    traceCount = index + 1;
++                } else traceOverflow++;
++            }
 +        } catch (Throwable ignored) { }
 +    }
 +
@@ -1916,10 +1960,10 @@ index 0000000..a02319b
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
 new file mode 100644
-index 0000000..4ad245a
+index 0000000..d70d6ce
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,263 @@
 +package net.wachiland.launcher
 +
 +import android.app.ActivityManager
@@ -1957,13 +2001,14 @@ index 0000000..4ad245a
 +
 +    @JvmStatic fun begin(context: Context, renderer: String) {
 +        val performance = PerformanceDiagnostics.armed(context)
++        val collectMemory = enabled(context)
 +        if ((!enabled(context) && !performance) || !active.compareAndSet(false, true)) return
 +        val app = context.applicationContext
 +        try {
 +            origin = System.currentTimeMillis()
 +            val prefix = "memory-${origin}-${Process.myPid()}"
 +            session = prefix
-+            deep = deepArmed(app) && !performance // Avoid stacking heavy heap probes on frame timing.
++            deep = collectMemory && deepArmed(app) && !performance // Avoid stacking heavy heap probes on frame timing.
 +            PerformanceDiagnostics.begin(performance)
 +            app.getSharedPreferences(PREFS, 0).edit().putString("game_telemetry_prefix", prefix)
 +                .putBoolean("game_performance_requested", performance).commit()
@@ -1978,6 +2023,7 @@ index 0000000..4ad245a
 +            directory.listFiles().orEmpty().filter { file -> sessions.drop(2).any { file.name.startsWith("$it-") } }.forEach { it.delete() }
 +            File(directory, "$prefix-info.txt").writeText("""
 +                Session=$prefix; PID=${Process.myPid()}; origin_epoch_ms=$origin; renderer=$renderer
++                Memory collectors enabled: $collectMemory. Disabled collectors produce no Android/JVM memory samples.
 +                ART/native/status/system samples every 10 seconds; Debug.MemoryInfo every 30 seconds.
 +                One initial mapping summary only; maximum 3 hours. Android meminfo keys absent between full samples.
 +                Android JSON memory values in KiB except explicitly named *_bytes. Missing metrics absent/-1.
@@ -2004,7 +2050,10 @@ index 0000000..4ad245a
 +                runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
 +                for (index in 0 until 1080) {
 +                    if (!active.get()) break
-+                    runCatching { sample(app, prefix, index % 3 == 0, index == 0) }.onFailure {
++                    runCatching {
++                        if (collectMemory) sample(app, prefix, index % 3 == 0, index == 0)
++                        else PerformanceDiagnostics.checkpoint(app, prefix, origin)
++                    }.onFailure {
 +                        runCatching { event(app, prefix, "sample_error_${it.javaClass.simpleName}", -1) }
 +                    }
 +                    try { Thread.sleep(10000) } catch (_: InterruptedException) { break }
@@ -2057,7 +2106,7 @@ index 0000000..4ad245a
 +                for (index in main - 1 downTo 0) if (args[index].startsWith(bootPrefix)) args.removeAt(index)
 +                mergedOptional.add(0, bootPrefix + paths.joinToString(File.pathSeparator))
 +            }
-+            args.addAll(args.indexOf("net.wachiland.diagnostics.MemoryMain"), listOf("-Dwachiland.memory.file=${File(dir(context), "$prefix-jvm.csv").absolutePath}", "-Dwachiland.memory.origin=$origin", "-Dwachiland.memory.deep=$deep") + mergedOptional)
++            args.addAll(args.indexOf("net.wachiland.diagnostics.MemoryMain"), listOf("-Dwachiland.memory.file=${File(dir(context), "$prefix-jvm.csv").absolutePath}", "-Dwachiland.memory.origin=$origin", "-Dwachiland.memory.deep=$deep", "-Dwachiland.memory.sample=${enabled(context)}") + mergedOptional)
 +            event(context, prefix, "jvm_probe_arguments_prepared", -1)
 +            args.toTypedArray()
 +        } catch (e: Exception) {
