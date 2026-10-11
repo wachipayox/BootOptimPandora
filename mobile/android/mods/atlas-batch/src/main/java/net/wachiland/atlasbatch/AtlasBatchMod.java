@@ -59,6 +59,7 @@ public final class AtlasBatchMod {
             .then(Commands.literal("reloadconfig").executes(c -> {
                 AtlasBatch.setEnabled(false);
                 AndroidSupportConfig.load();
+                StagedAtlasUpload.invalidatePixels();
                 c.getSource().sendSuccess(() -> Component.literal("Android support configuration reloaded; experimental batching disabled."),false);
                 return Command.SINGLE_SUCCESS;
             })));

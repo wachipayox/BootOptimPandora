@@ -17,6 +17,7 @@ final class AndroidSupportConfig {
     static volatile boolean diagnostics;
     static volatile boolean enabled=true;
     static volatile boolean stagedUploads;
+    static volatile boolean reuseStagingStorage;
     static volatile boolean directTerrainDraws;
     static volatile boolean frameWait;
     static volatile boolean flywheelExplicitOutputs;
@@ -32,6 +33,7 @@ final class AndroidSupportConfig {
                 values.setProperty("enabled","true");
                 values.setProperty("diagnostics","false");
                 values.setProperty("experimental.stagedUploads","false");
+                values.setProperty("experimental.reuseStagingStorage","false");
                 values.setProperty("experimental.directTerrainDraws","false");
                 values.setProperty("experimental.frameWait","false");
                 values.setProperty("experimental.flywheelExplicitOutputs","false");
@@ -43,12 +45,13 @@ final class AndroidSupportConfig {
             enabled=bool(values,"enabled",true);
             diagnostics=bool(values,"diagnostics",false);
             stagedUploads=bool(values,"experimental.stagedUploads",false);
+            reuseStagingStorage=bool(values,"experimental.reuseStagingStorage",false);
             directTerrainDraws=bool(values,"experimental.directTerrainDraws",false);
             frameWait=bool(values,"experimental.frameWait",false);
             flywheelExplicitOutputs=bool(values,"experimental.flywheelExplicitOutputs",false);
             rainBiomeMemo=bool(values,"experimental.rainBiomeMemo",false);
         } catch (IOException | IllegalArgumentException e) {
-            enabled=false; diagnostics=false; stagedUploads=false; directTerrainDraws=false; frameWait=false; flywheelExplicitOutputs=false; rainBiomeMemo=false;
+            enabled=false; diagnostics=false; stagedUploads=false; reuseStagingStorage=false; directTerrainDraws=false; frameWait=false; flywheelExplicitOutputs=false; rainBiomeMemo=false;
             LogUtils.getLogger().warn("[Wachiland Android support] Configuration unavailable; stock behavior",e);
         }
     }
