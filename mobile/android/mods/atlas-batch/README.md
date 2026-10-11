@@ -182,3 +182,17 @@ research entries above. Historical diagnostic gates do not imply promotion.
 GPL-3.0-only; see COPYING. The corresponding source ZIP includes this standalone
 build, wrapper and research record. It does not include Minecraft or NeoForge
 binaries. Keep this candidate separate from production until the gates pass.
+
+## Rain experiment startup isolation (0.2.12)
+
+The optional ParticleRain read-reuse experiment is **off by default**. When off,
+the plugin does not install its mixin at all, avoiding per-block wrapper dispatch.
+To test it, set `experimental.rainBiomeMemo=true` before starting Minecraft, or
+opt into the existing rain A/B/A marker with `diagnostics=true`. An unreadable
+configuration skips the hook. `/wachilandandroid rainmemo on` cannot install a
+missing mixin in an already running JVM; it reports that a restart is needed.
+Once opted in at startup, on/off still works for same-session comparisons.
+Status reports whether the hook was installed. No particle count, texture or
+animation quality reduction is involved. The cache has no proven FPS benefit
+on the server; keep it experimental. See the server research ledger for scope,
+bytecode coverage, invalidation and physical evidence.

@@ -16,7 +16,14 @@ public final class AtlasBatchMod {
     private static void commands(RegisterClientCommandsEvent event) {
         event.getDispatcher().register(Commands.literal("wachilandandroid")
             .then(Commands.literal("rainmemo")
-                .then(Commands.literal("on").executes(c -> { AndroidSupportConfig.rainBiomeMemo=true; c.getSource().sendSuccess(() -> Component.literal(ParticleRainBiomeMemo.status()),false); return 1; }))
+                .then(Commands.literal("on").executes(c -> {
+                    if (!AtlasBatchMixinPlugin.rainHookInstalled()) {
+                        c.getSource().sendSuccess(() -> Component.literal("Rain experiment was not installed. Set experimental.rainBiomeMemo=true and restart to enable it."),false);
+                        return 0;
+                    }
+                    AndroidSupportConfig.rainBiomeMemo=true;
+                    c.getSource().sendSuccess(() -> Component.literal(ParticleRainBiomeMemo.status()),false); return 1;
+                }))
                 .then(Commands.literal("off").executes(c -> { AndroidSupportConfig.rainBiomeMemo=false; c.getSource().sendSuccess(() -> Component.literal(ParticleRainBiomeMemo.status()),false); return 1; }))
                 .then(Commands.literal("status").executes(c -> { c.getSource().sendSuccess(() -> Component.literal(ParticleRainBiomeMemo.status()),false); return 1; })))
             .then(Commands.literal("memoryheap").executes(c -> {

@@ -45,7 +45,7 @@ public final class ParticleRainBiomeMemo {
         return result;
     }
     public static String status() {
-        return "rain_biome_memo="+AndroidSupportConfig.rainBiomeMemo+" version_checked="+checked
+        return "rain_hook_installed="+AtlasBatchMixinPlugin.rainHookInstalled()+" rain_biome_memo="+AndroidSupportConfig.rainBiomeMemo+" version_checked="+checked
             +" supported="+supported+" scopes="+scopes+" hits="+hits+" misses="+misses;
     }
 }
