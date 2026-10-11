@@ -13,7 +13,11 @@
     "GlStateManagerMixin",
     "NativeImageMixin",
     "SodiumTerrainDrawMixin",
-    "RenderSystemWaitMixin"
+    "RenderSystemWaitMixin",
+    "TextureManagerAccess",
+    "NativeImageAccess",
+    "ModelBakeryAccess",
+    "SimpleModelAccess"
   ],
   "injectors": {
     "defaultRequire": 1
