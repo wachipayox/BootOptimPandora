@@ -90,7 +90,7 @@ public class ByteArrayChannel implements SeekableByteChannel {
         if (!desktopTest && !("Linux".equals(System.getProperty("os.name"))
                 && "aarch64".equals(System.getProperty("os.arch"))
                 && System.getProperty("java.version", "").startsWith("21.0.1"))) return false;
-        return StackWalker.getInstance().walk(frames -> frames.limit(16).anyMatch(frame ->
+        return StackWalker.getInstance().walk(frames -> frames.limit(32).anyMatch(frame ->
                 frame.getClassName().equals("jdk.nio.zipfs.ZipFileSystem") && frame.getMethodName().equals("<init>")));
     }
 
@@ -109,7 +109,7 @@ public class ByteArrayChannel implements SeekableByteChannel {
             buf=null;
             long count=CHANNELS.incrementAndGet();
             long total=SPILLED.addAndGet(bytes.length);
-            if (count<=4 || count%32==0) System.err.println("[Wachiland ZIP spill] channels="+count+" snapshot_bytes="+total);
+            if (count<=4 || count%32==0) System.err.println("[Wachiland ZIP spill] guardDepth=32 channels="+count+" snapshot_bytes="+total);
         } catch (IOException | SecurityException failure) {
             // Any temp filesystem failure retains the original authoritative array.
             if (candidate!=null) try { candidate.close(); } catch (IOException ignored) { }

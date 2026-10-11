@@ -42,3 +42,14 @@ Only the isolated phone trial uses `--patch-module=jdk.zipfs=<private jar>`
 and `-Dwachiland.zipfs.spill=true`. Remove both arguments to restore the
 unmodified runtime; the JRE files are never overwritten. No APK rebuild and
 no BootOptim source change is needed for this test.
+
+## 2026-10-11 depth correction (still experimental)
+
+The actual phone JFR last old-object sample batch revealed JarJar PathFileSystem
+wrappers placing the nested ZipFileSystem constructor at frame index 17. The
+first implementation examined only 16 StackWalker frames and missed that path.
+The candidate now examines at most 32 frames; all other eligibility conditions
+and I/O behavior are unchanged. Source attribution and physical trial results
+belong in ANDROID-SUPPORT-MODEL-OWNERS-2026-10-11.md. Counter bytes remain
+cumulative copied snapshots, never a claim of actual RAM savings. No production
+promotion follows solely from increasing coverage.
