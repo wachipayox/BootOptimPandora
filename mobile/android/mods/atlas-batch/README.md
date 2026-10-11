@@ -13,15 +13,6 @@ resolution, textures, mipmaps, animation or simulation. Invalid/unreadable
 configuration disables the support mechanisms. Non-Android clients skip these
 mixins. GPU vendor names are reported, not used to enable unvalidated fixes.
 Defaults also include `experimental.stagedUploads=false`.
-The separate `experimental.reuseStagingStorage=false` candidate reuses bounded
-temporary RGBA8 storage on the render thread when staging is enabled. It does
-not reduce animation, image quality or particle count. It remains opt-in;
-compilation alone does not validate performance, resource reload or other GPUs.
-`/wachilandandroid reloadconfig` releases storage and resets pixel verification.
-For a bounded same-world OFF/ON/OFF diagnostic, enable diagnostics and create
-only `wachiland-staging-storage-probe.txt` before starting Minecraft. The existing
-probe restores the original option and releases storage when it completes or
-the world/screen changes. See `ANDROID-SERVER-FPS-2026-10-11.md` for evidence.
 Capability presence is also only evidence of availability, not proof of correct
 renderer implementation. No automatic mod removal or renderer change.
 

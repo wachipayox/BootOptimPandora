@@ -21,9 +21,6 @@ public final class StagedAtlasUpload {
     private static boolean tested, supported, failed;
     private static long uploads, fallbacks;
     private static int verifiedMips;
-    private static int scratchTexture, scratchFramebuffer;
-    private static Object scratchCapabilities;
-    private static long storageAllocations, storageReuses;
     private static final int[] STORES={3317,3314,3315,3316,3333,3330,3331,3332};
 
     public static boolean enter(SpriteContents sprite,TextureAtlas atlas) {
@@ -40,44 +37,12 @@ public final class StagedAtlasUpload {
         return previous;
     }
     public static void leave(boolean previous) { SCOPE.set(previous); }
-    public static String status() { return "staged_uploads="+AndroidSupportConfig.stagedUploads+" reuse_storage="+AndroidSupportConfig.reuseStagingStorage+" storage_allocations="+storageAllocations+" storage_reuses="+storageReuses+" self_test="+tested+" supported="+supported+" failed="+failed+" verified_mips="+verifiedMips+" uploads="+uploads+" fallbacks="+fallbacks; }
-    public static void invalidatePixels() {
-        if (RenderSystem.isOnRenderThread()) { verifiedMips=0; releaseStorage(); }
-    }
-
-    private static void releaseStorage() {
-        // GL names belong to their context. Never delete an old context's names in a new one.
-        if (scratchCapabilities==GL.getCapabilities()) {
-            if (scratchFramebuffer!=0) GL30C.glDeleteFramebuffers(scratchFramebuffer);
-            if (scratchTexture!=0) GL11C.glDeleteTextures(scratchTexture);
-        }
-        scratchTexture=0; scratchFramebuffer=0; scratchCapabilities=null;
-    }
-
-    private static void prepareStorage() {
-        Object capabilities=GL.getCapabilities();
-        if (scratchCapabilities!=null && scratchCapabilities!=capabilities) {
-            releaseStorage(); verifiedMips=0;
-        }
-        if (scratchTexture==0) {
-            scratchCapabilities=capabilities;
-            scratchTexture=GL11C.glGenTextures();
-            scratchFramebuffer=GL30C.glGenFramebuffers();
-            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D,scratchTexture);
-            // Bounded RGBA8 storage: 256 KiB, no mip chain or second full atlas.
-            allocate(256,256); storageAllocations++;
-        } else {
-            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D,scratchTexture);
-            storageReuses++;
-        }
-    }
+    public static String status() { return "staged_uploads="+AndroidSupportConfig.stagedUploads+" self_test="+tested+" supported="+supported+" failed="+failed+" verified_mips="+verifiedMips+" uploads="+uploads+" fallbacks="+fallbacks; }
+    public static void invalidatePixels() { if (RenderSystem.isOnRenderThread()) verifiedMips=0; }
 
     public static boolean upload(int target,int level,int x,int y,int width,int height,int format,int type,long pointer) {
         if (!SCOPE.get() || !RenderSystem.isOnRenderThread() || failed || target!=GL11C.GL_TEXTURE_2D || level<0 || level>15 || width<=0 || height<=0
             || width>256 || height>256 || x<0 || y<0 || format!=GL11C.GL_RGBA || type!=GL11C.GL_UNSIGNED_BYTE || pointer==0) return false;
-        if (scratchCapabilities!=null && scratchCapabilities!=GL.getCapabilities()) {
-            releaseStorage(); tested=false; supported=false; verifiedMips=0;
-        }
         if (!tested) selfTest();
         if (!supported || failed) return false;
         // Client memory only. With a PBO the pointer is an offset, not an address.
@@ -91,23 +56,16 @@ public final class StagedAtlasUpload {
         if (GL11C.glGetError()!=GL11C.GL_NO_ERROR) { disable("pre-existing GL error"); return false; }
         State saved=new State();
         int texture=0, framebuffer=0;
-        boolean reuse=AndroidSupportConfig.reuseStagingStorage;
         boolean complete=false;
         try {
-            if (reuse) {
-                prepareStorage(); texture=scratchTexture; framebuffer=scratchFramebuffer;
-            } else {
-                texture=GL11C.glGenTextures(); framebuffer=GL30C.glGenFramebuffers();
-                GL11C.glBindTexture(target,texture);
-                allocate(width,height);
-            }
+            texture=GL11C.glGenTextures(); framebuffer=GL30C.glGenFramebuffers();
+            GL11C.glBindTexture(target,texture);
+            allocate(width,height);
             GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER,framebuffer);
             GL30C.glFramebufferTexture2D(GL30C.GL_READ_FRAMEBUFFER,GL30C.GL_COLOR_ATTACHMENT0,target,texture,0);
             if (GL30C.glCheckFramebufferStatus(GL30C.GL_READ_FRAMEBUFFER)!=GL30C.GL_FRAMEBUFFER_COMPLETE) { disable("staging framebuffer incomplete"); return false; }
             GL11C.glReadBuffer(GL30C.GL_COLOR_ATTACHMENT0);
             // Pixel store was set by NativeImage and remains intact, including frame offsets.
-            // Upload -> copy -> next upload stay in one render-context command stream.
-            // No CPU pixel pointer is retained and no worker writes the shared storage.
             GL11C.glTexSubImage2D(target,0,0,0,width,height,format,type,pointer);
             GL11C.glBindTexture(target,saved.texture);
             GL11C.glCopyTexSubImage2D(target,level,x,y,0,0,width,height);
@@ -118,11 +76,8 @@ public final class StagedAtlasUpload {
             disable("native route unavailable: "+e.getClass().getSimpleName());
         } finally {
             saved.restore();
-            if (reuse) { if (failed) releaseStorage(); }
-            else {
-                if (framebuffer!=0) GL30C.glDeleteFramebuffers(framebuffer);
-                if (texture!=0) GL11C.glDeleteTextures(texture);
-            }
+            if (framebuffer!=0) GL30C.glDeleteFramebuffers(framebuffer);
+            if (texture!=0) GL11C.glDeleteTextures(texture);
         }
         if (complete) uploads++; else fallbacks++;
         return complete; // Caller repeats original CPU upload if copying failed.
