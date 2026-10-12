@@ -48,7 +48,7 @@ Comparison recent profile-only capture visible-affinity2-skipped:6.2972 loops/s,
 p50/p95/p99 148.76/247.41/317.35ms,max459.33ms,8.86% frame wall>250ms,
 mark-window187.07ms versus132.72 outside,19.991ticks/s. Actual display FPS not
 measured. Weather/thermal/order vary; one candidate run cannot establish causality.
-Results and disposition pending. No candidate production promotion yet.
+Results below. No candidate production promotion.
 
 First connection rejected by the known intermittent registry bug:
 create:mechanical_press unknown server item. No world capture from that attempt
@@ -75,3 +75,37 @@ state or cached ship membership. General source-level change, not Android-only.
 Compile pending; NOT installed/promoted or claimed as performance win. Exact
 phone fork/source alignment and semantic particle/ship validation required
 before substituting the pack JAR. This is separate from EntityCulling trial.
+
+## EntityCulling result: removed
+
+Candidate session memory-1791802408799-6575, origin1791802761020,120.441s.
+375 completed loops,3.1136/s,p50/p95/p99 252.34/745.61/970.98ms,max1182.78ms;
+74.13% frame wall in >250ms frames; ticks18.025/s. Mark-window391.53ms versus
+254.52ms outside. GC max196.689ms,total1253.089ms; cycles8.5–16.8s.
+
+Return stock support0.2.12: session memory-1791803153673-19840,
+origin1791803527562,120.438s.751 loops,6.2356/s,p50/p95/p99
+141.80/278.64/357.12ms,max542.78ms;16.25% wall>250ms; ticks19.985/s.
+Mark-window191.78ms versus139.25ms outside; GC max151.635ms,total1167.371ms.
+Mark cycles7.6–7.9s. These match earlier profile-only ~6.3/s far more closely.
+
+Candidate had heavy GLOBAL paging (mark pswpin5269pages/s,majorfault6053/s;
+outside2586/3392) versus return control130/161 and220/408. MemAvailable
+candidate315256/594264/1036968KiB; control470692/544856/607180KiB.
+Global rates do not identify which process owns those pages. Battery temperatures
+31.7 versus31.8C earlier control do not measure CPU/GPU junction temperature.
+Day/night and memory state vary; cannot assign all regression to the patch or
+assert a root cause from this one return comparison. No benefit demonstrated.
+
+Disposition: candidate REMOVED from deliverable source and phone active mod set.
+Experiment code retained in commitf2d76812a only for research. Restore original
+support config and0.2.12; do not keep a disabled experimental switch in production.
+Remaining GC spikes still not solved, not hardware-limit evidence.
+
+Sable follow-up compile succeeded3m25s (:common:compileJava), commit4ed5589.
+Pulled exact phone Sable2.0.3; javap comparison of method instructions excluding
+constant-pool indices shows ONLY moveWithSubLevels changed. Packaged a diagnostic
+copy of that exact JAR replacing only ParticleMixin.class. Verified all other ZIP
+entries byte-identical and no signature entries invalidated. Source patch and
+jar-contract hashes saved in raw folder. This avoids replacing user/native/other
+compatibility changes with a fresh whole-mod build. Physical Sable trial pending.

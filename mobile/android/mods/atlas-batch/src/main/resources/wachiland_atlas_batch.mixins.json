@@ -19,8 +19,7 @@
     "ModelBakeryAccess",
     "SimpleModelAccess",
     "FlywheelCompilationMixin",
-    "ParticleRainBiomeMixin",
-    "EntityCullingAllocationMixin"
+    "ParticleRainBiomeMixin"
   ],
   "injectors": {
     "defaultRequire": 1

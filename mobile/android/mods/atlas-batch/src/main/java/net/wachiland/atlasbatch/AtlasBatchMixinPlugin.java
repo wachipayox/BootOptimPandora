@@ -33,25 +33,11 @@ public final class AtlasBatchMixinPlugin implements IMixinConfigPlugin {
         } catch (Exception e) { return false; }
     }
 
-    private static boolean requestEntityCulling() {
-        try {
-            Properties p=new Properties();
-            try (var reader=Files.newBufferedReader(FMLPaths.CONFIGDIR.get().resolve("wachiland-android-support.properties"))) { p.load(reader); }
-            if (!"true".equalsIgnoreCase(p.getProperty("enabled","true").trim())
-                || !"true".equalsIgnoreCase(p.getProperty("experimental.entityCullingAllocation","false").trim())) return false;
-            // Only the exact physical pack version audited for this experiment.
-            var list=net.neoforged.fml.loading.FMLLoader.getLoadingModList();
-            return list!=null && list.getMods().stream().anyMatch(m -> m.getModId().equals("entityculling")
-                && m.getVersion().toString().equals("1.10.4"));
-        } catch (Exception e) { return false; }
-    }
-
     @Override public void onLoad(String mixinPackage) { }
     @Override public String getRefMapperConfig() { return null; }
     @Override public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         return AndroidSupportConfig.ANDROID
-            && (!mixinClassName.endsWith(".ParticleRainBiomeMixin") || requestRainHook())
-            && (!mixinClassName.endsWith(".EntityCullingAllocationMixin") || requestEntityCulling());
+            && (!mixinClassName.endsWith(".ParticleRainBiomeMixin") || requestRainHook());
     }
     @Override public void acceptTargets(Set<String> myTargets, Set<String> otherTargets) { }
     @Override public List<String> getMixins() { return null; }
