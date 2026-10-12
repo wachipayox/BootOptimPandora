@@ -19,7 +19,10 @@
     "ModelBakeryAccess",
     "SimpleModelAccess",
     "FlywheelCompilationMixin",
-    "ParticleRainBiomeMixin"
+    "ParticleRainBiomeMixin",
+    "LevelFrustumCaptureMixin",
+    "OcclusionFrustumMixin",
+    "OcclusionVecAccess"
   ],
   "injectors": {
     "defaultRequire": 1
