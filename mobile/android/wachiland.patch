@@ -1,5 +1,5 @@
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index 8463609..9719936 100644
+index 8463609..6706439 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
 @@ -53,9 +53,9 @@ android {
@@ -24,8 +24,8 @@ index 8463609..9719936 100644
          targetSdk = libs.versions.targetSdk.get().toInt()
 -        versionCode = 1337
 -        versionName = "1.3.3.7"
-+        versionCode = 13
-+        versionName = "0.1.12-alpha"
++        versionCode = 14
++        versionName = "0.1.13-alpha"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
              cmake {
@@ -1399,10 +1399,10 @@ index 70ca430..96bae08 100644
  
      public Task<?> check(Context context, boolean showBeta, boolean showAlert) {
 diff --git a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
-index c0546b9..fa4a449 100644
+index c0546b9..c52b0da 100644
 --- a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
 +++ b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
-@@ -487,12 +487,21 @@ public class FCLauncher {
+@@ -487,12 +487,22 @@ public class FCLauncher {
          printTaskTitle(bridge, task + " Arguments");
          String libraryPath = getLibraryPath(config.getContext(), config.getJavaPath(), config.getRenderer().getPath(), config.getLwjglVersion());
          String[] args = rebaseArgs(config, libraryPath);
@@ -1413,6 +1413,7 @@ index c0546b9..fa4a449 100644
 +                major = Integer.parseInt(version.split("[.\\-+]")[0]);
 +            } catch (IOException | NumberFormatException ignored) { /* Optional diagnostic fails open. */ }
 +            boolean agentAvailable = major >= 17 && new File(config.getJavaPath(), "lib/libinstrument.so").isFile();
++            args = net.wachiland.launcher.GcRuntimeProfile.prepareGameArgs(config.getContext(), args, major);
 +            args = net.wachiland.launcher.MemoryDiagnostics.prepareGameArgs(config.getContext(), args, agentAvailable, new File(config.getWorkingDir()));
 +        }
          boolean javaArgs = true;
@@ -1425,7 +1426,7 @@ index c0546b9..fa4a449 100644
              String title = task.equals("Minecraft") ? javaArgs ? "Java" : task : task;
              String prefix = title + " argument: ";
              if (task.equals("Minecraft") && !javaArgs && mainClass < 2) {
-@@ -517,6 +526,8 @@ public class FCLauncher {
+@@ -517,6 +527,8 @@ public class FCLauncher {
      }
  
      public static FCLBridge launchMinecraft(FCLConfig config) {
@@ -1434,7 +1435,7 @@ index c0546b9..fa4a449 100644
          FCLBridge bridge = launchProcess(config, FCLPath.LATEST_GAME_LOG, "Minecraft", true, true, true);
          // 标志先落在 bridge 实例上：launch 线程无 Looper，不能在此触碰 CallbackBridge（类初始化含 Choreographer）
          bridge.setCleanroomActive(config.getInstalledModLoaders() != null
-@@ -539,6 +550,9 @@ public class FCLauncher {
+@@ -539,6 +551,9 @@ public class FCLauncher {
          bridge.setLogPath(config.getLogDir() + "/" + logName);
          Thread thread = new Thread(() -> {
              try {
@@ -1958,6 +1959,48 @@ index 0000000..a02319b
 +    }
 +    private static String hex(byte[] bytes) { StringBuilder result=new StringBuilder(); for(byte b:bytes) result.append(String.format(Locale.ROOT,"%02x",b&255)); return result.toString(); }
 +}
+diff --git a/FCL/src/main/java/net/wachiland/launcher/GcRuntimeProfile.kt b/FCL/src/main/java/net/wachiland/launcher/GcRuntimeProfile.kt
+new file mode 100644
+index 0000000..b872969
+--- /dev/null
++++ b/FCL/src/main/java/net/wachiland/launcher/GcRuntimeProfile.kt
+@@ -0,0 +1,36 @@
++package net.wachiland.launcher
++
++import android.content.Context
++
++/** Opt-in launch policy, independent of profiling. No frame hooks or heap-size changes. */
++object GcRuntimeProfile {
++    private const val PREFS = "wachiland_process_diagnostics"
++    @JvmStatic fun enabled(context: Context) = context.getSharedPreferences(PREFS, 0)
++        .getBoolean("gc_smoothness", false)
++    @JvmStatic fun setEnabled(context: Context, enabled: Boolean) {
++        context.getSharedPreferences(PREFS, 0).edit().putBoolean("gc_smoothness", enabled).apply()
++    }
++
++    @JvmStatic fun prepareGameArgs(context: Context, original: Array<String>, javaMajor: Int): Array<String> {
++        return try {
++            if (javaMajor < 17 || !enabled(context)) return original
++            val main = original.indexOf("mio.Wrapper")
++            if (main < 0) return original
++            val vm = original.take(main)
++            // Respect an explicitly selected collector, including disabling G1.
++            if (vm.any { it == "-XX:-UseG1GC" ||
++                (it.startsWith("-XX:+Use") && it.endsWith("GC") && it != "-XX:+UseG1GC") }) return original
++            val extra = mutableListOf<String>()
++            if (vm.none { it.startsWith("-XX:ConcGCThreads=") }) extra += "-XX:ConcGCThreads=1"
++            if (vm.none { it == "-XX:+ClassUnloadingWithConcurrentMark" ||
++                it == "-XX:-ClassUnloadingWithConcurrentMark" ||
++                it.startsWith("-XX:ClassUnloadingWithConcurrentMark=") }) {
++                extra += "-XX:-ClassUnloadingWithConcurrentMark"
++            }
++            if (extra.isEmpty()) return original
++            val result = original.toMutableList()
++            result.addAll(main, extra)
++            result.toTypedArray()
++        } catch (_: Exception) { original }
++    }
++}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/MemoryDiagnostics.kt
 new file mode 100644
 index 0000000..d70d6ce
@@ -2336,10 +2379,10 @@ index 0000000..5846eb5
 +}
 diff --git a/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
 new file mode 100644
-index 0000000..ed73032
+index 0000000..501498d
 --- /dev/null
 +++ b/FCL/src/main/java/net/wachiland/launcher/ProcessExitDiagnostics.kt
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,357 @@
 +package net.wachiland.launcher
 +
 +import android.annotation.SuppressLint
@@ -2479,6 +2522,14 @@ index 0000000..ed73032
 +            })
 +            addView(TextView(activity).apply {
 +                text = "Pide una pantalla de 60 Hz y rendimiento sostenido al sistema (${if (ThermalDiagnostics.sustainedSupported(activity)) "disponible" else "no disponible en este dispositivo"}). Conserva resolución y gráficos. Puede reducir la velocidad máxima; la respuesta depende del móvil. No limita por sí solo los FPS del juego ni desactiva la protección térmica."
++            })
++            addView(CheckBox(activity).apply {
++                text = "Reducir tirones por limpieza de memoria (Java 17+)"
++                isChecked = GcRuntimeProfile.enabled(activity)
++                setOnCheckedChangeListener { _, checked -> GcRuntimeProfile.setEnabled(activity, checked) }
++            })
++            addView(TextView(activity).apply {
++                text = "Perfil experimental para modpacks grandes. Conserva gráficos y simulación, pero puede retener más memoria de clases y código. Desmárcalo para usar el comportamiento estándar de Java. Respeta los parámetros Java que hayas definido a mano."
 +            })
 +            val basic = CheckBox(activity).apply {
 +                text = "Registrar memoria, temperatura y CPU durante las partidas"
