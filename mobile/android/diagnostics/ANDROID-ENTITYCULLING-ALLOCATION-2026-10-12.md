@@ -109,3 +109,28 @@ copy of that exact JAR replacing only ParticleMixin.class. Verified all other ZI
 entries byte-identical and no signature entries invalidated. Source patch and
 jar-contract hashes saved in raw folder. This avoids replacing user/native/other
 compatibility changes with a fresh whole-mod build. Physical Sable trial pending.
+
+
+## Sable physical result and attribution continuation
+
+Session memory-1791803987162-28241,120.410s,739 completed loops,6.1374/s,
+p50/p95/p99 144.92/298.65/386.43ms,max488.52ms;18.38% frame wall>250ms.
+Ticks20.023/s. Mark-window199.23ms versus131.03ms outside. GC max99.184ms,
+total1229.447ms; cycles7.6–8.6s,roughly14s apart. Control6.2356/s,p95 278.64,
+p99 357.12: no coherent loop-rate or spike benefit. Global MemAvailable
+372264/392488/413952KiB; low paging, unlike culling trial. No new particle/mixin
+failure, but stationary view does not prove all ship collision behavior.
+
+Disposition NOT promoted; exact original Sable restored on phone. Source draft
+remains on isolated research branch, not production or an installed disabled
+feature. No claim that allocated objects were dominant simply because sampled
+traffic was high. No universal hardware limit established.
+
+Existing JFR g1-attribution.jfr has ZERO ExecutionSample/NativeMethodSample events.
+Sampled allocation weights did not select two frame improvements. Reuse existing
+JFR mechanism with delayed330s, bounded180s/8MiB CPU/native samples at20ms,
+CPU/thread CPU load1s and GC summaries; no allocation sampling, old-object walk,
+heap dump or new Spark. Original mods restored. Existing frame capture and GC
+info timestamps allow inside/outside-mark and >250ms-frame attribution. This run
+is for source attribution, EXCLUDED from ordinary FPS performance comparisons.
+Physical label visible-frame-cause, recording visible-frame-cause.jfr. Pending.
