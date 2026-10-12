@@ -134,3 +134,39 @@ heap dump or new Spark. Original mods restored. Existing frame capture and GC
 info timestamps allow inside/outside-mark and >250ms-frame attribution. This run
 is for source attribution, EXCLUDED from ordinary FPS performance comparisons.
 Physical label visible-frame-cause, recording visible-frame-cause.jfr. Pending.
+
+
+## Bounded execution attribution result
+
+Original mods, profile-only GC retained. Session memory-1791804866262-9897.
+JFR start2026-10-12T11:39:58Z,180s,2,014,025bytes; no heap/allocation walks.
+Frame window1791805224855.60..1791805344786ms lies within recorded samples
+1791805199046.49..1791805378987.59ms.11015 Java samples,8511 native samples,
+3127 thread CPU events. Instrumented loop rate5.4285/s NOT compared as clean FPS.
+
+Within frame window: CullThread4193 Java samples, Render1631 Java+153 native,
+chunk executor1106 Java. Thread CPU mean machine fractions Render0.1110,
+CullThread0.09285,C2 compiler0.05484,chunk executor0.03331 (119 readings each).
+These are machine-normalized CPU observations, not FPS, GPU occupancy or exact
+critical-path wall. Native watcher3954 samples mostly wait; sample count alone
+must not assign it CPU cost. Phase classifier has low coverage/truncated stacks:
+other means UNCLASSIFIED, not a measured separate game phase.
+
+Cull leaves: ClientChunkCache.getChunk1758/4193 (~41.9%), isAABBVisible896,
+isVisible605,cullBlockEntities201,isSolidRender198,isVoxelVisible119.
+Main samples include block-entity ticking/getPos, Create SmartBlockEntity behavior
+callbacks and collections; no single main method demonstrated as sole culprit.
+Culling spends close to render-thread CPU and accesses world/chunk data heavily.
+This is a stronger premise than iterator allocation counts; source confirms
+Provider.prepareChunk only assigns world, per-voxel reads call world.getBlockState,
+and CullTask raycasts all eligible nearby block entities without a frustum-first
+filter. No chunk cache/frustum patch yet: preserve world/mixin read contracts,
+Nowheel/Flywheel custom bounds, camera freshness and visibility on rotation.
+
+Follow-up priority: reduce real culling query work and memory traffic, then
+main-thread Create/block-entity costs. Need measurement of whole cull passes and
+semantic visibility gates, not a claimed win from counts alone. Spark still parked.
+No new hardware-limit or30FPS guarantee. All temporary JFR/frame args/collectors
+removed after normal EGL shutdown; original Sable hash verified, original support
+config/0.2.12 restored, failed candidate file removed,2816MiB retained. APK0.1.13
+optional G1 profile enabled. Original user source trees and BootOptim untouched.
