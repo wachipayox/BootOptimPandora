@@ -33,12 +33,14 @@ public final class AtlasBatchMixinPlugin implements IMixinConfigPlugin {
         } catch (Exception e) { return false; }
     }
 
-    private static boolean requestFrustumHook() {
+    private static boolean requestFrustumHook() { return requestCullingHook("experimental.frustumCullingQueries"); }
+
+    private static boolean requestCullingHook(String property) {
         try {
             Properties p=new Properties();
             try (var reader=Files.newBufferedReader(FMLPaths.CONFIGDIR.get().resolve("wachiland-android-support.properties"))) { p.load(reader); }
             if (!"true".equalsIgnoreCase(p.getProperty("enabled","true").trim())
-                || !"true".equalsIgnoreCase(p.getProperty("experimental.frustumCullingQueries","false").trim())) return false;
+                || !"true".equalsIgnoreCase(p.getProperty(property,"false").trim())) return false;
             var list=net.neoforged.fml.loading.FMLLoader.getLoadingModList();
             return list!=null && list.getMods().stream().anyMatch(m -> m.getModId().equals("entityculling")
                 && m.getVersion().toString().equals("1.10.4"));
@@ -49,6 +51,7 @@ public final class AtlasBatchMixinPlugin implements IMixinConfigPlugin {
     @Override public String getRefMapperConfig() { return null; }
     @Override public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         return AndroidSupportConfig.ANDROID
+            && (!mixinClassName.endsWith(".CullingSlotIndexMixin") || requestCullingHook("experimental.cullingSlotIndex"))
             && (!mixinClassName.endsWith(".ParticleRainBiomeMixin") || requestRainHook())
             && (!(mixinClassName.endsWith(".LevelFrustumCaptureMixin") || mixinClassName.endsWith(".OcclusionFrustumMixin")
                 || mixinClassName.endsWith(".OcclusionVecAccess")) || requestFrustumHook());

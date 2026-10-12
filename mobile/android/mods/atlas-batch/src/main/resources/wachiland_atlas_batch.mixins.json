@@ -22,7 +22,8 @@
     "ParticleRainBiomeMixin",
     "LevelFrustumCaptureMixin",
     "OcclusionFrustumMixin",
-    "OcclusionVecAccess"
+    "OcclusionVecAccess",
+    "CullingSlotIndexMixin"
   ],
   "injectors": {
     "defaultRequire": 1
