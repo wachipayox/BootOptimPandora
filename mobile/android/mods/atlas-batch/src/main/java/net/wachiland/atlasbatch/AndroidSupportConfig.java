@@ -41,6 +41,8 @@ final class AndroidSupportConfig {
                 values.setProperty("experimental.earlyWindowCompatibility","true");
                 values.setProperty("earlyWindow.mode","auto");
                 values.setProperty("earlyWindow.fitLogo","true");
+                values.setProperty("startup.moduleGraph","true");
+                values.setProperty("startup.opcodeNames","true");
                 values.setProperty("compat.nowheelNullableBounds","true");
                 try (Writer out=Files.newBufferedWriter(file,StandardCharsets.UTF_8)) {
                     values.store(out,"Android support foundation. Quality is unchanged. Diagnostics add measurement overhead. No automatic mod removal or unvalidated GPU optimization.");

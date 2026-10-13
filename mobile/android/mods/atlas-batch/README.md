@@ -2,7 +2,7 @@
 
 Separate client mod for the Android pack, currently NeoForge 1.21.1. The build
 directory retains the historical atlas-batch name; the new artifact is
-`wachiland-android-support-neoforge-1.21.1-0.2.20-auto-early-fit.jar`, mod ID
+`wachiland-android-support-neoforge-1.21.1-0.2.24.jar`, mod ID
 `wachiland_android_support`. Remove/disable the old atlas diagnostic JAR before
 installing this one. Staging has a measured FPS benefit on the reference Vivo;
 it remains experimental because reload and cross-GPU gates have not passed.
@@ -174,7 +174,7 @@ From this directory, with JDK 21 and network access for initial dependencies:
 ./gradlew assemble --no-daemon
 ```
 
-The distributable is `build/libs/wachiland-android-support-neoforge-1.21.1-0.2.20-auto-early-fit.jar`.
+The distributable is `build/libs/wachiland-android-support-neoforge-1.21.1-0.2.24.jar`.
 `assemble` does not run tests. Compilation, physical startup and reference-world probes passed. General visual
 equivalence, resource reload and wider GPU gates remain open; see the current
 research entries above. Historical diagnostic gates do not imply promotion.
@@ -222,3 +222,26 @@ MobileGlues/core-profile detection; `legacy` restores stock and `modern` forces
 the adapter. `earlyWindow.fitLogo=true` proportionally fits the logo with margin;
 false retains original scaling. Restart after config changes. Both are optional
 settings; absent keys use these defaults on existing installations too.
+
+## Automatic startup hooks (0.2.24 / launcher 0.1.16)
+
+The launcher stages the helper before NeoForge even if Drippy is absent or its
+screen compatibility is disabled. Supported JRE21 module graphs use a bitset
+transitive closure of the same dependencies. The audited Mixin opcode-name
+wrapper uses its existing ASM table instead of repeated field reflection.
+Unknown runtime/class/table keeps the original route. No checks, callbacks,
+mod registration, simulation or graphics quality are skipped.
+
+Both are requested automatically; disable individually with
+`startup.moduleGraph=false` or `startup.opcodeNames=false` in
+`config/wachiland-android-support.properties`. `enabled=false` disables the whole
+addon. Explicit expert JVM properties take precedence over these defaults.
+No graphics vendor selects the startup hooks. The early screen still uses the
+actual GL context with `earlyWindow.mode=auto` and fits the logo by default.
+
+Physical graph closure dropped from 2.88 s to 0.21 s in one matched pair, while
+whole startup changed only about 0.91 s. Opcode candidate/control whole startup
+surrogates were 196.560 / 200.923 s in one pair: this is observed, not a robust
+universal speedup. See the [measurement ledger](../../diagnostics/ANDROID-MODULE-GRAPH-2026-10-13.md).
+The current crowded server remains below 30 FPS; these startup hooks do not
+claim an in-world FPS improvement.

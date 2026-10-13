@@ -26,7 +26,10 @@ public final class EarlyCompatAgent {
         Map.entry("glEnable","(I)V"),Map.entry("glDisable","(I)V"),Map.entry("glIsEnabled","(I)Z"),
         Map.entry("glEnableClientState","(I)V"),Map.entry("glDisableClientState","(I)V"));
     public static void initialize(Instrumentation instrumentation) {
-        if (!Boolean.getBoolean("wachiland.android.early.compat") || !STARTED.compareAndSet(false,true)) return;
+        if (!STARTED.compareAndSet(false,true)) return;
+        EarlyModuleGraphAgent.initialize(instrumentation);
+        EarlyOpcodeNamesAgent.initialize(instrumentation);
+        if (!Boolean.getBoolean("wachiland.android.early.compat")) return;
         instrumentation.addTransformer(new ClassFileTransformer() {
             @Override public byte[] transform(Module module,ClassLoader loader,String name,Class<?> redefining,ProtectionDomain domain,byte[] bytes) {
                 if (!TARGET.equals(name)) return null;

@@ -20,6 +20,8 @@ final class LiveBench {
     private static long start, epoch, pending, end;
     private static int ticks, duration;
     private static boolean running, oldFrustum, oldCulling, wantedFrustum, wantedCulling;
+    private static boolean oldStaging, wantedStaging;
+    private static Boolean requestedStaging;
     private static ClientLevel level;
     private static Vec3 position;
     private static float yaw, pitch, rain;
@@ -50,7 +52,10 @@ final class LiveBench {
                 if (mc.screen != null || mc.player == null || mc.level == null) { pending=now+5_000_000_000L; return; }
                 if (now < pending) return;
                 oldFrustum=AndroidSupportConfig.frustumCullingQueries; oldCulling=culling.getBoolean(null);
+                oldStaging=AndroidSupportConfig.stagedUploads;
+                wantedStaging=requestedStaging == null ? oldStaging : requestedStaging;
                 AndroidSupportConfig.frustumCullingQueries=wantedFrustum; culling.setBoolean(null,wantedCulling);
+                AndroidSupportConfig.stagedUploads=wantedStaging;
                 // Allow culling state and frustum snapshots to settle, outside the measurement.
                 pending=0; start=now+10_000_000_000L; return;
             }
@@ -66,7 +71,7 @@ final class LiveBench {
                 start=System.nanoTime(); epoch=System.currentTimeMillis(); end=start+duration*1_000_000_000L; invalid=null;
                 counters.getField("captureOriginNanos").setLong(null,start);
                 running=true; counters.getField("active").setBoolean(null,true);
-                status("capture_start label="+label+" epoch_ms="+epoch+" frustum="+wantedFrustum+" culling="+wantedCulling+" duration_s="+duration+" position="+position+" yaw="+yaw+" pitch="+pitch+" rain="+rain);
+                status("capture_start label="+label+" epoch_ms="+epoch+" frustum="+wantedFrustum+" culling="+wantedCulling+" staging="+wantedStaging+" duration_s="+duration+" position="+position+" yaw="+yaw+" pitch="+pitch+" rain="+rain);
                 return;
             }
             if (++ticks % 20 != 0) return;
@@ -74,9 +79,12 @@ final class LiveBench {
             if (!Files.isRegularFile(request)) return;
             String[] fields=Files.readString(request,StandardCharsets.UTF_8).trim().split("\\s+");
             Files.delete(request);
-            if (fields.length!=4 || !fields[0].matches("[a-zA-Z0-9_-]{1,48}") || !fields[2].matches("true|false") || !fields[3].matches("true|false")) throw new IllegalArgumentException("Expected label seconds frustum culling");
+            if ((fields.length!=4 && fields.length!=5) || !fields[0].matches("[a-zA-Z0-9_-]{1,48}") || !fields[2].matches("true|false") || !fields[3].matches("true|false")
+                || (fields.length==5 && !fields[4].matches("true|false"))) throw new IllegalArgumentException("Expected label seconds frustum culling [staging]");
             int seconds=Integer.parseInt(fields[1]); if (seconds<30 || seconds>120) throw new IllegalArgumentException("Capture must be 30..120 seconds");
-            label=fields[0]; duration=seconds; wantedFrustum=Boolean.parseBoolean(fields[2]); wantedCulling=Boolean.parseBoolean(fields[3]); pending=now+5_000_000_000L;
+            label=fields[0]; duration=seconds; wantedFrustum=Boolean.parseBoolean(fields[2]); wantedCulling=Boolean.parseBoolean(fields[3]);
+            requestedStaging=fields.length==5 ? Boolean.parseBoolean(fields[4]) : null;
+            pending=now+5_000_000_000L;
             status("capture_queued label="+label);
         } catch (Throwable error) {
             try { if (counters!=null) counters.getField("active").setBoolean(null,false); } catch (Throwable ignoredError) { }
@@ -96,7 +104,7 @@ final class LiveBench {
         for(int i=0;i<5;i++) trace[i]=Arrays.copyOf((long[])counters.getField(arrays[i]).get(null),count);
         String phase=label, failure=invalid; long origin=start, originEpoch=epoch, elapsed=now-start;
         long[] firstCount=initialCount,firstWall=initialWall;
-        String metadata="label="+phase+"\nvalid="+(failure==null)+"\ninvalid_reason="+failure+"\norigin_epoch_ms="+originEpoch+"\nelapsed_ns="+elapsed+"\nfrustum="+wantedFrustum+"\nculling="+wantedCulling+"\nposition="+position+"\nyaw="+yaw+"\npitch="+pitch+"\nrain="+rain+"\ntrace_overflow="+overflow+"\n";
+        String metadata="label="+phase+"\nvalid="+(failure==null)+"\ninvalid_reason="+failure+"\norigin_epoch_ms="+originEpoch+"\nelapsed_ns="+elapsed+"\nfrustum="+wantedFrustum+"\nculling="+wantedCulling+"\nstaging="+wantedStaging+"\nposition="+position+"\nyaw="+yaw+"\npitch="+pitch+"\nrain="+rain+"\ntrace_overflow="+overflow+"\n";
         restore(); running=false; start=0; level=null; position=null;
         // Bounded copy is complete; disk IO runs after capture, never in a timed frame.
         Thread writer=new Thread(() -> {
@@ -121,6 +129,7 @@ final class LiveBench {
     }
     private static void restore() {
         AndroidSupportConfig.frustumCullingQueries=oldFrustum;
+        AndroidSupportConfig.stagedUploads=oldStaging;
         try { if(culling!=null) culling.setBoolean(null,oldCulling); } catch(Throwable ignored) { }
     }
     private static synchronized void status(String text) {
