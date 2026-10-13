@@ -12,7 +12,7 @@ import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 
 @Mod(value = "wachiland_android_support", dist = Dist.CLIENT)
 public final class AtlasBatchMod {
-    public AtlasBatchMod() { AndroidSupportConfig.load(); NeoForge.EVENT_BUS.addListener(AtlasBatchMod::commands); }
+    public AtlasBatchMod() { AndroidSupportConfig.load(); NeoForge.EVENT_BUS.addListener(AtlasBatchMod::commands); NeoForge.EVENT_BUS.addListener(LiveBench::tick); }
     private static void commands(RegisterClientCommandsEvent event) {
         event.getDispatcher().register(Commands.literal("wachilandandroid")
             .then(Commands.literal("rainmemo")
