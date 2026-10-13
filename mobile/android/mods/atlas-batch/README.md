@@ -2,7 +2,7 @@
 
 Separate client mod for the Android pack, currently NeoForge 1.21.1. The build
 directory retains the historical atlas-batch name; the new artifact is
-`wachiland-android-support-neoforge-1.21.1-0.2.4-jit-attribution.jar`, mod ID
+`wachiland-android-support-neoforge-1.21.1-0.2.19-early-window-null-bounds.jar`, mod ID
 `wachiland_android_support`. Remove/disable the old atlas diagnostic JAR before
 installing this one. Staging has a measured FPS benefit on the reference Vivo;
 it remains experimental because reload and cross-GPU gates have not passed.
@@ -174,7 +174,7 @@ From this directory, with JDK 21 and network access for initial dependencies:
 ./gradlew assemble --no-daemon
 ```
 
-The distributable is `build/libs/wachiland-android-support-neoforge-1.21.1-0.2.4-jit-attribution.jar`.
+The distributable is `build/libs/wachiland-android-support-neoforge-1.21.1-0.2.19-early-window-null-bounds.jar`.
 `assemble` does not run tests. Compilation, physical startup and reference-world probes passed. General visual
 equivalence, resource reload and wider GPU gates remain open; see the current
 research entries above. Historical diagnostic gates do not imply promotion.
@@ -196,3 +196,22 @@ Status reports whether the hook was installed. No particle count, texture or
 animation quality reduction is involved. The cache has no proven FPS benefit
 on the server; keep it experimental. See the server research ledger for scope,
 bytecode coverage, invalidation and physical evidence.
+
+
+## Optional early screen adapter (0.2.19)
+
+On launcher0.1.14+, the support JAR carries its own early compatibility components.
+The launcher installs them before NeoForge starts. The external official Drippy
+module is retained; no fork or copied Drippy assets are shipped. The audited
+provider's legacy drawing is translated to modern GL only on MobileGlues, capped
+at20FPS during loading and cleaned up on Minecraft handoff. Unknown provider
+versions keep their original behavior. It runs even with diagnostic recording off.
+Disable via `experimental.earlyWindowCompatibility=false` in the support config;
+restart is required. This restores FCL's original early-window behavior.
+
+Exact EntityCulling1.10.4 + Nowheel1.0.6 compatibility also handles the observed
+null render-box failure by keeping that object visible through the existing
+EntityCulling oversized-box guard. `compat.nowheelNullableBounds=false` disables
+this hook; no rendering/simulation is skipped. It is not an established FPS win.
+See the [early-window ledger](../../diagnostics/ANDROID-STARTUP-EARLY-WINDOW-2026-10-13.md)
+for physical evidence and outstanding visual/GPU gates.

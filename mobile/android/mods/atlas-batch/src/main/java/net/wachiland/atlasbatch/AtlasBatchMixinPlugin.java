@@ -46,9 +46,20 @@ public final class AtlasBatchMixinPlugin implements IMixinConfigPlugin {
     }
 
     @Override public void onLoad(String mixinPackage) { }
+    private static boolean requestNullableBoundsHook() {
+        try {
+            Properties p=new Properties();
+            try(var reader=Files.newBufferedReader(FMLPaths.CONFIGDIR.get().resolve("wachiland-android-support.properties"))){p.load(reader);}
+            if(!"true".equalsIgnoreCase(p.getProperty("enabled","true").trim()) || !"true".equalsIgnoreCase(p.getProperty("compat.nowheelNullableBounds","true").trim()))return false;
+            var list=net.neoforged.fml.loading.FMLLoader.getLoadingModList();
+            return list!=null && list.getMods().stream().anyMatch(m->m.getModId().equals("entityculling") && m.getVersion().toString().equals("1.10.4"))
+                && list.getMods().stream().anyMatch(m->m.getModId().equals("nowheel") && m.getVersion().toString().equals("1.0.6"));
+        }catch(Exception unavailable){return false;}
+    }
     @Override public String getRefMapperConfig() { return null; }
     @Override public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         return AndroidSupportConfig.ANDROID
+            && (!mixinClassName.endsWith(".NowheelNullableBoundsMixin") || requestNullableBoundsHook())
             && (!mixinClassName.endsWith(".ParticleRainBiomeMixin") || requestRainHook())
             && (!(mixinClassName.endsWith(".LevelFrustumCaptureMixin") || mixinClassName.endsWith(".OcclusionFrustumMixin")
                 || mixinClassName.endsWith(".OcclusionVecAccess")) || requestFrustumHook());

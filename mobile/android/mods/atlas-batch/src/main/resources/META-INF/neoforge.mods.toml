@@ -3,7 +3,7 @@ loaderVersion="[4,)"
 license="GPL-3.0-only"
 [[mods]]
 modId="wachiland_android_support"
-version="0.2.17-live-bench-probe"
+version="0.2.19-early-window-null-bounds"
 displayName="Wachiland Android Support (experimental)"
 authors="Wachiland"
 description='''Android compatibility and performance support foundation. GPU capability profile and optional diagnostics. Quality unchanged by default; experimental mechanisms are not validated optimizations.'''

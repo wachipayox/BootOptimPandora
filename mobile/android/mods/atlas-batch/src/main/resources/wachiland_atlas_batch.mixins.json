@@ -22,7 +22,8 @@
     "ParticleRainBiomeMixin",
     "LevelFrustumCaptureMixin",
     "OcclusionFrustumMixin",
-    "OcclusionVecAccess"
+    "OcclusionVecAccess",
+    "NowheelNullableBoundsMixin"
   ],
   "injectors": {
     "defaultRequire": 1

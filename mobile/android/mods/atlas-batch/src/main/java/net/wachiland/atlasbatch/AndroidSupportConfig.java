@@ -38,6 +38,8 @@ final class AndroidSupportConfig {
                 values.setProperty("experimental.flywheelExplicitOutputs","false");
                 values.setProperty("experimental.rainBiomeMemo","false");
                 values.setProperty("experimental.frustumCullingQueries","false");
+                values.setProperty("experimental.earlyWindowCompatibility","true");
+                values.setProperty("compat.nowheelNullableBounds","true");
                 try (Writer out=Files.newBufferedWriter(file,StandardCharsets.UTF_8)) {
                     values.store(out,"Android support foundation. Quality is unchanged. Diagnostics add measurement overhead. No automatic mod removal or unvalidated GPU optimization.");
                 }
