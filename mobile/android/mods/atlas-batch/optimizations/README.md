@@ -38,3 +38,20 @@ Defaults request these two startup hooks on launcher0.1.16+, independently of
 Drippy. JVM overrides remain available for controls. Ordinary-launch default
 and rare override gates are recorded in the research ledger, including any
 pending checks. These startup mechanisms do not promise higher world FPS.
+
+## Coordinated background session
+
+APK0.1.17 / Support0.2.26: private bounded atomic session protocol; retained
+SurfaceTexture, native swap skip, user-visible foreground session/wake lock,
+initial completion notification and public Battery Saver Settings shortcut.
+Hidden rendering/textures and exact EntityCulling1.10.4 visual raycasts/snapshot
+preparation stop; original logical ticks/reload GL work continue. No GPU vendor
+gate or visual-quality downgrade. Default on; `background.enabled=false` or
+`enabled=false` disables on next launch. Missing/unknown protocol stays visible.
+
+Physical server Home/notification-return and screen-off survival gates passed;
+same PID/UUID, zero world rendering/uploads and~19.9ticks/s in a60s hidden
+capture. No foreground FPS saving claimed. Battery exemption and foreground
+service do not prevent memory kills: this exact pack failed two hidden startup
+attempts with LOW_MEMORY. Initial-load stability and long Doze/AFK endurance
+remain open, not implied by the bounded world gate. See the background ledger.

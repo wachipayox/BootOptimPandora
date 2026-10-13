@@ -1,8 +1,8 @@
-# Wachiland Android Support â€” 0.2.1 pixel validation
+# Wachiland Android Support - 0.2.26
 
 Separate client mod for the Android pack, currently NeoForge 1.21.1. The build
 directory retains the historical atlas-batch name; the new artifact is
-`wachiland-android-support-neoforge-1.21.1-0.2.24.jar`, mod ID
+`wachiland-android-support-neoforge-1.21.1-0.2.26.jar`, mod ID
 `wachiland_android_support`. Remove/disable the old atlas diagnostic JAR before
 installing this one. Staging has a measured FPS benefit on the reference Vivo;
 it remains experimental because reload and cross-GPU gates have not passed.
@@ -174,7 +174,7 @@ From this directory, with JDK 21 and network access for initial dependencies:
 ./gradlew assemble --no-daemon
 ```
 
-The distributable is `build/libs/wachiland-android-support-neoforge-1.21.1-0.2.24.jar`.
+The distributable is `build/libs/wachiland-android-support-neoforge-1.21.1-0.2.26.jar`.
 `assemble` does not run tests. Compilation, physical startup and reference-world probes passed. General visual
 equivalence, resource reload and wider GPU gates remain open; see the current
 research entries above. Historical diagnostic gates do not imply promotion.
@@ -245,3 +245,27 @@ surrogates were 196.560 / 200.923 s in one pair: this is observed, not a robust
 universal speedup. See the [measurement ledger](../../diagnostics/ANDROID-MODULE-GRAPH-2026-10-13.md).
 The current crowded server remains below 30 FPS; these startup hooks do not
 claim an in-world FPS improvement.
+
+## Background session (0.2.26 / launcher 0.1.17)
+
+Default `background.enabled=true` coordinates with the launcher through private
+atomic session files. When hidden, world drawing, texture animation/presentation
+and audited EntityCulling1.10.4 occlusion preparation stop. Original logical
+tick decisions and reload uploads continue. Initial loading completion has a
+1Hz offscreen heartbeat; logical ticks are not reduced to1Hz. No GPU-vendor
+selection, graphics-quality reduction or simulation skip is introduced.
+
+The launcher maintains a visible session notification/wake lock and can notify
+when initial loading finishes while hidden. Return restores the existing
+surface rather than restarting Minecraft. Battery Saver warning offers Settings
+and automatic launch on return, or launch immediately. Android requires the
+user to disable Battery Saver; a normal application cannot flip it globally.
+
+`background.enabled=false` disables coordinated background support on the next
+launch. Notification permission/battery exemption can be denied. Physical
+stationary-server Home/return gates passed; zero world rendering/uploads and
+~19.9ticks/s in one60s hidden capture. This is not a foreground FPS gain.
+The full pack was killed for LOW_MEMORY in two hidden startup attempts,
+including after battery exemption. Background startup is therefore still
+unreliable under this pack's memory pressure. No Doze/endurance or universal
+phone claim. See the [background ledger](../../diagnostics/ANDROID-BACKGROUND-2026-10-13.md).

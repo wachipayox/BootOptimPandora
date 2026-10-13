@@ -23,7 +23,10 @@
     "LevelFrustumCaptureMixin",
     "OcclusionFrustumMixin",
     "OcclusionVecAccess",
-    "NowheelNullableBoundsMixin"
+    "NowheelNullableBoundsMixin",
+    "BackgroundMinecraftMixin",
+    "BackgroundCullTaskMixin",
+    "BackgroundCullSnapshotMixin"
   ],
   "injectors": {
     "defaultRequire": 1

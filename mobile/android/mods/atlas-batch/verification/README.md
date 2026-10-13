@@ -21,3 +21,8 @@ is bundled in the mod.
 
 Phone runtime, graphics and comparable performance gates remain separate.
 Do not infer Android behavior or startup speed from a green host harness.
+
+`VerifyLifecycle` compiles directly with LifecycleBridge. It checks bounded
+atomic-file visibility, current UUID completion and missing/malformed/oversized
+state falling back to visible. It is a protocol test, not a simulation of
+Android process priority, SurfaceTexture ownership, Doze or Minecraft ticks.

@@ -60,6 +60,10 @@ public final class EarlyCompatAgent {
                             return new MethodVisitor(Opcodes.ASM8,mv) {
                                 @Override public void visitCode() {
                                     super.visitCode();
+                                    if (method.equals("drawFrame") && desc.equals("()V")) {
+                                        Label draw=new Label();super.visitMethodInsn(Opcodes.INVOKESTATIC,"net/wachiland/android/compat/LifecycleBridge","renderEarly","()Z",false);
+                                        super.visitJumpInsn(Opcodes.IFNE,draw);super.visitInsn(Opcodes.RETURN);super.visitLabel(draw);super.visitFrame(Opcodes.F_SAME,0,null,0,null);
+                                    }
                                     if (method.equals("drawFrame") && desc.equals("()V")) super.visitMethodInsn(Opcodes.INVOKESTATIC,BRIDGE,"beginFrame","()V",false);
                                 }
                                 @Override public void visitMethodInsn(int op,String owner,String called,String descriptor,boolean itf) {

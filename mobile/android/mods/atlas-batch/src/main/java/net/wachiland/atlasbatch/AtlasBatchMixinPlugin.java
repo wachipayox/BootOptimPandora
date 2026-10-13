@@ -57,8 +57,13 @@ public final class AtlasBatchMixinPlugin implements IMixinConfigPlugin {
         }catch(Exception unavailable){return false;}
     }
     @Override public String getRefMapperConfig() { return null; }
+    private static boolean knownEntityCulling() {
+        var list=net.neoforged.fml.loading.FMLLoader.getLoadingModList();
+        return list!=null && list.getMods().stream().anyMatch(m -> m.getModId().equals("entityculling") && m.getVersion().toString().equals("1.10.4"));
+    }
     @Override public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         return AndroidSupportConfig.ANDROID
+            && (!(mixinClassName.endsWith(".BackgroundCullTaskMixin") || mixinClassName.endsWith(".BackgroundCullSnapshotMixin")) || knownEntityCulling())
             && (!mixinClassName.endsWith(".NowheelNullableBoundsMixin") || requestNullableBoundsHook())
             && (!mixinClassName.endsWith(".ParticleRainBiomeMixin") || requestRainHook())
             && (!(mixinClassName.endsWith(".LevelFrustumCaptureMixin") || mixinClassName.endsWith(".OcclusionFrustumMixin")

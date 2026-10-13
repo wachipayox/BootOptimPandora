@@ -3,7 +3,7 @@ plugins {
     id 'net.neoforged.moddev' version '2.0.144'
 }
 group = 'net.wachiland.atlasbatch'
-version = '0.2.24'
+version = '0.2.26'
 base { archivesName = 'wachiland-android-support-neoforge-1.21.1' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 neoForge {
@@ -22,7 +22,7 @@ tasks.named('compileEarlyCompatJava', JavaCompile) {
 }
 def earlyCompatJar = tasks.register('earlyCompatJar', Jar) {
     from earlyCompat.output
-    exclude '**/EarlyBridge*.class', '**/ModuleGraphClosure*.class'
+    exclude '**/EarlyBridge*.class', '**/ModuleGraphClosure*.class', '**/LifecycleBridge*.class'
     archiveFileName = 'wachiland-android-early-compat.jar'
     destinationDirectory = layout.buildDirectory.dir('early-compat')
     manifest.attributes('Premain-Class': 'net.wachiland.android.compat.EarlyCompatBootstrap','Can-Retransform-Classes':'true')
@@ -31,7 +31,7 @@ def earlyCompatJar = tasks.register('earlyCompatJar', Jar) {
 }
 def earlyBridgeJar = tasks.register('earlyBridgeJar', Jar) {
     from earlyCompat.output
-    include '**/EarlyBridge*.class', '**/ModuleGraphClosure*.class'
+    include '**/EarlyBridge*.class', '**/ModuleGraphClosure*.class', '**/LifecycleBridge*.class'
     archiveFileName = 'wachiland-android-early-bridge.jar'
     destinationDirectory = layout.buildDirectory.dir('early-compat')
     preserveFileTimestamps = false
