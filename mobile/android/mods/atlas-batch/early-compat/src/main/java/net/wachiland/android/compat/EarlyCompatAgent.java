@@ -44,12 +44,12 @@ public final class EarlyCompatAgent {
                     java.lang.reflect.Method[] methods=facade.getDeclaredMethods();
                     java.util.HashMap<String,MethodHandle> delegates=new java.util.HashMap<>();
                     for(java.lang.reflect.Method method:methods) {
-                        if(method.getName().startsWith("gl") || Set.of("beginFrame","endFrame","close").contains(method.getName()))
+                        if(method.getName().startsWith("gl") || Set.of("beginFrame","endFrame","close","fitUiScale").contains(method.getName()))
                             delegates.put(method.getName(),MethodHandles.publicLookup().unreflect(renderer.getMethod(method.getName(),method.getParameterTypes())));
                     }
                     facade.getMethod("install",Map.class).invoke(null,delegates);
                     if (module!=null && module.isNamed()) instrumentation.redefineModule(module,Set.of(facade.getModule()),Map.of(),Map.of(),Set.of(),Map.of());
-                    ClassReader reader=new ClassReader(bytes); ClassWriter writer=new ClassWriter(reader,0);
+                    ClassReader reader=new ClassReader(bytes); ClassWriter writer=new ClassWriter(reader,ClassWriter.COMPUTE_MAXS);
                     int[] hooks={0};
                     reader.accept(new ClassVisitor(Opcodes.ASM8,writer) {
                         @Override public MethodVisitor visitMethod(int access,String method,String desc,String signature,String[] exceptions) {
@@ -66,6 +66,19 @@ public final class EarlyCompatAgent {
                                     super.visitMethodInsn(op,owner,called,descriptor,itf);
                                 }
                                 @Override public void visitInsn(int op) {
+                                    if(op==Opcodes.FRETURN && method.equals("computeUiScale") && desc.equals("()F")) {
+                                        super.visitVarInsn(Opcodes.ALOAD,0);
+                                        super.visitFieldInsn(Opcodes.GETFIELD,TARGET,"windowWidth","I");
+                                        super.visitVarInsn(Opcodes.ALOAD,0);
+                                        super.visitFieldInsn(Opcodes.GETFIELD,TARGET,"options","Lde/keksuccino/drippyloadingscreen/earlywindow/window/config/EarlyLoadingOptions;");
+                                        super.visitMethodInsn(Opcodes.INVOKEVIRTUAL,"de/keksuccino/drippyloadingscreen/earlywindow/window/config/EarlyLoadingOptions","logoWidth","()I",false);
+                                        super.visitVarInsn(Opcodes.ALOAD,0);
+                                        super.visitFieldInsn(Opcodes.GETFIELD,TARGET,"options","Lde/keksuccino/drippyloadingscreen/earlywindow/window/config/EarlyLoadingOptions;");
+                                        super.visitMethodInsn(Opcodes.INVOKEVIRTUAL,"de/keksuccino/drippyloadingscreen/earlywindow/window/config/EarlyLoadingOptions","logoOffsetX","()I",false);
+                                        super.visitVarInsn(Opcodes.ALOAD,0);
+                                        super.visitFieldInsn(Opcodes.GETFIELD,TARGET,"logoTexture","Lde/keksuccino/drippyloadingscreen/earlywindow/window/texture/EarlyWindowTextureLoader$LoadedTexture;");
+                                        super.visitMethodInsn(Opcodes.INVOKESTATIC,BRIDGE,"fitUiScale","(FIIILjava/lang/Object;)F",false);
+                                    }
                                     if (op==Opcodes.RETURN && desc.equals("()V")) {
                                         if (method.equals("drawFrame")) super.visitMethodInsn(Opcodes.INVOKESTATIC,BRIDGE,"endFrame","()V",false);
                                         if (method.equals("cleanupTextures")) super.visitMethodInsn(Opcodes.INVOKESTATIC,BRIDGE,"close","()V",false);

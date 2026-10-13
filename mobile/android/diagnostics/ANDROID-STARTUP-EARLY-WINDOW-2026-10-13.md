@@ -153,3 +153,27 @@ world load passed, but this does not validate the exact recovery branch.
 ModernFix reported194.203s versus earlier diagnostic launches; this is NOT a
 clean startup A/B (instrumentation, caches and background differ), and is not
 claimed as a speedup. No in-world FPS improvement is claimed by this change.
+
+
+## Automatic route and logo fit, support0.2.20 / launcher0.1.15
+
+Default earlyWindow.mode=auto is now passed from config by the launcher. Runtime
+GL context chooses modern drawing for MobileGlues or a real desktop core profile
+(which excludes legacy drawing). Other contexts retain the original calls. No
+GPU-vendor heuristic. earlyWindow.mode=legacy keeps FCL stock; modern explicitly
+forces the modern path for unusual drivers. experimental.earlyWindowCompatibility
+=false disables the addon. No property needs to be added by users for auto.
+
+The pinned provider's computeUiScale result is clamped only on the modern route
+so the logo plus symmetric horizontal offset fits92% of window width. Natural
+texture width is used when config doesn't specify width. The original aspect,
+logo, progress and positions remain; background isn't rescaled. Unknown inputs
+keep scale. earlyWindow.fitLogo=false overrides fitting. Fit2 early screenshot
+confirms full logo/bar with margins, no crop. Log records854px viewport,861px
+natural logo and scale1 ->0.9104056. Handoff succeeded in the preceding fit run.
+
+First fit FPS capture was INVALID: diagnostic launch missed asm.commons and
+asm.util exports. All performance transforms skipped with IllegalAccessError;
+zero frames cannot be a valid performance result despite unchanged scene. Fixed
+existing probe exports for fit2; no new profiler or Spark run. Capture uses
+same dry glass position/frustum/culling, manual windows after world readiness.

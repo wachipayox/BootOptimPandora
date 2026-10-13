@@ -2,7 +2,7 @@
 
 Separate client mod for the Android pack, currently NeoForge 1.21.1. The build
 directory retains the historical atlas-batch name; the new artifact is
-`wachiland-android-support-neoforge-1.21.1-0.2.19-early-window-null-bounds.jar`, mod ID
+`wachiland-android-support-neoforge-1.21.1-0.2.20-auto-early-fit.jar`, mod ID
 `wachiland_android_support`. Remove/disable the old atlas diagnostic JAR before
 installing this one. Staging has a measured FPS benefit on the reference Vivo;
 it remains experimental because reload and cross-GPU gates have not passed.
@@ -174,7 +174,7 @@ From this directory, with JDK 21 and network access for initial dependencies:
 ./gradlew assemble --no-daemon
 ```
 
-The distributable is `build/libs/wachiland-android-support-neoforge-1.21.1-0.2.19-early-window-null-bounds.jar`.
+The distributable is `build/libs/wachiland-android-support-neoforge-1.21.1-0.2.20-auto-early-fit.jar`.
 `assemble` does not run tests. Compilation, physical startup and reference-world probes passed. General visual
 equivalence, resource reload and wider GPU gates remain open; see the current
 research entries above. Historical diagnostic gates do not imply promotion.
@@ -215,3 +215,10 @@ EntityCulling oversized-box guard. `compat.nowheelNullableBounds=false` disables
 this hook; no rendering/simulation is skipped. It is not an established FPS win.
 See the [early-window ledger](../../diagnostics/ANDROID-STARTUP-EARLY-WINDOW-2026-10-13.md)
 for physical evidence and outstanding visual/GPU gates.
+
+
+Early screen defaults need no manual launch flags. `earlyWindow.mode=auto` uses
+MobileGlues/core-profile detection; `legacy` restores stock and `modern` forces
+the adapter. `earlyWindow.fitLogo=true` proportionally fits the logo with margin;
+false retains original scaling. Restart after config changes. Both are optional
+settings; absent keys use these defaults on existing installations too.

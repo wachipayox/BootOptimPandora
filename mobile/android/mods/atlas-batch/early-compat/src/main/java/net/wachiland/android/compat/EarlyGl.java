@@ -12,7 +12,7 @@ import org.lwjgl.system.MemoryUtil;
  * No game code/assets copied; original provider owns layout, textures and progress.
  */
 public final class EarlyGl {
-    private static boolean attempted, core, disabled;
+    private static boolean attempted, core, disabled, fitReported;
     private static Thread owner;
     private static int program,vao,vbo,oldProgram,oldVao,oldVbo;
     private static int colorLocation,textureLocation;
@@ -32,7 +32,13 @@ public final class EarlyGl {
         attempted=true;
         try {
             String renderer=GL11.glGetString(GL11.GL_VERSION);
-            if (renderer==null || !renderer.contains("MobileGlues")) return false;
+            String route=System.getProperty("wachiland.android.early.mode","auto");
+            boolean needsModern=renderer!=null && renderer.contains("MobileGlues");
+            // A real core profile excludes fixed-function calls by definition.
+            // No GPU-vendor heuristic and no speculative probe of driver function pointers.
+            if(!needsModern && renderer!=null && !renderer.contains("OpenGL ES"))
+                needsModern=(GL11.glGetInteger(0x9126)&1)!=0;
+            if(route.equals("legacy") || (!route.equals("modern") && !needsModern)) return false;
             owner=Thread.currentThread();
             oldProgram=GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);oldVao=GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);oldVbo=GL11.glGetInteger(34964);
             int vertex=shader(GL20.GL_VERTEX_SHADER,"#version 150\nin vec2 Position; in vec2 UV; out vec2 texCoord; void main(){gl_Position=vec4(Position,0.0,1.0);texCoord=UV;}");
@@ -43,7 +49,7 @@ public final class EarlyGl {
             if(GL20.glGetProgrami(program,GL20.GL_LINK_STATUS)==0) throw new IllegalStateException(GL20.glGetProgramInfoLog(program));
             colorLocation=GL20.glGetUniformLocation(program,"Tint");textureLocation=GL20.glGetUniformLocation(program,"Textured");
             vao=GL30.glGenVertexArrays();vbo=org.lwjgl.opengl.GL15.glGenBuffers();stream=MemoryUtil.memAllocFloat(24576);
-            core=true;System.out.println("[Wachiland early compatibility] MobileGlues core drawing ready; loading cap=20 FPS");
+            core=true;System.out.println("[Wachiland early compatibility] Modern drawing ready; loading cap=20 FPS");
         } catch(Throwable failure) { disabled=true;core=false;System.out.println("[Wachiland early compatibility] Core drawing failed; original fallback: "+failure);cleanup(); }
         return core;
     }
@@ -51,6 +57,17 @@ public final class EarlyGl {
         int s=GL20.glCreateShader(type);GL20.glShaderSource(s,source);GL20.glCompileShader(s);
         if(GL20.glGetShaderi(s,GL20.GL_COMPILE_STATUS)==0) {String log=GL20.glGetShaderInfoLog(s);GL20.glDeleteShader(s);throw new IllegalStateException(log);}
         return s;
+    }
+    public static float fitUiScale(float scale,int width,int logoWidth,int offset,Object texture) {
+        if(!use() || !Boolean.parseBoolean(System.getProperty("wachiland.android.early.fitLogo","true")))return scale;
+        try {
+            int natural=logoWidth>0?logoWidth:texture==null?0:(int)texture.getClass().getMethod("width").invoke(texture);
+            if(width<=0 || natural<=0 || !Float.isFinite(scale) || scale<=0)return scale;
+            double extent=natural+2*Math.abs((double)offset);
+            float fitted=(float)Math.min(scale,width*0.92/extent);
+            if(fitted<scale && !fitReported){fitReported=true;System.out.println("[Wachiland early compatibility] Logo fitted to viewport; scale="+scale+" -> "+fitted+", width="+width+", logo="+natural);}
+            return fitted;
+        }catch(ReflectiveOperationException unavailable){return scale;}
     }
     public static void beginFrame() {frameStart=System.nanoTime();}
     public static void endFrame() {

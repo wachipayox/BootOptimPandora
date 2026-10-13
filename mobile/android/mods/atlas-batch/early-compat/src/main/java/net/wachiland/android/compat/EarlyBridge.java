@@ -29,6 +29,7 @@ public final class EarlyBridge {
     public static void glDisableClientState(int cap){try{h("glDisableClientState").invokeExact(cap);}catch(Throwable e){failure(e);}}
     public static void glVertexPointer(int size,int type,int stride,ByteBuffer data){try{h("glVertexPointer").invokeExact(size,type,stride,data);}catch(Throwable e){failure(e);}}
     public static void glDrawArrays(int mode,int first,int count){try{h("glDrawArrays").invokeExact(mode,first,count);}catch(Throwable e){failure(e);}}
+    public static float fitUiScale(float scale,int width,int logoWidth,int offset,Object texture){try{return (float)h("fitUiScale").invokeExact(scale,width,logoWidth,offset,texture);}catch(Throwable e){failure(e);return scale;}}
     public static void beginFrame(){try{h("beginFrame").invokeExact();}catch(Throwable e){failure(e);}}
     public static void endFrame(){try{h("endFrame").invokeExact();}catch(Throwable e){failure(e);}}
     public static void close(){try{h("close").invokeExact();}catch(Throwable e){failure(e);}finally{handles=Map.of();}}
