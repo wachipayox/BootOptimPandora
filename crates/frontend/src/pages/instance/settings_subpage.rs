@@ -82,6 +82,7 @@ pub struct InstanceSettingsSubpage {
     wrapper_command_input_state: Entity<TextareaState>,
     jvm_flags_enabled: bool,
     jvm_flags_input_state: Entity<TextareaState>,
+    profile_jvm_section: Entity<super::profile_jvm_section::ProfileJvmSection>,
     jvm_binary_enabled: bool,
     jvm_binary_path: Option<PathLabel>,
 
@@ -135,6 +136,7 @@ impl InstanceSettingsSubpage {
         let update_channel = entry.configuration.update_channel;
         let account = entry.configuration.preferred_account;
         let memory = entry.configuration.memory.unwrap_or_default();
+        let profile_jvm_choices = entry.configuration.profile_jvm_options.clone();
         let wrapper_command = entry.configuration.wrapper_command.clone().unwrap_or_default();
         let jvm_flags = entry.configuration.jvm_flags.clone().unwrap_or_default();
         let jvm_binary = entry.configuration.jvm_binary.clone().unwrap_or_default();
@@ -259,6 +261,13 @@ impl InstanceSettingsSubpage {
             cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 8).default_value(jvm_flags.flags));
         cx.subscribe(&jvm_flags_input_state, Self::on_jvm_flags_changed).detach();
 
+        let profile_jvm_section = {
+            let backend_handle = backend_handle.clone();
+            cx.new(|cx| {
+                super::profile_jvm_section::ProfileJvmSection::new(backend_handle, instance_id, profile_jvm_choices, cx)
+            })
+        };
+
         let mut page = Self {
             data: data.clone(),
             instance: instance.clone(),
@@ -279,6 +288,7 @@ impl InstanceSettingsSubpage {
             wrapper_command_input_state,
             jvm_flags_enabled: jvm_flags.enabled,
             jvm_flags_input_state,
+            profile_jvm_section,
             jvm_binary_enabled: jvm_binary.enabled,
             jvm_binary_path: jvm_binary.path.clone().map(|path| PathLabel::new(path, false)),
             override_glfw_enabled: system_libraries.override_glfw,
@@ -647,6 +657,7 @@ impl InstanceSettingsSubpage {
                 id: self.instance_id,
                 memory: self.get_memory_configuration(cx),
             });
+            self.refresh_profile_jvm(cx);
         }
     }
 
@@ -679,12 +690,18 @@ impl InstanceSettingsSubpage {
         }
     }
 
+    /// Profile options can be overridden by the player's JVM flags or memory setting.
+    fn refresh_profile_jvm(&self, cx: &mut Context<Self>) {
+        self.profile_jvm_section.update(cx, |section, cx| section.refresh(cx));
+    }
+
     pub fn on_jvm_flags_changed(&mut self, _: Entity<TextareaState>, event: &InputEvent, cx: &mut Context<Self>) {
         if let InputEvent::Change = event {
             self.backend_handle.send(MessageToBackend::SetInstanceJvmFlags {
                 id: self.instance_id,
                 jvm_flags: self.get_jvm_flags_configuration(cx),
             });
+            self.refresh_profile_jvm(cx);
         }
     }
 
@@ -986,6 +1003,7 @@ impl InstanceSettingsSubpage {
                                         id: page.instance_id,
                                         memory: page.get_memory_configuration(cx),
                                     });
+                                    page.refresh_profile_jvm(cx);
                                     cx.notify();
                                 }
                             })),
@@ -1015,6 +1033,7 @@ impl InstanceSettingsSubpage {
                             ),
                     ),
             )
+            .child(self.profile_jvm_section.clone())
             .child(
                 v_flex()
                     .gap_1()
@@ -1029,6 +1048,7 @@ impl InstanceSettingsSubpage {
                                         id: page.instance_id,
                                         jvm_flags: page.get_jvm_flags_configuration(cx),
                                     });
+                                    page.refresh_profile_jvm(cx);
                                     cx.notify();
                                 }
                             })),

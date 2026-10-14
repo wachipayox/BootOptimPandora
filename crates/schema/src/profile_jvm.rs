@@ -546,6 +546,15 @@ fn plan_one(
     (JvmPlanStatus::Applied { arg, source }, discarded)
 }
 
+/// What the instance settings page shows: the effective options with the decision the next
+/// Start would take for each, and the facts it was based on. Java facts come from the last
+/// launch of this instance; before that they are unknown and checked at Start.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProfileJvmOptionsView {
+    pub options: Vec<(ManifestJvmOption, JvmPlanEntry)>,
+    pub facts: JvmLaunchFacts,
+}
+
 /// Resolves a signed chain (oldest first): children replace options by id and
 /// `remove_jvm_options` withdraws inherited ones. Declaration order is preserved.
 pub fn apply_manifest_options(
