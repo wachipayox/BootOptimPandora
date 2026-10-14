@@ -227,7 +227,8 @@ pub fn start(
     let _ = std::fs::create_dir_all(&directories.instances_dir);
     state_file_watching.watch_filesystem(directories.root_launcher_dir.clone(), WatchTarget::RootDir);
 
-    // Load accounts
+    // Load accounts, importing them once from the pre-rebrand PandoraLauncher folder.
+    crate::legacy_accounts::import_legacy_accounts(&directories.root_launcher_dir);
     let account_info = Persistent::load(directories.accounts_json.clone());
 
     let state = BackendState {
