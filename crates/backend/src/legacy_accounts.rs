@@ -1,8 +1,10 @@
-//! One-time import of Minecraft accounts from the data folder used before the Wachiland rebrand.
+//! One-time import of Minecraft accounts and the local skin library from the data folder used
+//! before the Wachiland rebrand.
 //!
 //! The rebrand moved the launcher folder from `PandoraLauncher` to `WachilandLauncher` (a sibling
-//! in the same data directory). Only `accounts.json` is imported: instances, libraries and every
-//! other file stay where they are. Account secrets are kept by the system credential store under
+//! in the same data directory). Only `accounts.json` and the `skins` library are imported:
+//! instances, libraries and every other file stay where they are. The skin library is local to
+//! the launcher; the Microsoft account itself keeps only the active skin and capes. Account secrets are kept by the system credential store under
 //! names that never included the folder (`PandoraLauncher_*` on Windows, service
 //! `pandora-launcher` on Linux), keyed by account UUID, so an imported account keeps working
 //! without signing in again. The old folder is only read, never modified.
@@ -100,6 +102,69 @@ pub(crate) fn try_import(launcher_dir: &Path) -> Result<ImportOutcome, String> {
     })
 }
 
+const SKINS_DIR: &str = "skins";
+const SKINS_MARKER_FILE: &str = "pandora-skins-imported";
+
+/// Copies the old skin library once. Files already present with the same bytes are skipped and
+/// a different file with the same name is kept under a new name, so nothing is overwritten.
+pub(crate) fn import_legacy_skins(launcher_dir: &Path) {
+    match try_import_skins(launcher_dir) {
+        Ok(Some(copied)) => log::info!(
+            "[migration] Copied {copied} skin file(s) from the previous {LEGACY_FOLDER} folder; the old folder was not modified."
+        ),
+        Ok(None) => {},
+        Err(error) => log::warn!(
+            "[migration] Could not copy skins from the previous {LEGACY_FOLDER} folder; it will be retried on the next start: {error}"
+        ),
+    }
+}
+
+pub(crate) fn try_import_skins(launcher_dir: &Path) -> Result<Option<usize>, String> {
+    let marker = launcher_dir.join(SKINS_MARKER_FILE);
+    if marker.exists() || launcher_dir.file_name().is_some_and(|name| name == LEGACY_FOLDER) {
+        return Ok(None);
+    }
+    let Some(legacy_dir) = launcher_dir.parent().map(|parent| parent.join(LEGACY_FOLDER).join(SKINS_DIR)) else {
+        return Ok(None);
+    };
+    if !legacy_dir.is_dir() {
+        return Ok(None);
+    }
+    let target_dir = launcher_dir.join(SKINS_DIR);
+    std::fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
+    let mut copied = 0;
+    for entry in std::fs::read_dir(&legacy_dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        // Only plain files: links and folders are not part of the skin library.
+        if !entry.file_type().map_err(|error| error.to_string())?.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let source = entry.path();
+        let mut target = target_dir.join(name);
+        if target.exists() {
+            let same = std::fs::read(&target).ok() == std::fs::read(&source).ok();
+            if same {
+                continue;
+            }
+            target = target_dir.join(&*crate::fs::unique_name(&target_dir, name, false));
+        }
+        std::fs::copy(&source, &target).map_err(|error| format!("could not copy a skin ({error})"))?;
+        copied += 1;
+    }
+    crate::fs::write_safe(
+        &marker,
+        format!(
+            "Copied {copied} skin file(s) from ../{LEGACY_FOLDER}/{SKINS_DIR}
+"
+        )
+        .as_bytes(),
+    )
+    .map_err(|error| format!("could not write the import marker ({error})"))?;
+    Ok(Some(copied))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +260,26 @@ mod tests {
         std::fs::write(root.join(LEGACY_FOLDER).join(ACCOUNTS_FILE), b"[]").unwrap();
         assert!(try_import(&launcher).is_err());
         assert!(!launcher.join(ACCOUNTS_FILE).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copies_skins_once_without_overwriting() {
+        let root = data_dir("skins");
+        let launcher = root.join("WachilandLauncher");
+        let legacy = root.join(LEGACY_FOLDER).join(SKINS_DIR);
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::create_dir_all(launcher.join(SKINS_DIR)).unwrap();
+        std::fs::write(legacy.join("a.png"), b"old-a").unwrap();
+        std::fs::write(legacy.join("b.png"), b"same").unwrap();
+        std::fs::write(launcher.join(SKINS_DIR).join("a.png"), b"new-a").unwrap();
+        std::fs::write(launcher.join(SKINS_DIR).join("b.png"), b"same").unwrap();
+
+        assert_eq!(try_import_skins(&launcher).unwrap(), Some(1));
+        assert_eq!(std::fs::read(launcher.join(SKINS_DIR).join("a.png")).unwrap(), b"new-a");
+        assert_eq!(std::fs::read_dir(launcher.join(SKINS_DIR)).unwrap().count(), 3);
+        assert_eq!(std::fs::read(legacy.join("a.png")).unwrap(), b"old-a");
+        assert_eq!(try_import_skins(&launcher).unwrap(), None);
         std::fs::remove_dir_all(root).unwrap();
     }
 
