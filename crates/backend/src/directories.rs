@@ -1,9 +1,13 @@
-use std::{path::{Path, PathBuf}, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 pub struct LauncherDirectories {
     pub instances_dir: Arc<Path>,
 
     pub synced_dir: Arc<Path>,
+    pub save_groups_dir: Arc<Path>,
     pub skin_library_dir: Arc<Path>,
 
     pub metadata_dir: Arc<Path>,
@@ -35,6 +39,7 @@ impl LauncherDirectories {
         let instances_dir = launcher_dir.join("instances");
 
         let synced_dir = launcher_dir.join("synced");
+        let save_groups_dir = launcher_dir.join("save-groups");
         let skin_library_dir = launcher_dir.join("skins");
 
         let metadata_dir = launcher_dir.join("metadata");
@@ -65,6 +70,7 @@ impl LauncherDirectories {
             instances_dir: instances_dir.into(),
 
             synced_dir: synced_dir.into(),
+            save_groups_dir: save_groups_dir.into(),
             skin_library_dir: skin_library_dir.into(),
 
             metadata_dir: metadata_dir.into(),

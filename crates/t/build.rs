@@ -32,7 +32,8 @@ fn inner(dir: &Path) -> Result<(), Box<dyn Error>> {
 
     let locales = Locales::new(data)?;
 
-    content.push_str(r#"
+    content.push_str(
+        r#"
 static LANG: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 #[derive(Clone, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -91,7 +92,8 @@ pub fn set_lang(lang: &Language) {
     LANG.store(language_to_id(lang), std::sync::atomic::Ordering::Relaxed);
 }
 
-"#);
+"#,
+    );
 
     // lang_code_to_id function
     content.push_str("fn lang_code_to_id(code: &str) -> Option<u8> {\n");
@@ -138,10 +140,13 @@ static INDENTATION: &'static str = "                                    ";
 impl LocaleNode {
     pub fn write(&self, locales: &Locales, indentation: usize, content: &mut String) {
         match &self.val {
-            LocaleNodeVal::Parent { children, static_translation_children } => {
-                content.push_str(&INDENTATION[..indentation*4]);
+            LocaleNodeVal::Parent {
+                children,
+                static_translation_children,
+            } => {
+                content.push_str(&INDENTATION[..indentation * 4]);
                 content.push_str("#[rustfmt::skip]\n");
-                content.push_str(&INDENTATION[..indentation*4]);
+                content.push_str(&INDENTATION[..indentation * 4]);
                 content.push_str("pub mod ");
                 content.push_str(&self.name);
                 content.push_str(" {\n");
@@ -154,16 +159,16 @@ impl LocaleNode {
                         !short_translations.is_empty()
                     });
 
-                    content.push_str(&INDENTATION[..indentation*4+4]);
+                    content.push_str(&INDENTATION[..indentation * 4 + 4]);
                     if has_short {
                         content.push_str("pub fn get(key: &str, short: bool) -> Option<&'static str> {\n");
                     } else {
                         content.push_str("pub fn get(key: &str) -> Option<&'static str> {\n");
                     }
-                    content.push_str(&INDENTATION[..indentation*4+8]);
+                    content.push_str(&INDENTATION[..indentation * 4 + 8]);
                     content.push_str("match key {\n");
                     for (key, index) in static_translation_children {
-                        content.push_str(&INDENTATION[..indentation*4+12]);
+                        content.push_str(&INDENTATION[..indentation * 4 + 12]);
                         content.push_str(&format!("{:?}", key));
                         content.push_str(" => Some(");
                         content.push_str(&locales.nodes[*index].name);
@@ -176,23 +181,27 @@ impl LocaleNode {
                             content.push_str("(short)),\n");
                         }
                     }
-                    content.push_str(&INDENTATION[..indentation*4+12]);
+                    content.push_str(&INDENTATION[..indentation * 4 + 12]);
                     content.push_str("_ => None,\n");
-                    content.push_str(&INDENTATION[..indentation*4+8]);
+                    content.push_str(&INDENTATION[..indentation * 4 + 8]);
                     content.push_str("}\n");
-                    content.push_str(&INDENTATION[..indentation*4+4]);
+                    content.push_str(&INDENTATION[..indentation * 4 + 4]);
                     content.push_str("}\n");
                 }
 
                 for child in children {
-                    locales.nodes[*child].write(&locales, indentation+1, content);
+                    locales.nodes[*child].write(&locales, indentation + 1, content);
                 }
 
-                content.push_str(&INDENTATION[..indentation*4]);
+                content.push_str(&INDENTATION[..indentation * 4]);
                 content.push_str("}\n");
             },
-            LocaleNodeVal::Leaf { arguments, translations, short_translations } => {
-                content.push_str(&INDENTATION[..indentation*4]);
+            LocaleNodeVal::Leaf {
+                arguments,
+                translations,
+                short_translations,
+            } => {
+                content.push_str(&INDENTATION[..indentation * 4]);
                 content.push_str("pub fn ");
                 content.push_str(&self.name);
                 if arguments.is_empty() {
@@ -219,17 +228,13 @@ impl LocaleNode {
                     }
                     content.push_str(") -> String {\n");
                 }
-                content.push_str(&INDENTATION[..indentation*4+4]);
+                content.push_str(&INDENTATION[..indentation * 4 + 4]);
                 content.push_str("match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {\n");
                 let mut end = String::new();
                 for (key, value) in translations {
-                    let target = if *key == 0 {
-                        &mut end
-                    } else {
-                        &mut *content
-                    };
+                    let target = if *key == 0 { &mut end } else { &mut *content };
 
-                    target.push_str(&INDENTATION[..indentation*4+8]);
+                    target.push_str(&INDENTATION[..indentation * 4 + 8]);
                     if *key == 0 {
                         target.push('_');
                     } else {
@@ -272,11 +277,10 @@ impl LocaleNode {
                 if !end.is_empty() {
                     content.push_str(&end);
                 }
-                content.push_str(&INDENTATION[..indentation*4+4]);
+                content.push_str(&INDENTATION[..indentation * 4 + 4]);
                 content.push_str("}\n");
-                content.push_str(&INDENTATION[..indentation*4]);
+                content.push_str(&INDENTATION[..indentation * 4]);
                 content.push_str("}\n");
-
             },
         }
     }
@@ -328,17 +332,14 @@ impl Locales {
 
             for val in vals {
                 locales.roots.push(locales.nodes.len());
-                locales.nodes.push(LocaleNode {
-                    name: key.clone(),
-                    val
-                });
+                locales.nodes.push(LocaleNode { name: key.clone(), val });
             }
         }
 
         Ok(locales)
     }
 
-    fn create(&mut self, data: toml::Value) -> Result<Vec<LocaleNodeVal>, Box<dyn Error>>  {
+    fn create(&mut self, data: toml::Value) -> Result<Vec<LocaleNodeVal>, Box<dyn Error>> {
         match data {
             toml::Value::Table(map) => {
                 let mut has_string = false;
@@ -361,7 +362,7 @@ impl Locales {
                         };
 
                         let (key, short) = if key.ends_with("_short") {
-                            (&key[..key.len()-"_short".len()], true)
+                            (&key[..key.len() - "_short".len()], true)
                         } else {
                             (key.as_str(), false)
                         };
@@ -374,15 +375,15 @@ impl Locales {
                             while let Some(index) = value[from..].find('$') {
                                 let index = index + from;
 
-                                let Some(next) = value.as_bytes().get(index+1) else {
+                                let Some(next) = value.as_bytes().get(index + 1) else {
                                     break;
                                 };
                                 if *next == b'{' {
-                                    let Some(end) = value[index+1..].find('}') else {
+                                    let Some(end) = value[index + 1..].find('}') else {
                                         break;
                                     };
 
-                                    let inner = &value[index+2..index+1+end];
+                                    let inner = &value[index + 2..index + 1 + end];
 
                                     let Some((name, ty)) = inner.split_once(':') else {
                                         return Err("Format argument must be `param: type`".into());
@@ -394,7 +395,11 @@ impl Locales {
                                     for existing in &arguments {
                                         if existing.0 == name {
                                             if existing.1 != ty {
-                                                return Err(format!("Multiple arguments with different types: {} in {}", existing.0, value).into());
+                                                return Err(format!(
+                                                    "Multiple arguments with different types: {} in {}",
+                                                    existing.0, value
+                                                )
+                                                .into());
                                             }
                                             has_existing = true;
                                         }
@@ -404,11 +409,11 @@ impl Locales {
                                         arguments.push((name.to_string(), ty.to_string()));
                                     }
 
-                                    value.replace_range(index..index+2+end, &format!("{{{name}}}"));
+                                    value.replace_range(index..index + 2 + end, &format!("{{{name}}}"));
 
-                                    from = index+2;
+                                    from = index + 2;
                                 } else {
-                                    from = index+1;
+                                    from = index + 1;
                                 }
                             }
                         }
@@ -456,20 +461,18 @@ impl Locales {
                             children.push(self.nodes.len());
                             self.nodes.push(LocaleNode {
                                 name: name.clone(),
-                                val
+                                val,
                             });
                         }
                     }
                     vals.push(LocaleNodeVal::Parent {
                         children,
-                        static_translation_children
+                        static_translation_children,
                     });
                 }
                 return Ok(vals);
             },
-            _ => {
-                return Err(format!("Unexpected value: {data:?}").into())
-            },
+            _ => return Err(format!("Unexpected value: {data:?}").into()),
         }
     }
 }

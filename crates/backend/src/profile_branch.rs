@@ -15,6 +15,35 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub const PROFILE_BRANCH_SCHEMA_VERSION: u32 = 1;
+pub const MAX_PROFILE_BRANCH_DEPTH: usize = 8;
+
+/// Pandora represents a disabled content file by appending `.disabled` to its filename.
+/// Branch lineage treats that suffix as per-instance state, not as part of the mod's identity.
+pub(crate) fn canonical_mod_path(path: &str) -> String {
+    let Some((folder, _)) = path.split_once('/') else {
+        return path.to_owned();
+    };
+    let Some(enabled_path) = path.strip_suffix(".disabled") else {
+        return path.to_owned();
+    };
+    if folder.eq_ignore_ascii_case("mods") && is_toggleable_mod_path(enabled_path) {
+        enabled_path.to_owned()
+    } else {
+        path.to_owned()
+    }
+}
+
+pub(crate) fn disabled_mod_alias(path: &str) -> Option<String> {
+    let canonical = canonical_mod_path(path);
+    (canonical == path
+        && path.split_once('/').is_some_and(|(folder, _)| folder.eq_ignore_ascii_case("mods"))
+        && is_toggleable_mod_path(path))
+    .then(|| format!("{path}.disabled"))
+}
+
+fn is_toggleable_mod_path(path: &str) -> bool {
+    [".jar", ".mrpack", ".zip"].iter().any(|suffix| path.ends_with(suffix))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GlobalRevisionPin {
@@ -166,6 +195,11 @@ pub enum ProfileEntryOrigin {
 pub struct ProfileEntryMetadata {
     pub logical_identity: String,
     pub source_sha256: String,
+    /// Fast superficial parent-update fingerprint. Full hashing remains the explicit repair path.
+    #[serde(default)]
+    pub source_size_bytes: u64,
+    #[serde(default)]
+    pub source_modified_unix_nanos: u128,
     pub origin: ProfileEntryOrigin,
     pub ownership: ProfileEntryOwnership,
     pub policy: ProfileFilePolicy,
@@ -209,6 +243,11 @@ pub struct ProfileBranchManifest {
     /// live files or downloading unchanged config objects.
     #[serde(default)]
     pub config_setting_signatures: BTreeMap<String, String>,
+    /// Effective inherited configuration rules. Local descendants persist the rules they
+    /// inherited so a later parent update can merge line/key settings without contacting the
+    /// distribution service again.
+    #[serde(default)]
+    pub config_settings: Vec<crate::distribution::ManifestConfigSetting>,
 }
 
 impl ProfileBranchManifest {
@@ -394,6 +433,8 @@ pub fn resolve_effective_entries_for_branch(
                     metadata: ProfileEntryMetadata {
                         logical_identity: logical_identity.clone(),
                         source_sha256: source_sha256.to_ascii_lowercase(),
+                        source_size_bytes: 0,
+                        source_modified_unix_nanos: 0,
                         origin: ProfileEntryOrigin::LocalProfile {
                             profile_uuid: local_profile_uuid,
                         },
@@ -516,6 +557,8 @@ mod tests {
             metadata: ProfileEntryMetadata {
                 logical_identity: "base".to_owned(),
                 source_sha256: "1".repeat(64),
+                source_size_bytes: 0,
+                source_modified_unix_nanos: 0,
                 origin: ProfileEntryOrigin::GlobalRevision { pin: global },
                 ownership: ProfileEntryOwnership::Inherited,
                 policy: ProfileFilePolicy::Enforced,
@@ -553,6 +596,8 @@ mod tests {
             metadata: ProfileEntryMetadata {
                 logical_identity: "removed".to_owned(),
                 source_sha256: "3".repeat(64),
+                source_size_bytes: 0,
+                source_modified_unix_nanos: 0,
                 origin: ProfileEntryOrigin::GlobalRevision { pin: global },
                 ownership: ProfileEntryOwnership::Inherited,
                 policy: ProfileFilePolicy::Enforced,

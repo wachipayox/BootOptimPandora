@@ -74,6 +74,8 @@ fn duplicate_with_content_library(
     from: &Path,
     to: &Path,
     content_library_dir: &Path,
+    save_groups_dir: &Path,
+    preserve_external_saves_link: bool,
     progress: &dyn Fn(u64, u64),
     check_cancel: &dyn Fn() -> Result<()>,
 ) -> Result<()> {
@@ -95,18 +97,16 @@ fn duplicate_with_content_library(
     let mut external_junctions = Vec::new();
 
     let mut directories_to_visit = Vec::new();
-    directories_to_visit.push((from.to_path_buf(), 0));
+    directories_to_visit.push((from.to_path_buf(), 0, PathBuf::new()));
 
-    while let Some((directory, depth)) = directories_to_visit.pop() {
+    while let Some((directory, depth, relative_directory)) = directories_to_visit.pop() {
         check_cancel()?;
         let read_dir = fs::read_dir(directory)?;
         for entry in read_dir {
             let entry = entry?;
             let path = entry.path();
             let file_type = entry.file_type()?;
-            let Ok(relative) = path.strip_prefix(&from) else {
-                return Err(Error::new(ErrorKind::Other, format!("{path:?} is not a child of {from:?}")));
-            };
+            let relative = relative_directory.join(entry.file_name());
             // Persistent profile control state is identity/transaction state, not instance
             // payload. The destination namespace is created separately with a fresh UUID.
             if relative == Path::new(CONTROL_DIR_NAME) {
@@ -114,6 +114,14 @@ fn duplicate_with_content_library(
             }
             #[cfg(windows)]
             if let Ok(target) = junction::get_target(&path) {
+                if relative == Path::new(".minecraft/saves")
+                    && !preserve_external_saves_link
+                    && is_managed_group_saves(&target, save_groups_dir)
+                {
+                    directories.push(relative.to_path_buf());
+                    directories_to_visit.push((target, depth + 1, relative.to_path_buf()));
+                    continue;
+                }
                 if let Ok(internal) = target.strip_prefix(&from) {
                     internal_junctions.push((relative.to_path_buf(), internal.to_path_buf()));
                 } else {
@@ -123,6 +131,14 @@ fn duplicate_with_content_library(
             }
             if file_type.is_symlink() {
                 let target = fs::read_link(&path)?;
+                if relative == Path::new(".minecraft/saves")
+                    && !preserve_external_saves_link
+                    && is_managed_group_saves(&path, save_groups_dir)
+                {
+                    directories.push(relative.to_path_buf());
+                    directories_to_visit.push((path.canonicalize()?, depth + 1, relative.to_path_buf()));
+                    continue;
+                }
                 if let Ok(internal) = target.strip_prefix(&from) {
                     internal_symlinks.push((relative.to_path_buf(), internal.to_path_buf()));
                 } else {
@@ -136,7 +152,7 @@ fn duplicate_with_content_library(
                 }
 
                 directories.push(relative.to_path_buf());
-                directories_to_visit.push((path, depth + 1));
+                directories_to_visit.push((path, depth + 1, relative.to_path_buf()));
             }
         }
     }
@@ -218,7 +234,57 @@ fn duplicate_with_content_library(
     Ok(())
 }
 
+fn is_managed_group_saves(link: &Path, save_groups_dir: &Path) -> bool {
+    let Ok(target) = fs::canonicalize(link) else {
+        return false;
+    };
+    let Ok(groups_root) = fs::canonicalize(save_groups_dir) else {
+        return false;
+    };
+    target.file_name().is_some_and(|name| name == "saves") && target.starts_with(groups_root)
+}
+
 pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name: &str, modal_action: ModalAction) {
+    duplicate_instance_inner(backend, id, name, modal_action, false, true, 0).await;
+}
+
+pub async fn create_local_branch(backend: Arc<BackendState>, id: InstanceID, name: &str, create_save_group: bool, reuse_parent_icon: bool, icon_hue_degrees: i32, modal_action: ModalAction) {
+    // Validate before moving any worlds; failed/cancelled creation restores a newly made group.
+    if !crate::fs::is_single_component_path_str(name)
+        || !sanitize_filename::is_sanitized_with_options(name, sanitize_filename::OptionsForCheck { windows: true, ..Default::default() })
+        || backend.instance_state.read().instances.iter().any(|instance| instance.name == name)
+    {
+        modal_action.set_finished_with_error("Choose a valid, unused instance name".into());
+        return;
+    }
+    let mut created_group = false;
+    if create_save_group {
+        match backend.list_save_groups(id) {
+            Ok(groups) if groups.iter().any(|group| group.selected) => {},
+            Ok(_) => match backend.create_save_group(id, format!("Worlds of {name}")) {
+                Ok(()) => created_group = true,
+                Err(error) => { modal_action.set_finished_with_error(error.into()); return; }
+            },
+            Err(error) => { modal_action.set_finished_with_error(error.into()); return; }
+        }
+    }
+    duplicate_instance_inner(backend.clone(), id, name, modal_action.clone(), true, reuse_parent_icon, icon_hue_degrees).await;
+    if created_group && (modal_action.get_error_message().is_some() || modal_action.has_requested_cancel()) {
+        if let Err(error) = backend.leave_save_group(id) {
+            backend.send.send_error(format!("Branch creation stopped; worlds remain in their save group: {error}"));
+        }
+    }
+}
+
+async fn duplicate_instance_inner(
+    backend: Arc<BackendState>,
+    id: InstanceID,
+    name: &str,
+    modal_action: ModalAction,
+    as_branch: bool,
+    reuse_parent_icon: bool,
+    icon_hue_degrees: i32,
+) {
     if !crate::fs::is_single_component_path_str(name) {
         modal_action
             .set_finished_with_error(format!("Unable to duplicate instance, name must not be a path: {name}").into());
@@ -239,6 +305,29 @@ pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name
         return;
     }
 
+    let parent_branch = if as_branch {
+        let depth = match backend.persistent_profile_branch_depth(id) {
+            Ok(depth) => depth,
+            Err(error) => {
+                modal_action.set_finished_with_error(format!("Unable to inspect branch ancestry: {error}").into());
+                return;
+            },
+        };
+        if depth >= crate::profile_branch::MAX_PROFILE_BRANCH_DEPTH {
+            modal_action.set_finished_with_error("A profile cannot inherit more than 8 levels".to_string().into());
+            return;
+        }
+        match backend.ensure_persistent_profile_branch(id) {
+            Ok(snapshot) => Some((snapshot.profile_uuid, snapshot.branch)),
+            Err(error) => {
+                modal_action.set_finished_with_error(format!("Unable to prepare parent profile: {error}").into());
+                return;
+            },
+        }
+    } else {
+        None
+    };
+
     let source = {
         let state = backend.instance_state.read();
         let Some(instance) = state.instances.get(id) else {
@@ -248,10 +337,10 @@ pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name
         instance.root_path.clone()
     };
 
-    // Persistent sources are cloned only from a hash-proven Ready snapshot. The returned source
-    // guard stays alive through the copy, so a cooperating second Pandora process cannot enter
-    // reconcile/Publishing while the snapshot is being duplicated. Legacy has no control state;
-    // ambiguous/non-Ready persistent state is rejected rather than recovered or guessed here.
+    // Persistent sources must have a committed Ready identity and no pending transaction. The
+    // source guard stays alive through copying; ordinary live edits are captured into the clone
+    // snapshot rather than treated as transaction corruption. Legacy sources have no control
+    // state; ambiguous/non-Ready persistent state is rejected rather than guessed here.
     let clone_source = match prepare_profile_clone_source(&source) {
         Ok(source) => source,
         Err(error) => {
@@ -269,7 +358,7 @@ pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name
 
     // Mint the destination identity before copying any instance payload. The destination guard
     // remains held until the clone is verified and its reminted Ready manifest is committed.
-    let clone_destination = match begin_profile_clone_destination(&dest, &clone_source) {
+    let clone_destination = match begin_profile_clone_destination(&dest, &clone_source, as_branch) {
         Ok(destination) => destination,
         Err(error) => {
             let _ = fs::remove_dir_all(&dest);
@@ -285,6 +374,8 @@ pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name
         &source,
         &dest,
         &backend.directories.content_library_dir,
+        &backend.directories.save_groups_dir,
+        as_branch,
         &|current, total| {
             tracker.set_count(current as usize);
             tracker.set_total(total as usize);
@@ -300,16 +391,28 @@ pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name
     );
 
     let result = match result {
-        Ok(()) => clone_destination
-            .finish()
-            .map(|_| ())
-            .map_err(|error| Error::new(ErrorKind::Other, error.to_string())),
+        Ok(()) => {
+            let icon_result = if as_branch { apply_branch_icon(&dest, reuse_parent_icon, icon_hue_degrees) } else { Ok(()) };
+            let normalized = icon_result.and_then(|()| if as_branch {
+                normalize_disabled_mods_for_branch(&dest)
+            } else {
+                Ok(())
+            });
+            normalized.and_then(|()| {
+                clone_destination
+                    .finish()
+                    .map(|_| ())
+                    .map_err(|error| Error::new(ErrorKind::Other, error.to_string()))
+            })
+        },
         Err(error) => Err(error),
     };
 
+    let mut clone_succeeded = false;
     match result {
         Ok(()) => {
             tracker.set_finished(ProgressTrackerFinishType::Normal);
+            clone_succeeded = true;
         },
         Err(error) => {
             let _ = fs::remove_dir_all(&dest);
@@ -322,7 +425,153 @@ pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name
         },
     }
 
+    if clone_succeeded && let Some((parent_uuid, parent_branch)) = parent_branch {
+        let parent_root = {
+            let state = backend.instance_state.read();
+            state
+                .instances
+                .get(id)
+                .map(|instance| instance.dot_minecraft_path.to_path_buf())
+                .ok_or_else(|| "The parent instance is no longer available".to_owned())
+        };
+        let setup_result = match parent_root {
+            Ok(parent_root) => {
+                let child_root = dest.clone();
+                // This is a one-time full-tree snapshot (reflinked where possible), not per-start
+                // sandbox copying. The lineage update rebases cloned ownership as inherited while
+                // preserving the new UUID and the already-copied bytes.
+                match tokio::task::spawn_blocking(move || {
+                    let mut child_layout = crate::profile_layout_flow::PersistentProfileLayout::open(&child_root)
+                        .map_err(|error| error.to_string())?;
+                    let child_branch = child_layout.branch_manifest().map_err(|error| error.to_string())?;
+                    let parent_entries = crate::local_profile::snapshot_parent_tree(
+                        &parent_root,
+                        parent_uuid,
+                        &parent_branch,
+                        Some(&child_branch.entries),
+                    )?;
+                    let delta = crate::local_profile::local_parent_delta(
+                        &child_branch,
+                        parent_uuid,
+                        &parent_branch.lineage,
+                        parent_branch.applied_revision.clone(),
+                        &parent_branch.config_settings,
+                        parent_entries,
+                    )?;
+                    match child_layout.initialize_local_child_branch(&delta).map_err(|error| error.to_string())? {
+                        crate::profile_layout_flow::ReconcileOutcome::Ready { .. } => Ok(()),
+                        crate::profile_layout_flow::ReconcileOutcome::NeedsReconcile { conflicts, .. } => {
+                            Err(format!("Child profile reconciliation needs attention: {}", conflicts.join(", ")))
+                        },
+                    }
+                })
+                .await
+                {
+                    Ok(result) => result,
+                    Err(error) => Err(format!("Local branch initialization task failed: {error}")),
+                }
+            },
+            Err(error) => Err(error),
+        };
+        if let Err(error) = setup_result {
+            let _ = fs::remove_dir_all(&dest);
+            modal_action.set_finished_with_error(format!("Instance copied, but branch setup failed: {error}").into());
+        } else {
+            if backend.load_instance_from_path(&dest, false, false) {
+                let child_id = backend.instance_state.read().instances.iter().find(|i| i.root_path.as_ref() == dest.as_path()).map(|i| i.id);
+                if let Some(child_id) = child_id {
+                    match backend.persistent_profile_branch_status(id, None).map_err(|e| e.to_string()).and_then(|parent| backend.record_parent_version(child_id, &parent)) {
+                        Ok(()) => {},
+                        Err(error) => backend.send.send_error(format!("Branch created; parent version could not be recorded: {error}")),
+                    }
+                }
+                backend.send.send_success(format!("Local branch '{name}' is ready"));
+            } else {
+                let _ = fs::remove_dir_all(&dest);
+                modal_action.set_finished_with_error("The local branch was created but could not be loaded".into());
+            }
+        }
+    }
+
     modal_action.set_finished();
+}
+
+fn apply_branch_icon(instance_root: &Path, reuse: bool, hue_degrees: i32) -> Result<()> {
+    let icon_path = instance_root.join("icon.png");
+    if !reuse {
+        match fs::remove_file(&icon_path) {
+            Ok(()) => {},
+            Err(error) if error.kind() == ErrorKind::NotFound => {},
+            Err(error) => return Err(error),
+        }
+        return Ok(());
+    }
+    let hue_degrees = hue_degrees.clamp(-180, 180);
+    if hue_degrees == 0 || !icon_path.is_file() { return Ok(()); }
+    let image = image::open(&icon_path).map_err(|error| Error::new(ErrorKind::InvalidData, format!("cannot read parent icon: {error}")))?;
+    let rotated = image.huerotate(hue_degrees);
+    let mut output = std::io::BufWriter::new(fs::File::create(&icon_path)?);
+    rotated.write_to(&mut output, image::ImageFormat::Png)
+        .map_err(|error| Error::new(ErrorKind::Other, format!("cannot recolor branch icon: {error}")))?;
+    output.flush()
+}
+
+/// A child branch starts with its own enabled mods, regardless of the parent's local toggle state.
+fn normalize_disabled_mods_for_branch(instance_root: &Path) -> Result<()> {
+    let mods = instance_root.join(".minecraft").join("mods");
+    match fs::symlink_metadata(&mods) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+        Ok(metadata) if !metadata.is_dir() || metadata.file_type().is_symlink() => {
+            return Err(Error::new(ErrorKind::InvalidData, "mods path is not a plain directory"));
+        },
+        Ok(_) => {},
+    }
+    #[cfg(windows)]
+    if junction::exists(&mods).unwrap_or(false) {
+        return Err(Error::new(ErrorKind::InvalidData, "mods path is a junction"));
+    }
+    let entries = match fs::read_dir(&mods) {
+        Ok(entries) => entries,
+        Err(error) => return Err(error),
+    };
+
+    for entry in entries {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.file_name().and_then(|filename| filename.to_str()).is_none() {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(instance_root.join(".minecraft"))
+            .map_err(|error| Error::new(ErrorKind::InvalidInput, error.to_string()))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let canonical = crate::profile_branch::canonical_mod_path(&relative);
+        if canonical == relative {
+            continue;
+        }
+        let Some(enabled_filename) = canonical.rsplit('/').next() else {
+            continue;
+        };
+        let enabled_path = path.with_file_name(enabled_filename);
+        match fs::symlink_metadata(&enabled_path) {
+            Ok(_) => {
+                return Err(Error::new(
+                    ErrorKind::AlreadyExists,
+                    format!("cannot create branch: both enabled and disabled copies exist for {enabled_filename}"),
+                ));
+            },
+            Err(error) if error.kind() == ErrorKind::NotFound => {},
+            Err(error) => return Err(error),
+        }
+        fs::rename(path, enabled_path)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -370,6 +619,28 @@ mod tests {
     }
 
     #[test]
+    fn derived_branch_icon_reuse_hue_rotation_and_opt_out_are_child_only() {
+        let parent = TestRoot::new("icon-parent", false);
+        let child = TestRoot::new("icon-child", false);
+        let mut image = image::RgbaImage::new(2, 1);
+        image.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        image.put_pixel(1, 0, image::Rgba([25, 80, 140, 72]));
+        image.save(parent.0.join("icon.png")).unwrap();
+        fs::copy(parent.0.join("icon.png"), child.0.join("icon.png")).unwrap();
+        let original = fs::read(parent.0.join("icon.png")).unwrap();
+        apply_branch_icon(&child.0, true, 0).unwrap();
+        assert_eq!(fs::read(parent.0.join("icon.png")).unwrap(), original);
+        apply_branch_icon(&child.0, true, 120).unwrap();
+        assert_eq!(fs::read(parent.0.join("icon.png")).unwrap(), original);
+        let recolored = image::open(child.0.join("icon.png")).unwrap().to_rgba8();
+        assert_ne!(recolored.get_pixel(0, 0), image.get_pixel(0, 0));
+        assert_eq!(recolored.get_pixel(1, 0)[3], 72);
+        apply_branch_icon(&child.0, false, 0).unwrap();
+        assert!(!child.0.join("icon.png").exists());
+        assert_eq!(fs::read(parent.0.join("icon.png")).unwrap(), original);
+    }
+
+    #[test]
     fn profile_layout_ready_duplicate_remints_namespace_and_cannot_use_original_journal() {
         let source = TestRoot::new("ready-source", true);
         let destination = TestRoot::new("ready-destination", false);
@@ -383,11 +654,20 @@ mod tests {
         let clone_source = prepare_profile_clone_source(&source.0).unwrap();
         assert!(matches!(clone_source, ProfileCloneSource::Ready { .. }));
         assert_eq!(clone_source.source_uuid(), Some(original_uuid));
-        let clone_destination = begin_profile_clone_destination(&destination.0, &clone_source).unwrap();
+        let clone_destination = begin_profile_clone_destination(&destination.0, &clone_source, false).unwrap();
         let clone_uuid = clone_destination.profile_uuid();
         assert_ne!(clone_uuid, original_uuid);
 
-        duplicate_with_content_library(&source.0, &destination.0, &content_library.0, &|_, _| {}, &|| Ok(())).unwrap();
+        duplicate_with_content_library(
+            &source.0,
+            &destination.0,
+            &content_library.0,
+            &content_library.0,
+            false,
+            &|_, _| {},
+            &|| Ok(()),
+        )
+        .unwrap();
         clone_destination.finish().unwrap();
         drop(clone_source);
 
@@ -431,5 +711,22 @@ mod tests {
         fs::remove_dir_all(&destination.0).unwrap();
         assert!(source.0.join(CONTROL_DIR_NAME).join("identity.json").is_file());
         assert_eq!(fs::read(source.0.join(".minecraft/mods/managed.jar")).unwrap(), b"source-v1");
+    }
+
+    #[test]
+    fn child_branch_starts_parent_disabled_mod_enabled_and_refuses_collisions() {
+        let root = TestRoot::new("disabled-mod", true);
+        let mods = root.0.join(".minecraft/mods");
+        fs::write(mods.join("child.jar.disabled"), b"mod").unwrap();
+
+        normalize_disabled_mods_for_branch(&root.0).unwrap();
+        assert!(mods.join("child.jar").is_file());
+        assert!(!mods.join("child.jar.disabled").exists());
+
+        fs::write(mods.join("collision.jar"), b"enabled").unwrap();
+        fs::write(mods.join("collision.jar.disabled"), b"disabled").unwrap();
+        assert!(normalize_disabled_mods_for_branch(&root.0).is_err());
+        assert!(mods.join("collision.jar").is_file());
+        assert!(mods.join("collision.jar.disabled").is_file());
     }
 }

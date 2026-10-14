@@ -1,8 +1,23 @@
-use std::{ffi::OsString, io::{Error, ErrorKind}, os::windows::io::{HandleOrInvalid, OwnedHandle}};
+use std::{
+    ffi::OsString,
+    io::{Error, ErrorKind},
+    os::windows::io::{HandleOrInvalid, OwnedHandle},
+};
 
 use crate::PandoraArg;
 
-use windows::Win32::{Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, TRUE}, Security::SECURITY_ATTRIBUTES, Storage::FileSystem::{CreateFileW, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING}, System::{JobObjects::{CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject}, Threading::GetCurrentProcess}};
+use windows::Win32::{
+    Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, TRUE},
+    Security::SECURITY_ATTRIBUTES,
+    Storage::FileSystem::{CreateFileW, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING},
+    System::{
+        JobObjects::{
+            CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JobObjectExtendedLimitInformation, SetInformationJobObject,
+        },
+        Threading::GetCurrentProcess,
+    },
+};
 
 pub fn join_windows_shell_arg(args: &[PandoraArg]) -> OsString {
     let mut string = Vec::new();
@@ -33,7 +48,7 @@ pub fn join_windows_shell_arg(args: &[PandoraArg]) -> OsString {
             if *byte == b'\\' {
                 backslashes += 1;
             } else if *byte == b'"' {
-                for _ in 0..backslashes*2 {
+                for _ in 0..backslashes * 2 {
                     string.push(b'\\');
                 }
                 string.push(b'\\');
@@ -49,7 +64,7 @@ pub fn join_windows_shell_arg(args: &[PandoraArg]) -> OsString {
         }
 
         if quoted {
-            for _ in 0..backslashes*2 {
+            for _ in 0..backslashes * 2 {
                 string.push(b'\\');
             }
         } else {
@@ -63,18 +78,11 @@ pub fn join_windows_shell_arg(args: &[PandoraArg]) -> OsString {
         }
     }
 
-    unsafe {
-        OsString::from_encoded_bytes_unchecked(string)
-    }
+    unsafe { OsString::from_encoded_bytes_unchecked(string) }
 }
 
 pub fn create_job_object() -> std::io::Result<HANDLE> {
-    let job_handle = unsafe {
-        CreateJobObjectW(
-            None,
-            windows::core::PCWSTR::default()
-        )?
-    };
+    let job_handle = unsafe { CreateJobObjectW(None, windows::core::PCWSTR::default())? };
     if job_handle.is_invalid() {
         return Err(Error::new(ErrorKind::Other, "CreateJobObjectW returned invalid handle"));
     }
@@ -85,7 +93,7 @@ pub fn create_job_object() -> std::io::Result<HANDLE> {
             job_handle,
             JobObjectExtendedLimitInformation,
             &info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION as _,
-            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         )?
     }
     Ok(job_handle)
@@ -118,15 +126,7 @@ pub fn duplicate_handle_as_inheritable(handle: HANDLE) -> std::io::Result<HANDLE
     let mut duplicated = HANDLE::default();
     unsafe {
         let cur_proc = GetCurrentProcess();
-        DuplicateHandle(
-           cur_proc,
-            handle,
-            cur_proc,
-            &mut duplicated,
-            0,
-            true,
-            DUPLICATE_SAME_ACCESS,
-        )?;
+        DuplicateHandle(cur_proc, handle, cur_proc, &mut duplicated, 0, true, DUPLICATE_SAME_ACCESS)?;
     }
     if duplicated.is_invalid() {
         return Err(Error::new(ErrorKind::Other, "DuplicateHandle returned invalid handle"));

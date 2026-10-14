@@ -2,9 +2,18 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use indexmap::IndexMap;
 use once_cell::sync::Lazy;
-use schema::{auxiliary::AuxDisabledChildren, content::ContentSource, curseforge::{CurseforgeModLoaderType, CurseforgeModpackFile, CurseforgeModpackMinecraft}, loader::Loader, modrinth::ModrinthLoader, server_status::ServerStatus, text_component::FlatTextComponent, unique_bytes::UniqueBytes};
+use schema::{
+    auxiliary::AuxDisabledChildren,
+    content::ContentSource,
+    curseforge::{CurseforgeModLoaderType, CurseforgeModpackFile, CurseforgeModpackMinecraft},
+    loader::Loader,
+    modrinth::ModrinthLoader,
+    server_status::ServerStatus,
+    text_component::FlatTextComponent,
+    unique_bytes::UniqueBytes,
+};
 
-use crate::{safe_path::SafePath};
+use crate::safe_path::SafePath;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InstanceID {
@@ -202,7 +211,7 @@ pub enum ModpackFileSource {
     },
     Builtin {
         bytes: Arc<[u8]>,
-    }
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -237,18 +246,16 @@ impl ContentType {
 
     pub fn content_folder(&self) -> Option<&'static str> {
         match self {
-            Self::Fabric | Self::Forge | Self::LegacyForge | Self::NeoForge | Self::JavaModule | Self::ModrinthModpack { .. } | Self::CurseforgeModpack { .. } => {
-                Some("mods")
-            },
-            ContentType::ResourcePack => {
-                Some("resourcepacks")
-            },
-            ContentType::ShaderPack => {
-                Some("shaderpacks")
-            },
-            ContentType::Unknown => {
-                None
-            }
+            Self::Fabric
+            | Self::Forge
+            | Self::LegacyForge
+            | Self::NeoForge
+            | Self::JavaModule
+            | Self::ModrinthModpack { .. }
+            | Self::CurseforgeModpack { .. } => Some("mods"),
+            ContentType::ResourcePack => Some("resourcepacks"),
+            ContentType::ShaderPack => Some("shaderpacks"),
+            ContentType::Unknown => None,
         }
     }
 
@@ -277,7 +284,10 @@ impl ContentType {
             ContentType::NeoForge => [ModrinthLoader::NeoForge].into(),
             ContentType::ResourcePack => [ModrinthLoader::Minecraft].into(),
             ContentType::ShaderPack => [ModrinthLoader::Iris, ModrinthLoader::Optifine, ModrinthLoader::Canvas].into(),
-            ContentType::Unknown | ContentType::JavaModule | ContentType::ModrinthModpack { .. } | ContentType::CurseforgeModpack { .. } => [fallback].into(),
+            ContentType::Unknown
+            | ContentType::JavaModule
+            | ContentType::ModrinthModpack { .. }
+            | ContentType::CurseforgeModpack { .. } => [fallback].into(),
         }
     }
 
@@ -286,7 +296,12 @@ impl ContentType {
             ContentType::Fabric => Some(CurseforgeModLoaderType::Fabric),
             ContentType::Forge | ContentType::LegacyForge => Some(CurseforgeModLoaderType::Forge),
             ContentType::NeoForge => Some(CurseforgeModLoaderType::NeoForge),
-            ContentType::Unknown | ContentType::JavaModule | ContentType::ModrinthModpack { .. } | ContentType::CurseforgeModpack { .. } | ContentType::ResourcePack | ContentType::ShaderPack => None,
+            ContentType::Unknown
+            | ContentType::JavaModule
+            | ContentType::ModrinthModpack { .. }
+            | ContentType::CurseforgeModpack { .. }
+            | ContentType::ResourcePack
+            | ContentType::ShaderPack => None,
         }
     }
 }
@@ -299,14 +314,18 @@ pub enum ContentUpdateStatus {
     ErrorInvalidHash,
     AlreadyUpToDate,
     Modrinth,
-    Curseforge
+    Curseforge,
 }
 
 impl ContentUpdateStatus {
     pub fn can_update(&self) -> bool {
         match self {
             ContentUpdateStatus::Modrinth | ContentUpdateStatus::Curseforge => true,
-            ContentUpdateStatus::Unknown | ContentUpdateStatus::ManualInstall | ContentUpdateStatus::ErrorNotFound | ContentUpdateStatus::ErrorInvalidHash | ContentUpdateStatus::AlreadyUpToDate => false,
+            ContentUpdateStatus::Unknown
+            | ContentUpdateStatus::ManualInstall
+            | ContentUpdateStatus::ErrorNotFound
+            | ContentUpdateStatus::ErrorInvalidHash
+            | ContentUpdateStatus::AlreadyUpToDate => false,
         }
     }
 }
@@ -320,7 +339,11 @@ pub struct ContentUpdateContext {
 
 impl ContentUpdateContext {
     pub fn new(status: ContentUpdateStatus, for_loader: Loader, for_version: &'static str) -> Self {
-        Self { status, for_loader, for_version }
+        Self {
+            status,
+            for_loader,
+            for_version,
+        }
     }
 
     pub fn status_if_matches(&self, loader: Loader, version: &'static str) -> ContentUpdateStatus {

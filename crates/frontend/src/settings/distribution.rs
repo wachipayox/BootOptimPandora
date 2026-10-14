@@ -120,7 +120,8 @@ fn text_field(field: Field) -> SettingItemWidget {
         );
         if created {
             cx.subscribe_in(&state, window, move |root, state, event: &InputEvent, window, cx| {
-                if !matches!(event, InputEvent::PressEnter { .. }) {
+                let blur_after_save = matches!(event, InputEvent::PressEnter { .. });
+                if !matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
                     return;
                 }
                 let Some(mut config) = root.backend_config().map(|backend| backend.distribution.clone()) else {
@@ -131,7 +132,9 @@ fn text_field(field: Field) -> SettingItemWidget {
                     set_value(&mut config, field, updated);
                     root.set_distribution_settings(config, cx);
                 }
-                window.blur();
+                if blur_after_save {
+                    window.blur();
+                }
             })
             .detach();
         }

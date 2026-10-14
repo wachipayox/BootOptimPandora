@@ -35,6 +35,12 @@ pub enum ProfileLayoutServiceError {
     SandboxStockOnly,
     #[error("persistent profile {0} is busy in another launcher process")]
     ProfileBusy(Uuid),
+    #[error("a profile cannot inherit more than 8 levels")]
+    BranchDepthExceeded,
+    #[error("a local parent profile is no longer available")]
+    MissingLocalParent,
+    #[error("local profile ancestry contains a cycle")]
+    BranchCycle,
     #[error("persistent profile identity/lock could not be established safely: {0}")]
     ProfileLock(String),
     #[error(transparent)]
@@ -72,6 +78,73 @@ impl BackendState {
                 repair_modpack_available: branch.lineage.can_repair_modpack(),
                 branch,
             })
+        })
+    }
+
+    /// Creates the persistent identity/empty manifest for a legacy local profile on the first
+    /// explicit branch operation. It never scans `.minecraft` or hashes its files.
+    pub fn ensure_persistent_profile_branch(
+        &self,
+        id: InstanceID,
+    ) -> Result<ProfileBranchSnapshot, ProfileLayoutServiceError> {
+        let snapshot = self.persistent_profile_branch_status(id, None)?;
+        if snapshot.generation.is_none() && snapshot.layout_state == ProfileLayoutState::NeedsReconcile {
+            self.configure_persistent_profile_lineage(id, snapshot.branch.lineage.clone())?;
+            return self.persistent_profile_branch_status(id, None);
+        }
+        if snapshot.layout_state != ProfileLayoutState::Ready {
+            return Err(ProfileLayoutFlowError::AmbiguousTransaction.into());
+        }
+        Ok(snapshot)
+    }
+
+    /// Resolves the stored local-parent chain without enumerating or hashing profile files.
+    pub fn persistent_profile_branch_depth(&self, id: InstanceID) -> Result<usize, ProfileLayoutServiceError> {
+        let mut current_id = id;
+        let mut visited = std::collections::HashSet::new();
+        let mut depth = 0usize;
+        loop {
+            let snapshot = self.persistent_profile_branch_status(current_id, None)?;
+            if !visited.insert(snapshot.profile_uuid) {
+                return Err(ProfileLayoutServiceError::BranchCycle);
+            }
+            match snapshot.branch.lineage.parent {
+                None => return Ok(depth),
+                Some(crate::profile_branch::ProfileParentRef::GlobalRevision { .. }) => {
+                    depth += 1;
+                    return Ok(depth);
+                },
+                Some(crate::profile_branch::ProfileParentRef::LocalProfile { profile_uuid }) => {
+                    depth += 1;
+                    if depth > crate::profile_branch::MAX_PROFILE_BRANCH_DEPTH {
+                        return Err(ProfileLayoutServiceError::BranchDepthExceeded);
+                    }
+                    current_id = self
+                        .find_instance_id_for_profile_uuid(profile_uuid)
+                        .ok_or(ProfileLayoutServiceError::MissingLocalParent)?;
+                },
+            }
+        }
+    }
+
+    pub fn find_instance_id_for_profile_uuid(&self, profile_uuid: Uuid) -> Option<InstanceID> {
+        #[derive(serde::Deserialize)]
+        struct Identity {
+            schema: u32,
+            profile_uuid: Uuid,
+        }
+
+        let roots = self
+            .instance_state
+            .read()
+            .instances
+            .iter()
+            .map(|instance| (instance.id, instance.root_path.to_path_buf()))
+            .collect::<Vec<_>>();
+        roots.into_iter().find_map(|(id, root)| {
+            let path = root.join(CONTROL_DIR).join("identity.json");
+            let identity: Identity = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+            (identity.schema == 1 && identity.profile_uuid == profile_uuid).then_some(id)
         })
     }
 

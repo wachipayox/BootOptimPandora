@@ -1,4 +1,11 @@
-use std::{alloc::Layout, borrow::{Borrow, Cow}, hash::Hash, ops::Deref, ptr::NonNull, sync::atomic::{AtomicUsize, Ordering}};
+use std::{
+    alloc::Layout,
+    borrow::{Borrow, Cow},
+    hash::Hash,
+    ops::Deref,
+    ptr::NonNull,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -156,16 +163,16 @@ impl UniqueBytes {
 impl Serialize for UniqueBytes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer
+        S: serde::Serializer,
     {
         serializer.serialize_bytes(&**self)
     }
 }
 
-impl <'de> Deserialize<'de> for UniqueBytes {
+impl<'de> Deserialize<'de> for UniqueBytes {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>
+        D: serde::Deserializer<'de>,
     {
         deserializer.deserialize_bytes(UniqueBytesVisitor)
     }
@@ -173,7 +180,7 @@ impl <'de> Deserialize<'de> for UniqueBytes {
 
 struct UniqueBytesVisitor;
 
-impl <'de> Visitor<'de> for UniqueBytesVisitor {
+impl<'de> Visitor<'de> for UniqueBytesVisitor {
     type Value = UniqueBytes;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -181,8 +188,8 @@ impl <'de> Visitor<'de> for UniqueBytesVisitor {
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: serde::de::SeqAccess<'de>
+    where
+        A: serde::de::SeqAccess<'de>,
     {
         let capacity = seq.size_hint().unwrap_or(0).max(0);
         let mut values = Vec::<u8>::with_capacity(capacity);
@@ -196,7 +203,7 @@ impl <'de> Visitor<'de> for UniqueBytesVisitor {
 
     fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
     where
-        E: serde::de::Error
+        E: serde::de::Error,
     {
         Ok(UniqueBytes::new(v))
     }

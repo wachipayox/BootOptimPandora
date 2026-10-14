@@ -158,20 +158,12 @@ impl SkinsPage {
             false
         }
     }
-}
-
-impl Page for SkinsPage {
-    fn controls(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        gpui::Empty
-    }
-
-    fn scrollable(&self, _cx: &App) -> bool {
-        false
-    }
-}
-
-impl Render for SkinsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    #[inline(never)]
+    fn render_account_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (AnyElement, Option<UniqueBytes>, Option<SkinVariant>, AnyElement) {
         let theme = cx.theme();
         let secondary = theme.secondary;
         let secondary_hover = theme.secondary_hover;
@@ -179,20 +171,7 @@ impl Render for SkinsPage {
         let list_active = theme.list_active;
         let list_active_border = theme.list_active_border;
         let secondary_skeleton = theme.secondary_foreground.opacity(0.5);
-
-        if self.pending_apply_cape && let Some((_, cape_url)) = &self.selected_cape {
-            let uri: SharedUri = SharedString::new(cape_url.clone()).into();
-            let bytes = window.use_asset::<DataAssetLoader>(&Resource::Uri(uri), cx).flatten();
-            if let Some(bytes) = bytes {
-                self.player_model_widget.update(cx, |widget, cx| {
-                    widget.set_cape(cx, Some(bytes));
-                });
-                self.pending_apply_cape = false;
-            }
-        }
-
         let mut library = v_flex()
-            .flex_1()
             .min_w_0()
             .w_full()
             .text_xl()
@@ -415,6 +394,24 @@ impl Render for SkinsPage {
             controls = t::skins::select_account().into_any_element();
         }
 
+        (controls, active_skin, active_skin_variant, library.into_any_element())
+    }
+
+    #[inline(never)]
+    fn render_skin_library(
+        &mut self,
+        active_skin: Option<UniqueBytes>,
+        active_skin_variant: Option<SkinVariant>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let secondary = theme.secondary;
+        let secondary_hover = theme.secondary_hover;
+        let radius = theme.radius;
+        let list_active = theme.list_active;
+        let list_active_border = theme.list_active_border;
+        let secondary_skeleton = theme.secondary_foreground.opacity(0.5);
+        let mut library = v_flex().flex_1().min_w_0().w_full().text_xl().content_start().items_start();
         let skin_library = self.data.use_skin_library(cx).cloned();
         let sort_descending = InterfaceConfig::get(cx).skin_list_sort_desc;
         let skin_library_iter = skin_library.iter().flat_map(|l| {
@@ -689,6 +686,47 @@ impl Render for SkinsPage {
                     }))
             })));
 
+        library
+            .overflow_y_scrollbar()
+            .drag_over(|style, _: &ExternalPaths, _, cx| style.bg(cx.theme().accent.opacity(0.5)))
+            .on_drop(cx.listener(|page, paths: &ExternalPaths, _window, _cx| {
+                for path in paths.paths() {
+                    page.data.backend_handle.send(MessageToBackend::AddToSkinLibrary {
+                        source: UrlOrFile::File { path: path.clone() },
+                    });
+                }
+            }))
+            .into_any_element()
+    }
+
+}
+
+impl Page for SkinsPage {
+    fn controls(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+
+    fn scrollable(&self, _cx: &App) -> bool {
+        false
+    }
+}
+
+impl Render for SkinsPage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.pending_apply_cape && let Some((_, cape_url)) = &self.selected_cape {
+            let uri: SharedUri = SharedString::new(cape_url.clone()).into();
+            let bytes = window.use_asset::<DataAssetLoader>(&Resource::Uri(uri), cx).flatten();
+            if let Some(bytes) = bytes {
+                self.player_model_widget.update(cx, |widget, cx| {
+                    widget.set_cape(cx, Some(bytes));
+                });
+                self.pending_apply_cape = false;
+            }
+        }
+
+        let (controls, active_skin, active_skin_variant, cape_library) =
+            self.render_account_panel(window, cx);
+
         h_flex().p_4()
             .gap_4()
             .child(v_flex()
@@ -696,18 +734,12 @@ impl Render for SkinsPage {
                 .h_full()
                 .child(controls)
                 .child(self.player_model_widget.clone()))
-            .child(library
-                .overflow_y_scrollbar()
-                .drag_over(|style, _: &ExternalPaths, _, cx| {
-                    style.bg(cx.theme().accent.opacity(0.5))
-                })
-                .on_drop(cx.listener(|page, paths: &ExternalPaths, _window, _cx| {
-                    for path in paths.paths() {
-                        page.data.backend_handle.send(MessageToBackend::AddToSkinLibrary {
-                            source: UrlOrFile::File { path: path.clone() }
-                        });
-                    }
-                })))
+            .child(v_flex()
+                .flex_1()
+                .min_w_0()
+                .w_full()
+                .child(cape_library)
+                .child(self.render_skin_library(active_skin.clone(), active_skin_variant, cx)))
             .overflow_hidden()
     }
 }

@@ -158,7 +158,7 @@ pub(crate) fn prepare_profile_clone_source(instance_root: &Path) -> Result<Profi
 
     let lock = acquire_existing_profile_lock(instance_root)?;
     reject_transaction_evidence(&control)?;
-    let manifest = read_manifest(&control)?;
+    let mut manifest = read_manifest(&control)?;
     if manifest.schema != SCHEMA_VERSION
         || manifest.profile_uuid != lock.profile_uuid()
         || manifest.state != ProfileLayoutState::Ready
@@ -167,9 +167,63 @@ pub(crate) fn prepare_profile_clone_source(instance_root: &Path) -> Result<Profi
             "identity/schema/state is not committed Ready".to_string(),
         ));
     }
-    verify_ready_live_snapshot(instance_root, &manifest)?;
+    // A local branch is editable by design. Its on-disk files can therefore differ from the
+    // last committed layout snapshot (including an intentionally removed inherited mod). Clone
+    // the actual stopped instance state and rebase the destination's layout snapshot to those
+    // bytes. Transaction evidence and filesystem object types are still checked strictly above
+    // and below; only ordinary file edits/removals are accepted here.
+    refresh_clone_snapshot(instance_root, &mut manifest)?;
 
     Ok(ProfileCloneSource::Ready { manifest, _lock: lock })
+}
+
+fn refresh_clone_snapshot(
+    instance_root: &Path,
+    manifest: &mut ProfileLayoutManifest,
+) -> Result<(), ProfileIdentityError> {
+    let live_root = instance_root.join(".minecraft");
+    ensure_plain_existing_directory(&live_root)?;
+    let mut removed = Vec::new();
+    for (relative, entry) in &mut manifest.managed_entries {
+        let path = safe_managed_path(&live_root, relative)?;
+        if managed_file_is_missing_or_validate_parents(&live_root, relative, &path)? {
+            removed.push(relative.clone());
+        } else {
+            // The source identity lock is held. Hash the actual file so the destination can be
+            // verified against the state that was copied.
+            entry.applied_hash = hash_regular_file(&path)?;
+        }
+    }
+    for relative in removed {
+        manifest.managed_entries.remove(&relative);
+    }
+    Ok(())
+}
+
+fn managed_file_is_missing_or_validate_parents(
+    root: &Path,
+    relative: &str,
+    path: &Path,
+) -> Result<bool, ProfileIdentityError> {
+    ensure_plain_existing_directory(root)?;
+    let segments: Vec<_> = relative.split('/').collect();
+    let mut current = root.to_path_buf();
+    for segment in &segments[..segments.len().saturating_sub(1)] {
+        current.push(segment);
+        match fs::symlink_metadata(&current) {
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(true),
+            Err(err) => return Err(err.into()),
+            Ok(_) => ensure_plain_existing_directory(&current)?,
+        }
+    }
+    match fs::symlink_metadata(path) {
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(true),
+        Err(err) => Err(err.into()),
+        Ok(_) => {
+            ensure_regular_file(path)?;
+            Ok(false)
+        },
+    }
 }
 
 /// Creates a fresh UUID namespace in an already-created empty destination before file copying.
@@ -177,6 +231,7 @@ pub(crate) fn prepare_profile_clone_source(instance_root: &Path) -> Result<Profi
 pub(crate) fn begin_profile_clone_destination(
     destination_root: &Path,
     source: &ProfileCloneSource,
+    inherit_mods_enabled: bool,
 ) -> Result<ProfileCloneDestination, ProfileIdentityError> {
     ensure_plain_existing_directory(destination_root)?;
     let control = control_root(destination_root);
@@ -195,7 +250,7 @@ pub(crate) fn begin_profile_clone_destination(
     write_new_synced(&control.join(IDENTITY_FILE), &serde_json::to_vec_pretty(&identity)?)?;
     let lock = acquire_lock_for_identity(&control, profile_uuid)?;
 
-    let ready_manifest = match source {
+    let mut ready_manifest = match source {
         ProfileCloneSource::Legacy => None,
         ProfileCloneSource::Ready { manifest, .. } => Some(ProfileLayoutManifest {
             schema: SCHEMA_VERSION,
@@ -210,6 +265,11 @@ pub(crate) fn begin_profile_clone_destination(
             transaction_id: None,
         }),
     };
+    if inherit_mods_enabled {
+        if let Some(manifest) = ready_manifest.as_mut() {
+            canonicalize_clone_mod_paths(manifest)?;
+        }
+    }
 
     Ok(ProfileCloneDestination {
         root: destination_root.to_path_buf(),
@@ -217,6 +277,27 @@ pub(crate) fn begin_profile_clone_destination(
         ready_manifest,
         _lock: lock,
     })
+}
+
+fn canonicalize_clone_mod_paths(manifest: &mut ProfileLayoutManifest) -> Result<(), ProfileIdentityError> {
+    fn canonicalize_map<T>(entries: &mut std::collections::BTreeMap<String, T>) -> Result<(), ProfileIdentityError> {
+        let mut normalized = std::collections::BTreeMap::new();
+        for (path, entry) in std::mem::take(entries) {
+            let canonical = crate::profile_branch::canonical_mod_path(&path);
+            if normalized.insert(canonical.clone(), entry).is_some() {
+                return Err(ProfileIdentityError::CloneSourceNotReady(format!(
+                    "both enabled and disabled mod files exist for {canonical}"
+                )));
+            }
+        }
+        *entries = normalized;
+        Ok(())
+    }
+
+    canonicalize_map(&mut manifest.managed_entries)?;
+    canonicalize_map(&mut manifest.branch.entries)?;
+    canonicalize_map(&mut manifest.branch.tombstones)?;
+    Ok(())
 }
 
 fn reject_transaction_evidence(control: &Path) -> Result<(), ProfileIdentityError> {
@@ -710,7 +791,7 @@ mod tests {
         let destination = TestRoot::new("legacy-destination");
         let plan = prepare_profile_clone_source(&source.0).unwrap();
         assert!(matches!(plan, ProfileCloneSource::Legacy));
-        let destination_state = begin_profile_clone_destination(&destination.0, &plan).unwrap();
+        let destination_state = begin_profile_clone_destination(&destination.0, &plan, false).unwrap();
         let clone_uuid = destination_state.finish().unwrap();
         assert!(!control_root(&source.0).exists());
         assert!(control_root(&destination.0).join(IDENTITY_FILE).is_file());
@@ -750,5 +831,55 @@ mod tests {
             prepare_profile_clone_source(&non_ready.0),
             Err(ProfileIdentityError::CloneSourceNotReady(_))
         ));
+    }
+
+    #[test]
+    fn profile_layout_clone_accepts_local_removal_and_rebases_snapshot() {
+        let source = TestRoot::new("edited-source");
+        let destination = TestRoot::new("edited-destination");
+        let source_file = source.0.join(".minecraft/mods/removed-by-user.jar");
+        fs::write(&source_file, b"parent mod").unwrap();
+        let lock = acquire_or_initialize_profile_lock(&source.0).unwrap();
+        let profile_uuid = lock.profile_uuid();
+        drop(lock);
+        let hash = hex::encode(Sha256::digest(b"parent mod"));
+        let mut managed_entries = std::collections::BTreeMap::new();
+        managed_entries.insert(
+            "mods/removed-by-user.jar".to_string(),
+            crate::profile_layout_flow::ManagedManifestEntry {
+                logical_identity: "mod:removed-by-user".to_string(),
+                source_hash: hash.clone(),
+                applied_hash: hash,
+            },
+        );
+        let manifest = ProfileLayoutManifest {
+            schema: SCHEMA_VERSION,
+            profile_uuid,
+            generation: 1,
+            state: ProfileLayoutState::Ready,
+            managed_input_fingerprint: String::new(),
+            sync_identity: String::new(),
+            sandbox_policy: String::new(),
+            managed_entries,
+            branch: Default::default(),
+            transaction_id: None,
+        };
+        write_new_synced(
+            &control_root(&source.0).join(MANIFEST_FILE),
+            &serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        fs::remove_file(source_file).unwrap();
+
+        let plan = prepare_profile_clone_source(&source.0).unwrap();
+        let ProfileCloneSource::Ready { manifest, .. } = &plan else {
+            panic!("persistent source should remain persistent");
+        };
+        assert!(manifest.managed_entries.is_empty());
+
+        let clone = begin_profile_clone_destination(&destination.0, &plan, false).unwrap();
+        clone.finish().unwrap();
+        let clone_manifest = read_manifest(&control_root(&destination.0)).unwrap();
+        assert!(clone_manifest.managed_entries.is_empty());
     }
 }

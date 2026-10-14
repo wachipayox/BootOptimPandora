@@ -7,7 +7,7 @@ use schema::{minecraft_profile::SkinVariant, unique_bytes::UniqueBytes};
 
 const THUMB_YAW: f64 = 22.5;
 const THUMB_PITCH: f64 = -8.0;
-const THUMB_ANIMATION: f64 = 3.0/16.0;
+const THUMB_ANIMATION: f64 = 3.0 / 16.0;
 const THUMB_Y_OFFSET: f64 = 6.0;
 const THUMB_ZOOM: f64 = 1.4;
 pub const THUMB_WIDTH: u32 = 128;
@@ -46,7 +46,8 @@ impl SkinThumbnailCache {
                     cx.drop_image(image, None);
                 }
             }
-        }).detach();
+        })
+        .detach();
         entity
     }
 
@@ -59,7 +60,7 @@ impl SkinThumbnailCache {
         match self.cache.get(skin) {
             Some(ThumbnailState::Ready(img)) => return Some(img.clone()),
             Some(ThumbnailState::Pending) => return None,
-            None => {}
+            None => {},
         }
 
         self.cache.insert(skin.clone(), ThumbnailState::Pending);
@@ -81,30 +82,32 @@ impl SkinThumbnailCache {
 
         let (tx, rx) = tokio::sync::oneshot::channel::<Option<SkinImage>>();
 
-        cx.background_executor().spawn({
-            let skin = entry.skin.clone();
-            async move {
-                let result = crate::skin_renderer::render_skin_3d(
-                    &skin,
-                    None,
-                    entry.variant,
-                    THUMB_WIDTH,
-                    THUMB_HEIGHT,
-                    THUMB_YAW,
-                    THUMB_PITCH,
-                    THUMB_ANIMATION,
-                    THUMB_Y_OFFSET,
-                    THUMB_ZOOM,
-                );
-                let result = result.map(|mut img| {
-                    for px in img.chunks_exact_mut(4) {
-                        px.swap(0, 2);
-                    }
-                    img
-                });
-                let _ = tx.send(result);
-            }
-        }).detach();
+        cx.background_executor()
+            .spawn({
+                let skin = entry.skin.clone();
+                async move {
+                    let result = crate::skin_renderer::render_skin_3d(
+                        &skin,
+                        None,
+                        entry.variant,
+                        THUMB_WIDTH,
+                        THUMB_HEIGHT,
+                        THUMB_YAW,
+                        THUMB_PITCH,
+                        THUMB_ANIMATION,
+                        THUMB_Y_OFFSET,
+                        THUMB_ZOOM,
+                    );
+                    let result = result.map(|mut img| {
+                        for px in img.chunks_exact_mut(4) {
+                            px.swap(0, 2);
+                        }
+                        img
+                    });
+                    let _ = tx.send(result);
+                }
+            })
+            .detach();
 
         self.render_task = Some(cx.spawn(async move |this, cx| {
             let result = rx.await;

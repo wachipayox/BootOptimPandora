@@ -143,6 +143,24 @@ impl BackendState {
 
     pub async fn handle_message(self: &Arc<Self>, message: MessageToBackend) {
         match message {
+            MessageToBackend::GetSaveGroups { id, channel } => {
+                let _ = channel.send(crate::BackendState::list_save_groups(self, id));
+            },
+            MessageToBackend::CreateSaveGroup { id, name, channel } => {
+                let result = crate::BackendState::create_save_group(self, id, name);
+                refresh_instance_saves(self, id, result.is_ok());
+                let _ = channel.send(result);
+            },
+            MessageToBackend::JoinSaveGroup { id, group_id, channel } => {
+                let result = crate::BackendState::join_save_group(self, id, group_id);
+                refresh_instance_saves(self, id, result.is_ok());
+                let _ = channel.send(result);
+            },
+            MessageToBackend::LeaveSaveGroup { id, channel } => {
+                let result = crate::BackendState::leave_save_group(self, id);
+                refresh_instance_saves(self, id, result.is_ok());
+                let _ = channel.send(result);
+            },
             MessageToBackend::RequestMetadata { request, force_reload } => {
                 let meta = self.meta.clone();
                 let send = self.send.clone();
@@ -239,7 +257,10 @@ impl BackendState {
                 loader,
                 icon,
             } => {
-                self.create_instance(&name, &version, loader, icon).await;
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    backend.create_instance(&name, &version, loader, icon).await;
+                });
             },
             MessageToBackend::DeleteInstance { id } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
@@ -253,6 +274,13 @@ impl BackendState {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
                     crate::duplicate::duplicate_instance(backend, id, &name, modal_action).await;
+                });
+            },
+            MessageToBackend::CreateLocalBranch { id, name, create_save_group, reuse_parent_icon, icon_hue_degrees, modal_action } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    backend.send.send_info(format!("Creating local branch '{name}'"));
+                    crate::duplicate::create_local_branch(backend, id, &name, create_save_group, reuse_parent_icon, icon_hue_degrees, modal_action).await;
                 });
             },
             MessageToBackend::ExportInstance {
@@ -668,6 +696,7 @@ impl BackendState {
                 };
 
                 let mut cannot_modify_while_running = false;
+                let mut toggle_errors = Vec::new();
 
                 for mod_id in mod_ids {
                     if let Some((instance_mod, folder)) = instance.try_get_content(mod_id) {
@@ -687,12 +716,21 @@ impl BackendState {
                             new_path.set_extension("");
                         };
 
-                        let _ = std::fs::rename(&instance_mod.path, new_path);
+                        if let Err(error) = std::fs::rename(&instance_mod.path, &new_path) {
+                            toggle_errors.push(format!("{}: {error}", instance_mod.path.display()));
+                        }
                     }
                 }
 
                 if cannot_modify_while_running {
                     self.send.send_warning("Cannot modify mods folder while instance is running");
+                }
+                if !toggle_errors.is_empty() {
+                    self.send.send_warning(format!(
+                        "Unable to change enabled state for {} mod file(s): {}",
+                        toggle_errors.len(),
+                        toggle_errors.join("; ")
+                    ));
                 }
             },
             MessageToBackend::SetContentChildEnabled {
@@ -1574,39 +1612,30 @@ impl BackendState {
                 _ = channel.send(self.config.lock().get().clone());
             },
             MessageToBackend::GetGlobalProfiles { channel } => {
-                let config = self.config.lock().get().distribution.clone();
-                let result = async {
-                    let client =
-                        crate::distribution::DistributionClient::new(&config).map_err(|error| error.to_string())?;
-                    let profiles = client.list_profiles().await.map_err(|error| error.to_string())?;
-                    Ok(profiles
-                        .into_iter()
-                        .map(|profile| {
-                            let stable = profile.channels.iter().find(|channel| channel.name == "stable");
-                            bridge::message::GlobalProfileSummary {
-                                profile_id: profile.profile_id,
-                                name: profile.name,
-                                latest_revision_id: profile.latest_revision.revision_id,
-                                latest_sequence: profile.latest_revision.sequence,
-                                latest_manifest_sha256: profile.latest_revision.manifest_sha256,
-                                stable_revision_id: stable.map(|channel| channel.revision.revision_id.clone()),
-                                stable_sequence: stable.map(|channel| channel.revision.sequence),
-                                stable_manifest_sha256: stable.map(|channel| channel.revision.manifest_sha256.clone()),
-                            }
-                        })
-                        .collect())
-                }
-                .await;
-                let _ = channel.send(result);
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let result = backend.load_global_catalog().await;
+                    let _ = channel.send(result);
+                });
+            },
+            MessageToBackend::CheckInheritedUpdates { id, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let result = tokio::time::timeout(std::time::Duration::from_secs(2), backend.check_inherited_updates(id)).await
+                        .unwrap_or_else(|_| Err("The update check timed out".into()));
+                    let _ = channel.send(result);
+                });
+            },
+            MessageToBackend::UpdateInheritedChain { id, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move { let _ = channel.send(backend.update_inherited_chain(id).await); });
             },
             MessageToBackend::CheckDistributionConnection => {
                 let config = self.config.lock().get().distribution.clone();
                 match crate::distribution::probe_distribution_service(&config).await {
                     Ok(service) => {
-                        let profiles_ready = service
-                            .capabilities
-                            .iter()
-                            .any(|capability| capability == "signed-global-profiles");
+                        let profiles_ready =
+                            service.capabilities.iter().any(|capability| capability == "signed-global-profiles");
                         let capability_status = if profiles_ready {
                             "signed global profiles are available"
                         } else {
@@ -1644,11 +1673,24 @@ impl BackendState {
             MessageToBackend::UpdateGlobalProfileInstance { id } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
-                    backend.send.send_info("Checking for global profile updates".to_owned());
-                    match backend.update_global_profile_instance(id).await {
-                        Ok(true) => backend.send.send_success("Global profile updated".to_owned()),
-                        Ok(false) => backend.send.send_success("Global profile is already up to date".to_owned()),
-                        Err(error) => backend.send.send_error(format!("Global profile update failed: {error}")),
+                    backend.send.send_info("Checking for inherited profile updates".to_owned());
+                    let parent_kind = backend
+                        .persistent_profile_branch_status(id, None)
+                        .ok()
+                        .and_then(|snapshot| snapshot.branch.lineage.parent);
+                    let result = match parent_kind {
+                        Some(crate::profile_branch::ProfileParentRef::GlobalRevision { .. }) => {
+                            backend.update_global_profile_instance(id).await
+                        },
+                        Some(crate::profile_branch::ProfileParentRef::LocalProfile { .. }) => {
+                            backend.update_local_profile_branch(id).await
+                        },
+                        None => Err("This instance has no inherited parent profile".to_owned()),
+                    };
+                    match result {
+                        Ok(true) => backend.send.send_success("Inherited profile updated".to_owned()),
+                        Ok(false) => backend.send.send_success("Inherited profile is already up to date".to_owned()),
+                        Err(error) => backend.send.send_error(format!("Inherited profile update failed: {error}")),
                     }
                 });
             },
@@ -2877,6 +2919,15 @@ impl BackendState {
         }
 
         println!("Done downloading all metadata");
+    }
+}
+
+fn refresh_instance_saves(state: &Arc<BackendState>, id: InstanceID, changed: bool) {
+    if !changed {
+        return;
+    }
+    if let Some(instance) = state.instance_state.write().instances.get_mut(id) {
+        instance.mark_all_dirty(state, true);
     }
 }
 

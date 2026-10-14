@@ -1,17 +1,40 @@
 use std::{
-    ffi::OsStr, hash::Hash, io::{BufRead, Cursor, Read, Write}, path::{Path, PathBuf}, sync::{Arc, atomic::{AtomicBool, Ordering}}
+    ffi::OsStr,
+    hash::Hash,
+    io::{BufRead, Cursor, Read, Write},
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
-use bridge::{instance::{ContentSummary, ContentType, ContentUpdateStatus, ModpackFile, ModpackFilePath, ModpackFileSource, UNKNOWN_CONTENT_SUMMARY}, safe_path::SafePath};
+use bridge::{
+    instance::{
+        ContentSummary, ContentType, ContentUpdateStatus, ModpackFile, ModpackFilePath, ModpackFileSource,
+        UNKNOWN_CONTENT_SUMMARY,
+    },
+    safe_path::SafePath,
+};
 use image::{DynamicImage, GenericImageView, imageops::FilterType};
 use indexmap::IndexMap;
 use parking_lot::{RwLock, RwLockReadGuard};
 use rayon::iter::{IntoParallelRefIterator, ParallelExtend, ParallelIterator};
 use rc_zip_sync::EntryHandle;
 use rustc_hash::{FxHashMap, FxHashSet};
-use schema::{content::ContentSource, curseforge::{CachedCurseforgeFileInfo, CurseforgeFile, CurseforgeModpackManifestJson}, fabric_mod::{FabricModJson, Icon, Person}, forge_mod::{JarJarMetadata, McModInfo, ModsToml}, loader::Loader, modrinth::{ModrinthFile, ModrinthSideRequirement}, mrpack::ModrinthIndexJson, resourcepack::PackMcmeta, unique_bytes::UniqueBytes};
+use schema::{
+    content::ContentSource,
+    curseforge::{CachedCurseforgeFileInfo, CurseforgeFile, CurseforgeModpackManifestJson},
+    fabric_mod::{FabricModJson, Icon, Person},
+    forge_mod::{JarJarMetadata, McModInfo, ModsToml},
+    loader::Loader,
+    modrinth::{ModrinthFile, ModrinthSideRequirement},
+    mrpack::ModrinthIndexJson,
+    resourcepack::PackMcmeta,
+    unique_bytes::UniqueBytes,
+};
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, DeserializeAs};
+use serde_with::{DeserializeAs, serde_as};
 use sha1::{Digest, Sha1};
 use ustr::Ustr;
 
@@ -28,7 +51,7 @@ pub enum ContentUpdateAction {
     Curseforge {
         file: CurseforgeFile,
         project_id: u32,
-    }
+    },
 }
 
 impl ContentUpdateAction {
@@ -61,8 +84,8 @@ impl ZipMetadataFile {
     pub fn priority(self, extension: Option<&OsStr>) -> i32 {
         let mut priority = match self {
             ZipMetadataFile::McModInfo => 1, // If a legacy forge mod manifest is present, that's probably the one we want
-            ZipMetadataFile::JarJar => -1, // Fallback
-            ZipMetadataFile::JavaManifest => -2,  // Fallback
+            ZipMetadataFile::JarJar => -1,   // Fallback
+            ZipMetadataFile::JavaManifest => -2, // Fallback
             _ => 0,
         };
 
@@ -175,14 +198,18 @@ impl ModMetadataManager {
                 cursor.set_position(data_start + data_len as u64);
 
                 // Calculate and compare checksum
-                let all_bytes = &cursor.get_ref()[data_start as usize .. filename_end];
+                let all_bytes = &cursor.get_ref()[data_start as usize..filename_end];
                 let calculated_checksum = crc32fast::hash(all_bytes);
                 if checksum != calculated_checksum {
-                    log::error!("Cached curseforge info checksum failed, expected {:x}, got {:x}", checksum, calculated_checksum);
+                    log::error!(
+                        "Cached curseforge info checksum failed, expected {:x}, got {:x}",
+                        checksum,
+                        calculated_checksum
+                    );
                     continue;
                 }
 
-                let filename_bytes = &cursor.get_ref()[filename_start .. filename_end];
+                let filename_bytes = &cursor.get_ref()[filename_start..filename_end];
                 let Ok(filename_str) = str::from_utf8(filename_bytes) else {
                     continue;
                 };
@@ -235,8 +262,8 @@ impl ModMetadataManager {
                 let bytes = &data[data_start..];
                 let data_len = bytes.len();
                 let checksum = crc32fast::hash(bytes);
-                data[checksum_start..checksum_start+4].copy_from_slice(&u32::to_le_bytes(checksum));
-                data[checksum_start+4..checksum_start+8].copy_from_slice(&u32::to_le_bytes(data_len as u32));
+                data[checksum_start..checksum_start + 4].copy_from_slice(&u32::to_le_bytes(checksum));
+                data[checksum_start + 4..checksum_start + 8].copy_from_slice(&u32::to_le_bytes(data_len as u32));
             }
             _ = crate::fs::write_safe(&self.cached_curseforge_info_dat, &data);
         }
@@ -272,7 +299,12 @@ impl ModMetadataManager {
         self.get_file(&mut file, metadata, path.extension())
     }
 
-    pub fn get_file(self: &Arc<Self>, file: &mut std::fs::File, metadata: Option<std::fs::Metadata>, extension: Option<&OsStr>) -> Arc<ContentSummary> {
+    pub fn get_file(
+        self: &Arc<Self>,
+        file: &mut std::fs::File,
+        metadata: Option<std::fs::Metadata>,
+        extension: Option<&OsStr>,
+    ) -> Arc<ContentSummary> {
         let mut hasher = Sha1::new();
         let _ = std::io::copy(file, &mut hasher).ok().unwrap();
         let actual_hash: [u8; 20] = hasher.finalize().into();
@@ -323,7 +355,14 @@ impl ModMetadataManager {
         }
     }
 
-    fn load_mod_summary<R: rc_zip_sync::ReadZip>(self: &Arc<Self>, hash: [u8; 20], filesize: Option<u64>, file: &R, extension: Option<&OsStr>, allow_children: bool) -> Arc<ContentSummary> {
+    fn load_mod_summary<R: rc_zip_sync::ReadZip>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        filesize: Option<u64>,
+        file: &R,
+        extension: Option<&OsStr>,
+        allow_children: bool,
+    ) -> Arc<ContentSummary> {
         let Ok(archive) = file.read_zip() else {
             return UNKNOWN_CONTENT_SUMMARY.clone();
         };
@@ -366,7 +405,9 @@ impl ModMetadataManager {
                 ZipMetadataFile::McModInfo => self.load_legacy_forge_mod(hash, filesize, &archive, file),
                 ZipMetadataFile::FabricModJson => self.load_fabric_mod(hash, filesize, &archive, file),
                 ZipMetadataFile::ModsToml => self.load_forge_mod(hash, filesize, &archive, file, ContentType::Forge),
-                ZipMetadataFile::NeoforgeModsToml => self.load_forge_mod(hash, filesize, &archive, file, ContentType::NeoForge),
+                ZipMetadataFile::NeoforgeModsToml => {
+                    self.load_forge_mod(hash, filesize, &archive, file, ContentType::NeoForge)
+                },
                 ZipMetadataFile::JarJar => self.load_jarjar(hash, filesize, &archive, file),
                 ZipMetadataFile::JavaManifest => self.load_from_java_manifest(hash, filesize, &archive, file),
                 ZipMetadataFile::PackMcmeta => self.load_from_pack_mcmeta(hash, filesize, &archive, file),
@@ -389,14 +430,20 @@ impl ModMetadataManager {
                 version_str: "".into(),
                 rich_description: None,
                 png_icon: None,
-                extra: ContentType::ShaderPack
+                extra: ContentType::ShaderPack,
             });
         }
 
         UNKNOWN_CONTENT_SUMMARY.clone()
     }
 
-    fn load_fabric_mod<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, hash: [u8; 20], filesize: Option<u64>, archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>) -> Option<Arc<ContentSummary>> {
+    fn load_fabric_mod<R: rc_zip_sync::HasCursor>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        filesize: Option<u64>,
+        archive: &rc_zip_sync::ArchiveHandle<R>,
+        file: EntryHandle<'_, R>,
+    ) -> Option<Arc<ContentSummary>> {
         let mut bytes = file.bytes().ok()?;
 
         // Some mods violate the JSON spec by using raw newline characters inside strings (e.g. BetterGrassify)
@@ -406,9 +453,11 @@ impl ModMetadataManager {
             }
         }
 
-        let fabric_mod_json: FabricModJson = serde_json::from_slice(&bytes).inspect_err(|e| {
-            log::error!("Error parsing fabric.mod.json: {e}");
-        }).ok()?;
+        let fabric_mod_json: FabricModJson = serde_json::from_slice(&bytes)
+            .inspect_err(|e| {
+                log::error!("Error parsing fabric.mod.json: {e}");
+            })
+            .ok()?;
 
         drop(file);
 
@@ -426,11 +475,15 @@ impl ModMetadataManager {
         };
 
         let mut png_icon: Option<UniqueBytes> = None;
-        if let Some(icon) = icon && let Some(icon_file) = archive.by_name(&icon) {
+        if let Some(icon) = icon
+            && let Some(icon_file) = archive.by_name(&icon)
+        {
             png_icon = load_icon(icon_file);
         }
 
-        let authors = if let Some(authors) = fabric_mod_json.authors && let Some(authors) = create_authors_string(&authors) {
+        let authors = if let Some(authors) = fabric_mod_json.authors
+            && let Some(authors) = create_authors_string(&authors)
+        {
             authors.into()
         } else {
             "".into()
@@ -445,16 +498,25 @@ impl ModMetadataManager {
             version_str: create_version_string(&fabric_mod_json.version),
             rich_description: None,
             png_icon,
-            extra: ContentType::Fabric
+            extra: ContentType::Fabric,
         }))
     }
 
-    fn load_forge_mod<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, hash: [u8; 20], filesize: Option<u64>, archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>, extra: ContentType) -> Option<Arc<ContentSummary>> {
+    fn load_forge_mod<R: rc_zip_sync::HasCursor>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        filesize: Option<u64>,
+        archive: &rc_zip_sync::ArchiveHandle<R>,
+        file: EntryHandle<'_, R>,
+        extra: ContentType,
+    ) -> Option<Arc<ContentSummary>> {
         let bytes = file.bytes().ok()?;
 
-        let mods_toml: ModsToml = toml::from_slice(&bytes).inspect_err(|e| {
-            log::error!("Error parsing mods.toml/neoforge.mods.toml: {e}");
-        }).ok()?;
+        let mods_toml: ModsToml = toml::from_slice(&bytes)
+            .inspect_err(|e| {
+                log::error!("Error parsing mods.toml/neoforge.mods.toml: {e}");
+            })
+            .ok()?;
 
         let Some(first) = mods_toml.mods.first() else {
             return None;
@@ -465,7 +527,9 @@ impl ModMetadataManager {
         let name = first.display_name.clone().unwrap_or_else(|| Arc::clone(&first.mod_id));
 
         let mut png_icon: Option<UniqueBytes> = None;
-        if let Some(icon) = &first.logo_file && let Some(icon_file) = archive.by_name(&icon) {
+        if let Some(icon) = &first.logo_file
+            && let Some(icon_file) = archive.by_name(&icon)
+        {
             png_icon = load_icon(icon_file);
         }
 
@@ -502,12 +566,20 @@ impl ModMetadataManager {
         }))
     }
 
-    fn load_legacy_forge_mod<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, hash: [u8; 20], filesize: Option<u64>, archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>) -> Option<Arc<ContentSummary>> {
+    fn load_legacy_forge_mod<R: rc_zip_sync::HasCursor>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        filesize: Option<u64>,
+        archive: &rc_zip_sync::ArchiveHandle<R>,
+        file: EntryHandle<'_, R>,
+    ) -> Option<Arc<ContentSummary>> {
         let bytes = file.bytes().ok()?;
 
-        let mc_mod_info: McModInfo = serde_json::from_slice(&bytes).inspect_err(|e| {
-            log::error!("Error parsing mcmod.info: {e}");
-        }).ok()?;
+        let mc_mod_info: McModInfo = serde_json::from_slice(&bytes)
+            .inspect_err(|e| {
+                log::error!("Error parsing mcmod.info: {e}");
+            })
+            .ok()?;
 
         let Some(first) = mc_mod_info.0.first() else {
             return None;
@@ -516,7 +588,9 @@ impl ModMetadataManager {
         drop(file);
 
         let mut png_icon: Option<UniqueBytes> = None;
-        if let Some(icon) = &first.logo_file && let Some(icon_file) = archive.by_name(&icon) {
+        if let Some(icon) = &first.logo_file
+            && let Some(icon_file) = archive.by_name(&icon)
+        {
             png_icon = load_icon(icon_file);
         }
 
@@ -553,10 +627,18 @@ impl ModMetadataManager {
         }))
     }
 
-    fn load_modrinth_modpack<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, hash: [u8; 20], filesize: Option<u64>, archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>) -> Option<Arc<ContentSummary>> {
-        let modrinth_index_json: ModrinthIndexJson = serde_json::from_slice(&file.bytes().ok()?).inspect_err(|e| {
-            log::error!("Error parsing modrinth.index.json: {e}");
-        }).ok()?;
+    fn load_modrinth_modpack<R: rc_zip_sync::HasCursor>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        filesize: Option<u64>,
+        archive: &rc_zip_sync::ArchiveHandle<R>,
+        file: EntryHandle<'_, R>,
+    ) -> Option<Arc<ContentSummary>> {
+        let modrinth_index_json: ModrinthIndexJson = serde_json::from_slice(&file.bytes().ok()?)
+            .inspect_err(|e| {
+                log::error!("Error parsing modrinth.index.json: {e}");
+            })
+            .ok()?;
 
         let mut overrides: IndexMap<SafePath, Arc<[u8]>> = IndexMap::new();
 
@@ -584,7 +666,7 @@ impl ModMetadataManager {
                 continue;
             };
             overrides.insert(path, data.into());
-        };
+        }
 
         let mut modpack_files = Vec::new();
         for (mut path, bytes) in overrides {
@@ -640,11 +722,13 @@ impl ModMetadataManager {
             let summary = if let Some(cached) = self.by_hash.read().get(&file_hash).cloned() {
                 Some(cached)
             } else {
-                let content_path = crate::fs::create_content_library_path(&self.content_library_dir, file_hash, path.extension());
+                let content_path =
+                    crate::fs::create_content_library_path(&self.content_library_dir, file_hash, path.extension());
 
                 if let Ok(mut file) = std::fs::File::open(&content_path) {
                     let filesize = file.metadata().ok().as_ref().map(std::fs::Metadata::len);
-                    let summary = self.load_mod_summary(file_hash, filesize, &mut file, content_path.extension(), false);
+                    let summary =
+                        self.load_mod_summary(file_hash, filesize, &mut file, content_path.extension(), false);
                     self.put(file_hash, summary.clone());
                     Some(summary)
                 } else {
@@ -656,7 +740,7 @@ impl ModMetadataManager {
             Some(ModpackFile {
                 source: ModpackFileSource::DownloadUrl {
                     url: first_download.clone(),
-                    size: download.file_size
+                    size: download.file_size,
                 },
                 path: ModpackFilePath::Path(path),
                 hash: file_hash,
@@ -673,7 +757,9 @@ impl ModMetadataManager {
             png_icon = load_icon(icon);
         }
 
-        let authors = if let Some(authors) = modrinth_index_json.authors && let Some(authors) = create_authors_string(&authors) {
+        let authors = if let Some(authors) = modrinth_index_json.authors
+            && let Some(authors) = create_authors_string(&authors)
+        {
             authors.into()
         } else if let Some(author) = modrinth_index_json.author {
             format!("By {}", author.name()).into()
@@ -693,11 +779,15 @@ impl ModMetadataManager {
             extra: ContentType::ModrinthModpack {
                 files: modpack_files.into(),
                 dependencies: modrinth_index_json.dependencies,
-            }
+            },
         }))
     }
 
-    fn load_child_content_summary_from_bytes(self: &Arc<Self>, bytes: &[u8], extension: Option<&OsStr>) -> ([u8; 20], Arc<ContentSummary>) {
+    fn load_child_content_summary_from_bytes(
+        self: &Arc<Self>,
+        bytes: &[u8],
+        extension: Option<&OsStr>,
+    ) -> ([u8; 20], Arc<ContentSummary>) {
         let mut hasher = Sha1::new();
         hasher.update(&*bytes);
         let hash = hasher.finalize();
@@ -712,10 +802,18 @@ impl ModMetadataManager {
         return (hash, summary);
     }
 
-    fn load_curseforge_modpack<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, hash: [u8; 20], filesize: Option<u64>, archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>) -> Option<Arc<ContentSummary>> {
-        let manifest_json: CurseforgeModpackManifestJson = serde_json::from_slice(&file.bytes().ok()?).inspect_err(|e| {
-            log::error!("Error parsing manifest.json: {e}");
-        }).ok()?;
+    fn load_curseforge_modpack<R: rc_zip_sync::HasCursor>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        filesize: Option<u64>,
+        archive: &rc_zip_sync::ArchiveHandle<R>,
+        file: EntryHandle<'_, R>,
+    ) -> Option<Arc<ContentSummary>> {
+        let manifest_json: CurseforgeModpackManifestJson = serde_json::from_slice(&file.bytes().ok()?)
+            .inspect_err(|e| {
+                log::error!("Error parsing manifest.json: {e}");
+            })
+            .ok()?;
 
         let mut overrides: IndexMap<SafePath, Arc<[u8]>> = IndexMap::new();
 
@@ -768,7 +866,11 @@ impl ModMetadataManager {
                 known_files.push((file, cached_info));
             } else {
                 unknown_files.push(file.clone());
-                self.parents_by_missing_curseforge_id.write().entry(file.file_id).or_default().insert(hash);
+                self.parents_by_missing_curseforge_id
+                    .write()
+                    .entry(file.file_id)
+                    .or_default()
+                    .insert(hash);
             }
         }
 
@@ -788,11 +890,16 @@ impl ModMetadataManager {
             let summary = if let Some(cached) = self.by_hash.read().get(&cached_info.hash).cloned() {
                 Some(cached)
             } else {
-                let content_path = crate::fs::create_content_library_path(&self.content_library_dir, cached_info.hash, filename.extension());
+                let content_path = crate::fs::create_content_library_path(
+                    &self.content_library_dir,
+                    cached_info.hash,
+                    filename.extension(),
+                );
 
                 if let Ok(mut file) = std::fs::File::open(&content_path) {
                     let filesize = file.metadata().ok().as_ref().map(std::fs::Metadata::len);
-                    let summary = self.load_mod_summary(cached_info.hash, filesize, &mut file, content_path.extension(), false);
+                    let summary =
+                        self.load_mod_summary(cached_info.hash, filesize, &mut file, content_path.extension(), false);
                     self.put(cached_info.hash, summary.clone());
                     Some(summary)
                 } else {
@@ -802,12 +909,14 @@ impl ModMetadataManager {
             };
 
             Some(ModpackFile {
-                source: ModpackFileSource::DownloadCurseforge { file_id: curseforge_file.file_id },
+                source: ModpackFileSource::DownloadCurseforge {
+                    file_id: curseforge_file.file_id,
+                },
                 path: ModpackFilePath::Filename(filename),
                 hash: cached_info.hash,
                 summary,
                 default_disabled,
-                disabled_third_party_downloads: cached_info.disabled_third_party_downloads
+                disabled_third_party_downloads: cached_info.disabled_third_party_downloads,
             })
         });
 
@@ -837,16 +946,24 @@ impl ModMetadataManager {
                 unknown_files: unknown_files.into(),
                 files: modpack_files.into(),
                 minecraft: manifest_json.minecraft,
-            }
+            },
         }))
     }
 
-    fn load_jarjar<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, hash: [u8; 20], _filesize: Option<u64>, archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>) -> Option<Arc<ContentSummary>> {
+    fn load_jarjar<R: rc_zip_sync::HasCursor>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        _filesize: Option<u64>,
+        archive: &rc_zip_sync::ArchiveHandle<R>,
+        file: EntryHandle<'_, R>,
+    ) -> Option<Arc<ContentSummary>> {
         let bytes = file.bytes().ok()?;
 
-        let metadata_json: JarJarMetadata = serde_json::from_slice(&bytes).inspect_err(|e| {
-            log::error!("Error parsing jarjar/metadata.json: {e}");
-        }).ok()?;
+        let metadata_json: JarJarMetadata = serde_json::from_slice(&bytes)
+            .inspect_err(|e| {
+                log::error!("Error parsing jarjar/metadata.json: {e}");
+            })
+            .ok()?;
 
         drop(file);
 
@@ -869,7 +986,13 @@ impl ModMetadataManager {
         None
     }
 
-    fn load_from_java_manifest<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, hash: [u8; 20], filesize: Option<u64>, _archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>) -> Option<Arc<ContentSummary>> {
+    fn load_from_java_manifest<R: rc_zip_sync::HasCursor>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        filesize: Option<u64>,
+        _archive: &rc_zip_sync::ArchiveHandle<R>,
+        file: EntryHandle<'_, R>,
+    ) -> Option<Arc<ContentSummary>> {
         let bytes = file.bytes().ok()?;
 
         let manifest_str = str::from_utf8(&bytes).ok()?;
@@ -911,16 +1034,24 @@ impl ModMetadataManager {
             version_str: version.unwrap_or_default(),
             rich_description: None,
             png_icon: None,
-            extra: ContentType::JavaModule
+            extra: ContentType::JavaModule,
         }))
     }
 
-    fn load_from_pack_mcmeta<R: rc_zip_sync::HasCursor>(self: &Arc<Self>, hash: [u8; 20], filesize: Option<u64>, archive: &rc_zip_sync::ArchiveHandle<R>, file: EntryHandle<'_, R>) -> Option<Arc<ContentSummary>> {
+    fn load_from_pack_mcmeta<R: rc_zip_sync::HasCursor>(
+        self: &Arc<Self>,
+        hash: [u8; 20],
+        filesize: Option<u64>,
+        archive: &rc_zip_sync::ArchiveHandle<R>,
+        file: EntryHandle<'_, R>,
+    ) -> Option<Arc<ContentSummary>> {
         let bytes = file.bytes().ok()?;
 
-        let pack_mcmeta: PackMcmeta = serde_json::from_slice(&bytes).inspect_err(|e| {
-            log::error!("Error parsing pack.mcmeta: {e}");
-        }).ok()?;
+        let pack_mcmeta: PackMcmeta = serde_json::from_slice(&bytes)
+            .inspect_err(|e| {
+                log::error!("Error parsing pack.mcmeta: {e}");
+            })
+            .ok()?;
 
         drop(file);
 
@@ -938,15 +1069,20 @@ impl ModMetadataManager {
             version_str: "".into(),
             rich_description: Some(Arc::new(pack_mcmeta.pack.description)),
             png_icon,
-            extra: ContentType::ResourcePack
+            extra: ContentType::ResourcePack,
         }))
     }
 
     // Used for resourcepack folders
-    pub fn create_resource_pack(pack_mcmeta_bytes: &[u8], pack_png_bytes: Option<&[u8]>) -> Option<Arc<ContentSummary>> {
-        let pack_mcmeta: PackMcmeta = serde_json::from_slice(&pack_mcmeta_bytes).inspect_err(|e| {
-            log::error!("Error parsing pack.mcmeta: {e}");
-        }).ok()?;
+    pub fn create_resource_pack(
+        pack_mcmeta_bytes: &[u8],
+        pack_png_bytes: Option<&[u8]>,
+    ) -> Option<Arc<ContentSummary>> {
+        let pack_mcmeta: PackMcmeta = serde_json::from_slice(&pack_mcmeta_bytes)
+            .inspect_err(|e| {
+                log::error!("Error parsing pack.mcmeta: {e}");
+            })
+            .ok()?;
 
         let png_icon = pack_png_bytes.map(load_icon_bytes).flatten();
 
@@ -959,11 +1095,10 @@ impl ModMetadataManager {
             version_str: "".into(),
             rich_description: Some(Arc::new(pack_mcmeta.pack.description)),
             png_icon,
-            extra: ContentType::ResourcePack
+            extra: ContentType::ResourcePack,
         }))
     }
 }
-
 
 fn load_icon<R: rc_zip_sync::HasCursor>(icon_file: rc_zip_sync::EntryHandle<R>) -> Option<UniqueBytes> {
     let Ok(icon_bytes) = icon_file.bytes() else {
@@ -1002,7 +1137,11 @@ fn load_icon_bytes(icon_bytes: &[u8]) -> Option<UniqueBytes> {
 
     let mut modified_bytes = Vec::new();
     let mut cursor = Cursor::new(&mut modified_bytes);
-    let encoder = image::codecs::png::PngEncoder::new_with_quality(&mut cursor, image::codecs::png::CompressionType::Best, Default::default());
+    let encoder = image::codecs::png::PngEncoder::new_with_quality(
+        &mut cursor,
+        image::codecs::png::CompressionType::Best,
+        Default::default(),
+    );
     if image.write_with_encoder(encoder).is_err() {
         return None;
     }
@@ -1033,7 +1172,7 @@ fn crop_to_content(image: &DynamicImage) -> Option<DynamicImage> {
             return None;
         }
         for y in min_y..max_y {
-            if image.get_pixel(max_x-1, y).0[3] != 0 {
+            if image.get_pixel(max_x - 1, y).0[3] != 0 {
                 break 'crop_max_x;
             }
         }
@@ -1055,7 +1194,7 @@ fn crop_to_content(image: &DynamicImage) -> Option<DynamicImage> {
             return None;
         }
         for x in min_x..max_x {
-            if image.get_pixel(x, max_y-1).0[3] != 0 {
+            if image.get_pixel(x, max_y - 1).0[3] != 0 {
                 break 'crop_max_y;
             }
         }
@@ -1125,7 +1264,7 @@ impl ContentSources {
                     ContentSource::ModrinthProject { project_id: _ } => {
                         old_source == &value || value == ContentSource::ModrinthUnknown
                     },
-                    _ => old_source == &value
+                    _ => old_source == &value,
                 };
                 if !skip {
                     values[existing].1 = value;
@@ -1202,7 +1341,7 @@ impl ContentSources {
                 data.push(3_u8);
                 data.push(4_u8);
                 data.extend_from_slice(&project_id.to_le_bytes());
-            }
+            },
         }
     }
 
@@ -1291,7 +1430,9 @@ impl ContentSources {
                             continue;
                         };
 
-                        ContentSource::ModrinthProject { project_id: project_id.into() }
+                        ContentSource::ModrinthProject {
+                            project_id: project_id.into(),
+                        }
                     },
                     3 => {
                         debug_assert_eq!(type_and_size_buf[1], 4);
@@ -1301,12 +1442,14 @@ impl ContentSources {
                             break;
                         }
 
-                        ContentSource::CurseforgeProject { project_id: u32::from_le_bytes(id_buf) }
+                        ContentSource::CurseforgeProject {
+                            project_id: u32::from_le_bytes(id_buf),
+                        }
                     },
                     _ => {
                         cursor.consume(type_and_size_buf[1] as usize);
                         continue;
-                    }
+                    },
                 };
 
                 match values.binary_search_by_key(&key_buf, |v| v.0) {
@@ -1322,7 +1465,7 @@ impl ContentSources {
 
         Ok(Self {
             by_first_byte,
-            dirty: [0; 8]
+            dirty: [0; 8],
         })
     }
 }
@@ -1339,8 +1482,7 @@ fn create_version_string(ver: &str) -> Arc<str> {
 #[serde_as]
 #[derive(Deserialize)]
 struct LegacyDeserializedContentSources(
-    #[serde_as(as = "FxHashMap<DeserializeAsHex, _>")]
-    FxHashMap<[u8; 20], LegacyContentSource>
+    #[serde_as(as = "FxHashMap<DeserializeAsHex, _>")] FxHashMap<[u8; 20], LegacyContentSource>,
 );
 
 struct DeserializeAsHex {}
@@ -1348,7 +1490,8 @@ struct DeserializeAsHex {}
 impl<'de> DeserializeAs<'de, [u8; 20]> for DeserializeAsHex {
     fn deserialize_as<D>(deserializer: D) -> Result<[u8; 20], D::Error>
     where
-        D: serde::Deserializer<'de> {
+        D: serde::Deserializer<'de>,
+    {
         hex::serde::deserialize(deserializer)
     }
 }

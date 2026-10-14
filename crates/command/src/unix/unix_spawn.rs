@@ -1,14 +1,26 @@
-use std::{ffi::CString, io::{Error, ErrorKind}, os::{fd::{AsRawFd, OwnedFd, RawFd}, unix::ffi::OsStringExt}};
+use std::{
+    ffi::CString,
+    io::{Error, ErrorKind},
+    os::{
+        fd::{AsRawFd, OwnedFd, RawFd},
+        unix::ffi::OsStringExt,
+    },
+};
 
 use libc::c_char;
 
-use crate::{PandoraChild, PandoraCommand, PandoraStdioReadMode, PandoraStdioWriteMode, process::PandoraProcess, spawner::SpawnContext, unix::unix_helpers::{RawStringVec, cvt, cvt_r, environ}};
+use crate::{
+    PandoraChild, PandoraCommand, PandoraStdioReadMode, PandoraStdioWriteMode,
+    process::PandoraProcess,
+    spawner::SpawnContext,
+    unix::unix_helpers::{RawStringVec, cvt, cvt_r, environ},
+};
 
 pub fn spawn(mut command: PandoraCommand, context: &mut SpawnContext) -> std::io::Result<PandoraChild> {
     // Program
     let resolved = command.resolve_executable_path()?;
     let Ok(program) = CString::new(resolved.clone().into_os_string().into_vec()) else {
-        return Err(Error::new(ErrorKind::InvalidData, "program contained null byte"))
+        return Err(Error::new(ErrorKind::InvalidData, "program contained null byte"));
     };
 
     // Arguments
@@ -57,7 +69,7 @@ pub fn spawn(mut command: PandoraCommand, context: &mut SpawnContext) -> std::io
             stdin_write = Some(write);
             stdin_read = Some(read.as_raw_fd());
             fds_to_drop.push(read.into());
-        }
+        },
     }
     match command.stdout {
         PandoraStdioReadMode::Pipe => {
@@ -94,7 +106,7 @@ pub fn spawn(mut command: PandoraCommand, context: &mut SpawnContext) -> std::io
 
     let workdir = if let Some(current_dir) = command.current_dir {
         let Ok(workdir) = CString::new(current_dir.into_os_string().into_vec()) else {
-            return Err(Error::new(ErrorKind::InvalidData, "program contained null byte"))
+            return Err(Error::new(ErrorKind::InvalidData, "program contained null byte"));
         };
         Some(workdir)
     } else {
@@ -123,7 +135,7 @@ pub fn spawn(mut command: PandoraCommand, context: &mut SpawnContext) -> std::io
             #[cfg(target_os = "macos")]
             command.sandbox_profile,
             #[cfg(target_os = "macos")]
-            command.sandbox_params.map(|v| v.into_null_terminated_ptr().cast())
+            command.sandbox_params.map(|v| v.into_null_terminated_ptr().cast()),
         );
         unsafe { libc::_exit(1) }
     }
@@ -132,7 +144,7 @@ pub fn spawn(mut command: PandoraCommand, context: &mut SpawnContext) -> std::io
         process: PandoraProcess::new(pid),
         stdin: stdin_write,
         stdout: stdout_read,
-        stderr: stderr_read
+        stderr: stderr_read,
     })
 }
 
@@ -145,10 +157,8 @@ fn exec(
     stderr: Option<RawFd>,
     workdir: Option<*const c_char>,
     pass_fds: &[OwnedFd],
-    #[cfg(target_os = "macos")]
-    sandbox_profile: Option<CString>,
-    #[cfg(target_os = "macos")]
-    sandbox_params: Option<*const *const c_char>,
+    #[cfg(target_os = "macos")] sandbox_profile: Option<CString>,
+    #[cfg(target_os = "macos")] sandbox_params: Option<*const *const c_char>,
 ) -> std::io::Result<()> {
     unsafe {
         *environ() = env;
@@ -187,8 +197,7 @@ fn exec(
         if let Some(sandbox_profile) = sandbox_profile {
             let mut errorbuf = std::ptr::null_mut();
             let res = if let Some(sandbox_params) = sandbox_params {
-                sandbox_init_with_parameters(sandbox_profile.as_ptr(), 0,
-                    sandbox_params, &mut errorbuf)
+                sandbox_init_with_parameters(sandbox_profile.as_ptr(), 0, sandbox_params, &mut errorbuf)
             } else {
                 sandbox_init(sandbox_profile.as_ptr(), 0, &mut errorbuf)
             };
@@ -211,7 +220,12 @@ fn exec(
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    fn sandbox_init_with_parameters(profile: *const libc::c_char, flags: u64, parameters: *const *const libc::c_char, errorbuf: *mut *mut libc::c_char) -> libc::c_int;
+    fn sandbox_init_with_parameters(
+        profile: *const libc::c_char,
+        flags: u64,
+        parameters: *const *const libc::c_char,
+        errorbuf: *mut *mut libc::c_char,
+    ) -> libc::c_int;
     fn sandbox_init(profile: *const libc::c_char, flags: u64, errorbuf: *mut *mut libc::c_char) -> libc::c_int;
     fn sandbox_free_error(errorbuf: *mut libc::c_char);
 }

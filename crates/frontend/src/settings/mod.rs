@@ -95,9 +95,13 @@ impl SettingsRoot {
         }
 
         let (send, recv) = tokio::sync::oneshot::channel();
-        self.get_configuration_task = Some(cx.spawn(async move |page, cx| {
+        let settings_entity = cx.entity();
+        self.get_configuration_task = Some(cx.spawn(async move |_, cx| {
             let config: BackendConfig = recv.await.unwrap_or_default();
-            _ = page.update(cx, move |settings, cx| {
+            // A settings window can be closed while the backend request is in flight. Updating
+            // the captured weak entity is safe in that case; updating the originating window
+            // context tries to reach a native window that no longer exists.
+            _ = cx.update_entity(&settings_entity, move |settings, cx| {
                 settings.actual_backend_config = Some(config);
                 settings.get_configuration_task = None;
 
@@ -694,6 +698,7 @@ impl Settings {
 }
 
 pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut App) {
+    let display_id = main_window.display(cx).map(|display| display.id());
     let existing = cx.windows().into_iter().find_map(|w| {
         let root = w.downcast::<Root>()?;
         if !root.read(cx).ok()?.view().clone().downcast::<SettingsRoot>().is_ok() {
@@ -702,12 +707,18 @@ pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut 
         Some(root)
     });
     if let Some(existing) = existing {
-        _ = existing.update(cx, |_, window, _| window.activate_window());
-        return;
+        let existing_display_id = existing
+            .update(cx, |_, window, cx| window.display(cx).map(|display| display.id()))
+            .ok()
+            .flatten();
+        if existing_display_id == display_id {
+            _ = existing.update(cx, |_, window, _| window.activate_window());
+            return;
+        }
+        _ = existing.update(cx, |_, window, _| window.remove_window());
     }
 
     let use_custom_titlebar = crate::root::should_render_custom_titlebar();
-    let display_id = main_window.display(cx).map(|d| d.id());
     let options = WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: Some(t::settings::title().into()),
@@ -720,6 +731,7 @@ pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut 
         } else {
             WindowDecorations::Server
         }),
+        display_id,
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(display_id, size(px(960.0), px(540.0)), cx))),
         window_min_size: Some(size(px(480.0), px(270.0))),
         ..Default::default()

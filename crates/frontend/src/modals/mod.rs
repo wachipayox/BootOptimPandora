@@ -9,6 +9,7 @@ pub mod generic;
 pub mod global_profiles;
 pub mod manual_curseforge_downloads;
 pub mod modrinth_install;
+pub mod save_groups;
 pub mod select_icon;
 pub mod unzip_modpack;
 pub mod update_prompt;

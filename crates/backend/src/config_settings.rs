@@ -80,7 +80,7 @@ pub fn merge_toml_settings(
                     }
                     set_value(document.as_table_mut(), &rule.key, desired, &rule.key)?;
                 }
-            }
+            },
             "default_once" => {
                 if !initialized.contains(&identity) {
                     // Preserve an existing live key on migration/upgrade. A new
@@ -91,7 +91,7 @@ pub fn merge_toml_settings(
                     }
                     initialized.insert(identity);
                 }
-            }
+            },
             _ => return Err(ConfigSettingError::InvalidValue(rule.key.clone())),
         }
     }
@@ -124,8 +124,12 @@ pub fn merge_config_settings(
             changed_enforced: Vec::new(),
         }),
         Some("toml") => merge_toml_settings(path, published_contents, live_contents, initialized_default_once, rules),
-        Some("properties") => merge_properties_settings(path, published_contents, live_contents, initialized_default_once, rules),
-        Some("text_lines") => merge_text_line_settings(path, published_contents, live_contents, initialized_default_once, rules),
+        Some("properties") => {
+            merge_properties_settings(path, published_contents, live_contents, initialized_default_once, rules)
+        },
+        Some("text_lines") => {
+            merge_text_line_settings(path, published_contents, live_contents, initialized_default_once, rules)
+        },
         Some(_) => Err(ConfigSettingError::InvalidValue("unsupported config format".into())),
     }
 }
@@ -141,8 +145,13 @@ fn merge_properties_settings(
     let source = std::str::from_utf8(source).map_err(|_| ConfigSettingError::InvalidUtf8)?;
     let newline = if source.contains("\r\n") { "\r\n" } else { "\n" };
     let trailing_newline = source.ends_with('\n');
-    let mut lines: Vec<String> = source.split_terminator('\n').map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned()).collect();
-    if source.is_empty() { lines.clear(); }
+    let mut lines: Vec<String> = source
+        .split_terminator('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
+        .collect();
+    if source.is_empty() {
+        lines.clear();
+    }
     let mut initialized = initialized_default_once.clone();
     let mut changed_enforced = Vec::new();
 
@@ -165,22 +174,34 @@ fn merge_properties_settings(
         if should_apply {
             if let Some(index) = line_index {
                 if rule.policy == "enforced" && property_value(&lines[index]) != Some(escaped_desired.as_str()) {
-                    if live_contents.is_some() { changed_enforced.push(rule.key.clone()); }
+                    if live_contents.is_some() {
+                        changed_enforced.push(rule.key.clone());
+                    }
                     let value_start = property_value_start(&lines[index]);
-                    if property_has_separator(&lines[index]) { lines[index].truncate(value_start); }
-                    else { lines[index].push('='); }
+                    if property_has_separator(&lines[index]) {
+                        lines[index].truncate(value_start);
+                    } else {
+                        lines[index].push('=');
+                    }
                     lines[index].push_str(&escaped_desired);
                 } else if rule.policy == "default_once" && live_contents.is_none() {
                     let value_start = property_value_start(&lines[index]);
-                    if property_has_separator(&lines[index]) { lines[index].truncate(value_start); }
-                    else { lines[index].push('='); }
+                    if property_has_separator(&lines[index]) {
+                        lines[index].truncate(value_start);
+                    } else {
+                        lines[index].push('=');
+                    }
                     lines[index].push_str(&escaped_desired);
                 }
             } else if rule.policy == "enforced" || rule.policy == "default_once" {
-                if rule.policy == "enforced" && live_contents.is_some() { changed_enforced.push(rule.key.clone()); }
+                if rule.policy == "enforced" && live_contents.is_some() {
+                    changed_enforced.push(rule.key.clone());
+                }
                 lines.push(format!("{}={}", rule.key, escaped_desired));
             }
-            if rule.policy == "default_once" { initialized.insert(identity); }
+            if rule.policy == "default_once" {
+                initialized.insert(identity);
+            }
         }
     }
     Ok(ConfigMergeResult {
@@ -201,14 +222,23 @@ fn merge_text_line_settings(
     let source = std::str::from_utf8(source).map_err(|_| ConfigSettingError::InvalidUtf8)?;
     let newline = if source.contains("\r\n") { "\r\n" } else { "\n" };
     let trailing_newline = source.ends_with('\n');
-    let mut lines: Vec<String> = source.split_terminator('\n').map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned()).collect();
-    if source.is_empty() { lines.clear(); }
+    let mut lines: Vec<String> = source
+        .split_terminator('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
+        .collect();
+    if source.is_empty() {
+        lines.clear();
+    }
     let mut initialized = initialized_default_once.clone();
     let mut changed_enforced = Vec::new();
 
     for rule in rules.iter().filter(|rule| rule.path == path && rule.format == "text_lines") {
-        let line_number = rule.key.strip_prefix("line:").and_then(|value| value.parse::<usize>().ok())
-            .filter(|value| *value > 0).ok_or_else(|| ConfigSettingError::InvalidKey(rule.key.clone()))?;
+        let line_number = rule
+            .key
+            .strip_prefix("line:")
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| ConfigSettingError::InvalidKey(rule.key.clone()))?;
         let desired = rule.value.as_str().ok_or_else(|| ConfigSettingError::InvalidValue(rule.key.clone()))?;
         let identity = rule.identity();
         let should_apply = match rule.policy.as_str() {
@@ -218,16 +248,22 @@ fn merge_text_line_settings(
         };
         if should_apply {
             let index = line_number - 1;
-            if index >= lines.len() { return Err(ConfigSettingError::InvalidKey(rule.key.clone())); }
+            if index >= lines.len() {
+                return Err(ConfigSettingError::InvalidKey(rule.key.clone()));
+            }
             if rule.policy == "enforced" {
                 if lines[index] != desired {
-                    if live_contents.is_some() { changed_enforced.push(rule.key.clone()); }
+                    if live_contents.is_some() {
+                        changed_enforced.push(rule.key.clone());
+                    }
                     lines[index] = desired.to_owned();
                 }
             } else {
                 // First install takes the published default; an existing user
                 // line remains user-owned even if its marker is absent.
-                if live_contents.is_none() { lines[index] = desired.to_owned(); }
+                if live_contents.is_none() {
+                    lines[index] = desired.to_owned();
+                }
                 initialized.insert(identity);
             }
         }
@@ -241,25 +277,39 @@ fn merge_text_line_settings(
 
 fn join_lines(lines: &[String], newline: &str, trailing_newline: bool) -> String {
     let mut joined = lines.join(newline);
-    if trailing_newline && !joined.is_empty() { joined.push_str(newline); }
+    if trailing_newline && !joined.is_empty() {
+        joined.push_str(newline);
+    }
     joined
 }
 
 fn valid_properties_key(key: &str) -> bool {
-    !key.is_empty() && key.len() <= 256 && key.bytes().all(|byte| {
-        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
-    })
+    !key.is_empty()
+        && key.len() <= 256
+        && key.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
 fn property_key(line: &str) -> Option<&str> {
     let indent = line.len() - line.trim_start().len();
     let trimmed = &line[indent..];
-    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('!') { return None; }
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('!') {
+        return None;
+    }
     let mut escaped = false;
     let separator = trimmed.char_indices().find_map(|(index, character)| {
-        if escaped { escaped = false; return None; }
-        if character == '\\' { escaped = true; return None; }
-        if character == '=' || character == ':' || character.is_whitespace() { Some(index) } else { None }
+        if escaped {
+            escaped = false;
+            return None;
+        }
+        if character == '\\' {
+            escaped = true;
+            return None;
+        }
+        if character == '=' || character == ':' || character.is_whitespace() {
+            Some(index)
+        } else {
+            None
+        }
     });
     let key = trimmed[..separator.unwrap_or(trimmed.len())].trim();
     if valid_properties_key(key) { Some(key) } else { None }
@@ -270,11 +320,23 @@ fn property_value_start(line: &str) -> usize {
     let content = &line[indent..];
     let mut escaped = false;
     let separator = content.char_indices().find_map(|(index, character)| {
-        if escaped { escaped = false; return None; }
-        if character == '\\' { escaped = true; return None; }
-        if character == '=' || character == ':' || character.is_whitespace() { Some((index, character)) } else { None }
+        if escaped {
+            escaped = false;
+            return None;
+        }
+        if character == '\\' {
+            escaped = true;
+            return None;
+        }
+        if character == '=' || character == ':' || character.is_whitespace() {
+            Some((index, character))
+        } else {
+            None
+        }
     });
-    let Some((index, separator)) = separator else { return line.len(); };
+    let Some((index, separator)) = separator else {
+        return line.len();
+    };
     let mut cursor = index;
     while cursor < content.len() && content[cursor..].chars().next().is_some_and(char::is_whitespace) {
         cursor += content[cursor..].chars().next().unwrap().len_utf8();
@@ -294,8 +356,14 @@ fn property_has_separator(line: &str) -> bool {
     let content = line.trim_start();
     let mut escaped = false;
     content.chars().any(|character| {
-        if escaped { escaped = false; return false; }
-        if character == '\\' { escaped = true; return false; }
+        if escaped {
+            escaped = false;
+            return false;
+        }
+        if character == '\\' {
+            escaped = true;
+            return false;
+        }
         character == '=' || character == ':' || character.is_whitespace()
     })
 }
@@ -325,10 +393,7 @@ fn valid_key_path(key: &str) -> bool {
     !key.is_empty()
         && key.len() <= 256
         && key.split('.').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
         })
 }
 
@@ -356,9 +421,7 @@ fn set_value(table: &mut Table, key: &str, value: Value, full_key: &str) -> Resu
         let item = current
             .get_mut(part)
             .ok_or_else(|| ConfigSettingError::KeyCollision(full_key.to_owned()))?;
-        current = item
-            .as_table_mut()
-            .ok_or_else(|| ConfigSettingError::KeyCollision(full_key.to_owned()))?;
+        current = item.as_table_mut().ok_or_else(|| ConfigSettingError::KeyCollision(full_key.to_owned()))?;
     }
     Err(ConfigSettingError::InvalidKey(full_key.to_owned()))
 }
@@ -375,7 +438,7 @@ fn json_to_toml(value: &JsonValue) -> Option<Value> {
             } else {
                 value.as_f64().map(Value::from)
             }
-        }
+        },
         JsonValue::String(value) => Some(Value::from(value.as_str())),
         JsonValue::Array(values) => {
             let mut array = Array::new();
@@ -383,7 +446,7 @@ fn json_to_toml(value: &JsonValue) -> Option<Value> {
                 array.push(json_to_toml(value)?);
             }
             Some(Value::Array(array))
-        }
+        },
     }
 }
 
@@ -448,7 +511,13 @@ mod tests {
             b"# Keep this comment\nmode=fast\nname=Player\n",
             Some(b"# Local comment\nmode=slow\nname=Ana\n"),
             &BTreeSet::new(),
-            &[rule("config/options.properties", "properties", "mode", JsonValue::from("fast mode"), "enforced")],
+            &[rule(
+                "config/options.properties",
+                "properties",
+                "mode",
+                JsonValue::from("fast mode"),
+                "enforced",
+            )],
         )
         .unwrap();
         let properties_text = String::from_utf8(properties.bytes).unwrap();
@@ -461,7 +530,13 @@ mod tests {
             b"alpha\nbeta\ngamma\n",
             Some(b"local-alpha\nlocal-beta\nlocal-gamma\n"),
             &BTreeSet::new(),
-            &[rule("config/allowlist.txt", "text_lines", "line:2", JsonValue::from("required-beta"), "enforced")],
+            &[rule(
+                "config/allowlist.txt",
+                "text_lines",
+                "line:2",
+                JsonValue::from("required-beta"),
+                "enforced",
+            )],
         )
         .unwrap();
         assert_eq!(text.bytes, b"local-alpha\nrequired-beta\nlocal-gamma\n");
@@ -474,7 +549,13 @@ mod tests {
             b"mode=one\nmode=two\n",
             None,
             &BTreeSet::new(),
-            &[rule("config/options.properties", "properties", "mode", JsonValue::from("safe"), "enforced")],
+            &[rule(
+                "config/options.properties",
+                "properties",
+                "mode",
+                JsonValue::from("safe"),
+                "enforced",
+            )],
         );
         assert!(matches!(result, Err(ConfigSettingError::InvalidKey(_))));
     }

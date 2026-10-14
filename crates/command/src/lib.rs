@@ -14,8 +14,8 @@ mod process;
 mod spawner;
 
 pub use command::*;
-pub use process::*;
 pub use exit_status::*;
+pub use process::*;
 
 pub fn is_command_available(command: &'static str) -> bool {
     path_cache::get_command_path_cached(OsStr::new(command)).is_some()
@@ -26,7 +26,11 @@ pub fn get_command_path(command: &'static str) -> Option<Arc<Path>> {
 }
 
 #[cfg(windows)]
-pub use crate::windows::defender::{DefenderProcessAction, DefenderProcessLocalState, DefenderProcessResult, local_state as defender_process_local_state, request as request_defender_process_action, run_elevated as run_defender_process_action_elevated};
+pub use crate::windows::defender::{
+    DefenderProcessAction, DefenderProcessLocalState, DefenderProcessResult,
+    local_state as defender_process_local_state, request as request_defender_process_action,
+    run_elevated as run_defender_process_action_elevated,
+};
 
 #[cfg(windows)]
 pub fn set_traverse_acls(args: Vec<std::ffi::OsString>) -> std::io::Result<()> {

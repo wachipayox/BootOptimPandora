@@ -68,6 +68,22 @@ eligibility.
 - Repair modpack checks the whole resolved managed tree (not unrelated local
   additions) and is unavailable without a global ancestor.
 
+## Mod enablement across branches
+
+Pandora stores a disabled mod by appending `.disabled` to a supported mod
+archive (`.jar`, `.mrpack`, or `.zip`). That suffix is instance-local state and
+is not part of the mod's identity:
+
+- Creating a child branch starts its inherited mods enabled, even if the parent
+  currently has the archive disabled. The copied child removes the suffix.
+- During parent updates, enabled and disabled filenames resolve to the same
+  mod path. The launcher replaces the child's existing archive in place and
+  keeps the child's current enabled/disabled state, regardless of the parent's
+  state. This prevents an update from leaving both `mod.jar` and
+  `mod.jar.disabled` behind.
+- If both filename forms already exist in one instance, the launcher stops the
+  operation as ambiguous instead of choosing one or overwriting either file.
+
 ## Interruption and isolation
 
 The existing durable UUID-specific OS lock is acquired before layout open,
@@ -85,3 +101,25 @@ destination types are blocking conflicts rather than destructive guesses.
 The implementation does not add Distribution networking, signature
 verification, UI, Modrinth/CurseForge expansion, or a Start hook. Those remain
 outside this backend seam.
+
+## Save groups
+
+Minecraft worlds are user data and are excluded from local profile snapshots.
+The launcher stores group metadata and the shared `saves/` directory under
+`<launcher data>/save-groups/<uuid>/`; member instances point their
+`.minecraft/saves` path at that directory with a junction on Windows or a
+symbolic directory link on Unix. Launch does not copy or scan group worlds.
+
+Create, join, and leave operations require the selected instance to be stopped.
+Joining also requires existing members to be stopped because it moves world
+directories into shared storage. Name collisions preserve the group copy and
+rename the incoming directory to a free ` (from <instance>)` suffix. Leaving
+while other members remain gives the departing instance an empty local saves
+folder; the last member receives the group saves directory back. Local branch
+creation copies the existing link, so a branch of a grouped instance remains a
+member of the same group. An ordinary duplicate of a grouped instance copies
+the worlds into its own saves folder instead of joining the group. The current
+implementation uses same-volume renames;
+cross-volume moves fail closed without replacing worlds. It does not yet add a
+durable interrupted-operation journal, so do not treat the feature as fully
+validated for power-loss recovery until that is implemented and exercised.

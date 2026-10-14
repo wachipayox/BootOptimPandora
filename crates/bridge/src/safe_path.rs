@@ -1,4 +1,7 @@
-use std::{path::{Path, PathBuf}, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use relative_path::{RelativePath, RelativePathBuf};
 
@@ -14,10 +17,13 @@ impl SafePath {
                     return None;
                 },
                 relative_path::Component::Normal(component) => {
-                    let sanitized = sanitize_filename::is_sanitized_with_options(component, sanitize_filename::OptionsForCheck {
-                        windows: true,
-                        truncate: false
-                    });
+                    let sanitized = sanitize_filename::is_sanitized_with_options(
+                        component,
+                        sanitize_filename::OptionsForCheck {
+                            windows: true,
+                            truncate: false,
+                        },
+                    );
                     if !sanitized {
                         return None;
                     }

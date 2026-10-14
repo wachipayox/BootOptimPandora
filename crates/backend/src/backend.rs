@@ -326,7 +326,9 @@ struct LegacyModsLayoutStatus {
 }
 
 fn persistent_layout_launch_error(layout: Option<LegacyModsLayoutStatus>) -> Option<&'static str> {
-    let layout = layout?;
+    let Some(layout) = layout else {
+        return Some("the instance game-directory state could not be verified; the game was not started");
+    };
     if layout.original_mods_remaining {
         return Some("the legacy original_mods directory could not be restored; the game was not started");
     }
