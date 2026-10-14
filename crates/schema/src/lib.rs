@@ -22,6 +22,7 @@ pub mod modification;
 pub mod modrinth;
 pub mod mrpack;
 pub mod pandora_update;
+pub mod profile_jvm;
 pub mod resourcepack;
 pub mod server_status;
 pub mod text_component;

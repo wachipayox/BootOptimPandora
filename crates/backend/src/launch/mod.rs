@@ -60,6 +60,7 @@ use crate::{
 
 #[cfg(target_os = "linux")]
 mod linux_gpu;
+mod profile_jvm;
 
 #[derive(Clone)]
 pub struct Launcher {
@@ -138,6 +139,7 @@ impl Launcher {
         read_game_output: bool,
         launch_tracker: &ProgressTracker,
         modal_action: &ModalAction,
+        profile_jvm_options: Vec<schema::profile_jvm::ManifestJvmOption>,
     ) -> Result<PandoraChild, LaunchError> {
         log::info!("Launching {:?}", dot_minecraft_path);
 
@@ -264,6 +266,38 @@ impl Launcher {
             }
         }
 
+        // Same selection order as load_mojang_java_binary: a found custom binary, then the forced
+        // external Java, otherwise Mojang's runtime for this version.
+        let java_source = if instance_info.jvm_binary.as_ref().is_some_and(|binary| {
+            binary.enabled && binary.path.as_ref().is_some_and(|path| Self::search_for_java_binary(path).is_some())
+        }) || std::env::var_os("FORCE_EXTERNAL_JAVA").is_some()
+        {
+            profile_jvm::JavaRuntimeSource::External
+        } else {
+            profile_jvm::JavaRuntimeSource::Mojang {
+                major_version: version_info.java_version.as_ref().map_or(8, |java| java.major_version),
+            }
+        };
+        let profile_jvm_args = {
+            let configuration = instance_info.clone();
+            let java_path = java_path.clone();
+            let launch_wrapper = self.launch_wrapper.clone();
+            tokio::task::spawn_blocking(move || {
+                profile_jvm::plan_launch_arguments(
+                    &profile_jvm_options,
+                    &configuration,
+                    &java_path,
+                    java_source,
+                    &launch_wrapper,
+                )
+            })
+            .await
+            .unwrap_or_else(|error| {
+                log::warn!("[profile-jvm] planning failed, launching without profile JVM options: {error}");
+                Vec::new()
+            })
+        };
+
         let launch_context = LaunchContext {
             launch_wrapper_path: self.launch_wrapper.clone(),
             java_path,
@@ -280,6 +314,7 @@ impl Launcher {
             log_configuration,
             rule_context: launch_rule_context,
             login_info,
+            profile_jvm_args,
         };
 
         if modal_action.has_requested_cancel() {
@@ -2540,6 +2575,9 @@ pub struct LaunchContext {
     pub log_configuration: Option<OsString>,
     pub rule_context: LaunchRuleContext,
     pub login_info: MinecraftLoginInfo,
+    /// Profile JVM options decided for this launch. They go before the player's memory setting
+    /// and personal JVM arguments so HotSpot's last-occurrence rule lets the player win.
+    pub profile_jvm_args: Vec<String>,
 }
 
 impl LaunchContext {
@@ -2696,6 +2734,10 @@ impl LaunchContext {
 
         if let Some(log_configuration) = &self.log_configuration {
             command.arg(log_configuration.to_os_string());
+        }
+
+        for arg in &self.profile_jvm_args {
+            command.arg(arg.clone());
         }
 
         if let Some(memory) = &self.configuration.memory

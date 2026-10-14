@@ -421,6 +421,7 @@ impl PersistentProfileLayout {
             lineage,
             target_revision: branch.applied_revision,
             config_settings: branch.config_settings,
+            jvm_options: branch.jvm_options,
             changes: Vec::new(),
         };
         if is_local_child {
@@ -535,6 +536,7 @@ impl PersistentProfileLayout {
             lineage: branch.lineage.clone(),
             target_revision: branch.applied_revision.clone(),
             config_settings: config_settings.to_vec(),
+            jvm_options: branch.jvm_options.clone(),
             changes,
         };
         self.reconcile_revision_delta_inner(&delta, true, false)
@@ -573,6 +575,7 @@ impl PersistentProfileLayout {
             && branch.applied_revision == delta.target_revision
             && branch.config_setting_signatures == target_config_setting_signatures
             && branch.config_settings == delta.config_settings
+            && branch.jvm_options == delta.jvm_options
         {
             self.status.state = ProfileLayoutState::Ready;
             self.status.generation = current_generation;
@@ -974,6 +977,7 @@ impl PersistentProfileLayout {
         branch.applied_revision = delta.target_revision.clone();
         branch.config_setting_signatures = target_config_setting_signatures;
         branch.config_settings = delta.config_settings.clone();
+        branch.jvm_options = delta.jvm_options.clone();
         branch.validate(self.profile_uuid)?;
 
         let tx = new_uuid();
@@ -2270,6 +2274,7 @@ mod tests {
             lineage: crate::profile_branch::ProfileLineage::from_global(pin.clone()).unwrap(),
             target_revision: Some(pin),
             config_settings: Vec::new(),
+            jvm_options: Vec::new(),
             changes,
         }
     }
@@ -2329,6 +2334,7 @@ mod tests {
                 lineage: crate::profile_branch::ProfileLineage::from_global(r1.clone()).unwrap(),
                 target_revision: Some(r1),
                 config_settings: rules_v1,
+                jvm_options: Vec::new(),
                 changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(entry_v1)],
             })
             .unwrap();
@@ -2363,6 +2369,7 @@ mod tests {
                 lineage: crate::profile_branch::ProfileLineage::from_global(r2.clone()).unwrap(),
                 target_revision: Some(r2.clone()),
                 config_settings: rules_v2,
+                jvm_options: Vec::new(),
                 changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(entry_v2)],
             })
             .unwrap();
@@ -2437,6 +2444,7 @@ mod tests {
                 lineage: lineage.clone(),
                 target_revision: None,
                 config_settings: Vec::new(),
+                jvm_options: Vec::new(),
                 changes: vec![change],
             })
             .unwrap();
@@ -2452,6 +2460,7 @@ mod tests {
                 lineage: lineage.clone(),
                 target_revision: None,
                 config_settings: Vec::new(),
+                jvm_options: Vec::new(),
                 changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(
                     &source_v2,
                     metadata_v2,
@@ -2479,6 +2488,7 @@ mod tests {
                 lineage,
                 target_revision: None,
                 config_settings: Vec::new(),
+                jvm_options: Vec::new(),
                 changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(
                     &source_v3,
                     metadata_v3,
@@ -2522,6 +2532,7 @@ mod tests {
                 lineage: lineage.clone(),
                 target_revision: None,
                 config_settings: Vec::new(),
+                jvm_options: Vec::new(),
                 changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(
                     &source_v1,
                     metadata.clone(),
@@ -2540,6 +2551,7 @@ mod tests {
                 lineage: lineage.clone(),
                 target_revision: None,
                 config_settings: Vec::new(),
+                jvm_options: Vec::new(),
                 changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(
                     &source_v2,
                     metadata.clone(),
@@ -2558,6 +2570,7 @@ mod tests {
                 lineage,
                 target_revision: None,
                 config_settings: Vec::new(),
+                jvm_options: Vec::new(),
                 changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(make_entry(
                     &source_v3, metadata,
                 ))],
@@ -2609,6 +2622,7 @@ mod tests {
             lineage,
             target_revision: Some(global),
             config_settings: Vec::new(),
+            jvm_options: Vec::new(),
             changes: vec![crate::profile_branch::ProfileDeltaChange::Upsert(incoming)],
         };
         layout.initialize_local_child_branch(&delta).unwrap();
@@ -2722,6 +2736,7 @@ mod tests {
                 lineage: crate::profile_branch::ProfileLineage::from_global(r1.clone()).unwrap(),
                 target_revision: Some(r1),
                 config_settings: Vec::new(),
+                jvm_options: Vec::new(),
                 changes: vec![crate::profile_branch::ProfileDeltaChange::Remove {
                     path: "mods/removed.jar".to_owned(),
                     origin: crate::profile_branch::ProfileEntryOrigin::LocalProfile { profile_uuid },

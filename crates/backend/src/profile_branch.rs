@@ -248,6 +248,10 @@ pub struct ProfileBranchManifest {
     /// distribution service again.
     #[serde(default)]
     pub config_settings: Vec<crate::distribution::ManifestConfigSetting>,
+    /// Effective signed JVM options of the applied revision (inherited by local descendants),
+    /// read at Start without contacting the distribution service.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jvm_options: Vec<schema::profile_jvm::ManifestJvmOption>,
 }
 
 impl ProfileBranchManifest {
@@ -337,6 +341,7 @@ pub struct ProfileRevisionDelta {
     pub lineage: ProfileLineage,
     pub target_revision: Option<GlobalRevisionPin>,
     pub config_settings: Vec<crate::distribution::ManifestConfigSetting>,
+    pub jvm_options: Vec<schema::profile_jvm::ManifestJvmOption>,
     /// Revision-history delta only. Unchanged destinations must not be listed or verified.
     pub changes: Vec<ProfileDeltaChange>,
 }
