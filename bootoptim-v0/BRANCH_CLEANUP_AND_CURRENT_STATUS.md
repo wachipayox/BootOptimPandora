@@ -84,3 +84,22 @@ as historical evidence and are not part of the integration branch.
 - Do not recreate `codex/profile-branch-delta-wip`; its applicable backend is
   integrated and its remaining artifacts are preserved in its detached
   worktree.
+
+## 2026-10-14 cleanup: USN chain and Android chain
+
+**USN / asset-verification chain (#6, #8–#18, #22, #24, #25, #27–#29, #31).**
+Stacked September candidates for the launch verification I/O budget, asset
+verification intent, USN asset-cache foundation/runtime, attribution probes,
+reproducible A/B composition, loader SHA-1 cache (no-go, #25) and the fast USN
+rebootstrap. The production result is PR #64 (launch-fast library policy and
+default asset USN cache), already on integration. These PRs are closed
+unmerged; their branch-only documents are preserved verbatim in
+[`archive/`](archive/README.md) and their branches are kept as evidence.
+
+**Android chain (#82–#90).** The Android launcher (FoldCraftLauncher fork) and
+the Wachiland Android Support mod moved to their own private repositories:
+`wachipayox/WachilandLauncherAndroid` (launcher, plus the former
+`mobile/android` build scripts, deployment, runtime patches and diagnostics)
+and `wachipayox/WachilandAndroidSupport` (mod, split with history from
+`mobile/android/mods/atlas-batch`). The Pandora PRs are closed; their branches
+remain as history. `mobile/android` is not part of Pandora's integration branch.
