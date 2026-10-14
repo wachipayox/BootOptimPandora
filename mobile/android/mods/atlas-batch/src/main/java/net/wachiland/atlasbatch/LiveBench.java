@@ -41,7 +41,7 @@ final class LiveBench {
             long now = System.nanoTime();
             if (running) {
                 if (mc.level != level || mc.player == null) invalid = "world_changed";
-                else if (mc.screen != null) invalid = "screen_opened";
+                else if (mc.screen != null || mc.getOverlay()!=null) invalid = "screen_or_reload_opened";
                 else if (mc.player.position().distanceToSqr(position) > 0.0025
                     || Math.abs(mc.player.getYRot()-yaw) > 0.2 || Math.abs(mc.player.getXRot()-pitch) > 0.2) invalid = "camera_or_position_changed";
                 else if (Math.abs(mc.level.getRainLevel(1)-rain) > 0.02) invalid = "weather_changed";
@@ -49,7 +49,7 @@ final class LiveBench {
                 return;
             }
             if (pending != 0) {
-                if (mc.screen != null || mc.player == null || mc.level == null) { pending=now+5_000_000_000L; return; }
+                if (mc.screen != null || mc.getOverlay()!=null || mc.player == null || mc.level == null) { pending=now+5_000_000_000L; return; }
                 if (now < pending) return;
                 oldFrustum=AndroidSupportConfig.frustumCullingQueries; oldCulling=culling.getBoolean(null);
                 oldStaging=AndroidSupportConfig.stagedUploads;
@@ -60,7 +60,7 @@ final class LiveBench {
                 pending=0; start=now+10_000_000_000L; return;
             }
             if (start != 0) {
-                if (mc.player == null || mc.level == null || mc.screen != null) {
+                if (mc.player == null || mc.level == null || mc.screen != null || mc.getOverlay()!=null) {
                     restore(); start=0; return;
                 }
                 if (now < start) return;
@@ -79,11 +79,14 @@ final class LiveBench {
             if (!Files.isRegularFile(request)) return;
             String[] fields=Files.readString(request,StandardCharsets.UTF_8).trim().split("\\s+");
             Files.delete(request);
-            if ((fields.length!=4 && fields.length!=5) || !fields[0].matches("[a-zA-Z0-9_-]{1,48}") || !fields[2].matches("true|false") || !fields[3].matches("true|false")
-                || (fields.length==5 && !fields[4].matches("true|false"))) throw new IllegalArgumentException("Expected label seconds frustum culling [staging]");
+            if(fields.length==1&&fields[0].equals("resourcecensus")){
+                status(ResourceMemoryCensus.dump());return;
+            }
+            if ((fields.length<4 || fields.length>5) || !fields[0].matches("[a-zA-Z0-9_-]{1,48}") || !fields[2].matches("true|false") || !fields[3].matches("true|false")
+                || (fields.length>=5 && !fields[4].matches("true|false"))) throw new IllegalArgumentException("Expected label seconds frustum culling [staging]");
             int seconds=Integer.parseInt(fields[1]); if (seconds<30 || seconds>120) throw new IllegalArgumentException("Capture must be 30..120 seconds");
             label=fields[0]; duration=seconds; wantedFrustum=Boolean.parseBoolean(fields[2]); wantedCulling=Boolean.parseBoolean(fields[3]);
-            requestedStaging=fields.length==5 ? Boolean.parseBoolean(fields[4]) : null;
+            requestedStaging=fields.length>=5 ? Boolean.parseBoolean(fields[4]) : null;
             pending=now+5_000_000_000L;
             status("capture_queued label="+label);
         } catch (Throwable error) {
@@ -104,7 +107,7 @@ final class LiveBench {
         for(int i=0;i<5;i++) trace[i]=Arrays.copyOf((long[])counters.getField(arrays[i]).get(null),count);
         String phase=label, failure=invalid; long origin=start, originEpoch=epoch, elapsed=now-start;
         long[] firstCount=initialCount,firstWall=initialWall;
-        String metadata="label="+phase+"\nvalid="+(failure==null)+"\ninvalid_reason="+failure+"\norigin_epoch_ms="+originEpoch+"\nelapsed_ns="+elapsed+"\nfrustum="+wantedFrustum+"\nculling="+wantedCulling+"\nstaging="+wantedStaging+"\nposition="+position+"\nyaw="+yaw+"\npitch="+pitch+"\nrain="+rain+"\ntrace_overflow="+overflow+"\n";
+        String metadata="label="+phase+"\nvalid="+(failure==null)+"\ninvalid_reason="+failure+"\norigin_epoch_ms="+originEpoch+"\nelapsed_ns="+elapsed+"\nfrustum="+wantedFrustum+"\nculling="+wantedCulling+"\nstaging="+wantedStaging+"\nwindow_width="+Minecraft.getInstance().getWindow().getWidth()+"\nwindow_height="+Minecraft.getInstance().getWindow().getHeight()+"\nposition="+position+"\nyaw="+yaw+"\npitch="+pitch+"\nrain="+rain+"\ntrace_overflow="+overflow+"\n";
         restore(); running=false; start=0; level=null; position=null;
         // Bounded copy is complete; disk IO runs after capture, never in a timed frame.
         Thread writer=new Thread(() -> {

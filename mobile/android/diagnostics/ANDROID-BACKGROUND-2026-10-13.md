@@ -147,3 +147,11 @@ Checkpoint scope: short stationary-server AFK/Home and85s screen-off survival,
 return image and logical tick preservation passed. Initial background loading,
 long unattended AFK/Doze, meaningful startup reduction and30FPS server goal
 remain unresolved. No BootOptim edit or hardware-limit conclusion.
+
+2026-10-14 correction: the checkpoint above checked a mistakenly named extra
+`Wachiland Elite android.cfg`; FCL actually reads `fclversion.cfg`. Its claim
+of ordinary launch-argument restoration is invalid. The following investigation
+caught this, archived the effective settings and removed the extra file. All
+future cleanup must stop the launcher, write/read back `fclversion.cfg`, and
+restart before claiming restored settings. Prior frame evidence retains its
+explicit actual diagnostic origin and is not reclassified as an ordinary run.
