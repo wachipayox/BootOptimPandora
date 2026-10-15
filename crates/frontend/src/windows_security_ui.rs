@@ -9,7 +9,9 @@ use gpui_component::{
 /// The UAC prompt runs a nested Windows message loop; doing that inside a click handler let
 /// GPUI handle window messages while the app was already borrowed ("RefCell already borrowed").
 pub(crate) fn request_action(action: DefenderProcessAction, window: &mut Window, cx: &mut App) {
-    let request = cx.background_executor().spawn(async move { command::request_defender_process_action(action) });
+    let request = cx
+        .background_executor()
+        .spawn(async move { command::request_defender_process_action(action) });
     window
         .spawn(cx, async move |cx| {
             let result = request.await;
