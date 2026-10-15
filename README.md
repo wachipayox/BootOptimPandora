@@ -34,6 +34,10 @@ The private launcher starts from the instance's existing `.minecraft` directory 
 - No third-party metadata servers (no downtime, no delay when MC updates)
 - Automatic redaction of sensitive information (i.e. access tokens) in logs
 
+## Java for Wachiland profiles
+
+Instances of global profiles `profile_wachiland-*` on PC start with Java 25 (Mojang's `java-runtime-epsilon`, hash-verified). Other instances keep Java 21. Setting a custom Java binary on an instance, or `FORCE_EXTERNAL_JAVA`, always wins; enabling a Java 21 binary there forces Java 21. If a Java 25 start exits with an error within 15 seconds, Pandora logs `[WBOMBO-COMPAT] FALLBACK ... mechanism=java25-default` and uses Java 21 for that instance; remove `java25_fallback` from its `info_v1.json` (with the launcher closed) to try Java 25 again.
+
 ## FAQ
 
 ### Discord Server

@@ -46,3 +46,17 @@ impl Debug for PandoraExitStatus {
         debug.finish()
     }
 }
+
+impl PandoraExitStatus {
+    /// The process exit code, or `None` when it was ended by a signal.
+    #[cfg(windows)]
+    pub fn exit_code(&self) -> Option<i32> {
+        Some(self.0 as i32)
+    }
+
+    /// The process exit code, or `None` when it was ended by a signal.
+    #[cfg(unix)]
+    pub fn exit_code(&self) -> Option<i32> {
+        libc::WIFEXITED(self.0).then(|| libc::WEXITSTATUS(self.0))
+    }
+}

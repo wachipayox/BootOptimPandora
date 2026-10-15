@@ -53,7 +53,7 @@ use crate::{
     directories::LauncherDirectories,
     id_slab::IdSlab,
     instance::Instance,
-    launch::Launcher,
+    launch::{Launcher, java_default},
     metadata::{
         items::{CurseforgeGetFilesMetadataItem, CurseforgeProjectItem, MinecraftVersionManifestMetadataItem},
         manager::MetadataManager,
@@ -687,11 +687,13 @@ impl BackendState {
         let mut instance_state = self.instance_state.write();
         for instance in instance_state.instances.iter_mut() {
             let mut killed = false;
+            let mut exited: Vec<(u32, Option<i32>)> = Vec::new();
 
             instance.processes.retain_mut(|process| match process.try_wait() {
                 Ok(None) => true,
                 Ok(Some(status)) => {
                     log::info!("Child process {} is no longer alive: {}", process.id(), status);
+                    exited.push((process.id(), status.exit_code()));
                     killed = true;
                     false
                 },
@@ -701,6 +703,27 @@ impl BackendState {
                     false
                 },
             });
+            // Only a game that exits by itself counts; a player's Stop moves it to `closing_processes`.
+            for (pid, exit_code) in exited {
+                let Some(index) = instance.java25_starts.iter().position(|(started_pid, _)| *started_pid == pid) else {
+                    continue;
+                };
+                let (_, started) = instance.java25_starts.swap_remove(index);
+                if let Some(reason) = java_default::early_exit_reason(exit_code, started.elapsed()) {
+                    java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), &reason);
+                    let recorded_unix_secs = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map_or(0, |elapsed| elapsed.as_secs());
+                    instance.configuration.modify(|configuration| {
+                        configuration.java25_fallback = Some(schema::instance::Java25Fallback {
+                            reason,
+                            recorded_unix_secs,
+                        });
+                    });
+                }
+            }
+            let running: Vec<u32> = instance.processes.iter().map(|process| process.id()).collect();
+            instance.java25_starts.retain(|(pid, _)| running.contains(pid));
             instance.closing_processes.retain_mut(|(process, _)| match process.try_wait() {
                 Ok(None) => true,
                 Ok(Some(status)) => {
