@@ -81,15 +81,6 @@ pub struct JvmOptionPlatform {
     pub default_value: Option<JvmValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<JvmAuto>,
-    pub evidence: JvmEvidence,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct JvmEvidence {
-    pub url: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -610,7 +601,7 @@ mod tests {
         serde_json::from_str(
             r#"{"id":"jit-compiler-threads","label":"Hilos del compilador JIT","template":"-XX:CICompilerCount={value}",
             "type":"int","min":2,"max":4,"help":"…","java":{"min":21},"vm":["hotspot"],
-            "platforms":{"pc":{"default_enabled":false,"default_value":2,"evidence":{"url":"https://example.com"}}}}"#,
+            "platforms":{"pc":{"default_enabled":false,"default_value":2}}}"#,
         )
         .unwrap()
     }
