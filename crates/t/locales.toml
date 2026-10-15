@@ -2517,32 +2517,27 @@ en = "Off"
 [instance.profile_jvm.reset]
 en = "Use profile setting"
 
-[instance.profile_jvm.evidence]
-en = "Evidence"
-
 [instance.profile_jvm.status_applied]
-en = "Used at launch: ${arg: &str}"
+en = "Active at next launch: ${arg: &str}"
 
-[instance.profile_jvm.status_off]
-en = "Off at launch"
+[instance.profile_jvm.range]
+en = "Allowed values: ${min: &str}–${max: &str}"
+
+[instance.profile_jvm.advice]
+en = "Changing this is not recommended: the profile already picks a value that suits most PCs."
+
+[instance.profile_jvm.last_java]
+en = "Last Java detected: Java ${major: &str} (${vm: &str})"
+
+[instance.profile_jvm.last_java_unknown]
+en = "Last Java detected: none yet, it is checked when the instance starts"
 
 [instance.profile_jvm.status_overridden]
 en = "Overridden by your JVM flags or memory setting"
 
-[instance.profile_jvm.status_java_pending]
-en = "Java version is checked at launch"
-
 [instance.profile_jvm.status_not_used]
 en = "Not used: ${reason: &str}"
 
-[instance.profile_jvm.argument]
-en = "Argument: ${arg: &str}"
-
-[instance.profile_jvm.default_on]
-en = "Profile default: on"
-
-[instance.profile_jvm.default_off]
-en = "Profile default: off"
 [instance.jvm_binary]
 en = "Override JVM Binary"
 tr = "JVM Çalıştırılabilir Dosyasını Geçersiz Kıl"

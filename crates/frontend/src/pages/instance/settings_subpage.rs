@@ -267,6 +267,8 @@ impl InstanceSettingsSubpage {
                 super::profile_jvm_section::ProfileJvmSection::new(backend_handle, instance_id, profile_jvm_choices, cx)
             })
         };
+        // The page shows the section's "Last Java detected" line, so it redraws when that loads.
+        cx.observe(&profile_jvm_section, |_, _, cx| cx.notify()).detach();
 
         let mut page = Self {
             data: data.clone(),
@@ -1256,6 +1258,10 @@ impl InstanceSettingsSubpage {
                 ),
         );
 
+        let runtime_content = match self.profile_jvm_section.read(cx).last_java_text() {
+            Some(java) => runtime_content.child(div().text_sm().text_color(cx.theme().muted_foreground).child(java)),
+            None => runtime_content,
+        };
         runtime_content.into_any_element()
     }
 

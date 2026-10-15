@@ -1,7 +1,7 @@
 //! Instance settings: the profile's distributed JVM options, separate from the player's own JVM
 //! flags. Each option is a checkbox (or Automatic/On/Off when the profile can decide from the
-//! machine) with a "?" tooltip, plus a number field or dropdown for its value. The status line
-//! shows what the next Start does with it, as decided by the backend.
+//! machine) with a "?" tooltip, plus a number field or dropdown for its value. A status line
+//! shows what the next Start does with it when that is not obvious.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -76,6 +76,16 @@ impl ProfileJvmSection {
                 cx.notify();
             });
         });
+    }
+
+    /// "Last Java detected" line, shown by the settings page at the end of its runtime column.
+    /// Known only after this instance has started once in this launcher session.
+    pub fn last_java_text(&self) -> Option<SharedString> {
+        let facts = &self.view.as_ref()?.facts;
+        Some(match (facts.java_major, facts.java_vm.as_deref()) {
+            (Some(major), vm) => t::instance::profile_jvm::last_java(&major.to_string(), vm.unwrap_or("?")).into(),
+            _ => t::instance::profile_jvm::last_java_unknown().into(),
+        })
     }
 
     fn set_choice(&mut self, id: &str, update: impl FnOnce(&mut ProfileJvmOptionChoice), cx: &mut Context<Self>) {
@@ -207,20 +217,20 @@ impl ProfileJvmSection {
     }
 }
 
-fn status_text(entry: &JvmPlanEntry, java_major: Option<u32>) -> SharedString {
+/// What the next Start does with the option, when the checkbox and value alone do not say it.
+fn status_text(entry: &JvmPlanEntry, java_major: Option<u32>) -> Option<SharedString> {
     match &entry.status {
-        JvmPlanStatus::Applied { arg, .. } => t::instance::profile_jvm::status_applied(arg).into(),
-        JvmPlanStatus::Disabled { .. } => t::instance::profile_jvm::status_off().into(),
-        JvmPlanStatus::Overridden { .. } => t::instance::profile_jvm::status_overridden().into(),
-        JvmPlanStatus::Skipped { reason } if reason == "java-version-unknown" || reason == "java-vm-unknown" => {
-            t::instance::profile_jvm::status_java_pending().into()
-        },
+        JvmPlanStatus::Applied { arg, .. } => Some(t::instance::profile_jvm::status_applied(arg).into()),
+        JvmPlanStatus::Disabled { .. } => None,
+        JvmPlanStatus::Overridden { .. } => Some(t::instance::profile_jvm::status_overridden().into()),
+        // Unknown until the first Start; the Java line at the end of the section says so.
+        JvmPlanStatus::Skipped { reason } if reason == "java-version-unknown" || reason == "java-vm-unknown" => None,
         JvmPlanStatus::Skipped { reason } => {
             let detail = match (reason.strip_prefix("requires-java-"), java_major) {
                 (Some(range), Some(major)) => format!("requires Java {range} (this instance: {major})"),
                 _ => reason.clone(),
             };
-            t::instance::profile_jvm::status_not_used(&detail).into()
+            Some(t::instance::profile_jvm::status_not_used(&detail).into())
         },
     }
 }
@@ -233,23 +243,16 @@ fn effective_enabled(entry: &JvmPlanEntry, choice: Option<&ProfileJvmOptionChoic
     }
 }
 
+/// Player-facing help: the profile's explanation, the allowed range and a reminder that the
+/// profile value is the safe choice.
 fn tooltip_text(option: &ManifestJvmOption) -> SharedString {
-    let mut text = option.help.clone();
-    if let Some(platform) = option.platforms.get(PLATFORM) {
-        let arg = schema::profile_jvm::render(option, platform.default_value.as_ref()).unwrap_or_default();
+    let mut text = option.help.trim().to_owned();
+    if let (Some(min), Some(max)) = (option.min, option.max) {
         text.push_str("\n\n");
-        text.push_str(&t::instance::profile_jvm::argument(&arg));
-        text.push('\n');
-        text.push_str(if platform.default_enabled {
-            t::instance::profile_jvm::default_on()
-        } else {
-            t::instance::profile_jvm::default_off()
-        });
-        if let Some(summary) = &platform.evidence.summary {
-            text.push('\n');
-            text.push_str(summary);
-        }
+        text.push_str(&t::instance::profile_jvm::range(&min.to_string(), &max.to_string()));
     }
+    text.push_str("\n\n");
+    text.push_str(t::instance::profile_jvm::advice());
     text.into()
 }
 
@@ -300,7 +303,7 @@ impl Render for ProfileJvmSection {
                     .into_any_element(),
             };
 
-            let mut row = h_flex().gap_2().items_center().child(toggle).child(
+            let mut row = h_flex().gap_2().flex_wrap().items_center().child(toggle).child(
                 Button::new(SharedString::from(format!("profile-jvm-help-{}", option.id)))
                     .label("?")
                     .ghost()
@@ -308,28 +311,21 @@ impl Render for ProfileJvmSection {
                     .tooltip(tooltip_text(&option)),
             );
             if let Some(number) = controls.and_then(|controls| controls.number.clone()) {
-                row = row.child(div().w(px(110.0)).child(NumberInput::new(&number).small().disabled(!enabled)));
-                if let (Some(min), Some(max)) = (option.min, option.max) {
-                    row = row.child(div().text_sm().child(format!("{min}–{max}")));
-                }
+                row = row.child(div().w(px(140.0)).child(NumberInput::new(&number).small().disabled(!enabled)));
             }
             if let Some(values) = controls.and_then(|controls| controls.values.clone()) {
                 row = row.child(div().w(px(160.0)).child(Select::new(&values).small().disabled(!enabled)));
             }
-            let url = platform.evidence.url.clone();
-            row = row.child(
-                Button::new(SharedString::from(format!("profile-jvm-evidence-{}", option.id)))
-                    .label(t::instance::profile_jvm::evidence())
-                    .ghost()
-                    .small()
-                    .on_click(move |_, _, cx| cx.open_url(&url)),
-            );
+            let mut details = h_flex().gap_2().pl_6().flex_wrap().items_center();
+            if let Some(status) = status_text(&entry, java_major) {
+                details = details.child(div().text_sm().child(status));
+            }
             if choice.is_some() {
-                row = row.child(
+                details = details.child(
                     Button::new(SharedString::from(format!("profile-jvm-reset-{}", option.id)))
                         .label(t::instance::profile_jvm::reset())
                         .ghost()
-                        .small()
+                        .xsmall()
                         .on_click(cx.listener({
                             let id = id.clone();
                             move |section, _, window, cx| section.reset(&id, window, cx)
@@ -337,12 +333,7 @@ impl Render for ProfileJvmSection {
                 );
             }
 
-            list = list.child(
-                v_flex()
-                    .gap_0p5()
-                    .child(row)
-                    .child(div().text_sm().pl_6().child(status_text(&entry, java_major))),
-            );
+            list = list.child(v_flex().gap_0p5().child(row).child(details));
         }
         list.into_any_element()
     }
