@@ -17,11 +17,8 @@ pub fn open(window: &mut Window, cx: &mut App) {
                     .label("Enable optimization")
                     .success()
                     .on_click(|_, window, cx| {
-                        let result =
-                            command::request_defender_process_action(DefenderProcessAction::Enable);
                         window.close_all_dialogs(cx);
-                        crate::windows_security_ui::push_result(window, cx, result);
-                        cx.refresh_windows();
+                        crate::windows_security_ui::request_action(DefenderProcessAction::Enable, window, cx);
                     }),
             )
             .child(
