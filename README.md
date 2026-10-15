@@ -9,6 +9,17 @@ Work in progress
 
 The two launch options cannot be combined. Without either option, Pandora only opens or focuses its main window.
 
+Command-line starts run the same inherited update check as the GUI **Start** button, but never start silently on stale files. Results are printed to stdout and stderr (and `launcher.log`) with the prefix `[WBOMBO-PROFILE]`; when another launcher process is already running, the forwarding process prints them and returns the code.
+
+- No pending update: `UP-TO-DATE instance=<name> profile=<id> rev <id>` (or `rev local`), then the game starts. Exit code 0.
+- Pending update without a flag: one `UPDATE-AVAILABLE instance=<name> [via=<ancestor>] current=<profile> rev <id> available=<profile> rev <id>` line per stale ancestor (local parents print `current=<parent> gen <n> available=<parent> gen <m> kind=local-parent` or `kind=local-parent-files`), then `Relaunch with --update (update then start) or --no-update (start unchanged).` Nothing starts and the launcher exits with code **3**.
+- `--update`: applies the same update as **Update and start**, then starts (`UPDATED`). If the update fails, `UPDATE-FAILED reason=...` and exit code **4**.
+- `--no-update`: prints `UPDATE-SKIPPED ...` lines and starts the installed state unchanged.
+- Check failure (server unreachable, timeout): `UPDATE-CHECK-FAILED reason=...` and the game starts unchanged, like the GUI. Known local parent changes still gate.
+- Unknown instance name: `INSTANCE-NOT-FOUND`, exit code **5**.
+
+`--update` and `--no-update` require `--run-instance` or `--run-instance-normal` and exclude each other. Automated measurements should pass `--no-update` so the pack under test does not change between runs.
+
 The private launcher starts from the instance's existing `.minecraft` directory and keeps it writable across runs. Start does not rotate or rebuild `mods/`; the private updater must install pack changes into the instance before launch. The former `original_mods` layout is restored only when migrating an instance left by an older launcher build. Third-party Modrinth/CurseForge modpack expansion is not part of this private Start path.
 
 ## Features
