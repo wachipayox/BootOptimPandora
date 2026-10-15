@@ -2207,6 +2207,7 @@ impl BackendState {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
                     let Some(account) = backend.get_minecraft_profile(account).await else {
+                        log::warn!("Skins: could not get the Minecraft profile for {account}; asking to sign in");
                         _ = result.send(AccountSkinResult::NeedsLogin);
                         return;
                     };
@@ -2283,6 +2284,7 @@ impl BackendState {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
                     let Some(account) = backend.get_minecraft_profile(account).await else {
+                        log::warn!("Capes: could not get the Minecraft profile for {account}; asking to sign in");
                         _ = result.send(AccountCapesResult::NeedsLogin);
                         return;
                     };
@@ -2868,6 +2870,7 @@ impl BackendState {
         let login_result = self.login(&mut credentials, None, None).await;
 
         if let Err(LoginError::NeedsUserInteraction) | Err(LoginError::CancelledByUser) = login_result {
+            log::info!("Non-interactive login for {account} needs the player to sign in again");
             return None;
         }
 
