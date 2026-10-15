@@ -69,6 +69,10 @@ pub mod panic;
 fn main() {
     let cli = Cli::parse();
 
+    if cli_start_request(&cli).is_some() {
+        attach_parent_console();
+    }
+
     #[cfg(windows)]
     if let Some(internal_set_traverse_acls) = cli.internal_set_traverse_acls {
         if let Err(err) = command::set_traverse_acls(internal_set_traverse_acls) {
@@ -550,6 +554,23 @@ fn cli_update_policy(cli: &Cli) -> bridge::message::CliUpdatePolicy {
         CliUpdatePolicy::Ask
     }
 }
+
+/// Release Windows builds use the GUI subsystem and get no console. For command-line starts,
+/// borrow the calling shell's console so `[WBOMBO-PROFILE]` lines are visible there. Handles
+/// the caller already redirected are kept, and no new console window is ever created.
+#[cfg(all(windows, not(debug_assertions)))]
+fn attach_parent_console() {
+    use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
+    let redirected =
+        unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }.is_ok_and(|handle| !handle.is_invalid() && !handle.0.is_null());
+    if !redirected {
+        // Fails harmlessly when the parent has no console (Explorer, scheduled task).
+        _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    }
+}
+
+#[cfg(not(all(windows, not(debug_assertions))))]
+fn attach_parent_console() {}
 
 /// `[WBOMBO-PROFILE]` lines go to stdout and stderr so wrappers can capture either stream.
 fn print_cli_lines(lines: &[String]) {

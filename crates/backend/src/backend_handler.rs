@@ -1678,7 +1678,12 @@ impl BackendState {
                     let _ = channel.send(backend.read_profile_text_file(id, path).await);
                 });
             },
-            MessageToBackend::ReadProfileAncestorText { id, path, level, channel } => {
+            MessageToBackend::ReadProfileAncestorText {
+                id,
+                path,
+                level,
+                channel,
+            } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
                     let _ = channel.send(backend.read_profile_ancestor_text(id, path, level).await);
@@ -2613,7 +2618,11 @@ impl BackendState {
         }
         let Some(id) = id else {
             finish(
-                vec![format!("{} INSTANCE-NOT-FOUND name={}", gate::PREFIX, name.replace(['\r', '\n'], " "))],
+                vec![format!(
+                    "{} INSTANCE-NOT-FOUND name={}",
+                    gate::PREFIX,
+                    name.replace(['\r', '\n'], " ")
+                )],
                 gate::EXIT_INSTANCE_NOT_FOUND,
             );
             return;
@@ -2627,9 +2636,17 @@ impl BackendState {
                 self.start_instance(id, None, None, modal_action).await;
             },
             GateAction::UpdateThenStart => {
-                let update_modal = ModalAction::default();
                 let mut lines = decision.lines;
-                if let Err(error) = self.update_inherited_chain(id, &update_modal).await {
+                // Same per-instance lock as the GUI's "Update and start".
+                if !bridge::inherited_operations::try_begin(id) {
+                    lines.push(format!("{} UPDATE-FAILED instance={display} reason=busy", gate::PREFIX));
+                    finish(lines, gate::EXIT_UPDATE_FAILED);
+                    return;
+                }
+                let update_modal = ModalAction::default();
+                let result = self.update_inherited_chain(id, &update_modal).await;
+                bridge::inherited_operations::finish(id);
+                if let Err(error) = result {
                     update_modal.set_finished_with_error(error.clone().into());
                     lines.push(format!(
                         "{} UPDATE-FAILED instance={display} reason={}",

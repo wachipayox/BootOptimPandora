@@ -310,7 +310,13 @@ impl BackendState {
     }
     pub async fn check_inherited_updates(&self, id: InstanceID) -> Result<Vec<String>, String> {
         // The interactive dialog only needs names; global check failures stay silent (fail open).
-        Ok(self.check_inherited_update_report(id).await?.pending.into_iter().map(|update| update.label).collect())
+        Ok(self
+            .check_inherited_update_report(id)
+            .await?
+            .pending
+            .into_iter()
+            .map(|update| update.label)
+            .collect())
     }
 
     /// Structured form of the Start-time inherited update check, shared by the UI and the CLI gate.
@@ -338,7 +344,9 @@ impl BackendState {
                     via: child_name,
                     kind: PendingUpdateKind::LocalGeneration {
                         parent: parent_name,
-                        current: stored.and_then(|(uuid, generation)| (uuid == parent.profile_uuid).then_some(generation).flatten()),
+                        current: stored.and_then(|(uuid, generation)| {
+                            (uuid == parent.profile_uuid).then_some(generation).flatten()
+                        }),
                         available: parent.generation,
                     },
                 });
@@ -361,7 +369,10 @@ impl BackendState {
                     report.pending.push(PendingInheritedUpdate {
                         label: "Local parent files".into(),
                         via: child_name,
-                        kind: PendingUpdateKind::LocalFiles { parent: parent_name, generation: parent.generation },
+                        kind: PendingUpdateKind::LocalFiles {
+                            parent: parent_name,
+                            generation: parent.generation,
+                        },
                     });
                 }
             }
@@ -447,7 +458,10 @@ impl BackendState {
             crate::config_settings::config_setting_signatures(&rules).map_err(|error| error.to_string())
         };
         Ok((files(&current) != files(&latest) || rules(&current)? != rules(&latest)?).then(|| {
-            crate::cli_update_gate::GlobalUpdate { name: profile.name.clone(), revision_id: target.revision_id.clone() }
+            crate::cli_update_gate::GlobalUpdate {
+                name: profile.name.clone(),
+                revision_id: target.revision_id.clone(),
+            }
         }))
     }
     pub async fn update_inherited_chain(&self, id: InstanceID, modal_action: &ModalAction) -> Result<(), String> {
