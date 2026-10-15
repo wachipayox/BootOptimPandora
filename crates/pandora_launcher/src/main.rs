@@ -37,7 +37,7 @@ impl From<InternalDefenderProcessAction> for command::DefenderProcessAction {
 }
 
 #[derive(Parser, Debug)]
-#[command()]
+#[command(group = clap::ArgGroup::new("start_request").args(["run_instance", "run_instance_normal"]))]
 struct Cli {
     /// Open the launcher and launch an instance with full asset verification
     #[arg(long, conflicts_with = "run_instance_normal")]
@@ -48,6 +48,12 @@ struct Cli {
     /// Open or move the launcher to a one-based display number (for example, --monitor 3)
     #[arg(long, value_name = "NUMBER", value_parser = parse_monitor_number)]
     monitor: Option<usize>,
+    /// With --run-instance*: apply a pending inherited profile update (like "Update and start"), then start
+    #[arg(long, conflicts_with = "no_update", requires = "start_request")]
+    update: bool,
+    /// With --run-instance*: start unchanged even if an inherited profile update is pending
+    #[arg(long, conflicts_with = "update", requires = "start_request")]
+    no_update: bool,
     /// Internal function to set traversable ACLs in an elevated context
     #[cfg(windows)]
     #[arg(long, hide = false, num_args = 2..)]
@@ -138,6 +144,7 @@ fn main() {
         start_deadlock_detection(&deadlock_message, &frontend_handle);
 
         let listen_cancel = tokio_util::sync::CancellationToken::new();
+        let listen_cancel_for_cli = listen_cancel.clone();
 
         // note: there are many possible race conditions with the whole single-process architecture
         // it's possible for a command to be sent to the main process while it is shutting down
@@ -194,7 +201,23 @@ fn main() {
                             }
 
                             match Cli::try_parse_from(&args) {
-                                Ok(cli) => run_cli(cli, &frontend_handle, &backend_handle),
+                                Ok(cli) => {
+                                    if let Some(outcome) = run_cli(cli, &frontend_handle, &backend_handle) {
+                                        // Reply to the forwarding process: exit code byte, then the lines.
+                                        tokio::spawn(async move {
+                                            use tokio::io::AsyncWriteExt;
+                                            let Ok(outcome) = outcome.await else { return };
+                                            let mut reply = vec![outcome.exit_code];
+                                            for line in &outcome.lines {
+                                                reply.extend_from_slice(line.as_bytes());
+                                                reply.push(b'\n');
+                                            }
+                                            let mut conn = conn.into_inner();
+                                            _ = conn.write_all(&reply).await;
+                                            _ = conn.shutdown().await;
+                                        });
+                                    }
+                                },
                                 Err(err) => {
                                     log::error!("Error while parsing received arguments: {err}");
                                     continue 'listen;
@@ -223,7 +246,21 @@ fn main() {
             }))
         };
 
-        run_cli(cli, &frontend_handle, &backend_handle);
+        static CLI_EXIT_CODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+        if let Some(outcome) = run_cli(cli, &frontend_handle, &backend_handle) {
+            let backend_handle = backend_handle.clone();
+            let listen_cancel = listen_cancel_for_cli.clone();
+            runtime.spawn(async move {
+                let Ok(outcome) = outcome.await else { return };
+                print_cli_lines(&outcome.lines);
+                if outcome.exit_code != 0 {
+                    // Nothing was started: shut the launcher down cleanly and report the code.
+                    CLI_EXIT_CODE.store(outcome.exit_code, std::sync::atomic::Ordering::SeqCst);
+                    listen_cancel.cancel();
+                    backend_handle.send(MessageToBackend::Quit);
+                }
+            });
+        }
 
         backend::start(
             runtime,
@@ -242,6 +279,10 @@ fn main() {
             quit_handler,
         );
         log::info!("Quitting...");
+        let code = CLI_EXIT_CODE.load(std::sync::atomic::Ordering::SeqCst);
+        if code != 0 {
+            std::process::exit(code as i32);
+        }
     } else {
         eprintln!("Connecting to existing local socket: {socket:?}");
 
@@ -282,6 +323,20 @@ fn main() {
             if let Err(err) = conn.write_all(&bytes).await {
                 show_error_eprintln(format!("Error sending request to local socket: {err}"));
                 return;
+            }
+
+            // A gated --run-instance* request gets a reply; other requests (and older
+            // launchers) just close the connection, which keeps exit code 0.
+            use tokio::io::AsyncReadExt;
+            let mut reply = Vec::new();
+            if conn.read_to_end(&mut reply).await.is_ok()
+                && let Some((&code, text)) = reply.split_first()
+            {
+                let text = String::from_utf8_lossy(text);
+                print_cli_lines(&text.lines().map(str::to_owned).collect::<Vec<_>>());
+                if code != 0 {
+                    std::process::exit(code as i32);
+                }
             }
         });
     }
@@ -332,7 +387,7 @@ impl PlatformListener {
         pipe_name.push(global_name);
 
         let pipe = tokio::net::windows::named_pipe::ServerOptions::new()
-            .access_outbound(false)
+            .access_outbound(true)
             .first_pipe_instance(true)
             .create(&pipe_name)?;
 
@@ -344,7 +399,7 @@ impl PlatformListener {
         let old_pipe = std::mem::replace(
             &mut self.pipe,
             tokio::net::windows::named_pipe::ServerOptions::new()
-                .access_outbound(false)
+                .access_outbound(true)
                 .create(&self.pipe_name)?,
         );
         Ok(PlatformServerStream { server: old_pipe })
@@ -394,7 +449,7 @@ impl PlatformClientStream {
         pipe_name.push(global_name);
 
         loop {
-            match tokio::net::windows::named_pipe::ClientOptions::new().read(false).open(&pipe_name) {
+            match tokio::net::windows::named_pipe::ClientOptions::new().read(true).open(&pipe_name) {
                 Ok(client) => return Ok(Self { client }),
                 Err(e) if e.raw_os_error() == Some(231) => (), // ERROR_PIPE_BUSY
                 Err(e) => return Err(e),
@@ -406,6 +461,40 @@ impl PlatformClientStream {
 
     fn project(self: std::pin::Pin<&mut Self>) -> std::pin::Pin<&mut tokio::net::windows::named_pipe::NamedPipeClient> {
         unsafe { self.map_unchecked_mut(|s| &mut s.client) }
+    }
+}
+
+impl tokio::io::AsyncWrite for PlatformServerStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        tokio::io::AsyncWrite::poll_write(self.project(), cx, buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        tokio::io::AsyncWrite::poll_flush(self.project(), cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        tokio::io::AsyncWrite::poll_shutdown(self.project(), cx)
+    }
+}
+
+impl tokio::io::AsyncRead for PlatformClientStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        tokio::io::AsyncRead::poll_read(self.project(), cx, buf)
     }
 }
 
@@ -433,16 +522,43 @@ impl tokio::io::AsyncWrite for PlatformClientStream {
     }
 }
 
-fn run_cli(cli: Cli, frontend: &FrontendHandle, backend: &BackendHandle) {
+fn run_cli(
+    cli: Cli,
+    frontend: &FrontendHandle,
+    backend: &BackendHandle,
+) -> Option<tokio::sync::oneshot::Receiver<bridge::message::CliStartOutcome>> {
     frontend.send(MessageToFrontend::OpenOrFocusMainWindow { monitor: cli.monitor });
 
-    if let Some((name, modal_action)) = cli_start_request(&cli) {
-        backend.send(bridge::message::MessageToBackend::StartInstanceByName {
-            name,
-            quick_play: None,
-            modal_action,
-        });
+    let (name, modal_action) = cli_start_request(&cli)?;
+    let (outcome, receiver) = tokio::sync::oneshot::channel();
+    backend.send(bridge::message::MessageToBackend::CliStartInstanceByName {
+        name,
+        modal_action,
+        update_policy: cli_update_policy(&cli),
+        outcome,
+    });
+    Some(receiver)
+}
+
+fn cli_update_policy(cli: &Cli) -> bridge::message::CliUpdatePolicy {
+    use bridge::message::CliUpdatePolicy;
+    if cli.update {
+        CliUpdatePolicy::Update
+    } else if cli.no_update {
+        CliUpdatePolicy::NoUpdate
+    } else {
+        CliUpdatePolicy::Ask
     }
+}
+
+/// `[WBOMBO-PROFILE]` lines go to stdout and stderr so wrappers can capture either stream.
+fn print_cli_lines(lines: &[String]) {
+    use std::io::Write as _;
+    for line in lines {
+        _ = writeln!(std::io::stdout(), "{line}");
+        _ = writeln!(std::io::stderr(), "{line}");
+    }
+    _ = std::io::stdout().flush();
 }
 
 fn parse_monitor_number(value: &str) -> Result<usize, String> {
@@ -462,7 +578,8 @@ fn cli_start_request(cli: &Cli) -> Option<(String, ModalAction)> {
 
 #[cfg(test)]
 mod cli_tests {
-    use super::{Cli, cli_start_request};
+    use super::{Cli, cli_start_request, cli_update_policy};
+    use bridge::message::CliUpdatePolicy;
     use bridge::modal_action::AssetVerificationMode;
     use clap::Parser;
 
@@ -485,6 +602,22 @@ mod cli_tests {
     #[test]
     fn run_instance_modes_are_mutually_exclusive() {
         assert!(Cli::try_parse_from(["pandora", "--run-instance", "Pack", "--run-instance-normal", "Pack",]).is_err());
+    }
+
+    #[test]
+    fn update_flags_select_policy() {
+        let ask = Cli::try_parse_from(["pandora", "--run-instance-normal", "Pack"]).unwrap();
+        assert_eq!(cli_update_policy(&ask), CliUpdatePolicy::Ask);
+        let update = Cli::try_parse_from(["pandora", "--run-instance-normal", "Pack", "--update"]).unwrap();
+        assert_eq!(cli_update_policy(&update), CliUpdatePolicy::Update);
+        let skip = Cli::try_parse_from(["pandora", "--run-instance", "Pack", "--no-update"]).unwrap();
+        assert_eq!(cli_update_policy(&skip), CliUpdatePolicy::NoUpdate);
+    }
+
+    #[test]
+    fn update_flags_need_a_start_and_exclude_each_other() {
+        assert!(Cli::try_parse_from(["pandora", "--update"]).is_err());
+        assert!(Cli::try_parse_from(["pandora", "--run-instance", "Pack", "--update", "--no-update"]).is_err());
     }
 
     #[test]

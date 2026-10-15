@@ -61,3 +61,7 @@ closes and the tabs unlock; errors keep the message visible and also unlock
 the tabs. Global asset downloads show an aggregate byte bar and a bar for each
 downloaded file. A removed local or global ancestor does not invalidate an already
 installed descendant.
+
+Command-line starts (`--run-instance*`) use the same check without a dialog:
+a pending update exits with code 3 unless `--update` or `--no-update` is
+given. See the README "Command line" section for the output contract.
