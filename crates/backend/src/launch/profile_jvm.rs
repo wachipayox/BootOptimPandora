@@ -20,6 +20,11 @@ use schema::{
 
 /// Java runtime identity probed through the launch wrapper, cached per binary file state so a
 /// custom Java costs one extra JVM start per launcher session, not one per Start.
+/// Java seen at the last Start of each instance (by game directory), so the settings page can
+/// show whether an option fits without starting a JVM.
+static LAST_JAVA_BY_GAME_DIR: LazyLock<Mutex<HashMap<PathBuf, (Option<u32>, Option<String>)>>> =
+    LazyLock::new(Default::default);
+
 static JAVA_PROBE_CACHE: LazyLock<Mutex<HashMap<(PathBuf, u64, Option<SystemTime>), (u32, String)>>> =
     LazyLock::new(Default::default);
 
@@ -48,6 +53,7 @@ pub(crate) fn plan_launch_arguments(
     java_binary: &Path,
     java_source: JavaRuntimeSource,
     launch_wrapper: &Path,
+    game_dir: &Path,
 ) -> Vec<String> {
     if options.is_empty() {
         return Vec::new();
@@ -61,14 +67,10 @@ pub(crate) fn plan_launch_arguments(
             None => (None, None),
         },
     };
-    let facts = JvmLaunchFacts {
-        platform: "pc".into(),
-        java_major,
-        java_vm,
-        logical_cpus: profile_jvm::active_processor_count(&personal)
-            .or_else(|| std::thread::available_parallelism().ok().map(|count| count.get() as i64)),
-        memory_mib: total_memory_mib(),
-    };
+    if let Ok(mut last) = LAST_JAVA_BY_GAME_DIR.lock() {
+        last.insert(game_dir.to_path_buf(), (java_major, java_vm.clone()));
+    }
+    let facts = machine_facts(&personal, java_major, java_vm);
     let plan = profile_jvm::plan(
         options,
         &configuration.profile_jvm_options,
@@ -82,6 +84,43 @@ pub(crate) fn plan_launch_arguments(
             _ => None,
         })
         .collect()
+}
+
+fn machine_facts(personal: &[String], java_major: Option<u32>, java_vm: Option<String>) -> JvmLaunchFacts {
+    JvmLaunchFacts {
+        platform: "pc".into(),
+        java_major,
+        java_vm,
+        logical_cpus: profile_jvm::active_processor_count(personal)
+            .or_else(|| std::thread::available_parallelism().ok().map(|count| count.get() as i64)),
+        memory_mib: total_memory_mib(),
+    }
+}
+
+/// The decisions the next Start would take, for the instance settings page. Does not start a JVM.
+pub(crate) fn settings_view(
+    options: Vec<ManifestJvmOption>,
+    configuration: &InstanceConfiguration,
+    game_dir: &Path,
+) -> profile_jvm::ProfileJvmOptionsView {
+    let personal = personal_jvm_args(configuration);
+    let memory_enabled = configuration.memory.as_ref().is_some_and(|memory| memory.enabled);
+    let (java_major, java_vm) = LAST_JAVA_BY_GAME_DIR
+        .lock()
+        .ok()
+        .and_then(|last| last.get(game_dir).cloned())
+        .unwrap_or((None, None));
+    let facts = machine_facts(&personal, java_major, java_vm);
+    let plan = profile_jvm::plan(
+        &options,
+        &configuration.profile_jvm_options,
+        &facts,
+        &profile_jvm::personal_flag_keys(&personal, memory_enabled),
+    );
+    profile_jvm::ProfileJvmOptionsView {
+        options: options.into_iter().zip(plan).collect(),
+        facts,
+    }
 }
 
 /// One `[WBOMBO-COMPAT]` line per applied or skipped option, then one trace line with every

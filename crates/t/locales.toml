@@ -2499,6 +2499,45 @@ sv = "Lägg till JVM-argument"
 ru = "Добавить флаги JVM"
 fr = "Ajouter des options JVM"
 it = "Aggiungi flag JVM"
+[instance.profile_jvm.title]
+en = "Profile JVM options"
+
+[instance.profile_jvm.description]
+en = "Set by your profile and applied only when they fit this instance's Java. Your own JVM flags below always win and are never changed."
+
+[instance.profile_jvm.automatic]
+en = "Automatic"
+
+[instance.profile_jvm.on]
+en = "On"
+
+[instance.profile_jvm.off]
+en = "Off"
+
+[instance.profile_jvm.reset]
+en = "Use profile setting"
+
+[instance.profile_jvm.status_applied]
+en = "Active at next launch: ${arg: &str}"
+
+[instance.profile_jvm.range]
+en = "Allowed values: ${min: &str}–${max: &str}"
+
+[instance.profile_jvm.advice]
+en = "Changing this is not recommended: the profile already picks a value that suits most PCs."
+
+[instance.profile_jvm.last_java]
+en = "Last Java detected: Java ${major: &str} (${vm: &str})"
+
+[instance.profile_jvm.last_java_unknown]
+en = "Last Java detected: none yet, it is checked when the instance starts"
+
+[instance.profile_jvm.status_overridden]
+en = "Overridden by your JVM flags or memory setting"
+
+[instance.profile_jvm.status_not_used]
+en = "Not used: ${reason: &str}"
+
 [instance.jvm_binary]
 en = "Override JVM Binary"
 tr = "JVM Çalıştırılabilir Dosyasını Geçersiz Kıl"

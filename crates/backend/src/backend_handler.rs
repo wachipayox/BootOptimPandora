@@ -482,6 +482,46 @@ impl BackendState {
                     });
                 }
             },
+            MessageToBackend::GetProfileJvmOptions { id, channel } => {
+                let Some((root, game_dir, configuration)) =
+                    self.instance_state.write().instances.get_mut(id).map(|instance| {
+                        (
+                            instance.root_path.clone(),
+                            instance.dot_minecraft_path.clone(),
+                            instance.configuration.get().clone(),
+                        )
+                    })
+                else {
+                    _ = channel.send(None);
+                    return;
+                };
+                tokio::task::spawn_blocking(move || {
+                    let view = match crate::profile_layout_flow::read_committed_branch(&root) {
+                        Ok(Some(branch)) => Some(crate::launch::profile_jvm::settings_view(
+                            branch.jvm_options,
+                            &configuration,
+                            &game_dir,
+                        )),
+                        Ok(None) => None,
+                        Err(error) => {
+                            log::warn!("[profile-jvm] could not read the profile state for settings: {error}");
+                            None
+                        },
+                    };
+                    _ = channel.send(view);
+                });
+            },
+            MessageToBackend::SetInstanceProfileJvmOption { id, option_id, choice } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        if choice.is_untouched() {
+                            configuration.profile_jvm_options.remove(&option_id);
+                        } else {
+                            configuration.profile_jvm_options.insert(option_id, choice);
+                        }
+                    });
+                }
+            },
             MessageToBackend::SetInstanceJvmBinary { id, jvm_binary } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {

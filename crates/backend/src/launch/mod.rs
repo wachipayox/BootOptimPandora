@@ -60,7 +60,7 @@ use crate::{
 
 #[cfg(target_os = "linux")]
 mod linux_gpu;
-mod profile_jvm;
+pub(crate) mod profile_jvm;
 
 #[derive(Clone)]
 pub struct Launcher {
@@ -282,6 +282,7 @@ impl Launcher {
             let configuration = instance_info.clone();
             let java_path = java_path.clone();
             let launch_wrapper = self.launch_wrapper.clone();
+            let game_dir = dot_minecraft_path.clone();
             tokio::task::spawn_blocking(move || {
                 profile_jvm::plan_launch_arguments(
                     &profile_jvm_options,
@@ -289,6 +290,7 @@ impl Launcher {
                     &java_path,
                     java_source,
                     &launch_wrapper,
+                    &game_dir,
                 )
             })
             .await

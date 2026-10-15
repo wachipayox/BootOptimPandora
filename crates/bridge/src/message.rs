@@ -429,6 +429,19 @@ pub enum MessageToBackend {
         skin: UniqueBytes,
         variant: SkinVariant,
     },
+    /// The profile JVM options of an instance and what the next Start would do with each.
+    /// `None` when the instance has no profile state.
+    GetProfileJvmOptions {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Option<schema::profile_jvm::ProfileJvmOptionsView>>,
+    },
+    /// Stores the player's choice for one option; an untouched choice removes the entry so the
+    /// option follows the profile again.
+    SetInstanceProfileJvmOption {
+        id: InstanceID,
+        option_id: String,
+        choice: schema::profile_jvm::ProfileJvmOptionChoice,
+    },
     GetAccountCapes {
         account: Uuid,
         result: tokio::sync::oneshot::Sender<AccountCapesResult>,
