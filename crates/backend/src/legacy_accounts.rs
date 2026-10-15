@@ -1,0 +1,296 @@
+//! One-time import of Minecraft accounts and the local skin library from the data folder used
+//! before the Wachiland rebrand.
+//!
+//! The rebrand moved the launcher folder from `PandoraLauncher` to `WachilandLauncher` (a sibling
+//! in the same data directory). Only `accounts.json` and the `skins` library are imported:
+//! instances, libraries and every other file stay where they are. The skin library is local to
+//! the launcher; the Microsoft account itself keeps only the active skin and capes. Account secrets are kept by the system credential store under
+//! names that never included the folder (`PandoraLauncher_*` on Windows, service
+//! `pandora-launcher` on Linux), keyed by account UUID, so an imported account keeps working
+//! without signing in again. The old folder is only read, never modified.
+
+use std::path::{Path, PathBuf};
+
+use crate::account::BackendAccountInfo;
+
+const LEGACY_FOLDER: &str = "PandoraLauncher";
+const ACCOUNTS_FILE: &str = "accounts.json";
+/// Written after a successful import so accounts the player later removes are not re-imported.
+const MARKER_FILE: &str = "pandora-accounts-imported";
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ImportOutcome {
+    AlreadyImported,
+    NoLegacyAccounts,
+    Imported {
+        added: usize,
+        already_present: usize,
+    },
+}
+
+/// Imports legacy accounts before the account list is loaded. Failures are logged and leave
+/// both folders untouched so the next start can retry.
+pub(crate) fn import_legacy_accounts(launcher_dir: &Path) {
+    match try_import(launcher_dir) {
+        Ok(ImportOutcome::Imported { added, already_present }) => log::info!(
+            "[migration] Imported {added} account(s) from the previous {LEGACY_FOLDER} folder ({already_present} already present). \
+             Credentials stay in the system store under the same names; the old folder was not modified."
+        ),
+        Ok(ImportOutcome::AlreadyImported | ImportOutcome::NoLegacyAccounts) => {},
+        Err(error) => log::warn!(
+            "[migration] Could not import accounts from the previous {LEGACY_FOLDER} folder; nothing was changed and it will be retried on the next start: {error}"
+        ),
+    }
+}
+
+fn legacy_accounts_path(launcher_dir: &Path) -> Option<PathBuf> {
+    if launcher_dir.file_name()? == LEGACY_FOLDER {
+        return None;
+    }
+    Some(launcher_dir.parent()?.join(LEGACY_FOLDER).join(ACCOUNTS_FILE))
+}
+
+pub(crate) fn try_import(launcher_dir: &Path) -> Result<ImportOutcome, String> {
+    let marker = launcher_dir.join(MARKER_FILE);
+    if marker.exists() {
+        return Ok(ImportOutcome::AlreadyImported);
+    }
+    let Some(legacy_path) = legacy_accounts_path(launcher_dir).filter(|path| path.is_file()) else {
+        return Ok(ImportOutcome::NoLegacyAccounts);
+    };
+    let legacy: BackendAccountInfo = crate::fs::read_json(&legacy_path)
+        .map_err(|error| format!("the old accounts.json is unreadable ({error:?})"))?;
+
+    let current_path = launcher_dir.join(ACCOUNTS_FILE);
+    let mut current: BackendAccountInfo = if current_path.exists() {
+        // Never overwrite an accounts file this launcher cannot read.
+        crate::fs::read_json(&current_path)
+            .map_err(|error| format!("the current accounts.json is unreadable ({error:?})"))?
+    } else {
+        BackendAccountInfo::default()
+    };
+
+    let total = legacy.accounts.len();
+    let mut added = 0;
+    for (uuid, account) in legacy.accounts {
+        if !current.accounts.contains_key(&uuid) {
+            current.accounts.insert(uuid, account);
+            added += 1;
+        }
+    }
+    let mut changed = added > 0;
+    if current.selected_account.is_none()
+        && let Some(selected) = legacy.selected_account.filter(|uuid| current.accounts.contains_key(uuid))
+    {
+        current.selected_account = Some(selected);
+        changed = true;
+    }
+
+    if changed {
+        let bytes = serde_json::to_vec(&current).map_err(|error| error.to_string())?;
+        crate::fs::write_safe(&current_path, &bytes)
+            .map_err(|error| format!("could not write accounts.json ({error})"))?;
+    }
+    crate::fs::write_safe(
+        &marker,
+        format!("Imported {added} of {total} account(s) from ../{LEGACY_FOLDER}/{ACCOUNTS_FILE}\n").as_bytes(),
+    )
+    .map_err(|error| format!("could not write the import marker ({error})"))?;
+    Ok(ImportOutcome::Imported {
+        added,
+        already_present: total - added,
+    })
+}
+
+const SKINS_DIR: &str = "skins";
+const SKINS_MARKER_FILE: &str = "pandora-skins-imported";
+
+/// Copies the old skin library once. Files already present with the same bytes are skipped and
+/// a different file with the same name is kept under a new name, so nothing is overwritten.
+pub(crate) fn import_legacy_skins(launcher_dir: &Path) {
+    match try_import_skins(launcher_dir) {
+        Ok(Some(copied)) => log::info!(
+            "[migration] Copied {copied} skin file(s) from the previous {LEGACY_FOLDER} folder; the old folder was not modified."
+        ),
+        Ok(None) => {},
+        Err(error) => log::warn!(
+            "[migration] Could not copy skins from the previous {LEGACY_FOLDER} folder; it will be retried on the next start: {error}"
+        ),
+    }
+}
+
+pub(crate) fn try_import_skins(launcher_dir: &Path) -> Result<Option<usize>, String> {
+    let marker = launcher_dir.join(SKINS_MARKER_FILE);
+    if marker.exists() || launcher_dir.file_name().is_some_and(|name| name == LEGACY_FOLDER) {
+        return Ok(None);
+    }
+    let Some(legacy_dir) = launcher_dir.parent().map(|parent| parent.join(LEGACY_FOLDER).join(SKINS_DIR)) else {
+        return Ok(None);
+    };
+    if !legacy_dir.is_dir() {
+        return Ok(None);
+    }
+    let target_dir = launcher_dir.join(SKINS_DIR);
+    std::fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
+    let mut copied = 0;
+    for entry in std::fs::read_dir(&legacy_dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        // Only plain files: links and folders are not part of the skin library.
+        if !entry.file_type().map_err(|error| error.to_string())?.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let source = entry.path();
+        let mut target = target_dir.join(name);
+        if target.exists() {
+            let same = std::fs::read(&target).ok() == std::fs::read(&source).ok();
+            if same {
+                continue;
+            }
+            target = target_dir.join(&*crate::fs::unique_name(&target_dir, name, false));
+        }
+        std::fs::copy(&source, &target).map_err(|error| format!("could not copy a skin ({error})"))?;
+        copied += 1;
+    }
+    crate::fs::write_safe(
+        &marker,
+        format!(
+            "Copied {copied} skin file(s) from ../{LEGACY_FOLDER}/{SKINS_DIR}
+"
+        )
+        .as_bytes(),
+    )
+    .map_err(|error| format!("could not write the import marker ({error})"))?;
+    Ok(Some(copied))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn data_dir(label: &str) -> PathBuf {
+        let root = std::env::temp_dir()
+            .join(format!("wachiland-legacy-accounts-{label}-{}", Uuid::from_bytes(rand::random())));
+        std::fs::create_dir_all(root.join(LEGACY_FOLDER)).unwrap();
+        std::fs::create_dir_all(root.join("WachilandLauncher")).unwrap();
+        root
+    }
+
+    fn accounts(entries: &[(Uuid, &str)], selected: Option<Uuid>) -> String {
+        let accounts = entries
+            .iter()
+            .map(|(uuid, name)| format!(r#""{uuid}":{{"username":"{name}","offline":false,"head":null}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let selected = selected.map_or_else(|| "null".to_owned(), |uuid| format!("\"{uuid}\""));
+        format!(r#"{{"accounts":{{{accounts}}},"selected_account":{selected}}}"#)
+    }
+
+    fn read(path: &Path) -> BackendAccountInfo {
+        crate::fs::read_json(path).unwrap()
+    }
+
+    #[test]
+    fn imports_into_an_empty_launcher_and_leaves_the_old_folder_untouched() {
+        let root = data_dir("fresh");
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let legacy = accounts(&[(a, "Alpha"), (b, "Beta")], Some(b));
+        std::fs::write(root.join(LEGACY_FOLDER).join(ACCOUNTS_FILE), &legacy).unwrap();
+        let launcher = root.join("WachilandLauncher");
+
+        assert_eq!(
+            try_import(&launcher).unwrap(),
+            ImportOutcome::Imported {
+                added: 2,
+                already_present: 0
+            }
+        );
+        let imported = read(&launcher.join(ACCOUNTS_FILE));
+        assert_eq!(imported.accounts.keys().copied().collect::<Vec<_>>(), vec![a, b]);
+        assert_eq!(imported.selected_account, Some(b));
+        assert_eq!(std::fs::read_to_string(root.join(LEGACY_FOLDER).join(ACCOUNTS_FILE)).unwrap(), legacy);
+
+        // A later removal in the new launcher is not undone on the next start.
+        std::fs::write(launcher.join(ACCOUNTS_FILE), accounts(&[(a, "Alpha")], Some(a))).unwrap();
+        assert_eq!(try_import(&launcher).unwrap(), ImportOutcome::AlreadyImported);
+        assert_eq!(read(&launcher.join(ACCOUNTS_FILE)).accounts.len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn merges_without_replacing_existing_accounts_or_selection() {
+        let root = data_dir("merge");
+        let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        std::fs::write(
+            root.join(LEGACY_FOLDER).join(ACCOUNTS_FILE),
+            accounts(&[(a, "OldName"), (b, "Beta")], Some(a)),
+        )
+        .unwrap();
+        let launcher = root.join("WachilandLauncher");
+        std::fs::write(launcher.join(ACCOUNTS_FILE), accounts(&[(a, "NewName"), (c, "Gamma")], Some(c))).unwrap();
+
+        assert_eq!(
+            try_import(&launcher).unwrap(),
+            ImportOutcome::Imported {
+                added: 1,
+                already_present: 1
+            }
+        );
+        let merged = read(&launcher.join(ACCOUNTS_FILE));
+        assert_eq!(merged.accounts.len(), 3);
+        assert_eq!(&*merged.accounts[&a].username, "NewName");
+        assert_eq!(merged.selected_account, Some(c));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unreadable_files_change_nothing_and_retry_later() {
+        let root = data_dir("corrupt");
+        let launcher = root.join("WachilandLauncher");
+        std::fs::write(root.join(LEGACY_FOLDER).join(ACCOUNTS_FILE), accounts(&[(Uuid::new_v4(), "Alpha")], None))
+            .unwrap();
+        std::fs::write(launcher.join(ACCOUNTS_FILE), b"{not json").unwrap();
+        assert!(try_import(&launcher).is_err());
+        assert_eq!(std::fs::read(launcher.join(ACCOUNTS_FILE)).unwrap(), b"{not json");
+        assert!(!launcher.join(MARKER_FILE).exists());
+
+        std::fs::remove_file(launcher.join(ACCOUNTS_FILE)).unwrap();
+        std::fs::write(root.join(LEGACY_FOLDER).join(ACCOUNTS_FILE), b"[]").unwrap();
+        assert!(try_import(&launcher).is_err());
+        assert!(!launcher.join(ACCOUNTS_FILE).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copies_skins_once_without_overwriting() {
+        let root = data_dir("skins");
+        let launcher = root.join("WachilandLauncher");
+        let legacy = root.join(LEGACY_FOLDER).join(SKINS_DIR);
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::create_dir_all(launcher.join(SKINS_DIR)).unwrap();
+        std::fs::write(legacy.join("a.png"), b"old-a").unwrap();
+        std::fs::write(legacy.join("b.png"), b"same").unwrap();
+        std::fs::write(launcher.join(SKINS_DIR).join("a.png"), b"new-a").unwrap();
+        std::fs::write(launcher.join(SKINS_DIR).join("b.png"), b"same").unwrap();
+
+        assert_eq!(try_import_skins(&launcher).unwrap(), Some(1));
+        assert_eq!(std::fs::read(launcher.join(SKINS_DIR).join("a.png")).unwrap(), b"new-a");
+        assert_eq!(std::fs::read_dir(launcher.join(SKINS_DIR)).unwrap().count(), 3);
+        assert_eq!(std::fs::read(legacy.join("a.png")).unwrap(), b"old-a");
+        assert_eq!(try_import_skins(&launcher).unwrap(), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn nothing_to_do_without_a_legacy_folder() {
+        let root =
+            std::env::temp_dir().join(format!("wachiland-legacy-accounts-none-{}", Uuid::from_bytes(rand::random())));
+        let launcher = root.join("WachilandLauncher");
+        std::fs::create_dir_all(&launcher).unwrap();
+        assert_eq!(try_import(&launcher).unwrap(), ImportOutcome::NoLegacyAccounts);
+        assert!(!launcher.join(MARKER_FILE).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

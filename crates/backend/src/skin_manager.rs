@@ -90,7 +90,16 @@ impl SkinManager {
                             variant: skin_variant,
                         });
                     },
-                    SkinEntry::Failed => {},
+                    // A previous download failed (for example a network hiccup): try again
+                    // instead of dropping the request, which left the page without a skin.
+                    SkinEntry::Failed => {
+                        *existing = SkinEntry::Loading {
+                            accounts: Vec::new(),
+                            frontend_requests: vec![(skin_variant, send)],
+                        };
+                        drop(skin_manager);
+                        Self::download_skin(backend, skin_url);
+                    },
                 }
                 return;
             }
@@ -123,7 +132,14 @@ impl SkinManager {
                             }
                         });
                     },
-                    SkinEntry::Failed => {},
+                    SkinEntry::Failed => {
+                        *existing = SkinEntry::Loading {
+                            accounts: vec![account],
+                            frontend_requests: Vec::new(),
+                        };
+                        drop(skin_manager);
+                        Self::download_skin(backend, skin_url);
+                    },
                 }
                 return;
             }
