@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use crate::icon::PandoraIcon;
 use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -124,7 +125,7 @@ impl ProfileJvmSection {
 
         match option.kind {
             JvmOptionKind::Int => {
-                let text = value.map(|value| value.to_string()).unwrap_or_default();
+                let text = value.as_ref().map(|value| value.to_string()).unwrap_or_default();
                 let state = cx.new(|cx| InputState::new(window, cx).default_value(text));
                 let (min, max) = (option.min.unwrap_or(i64::MIN), option.max.unwrap_or(i64::MAX));
                 cx.subscribe_in(&state, window, move |_, state, event: &NumberInputEvent, window, cx| {
@@ -141,15 +142,42 @@ impl ProfileJvmSection {
                 })
                 .detach();
                 let option_id = id.clone();
-                cx.subscribe(&state, move |section, state, event: &InputEvent, cx| {
-                    if !matches!(event, InputEvent::Change) {
-                        return;
-                    }
-                    // Only values inside the profile's range are stored; others are ignored.
-                    if let Ok(number) = state.read(cx).value().trim().parse::<i64>()
-                        && (min..=max).contains(&number)
-                    {
-                        section.set_choice(&option_id, |choice| choice.value = Some(JvmValue::Int(number)), cx);
+                let fallback = value.as_ref().and_then(int_value).unwrap_or(min.max(0).min(max));
+                cx.subscribe_in(&state, window, move |section, state, event: &InputEvent, window, cx| {
+                    let text = state.read(cx).value().trim().to_owned();
+                    let parsed = text.parse::<i64>().ok();
+                    // The field never keeps a value outside the profile's range. Above the maximum
+                    // (or below a non-negative minimum) it snaps at once; a value that may still be
+                    // half typed, such as "1" on the way to "12", is settled when the field is left.
+                    let settled = match event {
+                        InputEvent::Change => match parsed {
+                            Some(number) if number > max || (number < min && (number < 0 || min < 0)) => {
+                                Some(number.clamp(min, max))
+                            },
+                            Some(number) if number < min => None,
+                            Some(number) => {
+                                section.set_choice(&option_id, |choice| choice.value = Some(JvmValue::Int(number)), cx);
+                                None
+                            },
+                            None if text.is_empty() || text == "-" => None,
+                            None => Some(fallback),
+                        },
+                        InputEvent::Blur | InputEvent::PressEnter { .. } => match parsed {
+                            Some(number) if (min..=max).contains(&number) => None,
+                            Some(number) => Some(number.clamp(min, max)),
+                            None => Some(
+                                section
+                                    .choices
+                                    .get(&option_id)
+                                    .and_then(|choice| choice.value.as_ref())
+                                    .and_then(int_value)
+                                    .unwrap_or(fallback),
+                            ),
+                        },
+                        InputEvent::Focus => None,
+                    };
+                    if let Some(number) = settled {
+                        state.update(cx, |input, cx| input.set_value(number.to_string(), window, cx));
                     }
                 })
                 .detach();
@@ -243,16 +271,16 @@ fn effective_enabled(entry: &JvmPlanEntry, choice: Option<&ProfileJvmOptionChoic
     }
 }
 
-/// Player-facing help: the profile's explanation, the allowed range and a reminder that the
-/// profile value is the safe choice.
+/// Player-facing help: the profile's explanation, a reminder that the profile value is the safe
+/// choice and, last, the allowed range.
 fn tooltip_text(option: &ManifestJvmOption) -> SharedString {
     let mut text = option.help.trim().to_owned();
+    text.push('\n');
+    text.push_str(t::instance::profile_jvm::advice());
     if let (Some(min), Some(max)) = (option.min, option.max) {
         text.push_str("\n\n");
         text.push_str(&t::instance::profile_jvm::range(&min.to_string(), &max.to_string()));
     }
-    text.push_str("\n\n");
-    text.push_str(t::instance::profile_jvm::advice());
     text.into()
 }
 
@@ -310,31 +338,42 @@ impl Render for ProfileJvmSection {
                     .small()
                     .tooltip(tooltip_text(&option)),
             );
+            // The value control and the reset icon stay together and wrap below the label as one
+            // piece when the column is narrow, so the reset icon is never cut off.
+            let mut value_group = h_flex().gap_1().flex_none().items_center();
             if let Some(number) = controls.and_then(|controls| controls.number.clone()) {
-                row = row.child(div().w(px(140.0)).child(NumberInput::new(&number).small().disabled(!enabled)));
+                value_group =
+                    value_group.child(div().w(px(140.0)).child(NumberInput::new(&number).small().disabled(!enabled)));
             }
             if let Some(values) = controls.and_then(|controls| controls.values.clone()) {
-                row = row.child(div().w(px(160.0)).child(Select::new(&values).small().disabled(!enabled)));
-            }
-            let mut details = h_flex().gap_2().pl_6().flex_wrap().items_center();
-            if let Some(status) = status_text(&entry, java_major) {
-                details = details.child(div().text_sm().child(status));
+                value_group =
+                    value_group.child(div().w(px(160.0)).child(Select::new(&values).small().disabled(!enabled)));
             }
             if choice.is_some() {
-                details = details.child(
+                value_group = value_group.child(
                     Button::new(SharedString::from(format!("profile-jvm-reset-{}", option.id)))
-                        .label(t::instance::profile_jvm::reset())
+                        .icon(PandoraIcon::RefreshCcw)
                         .ghost()
-                        .xsmall()
+                        .small()
+                        .tooltip(t::instance::profile_jvm::reset())
                         .on_click(cx.listener({
                             let id = id.clone();
                             move |section, _, window, cx| section.reset(&id, window, cx)
                         })),
                 );
             }
+            row = row.child(value_group);
+            let details = status_text(&entry, java_major).map(|status| div().text_sm().pl_6().child(status));
 
-            list = list.child(v_flex().gap_0p5().child(row).child(details));
+            list = list.child(v_flex().gap_0p5().child(row).children(details));
         }
         list.into_any_element()
+    }
+}
+
+fn int_value(value: &JvmValue) -> Option<i64> {
+    match value {
+        JvmValue::Int(number) => Some(*number),
+        JvmValue::Text(_) => None,
     }
 }
