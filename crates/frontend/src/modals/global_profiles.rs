@@ -324,7 +324,7 @@ impl ProfileDetailsModal {
                 h_flex().gap_4().items_center().child(profile_icon(p, 80.0)).child(
                     v_flex()
                         .gap_2()
-                        .child(format!("Minecraft {} · NeoForge {}", p.minecraft, p.neoforge))
+                        .child(format!("Minecraft {} · {} {}", p.minecraft, p.loader.pretty_name(), p.loader_version))
                         .child(format!("Version {}", p.stable_sequence.unwrap_or(p.latest_sequence))),
                 ),
             )
