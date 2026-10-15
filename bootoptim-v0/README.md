@@ -6,7 +6,7 @@ This directory is an intentionally narrow measurement prototype. It is **not** a
 
 - Host launcher: Moulberry/PandoraLauncher, MIT.
 - Audited upstream commit and fork `master` base: `4eb6c7849561151695288443c106519774ee05ea`.
-- Working repository: private `wachipayox/BootOptimPandora`.
+- Working repository: public `wachipayox/BootOptimPandora`.
 - Existing root `LICENSE` is retained. See `NOTICE.md` for prototype provenance.
 - BootOptim `agent/integration-current` is not modified by this prototype.
 

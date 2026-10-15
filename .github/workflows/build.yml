@@ -50,3 +50,35 @@ jobs:
 
       - name: Run build command
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}
+
+      - name: Name Windows artifact with short SHA
+        id: short_sha
+        if: matrix.platform.os_name == 'Windows-x86_64' && (github.event_name == 'pull_request' || github.ref_name == 'agent/integration-current')
+        shell: pwsh
+        run: '"sha=$($env:GITHUB_SHA.Substring(0, 7))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8'
+
+      - name: Upload Windows launcher artifact
+        if: matrix.platform.os_name == 'Windows-x86_64' && (github.event_name == 'pull_request' || github.ref_name == 'agent/integration-current')
+        uses: actions/upload-artifact@v4
+        with:
+          name: pandora-windows-x86_64-${{ steps.short_sha.outputs.sha }}
+          path: target/${{ matrix.platform.target }}/release/pandora_launcher${{ matrix.platform.binext }}
+          if-no-files-found: error
+          retention-days: 14
+
+  backend-tests-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Run backend library tests on Windows
+        run: cargo test -p backend --lib --frozen
