@@ -697,7 +697,9 @@ mod tests {
 
         fs::remove_file(minecraft.join("config/client.toml")).unwrap();
         fs::write(minecraft.join("resourcepacks/pack/pack.mcmeta"), b"{\"pack\":{\"v\":2}}\n").unwrap();
-        fs::write(minecraft.join("new-file.txt"), b"new\n").unwrap();
+        // Root-level files outside the conventional modpack folders are excluded by the default
+        // ignore policy (`*`), so the addition is placed in a tracked folder.
+        fs::write(minecraft.join("config/new-file.txt"), b"new\n").unwrap();
         let previous = first.into_iter().map(|entry| (entry.path, entry.metadata)).collect::<BTreeMap<_, _>>();
         let updated = snapshot_parent_tree(&minecraft, parent_uuid, &parent_branch, Some(&previous)).unwrap();
         let delta = local_parent_delta(
@@ -722,7 +724,7 @@ mod tests {
             delta
                 .changes
                 .iter()
-                .any(|change| matches!(change, ProfileDeltaChange::Upsert(entry) if entry.path == "new-file.txt"))
+                .any(|change| matches!(change, ProfileDeltaChange::Upsert(entry) if entry.path == "config/new-file.txt"))
         );
         assert!(delta.changes.iter().any(|change| matches!(change, ProfileDeltaChange::Upsert(entry) if entry.path == "resourcepacks/pack/pack.mcmeta")));
     }
