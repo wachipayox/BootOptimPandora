@@ -44,7 +44,7 @@ use crate::{
     arcfactory::ArcStrFactory,
     fs::FolderChanges,
     instance::Instance,
-    launch::{ArgumentExpansionKey, LaunchError},
+    launch::{ArgumentExpansionKey, LaunchError, java_default},
     library_install_state, log_reader,
     metadata::{
         items::{
@@ -2796,13 +2796,33 @@ impl BackendState {
 
         // Signed profile JVM options persisted at the last profile update; reading them is a single
         // metadata read with no tree walk. A damaged state launches without them.
-        let profile_jvm_options = match crate::profile_layout_flow::read_committed_branch(&root_path) {
-            Ok(branch) => branch.map(|branch| branch.jvm_options).unwrap_or_default(),
+        let committed_branch = match crate::profile_layout_flow::read_committed_branch(&root_path) {
+            Ok(branch) => branch,
             Err(error) => {
                 log::warn!(
-                    "[profile-jvm] could not read the profile state, launching without profile JVM options: {error}"
+                    "[profile-jvm] could not read the profile state, launching without profile JVM options or Java 25: {error}"
                 );
-                Vec::new()
+                None
+            },
+        };
+        let profile_jvm_options =
+            committed_branch.as_ref().map(|branch| branch.jvm_options.clone()).unwrap_or_default();
+
+        let java_choice = java_default::choose(&java_default::Inputs {
+            profile_id: committed_branch
+                .as_ref()
+                .and_then(|branch| branch.applied_revision.as_ref())
+                .map(|pin| pin.profile_id.as_str()),
+            jvm_binary_enabled: configuration.jvm_binary.as_ref().is_some_and(|binary| binary.enabled),
+            force_external_java: std::env::var_os("FORCE_EXTERNAL_JAVA").is_some(),
+            saved_fallback_reason: configuration.java25_fallback.as_ref().map(|fallback| fallback.reason.as_str()),
+        });
+        let java25 = match java_choice {
+            java_default::Choice::Java25 => true,
+            java_default::Choice::Java21 => false,
+            java_default::Choice::FallbackSaved(reason) => {
+                java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), reason);
+                false
             },
         };
 
@@ -2819,6 +2839,7 @@ impl BackendState {
                 &launch_tracker,
                 &modal_action,
                 profile_jvm_options,
+                java25,
             )
             .await;
         prelaunch_attribution.write_sidecar("launcher_launch_returned");
@@ -2829,7 +2850,7 @@ impl BackendState {
 
         let is_err = result.is_err();
         match result {
-            Ok(mut child) => {
+            Ok((mut child, java_major)) => {
                 if let Some(live_game_output) = live_game_output {
                     if let Some(stdout) = child.stdout.take() {
                         let receiver = log_reader::start_game_output(stdout, child.stderr.take());
@@ -2843,6 +2864,9 @@ impl BackendState {
                 child.stdout.take();
 
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    if java25 && java_major == java_default::JAVA_MAJOR {
+                        instance.java25_starts.push((child.process.id(), Instant::now()));
+                    }
                     instance.processes.push(child.process);
                     instance.update_session();
                     self.quit_coordinator.set_can_quit(false);

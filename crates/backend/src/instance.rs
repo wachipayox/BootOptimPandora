@@ -58,6 +58,9 @@ pub struct Instance {
     pub launch_keepalive: Option<KeepAliveHandle>,
     pub processes: Vec<PandoraProcess>,
     pub closing_processes: Vec<(PandoraProcess, Instant)>,
+    /// Java 25 game starts still tracked by process id, with their start time. Used to decide
+    /// whether an early error exit should record a Java 25 fallback.
+    pub java25_starts: Vec<(u32, Instant)>,
     session_started_at: Option<Instant>,
 
     pub worlds_state: BridgeDataLoadState,
@@ -1020,6 +1023,7 @@ impl Instance {
             launch_keepalive: None,
             processes: Vec::new(),
             closing_processes: Vec::new(),
+            java25_starts: Vec::new(),
             session_started_at: None,
 
             worlds_state: BridgeDataLoadState::default(),

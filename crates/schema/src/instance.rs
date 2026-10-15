@@ -59,6 +59,14 @@ pub struct InstanceConfiguration {
         skip_serializing_if = "std::collections::BTreeMap::is_empty"
     )]
     pub profile_jvm_options: std::collections::BTreeMap<String, crate::profile_jvm::ProfileJvmOptionChoice>,
+    /// Set when a Java 25 start of a Wachiland global profile exited with an error before it could
+    /// have reached the main menu. Later starts of this instance use Java 21 until it is removed.
+    #[serde(
+        default,
+        deserialize_with = "crate::try_deserialize",
+        skip_serializing_if = "crate::skip_if_none"
+    )]
+    pub java25_fallback: Option<Java25Fallback>,
     #[serde(
         default,
         deserialize_with = "crate::try_deserialize",
@@ -98,6 +106,7 @@ impl InstanceConfiguration {
             jvm_flags: None,
             jvm_binary: None,
             profile_jvm_options: std::collections::BTreeMap::new(),
+            java25_fallback: None,
             linux_wrapper: None,
             system_libraries: None,
             instance_fallback_icon: None,
@@ -299,6 +308,14 @@ fn is_default_jvm_flags_configuration(config: &Option<InstanceJvmFlagsConfigurat
 pub struct InstanceJvmBinaryConfiguration {
     pub enabled: bool,
     pub path: Option<Arc<Path>>,
+}
+
+/// Why Java 25 was dropped for this instance. Removing the key from the instance configuration
+/// makes the next Start try Java 25 again.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Java25Fallback {
+    pub reason: String,
+    pub recorded_unix_secs: u64,
 }
 
 fn is_default_jvm_binary_configuration(config: &Option<InstanceJvmBinaryConfiguration>) -> bool {

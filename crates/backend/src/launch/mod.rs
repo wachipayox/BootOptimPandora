@@ -58,6 +58,7 @@ use crate::{
     },
 };
 
+pub(crate) mod java_default;
 #[cfg(target_os = "linux")]
 mod linux_gpu;
 pub(crate) mod profile_jvm;
@@ -140,7 +141,8 @@ impl Launcher {
         launch_tracker: &ProgressTracker,
         modal_action: &ModalAction,
         profile_jvm_options: Vec<schema::profile_jvm::ManifestJvmOption>,
-    ) -> Result<PandoraChild, LaunchError> {
+        java25: bool,
+    ) -> Result<(PandoraChild, u32), LaunchError> {
         log::info!("Launching {:?}", dot_minecraft_path);
 
         launch_tracker.set_total(6);
@@ -187,13 +189,14 @@ impl Launcher {
             });
         }
 
-        let mojang_java_binary_future = self.load_mojang_java_binary(
+        let mojang_java_binary_future = self.load_game_java_binary(
             &self.meta,
             http_client,
             &instance_info,
             &version_info,
             modal_action,
             launch_tracker,
+            java25,
         );
         let load_assets_future =
             self.load_assets(&self.meta, http_client, &dot_minecraft_path, &version_info, modal_action, launch_tracker);
@@ -210,7 +213,7 @@ impl Launcher {
             load_log_configuration.map(Ok),
         );
 
-        let (java_path, assets_index_name, library_paths, log_configuration) = tokio::select! {
+        let ((java_path, java_major), assets_index_name, library_paths, log_configuration) = tokio::select! {
             result = joined => result?,
             _ = modal_action.request_cancel.cancelled() => {
                 self.sender.send(MessageToFrontend::CloseModal);
@@ -275,7 +278,7 @@ impl Launcher {
             profile_jvm::JavaRuntimeSource::External
         } else {
             profile_jvm::JavaRuntimeSource::Mojang {
-                major_version: version_info.java_version.as_ref().map_or(8, |java| java.major_version),
+                major_version: java_major,
             }
         };
         let profile_jvm_args = {
@@ -329,7 +332,7 @@ impl Launcher {
 
         launch_tracker.add_count(1);
 
-        Ok(child)
+        Ok((child, java_major))
     }
 
     async fn create_launch_version(
@@ -608,6 +611,7 @@ impl Launcher {
             },
         ];
 
+        // Installer processors keep the version's own runtime; Java 25 is only for the game JVM.
         let mojang_java_binary_future = self.load_mojang_java_binary(
             &self.meta,
             http_client,
@@ -615,13 +619,14 @@ impl Launcher {
             &base_version,
             modal_action,
             launch_tracker,
+            false,
         );
         let load_installer_library_future =
             self.load_libraries(http_client, artifacts, modal_action, launch_tracker, library_mode);
 
         let (artifact_load_result, java_load_result) = futures::future::try_join(
             load_installer_library_future.map_err(LaunchError::from),
-            mojang_java_binary_future.map_err(LaunchError::from),
+            mojang_java_binary_future.map_ok(|(path, _)| path).map_err(LaunchError::from),
         )
         .await?;
         let installer_path = &artifact_load_result[0].1;
@@ -1083,13 +1088,16 @@ impl Launcher {
         version_info: &MinecraftVersion,
         modal_action: &ModalAction,
         launch_tracker: &ProgressTracker,
-    ) -> Result<PathBuf, LoadJavaRuntimeError> {
+        java25: bool,
+    ) -> Result<(PathBuf, u32), LoadJavaRuntimeError> {
+        let version_major = version_info.java_version.as_ref().map_or(8, |java| java.major_version);
+
         if let Some(jvm_binary) = &configuration.jvm_binary {
             if jvm_binary.enabled
                 && let Some(path) = &jvm_binary.path
             {
                 if let Some(binary) = Self::search_for_java_binary(&path) {
-                    return Ok(binary);
+                    return Ok((binary, version_major));
                 }
             }
         }
@@ -1099,11 +1107,7 @@ impl Launcher {
 
             let mut found_versions = BTreeSet::new();
 
-            let needed_version = if let Some(java_version) = &version_info.java_version {
-                java_version.major_version
-            } else {
-                8
-            };
+            let needed_version = version_major;
 
             for path in paths {
                 let Some(binary) = Self::search_for_java_binary(&path) else {
@@ -1115,7 +1119,7 @@ impl Launcher {
                 };
 
                 if major_version == needed_version {
-                    return Ok(binary);
+                    return Ok((binary, needed_version));
                 } else {
                     found_versions.insert(major_version);
                 }
@@ -1139,13 +1143,30 @@ impl Launcher {
             (a, b) => format!("{a}-{b}").into(),
         };
 
-        let jre_component = if let Some(java_version) = &version_info.java_version {
+        let runtimes = meta.fetch(MojangJavaRuntimesMetadataItem).await?;
+
+        // Java 25 only when this platform's manifest offers it; otherwise the version's runtime is used.
+        let java25_component = if java25 {
+            let found = runtimes
+                .platforms
+                .get(&platform)
+                .and_then(|runtime_platform| java_default::java25_component(&runtime_platform.components))
+                .map(|(name, component)| (name, component.version.name));
+            if found.is_none() {
+                java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), "manifest-without-java25");
+            }
+            found
+        } else {
+            None
+        };
+
+        let jre_component = if let Some((name, _)) = java25_component {
+            name
+        } else if let Some(java_version) = &version_info.java_version {
             java_version.component
         } else {
             "jre-legacy".into()
         };
-
-        let runtimes = meta.fetch(MojangJavaRuntimesMetadataItem).await?;
 
         let mut runtime_platform = runtimes.platforms.get(&platform).ok_or(LoadJavaRuntimeError::UnknownPlatform)?;
         let mut runtime_components = runtime_platform.components.get(&jre_component);
@@ -1202,7 +1223,55 @@ impl Launcher {
 
         launch_tracker.add_count(1);
 
-        result
+        let path = result?;
+        match java25_component {
+            Some((_, version_name)) => {
+                java_default::log_active(version_name.as_str());
+                Ok((path, java_default::JAVA_MAJOR))
+            },
+            None => Ok((path, version_major)),
+        }
+    }
+
+    /// The game JVM: Java 25 when requested, and Java 21 through the usual path if the Java 25
+    /// runtime cannot be fetched or verified.
+    async fn load_game_java_binary(
+        &self,
+        meta: &MetadataManager,
+        http_client: &reqwest::Client,
+        configuration: &InstanceConfiguration,
+        version_info: &MinecraftVersion,
+        modal_action: &ModalAction,
+        launch_tracker: &ProgressTracker,
+        java25: bool,
+    ) -> Result<(PathBuf, u32), LoadJavaRuntimeError> {
+        if java25 {
+            match self
+                .load_mojang_java_binary(
+                    meta,
+                    http_client,
+                    configuration,
+                    version_info,
+                    modal_action,
+                    launch_tracker,
+                    true,
+                )
+                .await
+            {
+                Ok(binary) => return Ok(binary),
+                Err(_) => java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), "java25-unavailable"),
+            }
+        }
+        self.load_mojang_java_binary(
+            meta,
+            http_client,
+            configuration,
+            version_info,
+            modal_action,
+            launch_tracker,
+            false,
+        )
+        .await
     }
 
     async fn load_assets(
