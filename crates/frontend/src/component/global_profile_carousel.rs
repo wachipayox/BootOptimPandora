@@ -121,8 +121,10 @@ impl Render for GlobalProfileCarousel {
                                             .min_w_0()
                                             .child(div().font_semibold().truncate().child(profile.name.clone()))
                                             .child(div().text_xs().child(format!(
-                                                "Minecraft {} · NeoForge {}",
-                                                profile.minecraft, profile.neoforge
+                                                "Minecraft {} · {} {}",
+                                                profile.minecraft,
+                                                profile.loader.pretty_name(),
+                                                profile.loader_version
                                             ))),
                                     ),
                                 )

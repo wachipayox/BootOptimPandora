@@ -201,7 +201,63 @@ pub struct ManifestProfile {
 #[serde(deny_unknown_fields)]
 pub struct ManifestGame {
     pub minecraft: String,
+    /// Schema 1-3 spelling of the loader; empty in schema 4.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub neoforge: String,
+    /// Schema 4 spelling: `{kind, version}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loader: Option<ManifestLoader>,
+}
+
+/// Modloaders a signed profile can pin. An unknown kind fails to deserialize, so a
+/// profile for a loader this build cannot install is rejected instead of misinstalled.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ManifestLoaderKind {
+    NeoForge,
+    Fabric,
+    Forge,
+}
+
+impl ManifestLoaderKind {
+    pub fn loader(self) -> schema::loader::Loader {
+        match self {
+            Self::NeoForge => schema::loader::Loader::NeoForge,
+            Self::Fabric => schema::loader::Loader::Fabric,
+            Self::Forge => schema::loader::Loader::Forge,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestLoader {
+    pub kind: ManifestLoaderKind,
+    pub version: String,
+}
+
+impl ManifestGame {
+    /// The pinned loader and its version, whichever schema version spelled it.
+    pub fn resolved_loader(&self) -> (ManifestLoaderKind, &str) {
+        match &self.loader {
+            Some(loader) => (loader.kind, loader.version.as_str()),
+            None => (ManifestLoaderKind::NeoForge, self.neoforge.as_str()),
+        }
+    }
+
+    /// A NeoForge game from schema 3 and the same one spelled in schema 4 are equal.
+    pub fn same_game(&self, other: &Self) -> bool {
+        self.minecraft == other.minecraft && self.resolved_loader() == other.resolved_loader()
+    }
+
+    /// Schema 4 uses `game.loader` and nothing else; schemas 1-3 use `game.neoforge`.
+    fn validate_for_schema(&self, schema_version: u32) -> bool {
+        if schema_version >= 4 {
+            self.neoforge.is_empty() && self.loader.as_ref().is_some_and(|loader| !loader.version.is_empty())
+        } else {
+            self.loader.is_none() && !self.neoforge.is_empty()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -315,7 +371,8 @@ pub struct ResolvedGlobalProfile {
     pub pin: GlobalRevisionPin,
     pub name: String,
     pub minecraft_version: String,
-    pub neoforge_version: String,
+    pub loader: schema::loader::Loader,
+    pub loader_version: String,
     pub entries: Vec<EffectiveProfileEntry>,
     /// Signed object references, indexed by effective destination path.
     pub objects_by_path: BTreeMap<String, ManifestObjectRef>,
@@ -514,7 +571,8 @@ impl DistributionClient {
                 .await?
         };
         verify_release_signature(keys, &envelope.signature.key_id, &canonical, &envelope.signature.value)?;
-        if !(1..=3).contains(&manifest.schema_version)
+        if !(1..=4).contains(&manifest.schema_version)
+            || !manifest.game.validate_for_schema(manifest.schema_version)
             || manifest.profile.id != profile_id
             || manifest.revision.id != revision_id
             || manifest.revision.sequence <= 0
@@ -678,7 +736,7 @@ impl DistributionClient {
                 "revision ancestry exceeds the signed inheritance limit".into(),
             ));
         }
-        if chain.windows(2).any(|pair| pair[0].manifest.game != pair[1].manifest.game) {
+        if chain.windows(2).any(|pair| !pair[0].manifest.game.same_game(&pair[1].manifest.game)) {
             return Err(DistributionError::InvalidResponse(
                 "a revision and its pinned parent use different game versions".into(),
             ));
@@ -696,7 +754,8 @@ impl DistributionClient {
             None => None,
         };
         let minecraft_version = target.manifest.game.minecraft.clone();
-        let neoforge_version = target.manifest.game.neoforge.clone();
+        let (loader_kind, loader_version) = target.manifest.game.resolved_loader();
+        let (loader, loader_version) = (loader_kind.loader(), loader_version.to_owned());
 
         let mut files = BTreeMap::<String, EffectiveProfileEntry>::new();
         let mut mod_paths = BTreeMap::<String, String>::new();
@@ -1013,7 +1072,8 @@ impl DistributionClient {
             pin: target_pin,
             name: target_name,
             minecraft_version,
-            neoforge_version,
+            loader,
+            loader_version,
             entries: entries_with_sources,
             objects_by_path,
             config_settings: config_settings.into_values().collect(),
@@ -1517,15 +1577,15 @@ impl crate::BackendState {
             },
             None => resolved.icon_path.clone(),
         };
-        validate_game_identity(&resolved.minecraft_version, &resolved.neoforge_version)?;
+        validate_game_identity(&resolved.minecraft_version, &resolved.loader_version)?;
 
-        let (loader, loader_version) = if resolved.neoforge_version.is_empty() {
-            (schema::loader::Loader::Vanilla, None)
-        } else {
-            (schema::loader::Loader::NeoForge, Some(resolved.neoforge_version.as_str()))
-        };
         let Some((root, libraries_ready)) = self
-            .create_global_instance_sanitized(name, &resolved.minecraft_version, loader, loader_version)
+            .create_global_instance_sanitized(
+                name,
+                &resolved.minecraft_version,
+                resolved.loader,
+                Some(resolved.loader_version.as_str()),
+            )
             .await
         else {
             return Err("Wachiland Launcher could not create the local instance".to_owned());
@@ -1771,7 +1831,7 @@ impl crate::BackendState {
     }
 }
 
-fn validate_game_identity(minecraft: &str, neoforge: &str) -> Result<(), String> {
+fn validate_game_identity(minecraft: &str, loader_version: &str) -> Result<(), String> {
     let valid_version = |value: &str| {
         !value.is_empty()
             && value.len() <= 64
@@ -1779,8 +1839,8 @@ fn validate_game_identity(minecraft: &str, neoforge: &str) -> Result<(), String>
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'+'))
     };
-    if !valid_version(minecraft) || (!neoforge.is_empty() && !valid_version(neoforge)) {
-        return Err("The signed profile has an invalid Minecraft or NeoForge version".into());
+    if !valid_version(minecraft) || !valid_version(loader_version) {
+        return Err("The signed profile has an invalid Minecraft or modloader version".into());
     }
     Ok(())
 }
@@ -2062,7 +2122,8 @@ impl crate::BackendState {
                     }
                 }),
                 minecraft: verified.manifest.game.minecraft.clone(),
-                neoforge: verified.manifest.game.neoforge.clone(),
+                loader: verified.manifest.game.resolved_loader().0.loader(),
+                loader_version: verified.manifest.game.resolved_loader().1.to_owned(),
                 icon_path,
                 latest_revision_id: profile.latest_revision.revision_id,
                 latest_sequence: profile.latest_revision.sequence,
@@ -2073,5 +2134,53 @@ impl crate::BackendState {
             });
         }
         Ok(summaries)
+    }
+}
+
+#[cfg(test)]
+mod manifest_game_loader_tests {
+    use super::*;
+
+    fn game(json: &str) -> Result<ManifestGame, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    #[test]
+    fn schema_3_neoforge_and_schema_4_loader_are_both_read() {
+        let old = game(r#"{"minecraft":"1.21.1","neoforge":"21.1.1"}"#).unwrap();
+        assert!(old.validate_for_schema(3));
+        assert!(!old.validate_for_schema(4));
+        assert_eq!(old.resolved_loader(), (ManifestLoaderKind::NeoForge, "21.1.1"));
+
+        let fabric = game(r#"{"minecraft":"1.21.1","loader":{"kind":"fabric","version":"0.16.9"}}"#).unwrap();
+        assert!(fabric.validate_for_schema(4));
+        assert!(!fabric.validate_for_schema(3));
+        assert_eq!(fabric.resolved_loader(), (ManifestLoaderKind::Fabric, "0.16.9"));
+        assert_eq!(fabric.resolved_loader().0.loader(), schema::loader::Loader::Fabric);
+    }
+
+    #[test]
+    fn old_and_old_style_forge_versions_are_kept_verbatim() {
+        let forge = game(r#"{"minecraft":"1.7.10","loader":{"kind":"forge","version":"1.7.10-10.13.4.1614-1.7.10"}}"#).unwrap();
+        assert_eq!(forge.resolved_loader(), (ManifestLoaderKind::Forge, "1.7.10-10.13.4.1614-1.7.10"));
+        assert_eq!(forge.resolved_loader().0.loader(), schema::loader::Loader::Forge);
+    }
+
+    #[test]
+    fn unknown_loader_kind_and_mixed_spellings_are_rejected() {
+        assert!(game(r#"{"minecraft":"1.21.1","loader":{"kind":"quilt","version":"1"}}"#).is_err());
+        let mixed = game(r#"{"minecraft":"1.21.1","neoforge":"21.1.1","loader":{"kind":"fabric","version":"0.16.9"}}"#).unwrap();
+        assert!(!mixed.validate_for_schema(3));
+        assert!(!mixed.validate_for_schema(4));
+        assert!(game(r#"{"minecraft":"1.21.1","loader":{"kind":"fabric","version":"1","x":1}}"#).is_err());
+    }
+
+    #[test]
+    fn same_game_ignores_the_schema_spelling_of_neoforge() {
+        let old = game(r#"{"minecraft":"1.21.1","neoforge":"21.1.1"}"#).unwrap();
+        let new = game(r#"{"minecraft":"1.21.1","loader":{"kind":"neoforge","version":"21.1.1"}}"#).unwrap();
+        let fabric = game(r#"{"minecraft":"1.21.1","loader":{"kind":"fabric","version":"21.1.1"}}"#).unwrap();
+        assert!(old.same_game(&new));
+        assert!(!old.same_game(&fabric));
     }
 }
