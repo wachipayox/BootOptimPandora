@@ -230,7 +230,9 @@ pub fn start(
     // Bring in skins saved in the official Minecraft Launcher (new ones only, its file is only read).
     crate::official_skins::import_official_skins(&directories.root_launcher_dir, &directories.skin_library_dir);
 
-    // Load accounts
+    // Load accounts, importing them (and the skin library) once from the pre-rebrand PandoraLauncher folder.
+    crate::legacy_accounts::import_legacy_accounts(&directories.root_launcher_dir);
+    crate::legacy_accounts::import_legacy_skins(&directories.root_launcher_dir);
     let account_info = Persistent::load(directories.accounts_json.clone());
 
     let state = BackendState {

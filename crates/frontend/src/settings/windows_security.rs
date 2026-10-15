@@ -49,9 +49,7 @@ pub(super) fn create_page() -> SettingPage {
                                 .label(label)
                                 .when(action == DefenderProcessAction::Enable, ButtonVariants::success)
                                 .on_click(move |_, window, cx| {
-                                    let result = command::request_defender_process_action(action);
-                                    crate::windows_security_ui::push_result(window, cx, result);
-                                    cx.refresh_windows();
+                                    crate::windows_security_ui::request_action(action, window, cx);
                                 }),
                         );
                     }

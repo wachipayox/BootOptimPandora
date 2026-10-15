@@ -198,6 +198,13 @@ pub enum MessageToBackend {
         quick_play: Option<QuickPlayLaunch>,
         modal_action: ModalAction,
     },
+    /// Command-line Start: runs the inherited update gate before entering the launch pipeline.
+    CliStartInstanceByName {
+        name: String,
+        modal_action: ModalAction,
+        update_policy: CliUpdatePolicy,
+        outcome: tokio::sync::oneshot::Sender<CliStartOutcome>,
+    },
     StartInstance {
         id: InstanceID,
         quick_play: Option<QuickPlayLaunch>,
@@ -797,4 +804,23 @@ pub struct GameOutputMsg {
     pub time: i64,
     pub level: GameOutputLogLevel,
     pub text: Arc<[Arc<str>]>,
+}
+
+/// What a command-line Start does when an inherited update is pending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CliUpdatePolicy {
+    /// No flag: report pending updates and exit without starting.
+    #[default]
+    Ask,
+    /// `--update`: apply the same update as the UI's "Update and start", then start.
+    Update,
+    /// `--no-update`: start the installed files unchanged.
+    NoUpdate,
+}
+
+/// Lines to print and the process exit code for a command-line Start request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliStartOutcome {
+    pub lines: Vec<String>,
+    pub exit_code: u8,
 }
