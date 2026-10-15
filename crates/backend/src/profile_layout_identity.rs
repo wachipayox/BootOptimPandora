@@ -777,7 +777,16 @@ mod tests {
         fs::write(&outside, b"outside").unwrap();
         // This is a Windows reparse point. OPEN_REPARSE_POINT must expose it
         // as unsafe instead of allowing a lock outside the profile namespace.
-        symlink_file(&outside, &lock_path).unwrap();
+        // Creating file symlinks needs SeCreateSymbolicLinkPrivilege (Developer Mode or an
+        // elevated shell). Without it the case cannot be constructed here; CI runners grant it.
+        const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
+        if let Err(err) = symlink_file(&outside, &lock_path) {
+            if err.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD) {
+                eprintln!("skipping reparse lock test: symbolic link privilege not held");
+                return;
+            }
+            panic!("unable to create reparse point: {err}");
+        }
         assert!(matches!(
             acquire_existing_profile_lock(&root.0),
             Err(ProfileIdentityError::UnsafeFilesystem(path)) if path == lock_path
