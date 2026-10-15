@@ -26,6 +26,7 @@ mod java_manifest;
 mod launch;
 mod launch_wrapper;
 mod launcher_import;
+mod legacy_accounts;
 mod library_install_state;
 mod local_profile;
 mod log_reader;
