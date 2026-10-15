@@ -2675,7 +2675,9 @@ impl BackendState {
     ) {
         let keepalive = KeepAlive::new();
 
-        let (dot_minecraft, configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+        let (dot_minecraft, configuration, root_path) = if let Some(instance) =
+            self.instance_state.write().instances.get_mut(id)
+        {
             let root_path = instance.root_path.clone();
             match library_install_state::start_status(&root_path) {
                 Ok(
@@ -2709,7 +2711,7 @@ impl BackendState {
             self.send.send(MessageToFrontend::MoveInstanceToTop { id });
             self.send.send(instance.create_modify_message());
 
-            (instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
+            (instance.dot_minecraft_path.clone(), instance.configuration.get().clone(), root_path)
         } else {
             self.send.send_error("Can't launch instance, unknown id");
             modal_action.set_finished_with_error("Can't launch instance, unknown id".into());
@@ -2752,6 +2754,18 @@ impl BackendState {
         }
         modal_action.clear_trackers();
 
+        // Signed profile JVM options persisted at the last profile update; reading them is a single
+        // metadata read with no tree walk. A damaged state launches without them.
+        let profile_jvm_options = match crate::profile_layout_flow::read_committed_branch(&root_path) {
+            Ok(branch) => branch.map(|branch| branch.jvm_options).unwrap_or_default(),
+            Err(error) => {
+                log::warn!(
+                    "[profile-jvm] could not read the profile state, launching without profile JVM options: {error}"
+                );
+                Vec::new()
+            },
+        };
+
         let launch_tracker = modal_action.push_tracker("Launching".into());
         let result = self
             .launcher
@@ -2764,6 +2778,7 @@ impl BackendState {
                 live_game_output.is_some(),
                 &launch_tracker,
                 &modal_action,
+                profile_jvm_options,
             )
             .await;
         prelaunch_attribution.write_sidecar("launcher_launch_returned");

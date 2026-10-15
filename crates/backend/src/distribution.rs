@@ -22,6 +22,7 @@ use bridge::modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishTy
 use reqwest::{Certificate, Client, Url};
 use schema::backend_config::DistributionConfig;
 use schema::ignored_profile_paths::IgnoredProfilePaths;
+use schema::profile_jvm::ManifestJvmOption;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -169,6 +170,11 @@ pub struct GlobalRevisionManifest {
     pub remove_configs: Vec<ManifestRemoveConfig>,
     #[serde(default)]
     pub objects: Vec<ManifestObject>,
+    /// Schema 3: launcher JVM options; see `schema::profile_jvm`.
+    #[serde(default)]
+    pub jvm_options: Vec<ManifestJvmOption>,
+    #[serde(default)]
+    pub remove_jvm_options: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -315,6 +321,8 @@ pub struct ResolvedGlobalProfile {
     pub objects_by_path: BTreeMap<String, ManifestObjectRef>,
     /// Effective per-setting rules after applying ancestor-to-descendant overrides.
     pub config_settings: Vec<ManifestConfigSetting>,
+    /// Effective JVM options (schema 3) in declaration order.
+    pub jvm_options: Vec<ManifestJvmOption>,
 }
 
 impl ResolvedGlobalProfile {
@@ -506,7 +514,7 @@ impl DistributionClient {
                 .await?
         };
         verify_release_signature(keys, &envelope.signature.key_id, &canonical, &envelope.signature.value)?;
-        if !(manifest.schema_version == 1 || manifest.schema_version == 2)
+        if !(1..=3).contains(&manifest.schema_version)
             || manifest.profile.id != profile_id
             || manifest.revision.id != revision_id
             || manifest.revision.sequence <= 0
@@ -696,6 +704,7 @@ impl DistributionClient {
         let mut object_refs = BTreeMap::<(String, String, String), &ManifestObjectRef>::new();
         let mut config_settings = BTreeMap::<(String, String), ManifestConfigSetting>::new();
         let mut parent_config_permissions: Option<ManifestConfigPermissions> = None;
+        let mut jvm_options = Vec::<ManifestJvmOption>::new();
         for revision in chain.iter().rev() {
             let pin = GlobalRevisionPin::new(
                 revision.manifest.profile.id.clone(),
@@ -709,6 +718,17 @@ impl DistributionClient {
                     "per-setting config rules require manifest schema 2".into(),
                 ));
             }
+            if manifest.schema_version < 3
+                && (!manifest.jvm_options.is_empty() || !manifest.remove_jvm_options.is_empty())
+            {
+                return Err(DistributionError::InvalidResponse("JVM options require manifest schema 3".into()));
+            }
+            schema::profile_jvm::apply_manifest_options(
+                &mut jvm_options,
+                &manifest.jvm_options,
+                &manifest.remove_jvm_options,
+            )
+            .map_err(DistributionError::InvalidResponse)?;
             let mut seen_settings = BTreeSet::new();
             for item in &manifest.mods {
                 object_refs
@@ -997,6 +1017,7 @@ impl DistributionClient {
             entries: entries_with_sources,
             objects_by_path,
             config_settings: config_settings.into_values().collect(),
+            jvm_options,
         })
     }
 
@@ -1553,6 +1574,7 @@ impl crate::BackendState {
                     lineage,
                     target_revision: Some(resolved.pin),
                     config_settings: resolved.config_settings,
+                    jvm_options: resolved.jvm_options,
                     changes,
                 },
             )
@@ -1652,6 +1674,7 @@ impl crate::BackendState {
             .await
             .map_err(|error| error.to_string())?;
 
+        let jvm_options = resolved.jvm_options;
         let config_settings = resolved
             .config_settings
             .into_iter()
@@ -1734,6 +1757,7 @@ impl crate::BackendState {
                     lineage,
                     target_revision: Some(target_pin),
                     config_settings,
+                    jvm_options,
                     changes,
                 },
             )

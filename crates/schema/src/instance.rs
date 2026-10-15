@@ -51,6 +51,14 @@ pub struct InstanceConfiguration {
         skip_serializing_if = "is_default_jvm_binary_configuration"
     )]
     pub jvm_binary: Option<InstanceJvmBinaryConfiguration>,
+    /// Player choices for the profile's distributed JVM options, by option id. Only what the
+    /// player changed is stored; everything else follows the current profile revision.
+    #[serde(
+        default,
+        deserialize_with = "crate::try_deserialize",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    pub profile_jvm_options: std::collections::BTreeMap<String, crate::profile_jvm::ProfileJvmOptionChoice>,
     #[serde(
         default,
         deserialize_with = "crate::try_deserialize",
@@ -89,6 +97,7 @@ impl InstanceConfiguration {
             wrapper_command: None,
             jvm_flags: None,
             jvm_binary: None,
+            profile_jvm_options: std::collections::BTreeMap::new(),
             linux_wrapper: None,
             system_libraries: None,
             instance_fallback_icon: None,

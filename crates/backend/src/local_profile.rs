@@ -196,6 +196,7 @@ pub(crate) fn local_parent_delta(
     parent_lineage: &ProfileLineage,
     parent_applied_revision: Option<GlobalRevisionPin>,
     parent_config_settings: &[ManifestConfigSetting],
+    parent_jvm_options: &[schema::profile_jvm::ManifestJvmOption],
     parent_entries: Vec<EffectiveProfileEntry>,
 ) -> Result<ProfileRevisionDelta, String> {
     let lineage = ProfileLineage::from_local(parent_uuid, parent_lineage.global_ancestor.clone())
@@ -241,6 +242,7 @@ pub(crate) fn local_parent_delta(
         lineage,
         target_revision: parent_applied_revision,
         config_settings: parent_config_settings.to_vec(),
+        jvm_options: parent_jvm_options.to_vec(),
         changes,
     })
 }
@@ -457,12 +459,13 @@ impl BackendState {
                 .collect::<Vec<_>>();
             crate::config_settings::config_setting_signatures(&rules).map_err(|error| error.to_string())
         };
-        Ok((files(&current) != files(&latest) || rules(&current)? != rules(&latest)?).then(|| {
-            crate::cli_update_gate::GlobalUpdate {
+        Ok((files(&current) != files(&latest)
+            || rules(&current)? != rules(&latest)?
+            || current.jvm_options != latest.jvm_options)
+            .then(|| crate::cli_update_gate::GlobalUpdate {
                 name: profile.name.clone(),
                 revision_id: target.revision_id.clone(),
-            }
-        }))
+            }))
     }
     pub async fn update_inherited_chain(&self, id: InstanceID, modal_action: &ModalAction) -> Result<(), String> {
         let chain = self.inherited_local_chain(id)?;
@@ -617,12 +620,14 @@ impl BackendState {
             &parent_snapshot.branch.lineage,
             parent_snapshot.branch.applied_revision.clone(),
             &parent_snapshot.branch.config_settings,
+            &parent_snapshot.branch.jvm_options,
             entries,
         )?;
         let changed = !delta.changes.is_empty()
             || child_snapshot.branch.lineage != delta.lineage
             || child_snapshot.branch.applied_revision != delta.target_revision
-            || child_snapshot.branch.config_settings != delta.config_settings;
+            || child_snapshot.branch.config_settings != delta.config_settings
+            || child_snapshot.branch.jvm_options != delta.jvm_options;
         let outcome = self.apply_persistent_profile_delta(id, &delta).map_err(|error| error.to_string())?;
         match outcome {
             crate::profile_layout_flow::ReconcileOutcome::Ready { .. } => {
@@ -685,7 +690,8 @@ mod tests {
         assert_eq!(first.len(), 2);
         let child_branch = ProfileBranchManifest::default();
         let initial_delta =
-            local_parent_delta(&child_branch, parent_uuid, &parent_branch.lineage, None, &[], first.clone()).unwrap();
+            local_parent_delta(&child_branch, parent_uuid, &parent_branch.lineage, None, &[], &[], first.clone())
+                .unwrap();
         assert_eq!(initial_delta.changes.len(), 2);
         assert!(initial_delta.changes.iter().all(|change| matches!(change, ProfileDeltaChange::Upsert(_))));
 
@@ -702,6 +708,7 @@ mod tests {
             parent_uuid,
             &parent_branch.lineage,
             None,
+            &[],
             &[],
             updated,
         )
