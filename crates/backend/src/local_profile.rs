@@ -311,19 +311,49 @@ impl BackendState {
         }
     }
     pub async fn check_inherited_updates(&self, id: InstanceID) -> Result<Vec<String>, String> {
+        // The interactive dialog only needs names; global check failures stay silent (fail open).
+        Ok(self
+            .check_inherited_update_report(id)
+            .await?
+            .pending
+            .into_iter()
+            .map(|update| update.label)
+            .collect())
+    }
+
+    /// Structured form of the Start-time inherited update check, shared by the UI and the CLI gate.
+    pub async fn check_inherited_update_report(
+        &self,
+        id: InstanceID,
+    ) -> Result<crate::cli_update_gate::InheritedUpdateReport, String> {
+        use crate::cli_update_gate::{InheritedUpdateReport, PendingInheritedUpdate, PendingUpdateKind};
         let chain = self.inherited_local_chain(id)?;
-        let mut updates = Vec::new();
+        let mut report = InheritedUpdateReport::default();
+        let instance_name =
+            |instance: InstanceID| self.instance_state.read().instances.get(instance).map(|i| i.name.to_string());
         for pair in chain.windows(2) {
             let (child_id, _) = &pair[0];
-            let (_, parent) = &pair[1];
+            let (parent_id, parent) = &pair[1];
+            let child_name = instance_name(*child_id).unwrap_or_default();
+            let parent_name = instance_name(*parent_id).unwrap_or_default();
             let stored = fs::read(self.parent_version_path(*child_id)?)
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<(Uuid, Option<u64>)>(&bytes).ok());
             // Old branches get a single explicit synchronization, not an expensive scan here.
             if stored != Some((parent.profile_uuid, parent.generation)) {
-                updates.push("Local parent revision".into());
+                report.pending.push(PendingInheritedUpdate {
+                    label: "Local parent revision".into(),
+                    via: child_name,
+                    kind: PendingUpdateKind::LocalGeneration {
+                        parent: parent_name,
+                        current: stored.and_then(|(uuid, generation)| {
+                            (uuid == parent.profile_uuid).then_some(generation).flatten()
+                        }),
+                        available: parent.generation,
+                    },
+                });
             } else {
-                let parent_id = pair[1].0;
+                let parent_id = *parent_id;
                 let root = self
                     .instance_state
                     .read()
@@ -338,26 +368,48 @@ impl BackendState {
                     .await
                     .map_err(|error| format!("Parent file scan failed: {error}"))??;
                 if stored_fingerprint.as_deref() != Some(current.as_str()) {
-                    updates.push("Local parent files".into());
+                    report.pending.push(PendingInheritedUpdate {
+                        label: "Local parent files".into(),
+                        via: child_name,
+                        kind: PendingUpdateKind::LocalFiles {
+                            parent: parent_name,
+                            generation: parent.generation,
+                        },
+                    });
                 }
             }
         }
-        if let Some((_, root)) = chain.last()
+        if let Some((root_id, root)) = chain.last()
             && let Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin }) = &root.branch.lineage.parent
         {
+            report.global_current = Some((pin.profile_id.clone(), pin.revision_id.clone()));
             match tokio::time::timeout(std::time::Duration::from_secs(5), self.available_global_update(pin)).await {
-                Ok(Ok(Some(name))) => updates.push(name),
+                Ok(Ok(Some(update))) => report.pending.push(PendingInheritedUpdate {
+                    label: update.name,
+                    via: instance_name(*root_id).unwrap_or_default(),
+                    kind: PendingUpdateKind::GlobalRevision {
+                        profile: pin.profile_id.clone(),
+                        current: pin.revision_id.clone(),
+                        available: update.revision_id,
+                    },
+                }),
                 Ok(Ok(None)) => {},
-                Ok(Err(error)) => log::warn!("Global update check skipped: {error}"),
-                Err(_) => log::warn!("Global update check timed out"),
+                Ok(Err(error)) => {
+                    log::warn!("Global update check skipped: {error}");
+                    report.check_failure = Some(error);
+                },
+                Err(_) => {
+                    log::warn!("Global update check timed out");
+                    report.check_failure = Some("global update check timed out".into());
+                },
             }
         }
-        Ok(updates)
+        Ok(report)
     }
     async fn available_global_update(
         &self,
         pin: &crate::profile_branch::GlobalRevisionPin,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<crate::cli_update_gate::GlobalUpdate>, String> {
         let config = self.config.lock().get().distribution.clone();
         let client = crate::distribution::DistributionClient::new(&config).map_err(|e| e.to_string())?;
         let profiles = client.list_profiles().await.map_err(|e| e.to_string())?;
@@ -410,7 +462,10 @@ impl BackendState {
         Ok((files(&current) != files(&latest)
             || rules(&current)? != rules(&latest)?
             || current.jvm_options != latest.jvm_options)
-            .then(|| profile.name.clone()))
+            .then(|| crate::cli_update_gate::GlobalUpdate {
+                name: profile.name.clone(),
+                revision_id: target.revision_id.clone(),
+            }))
     }
     pub async fn update_inherited_chain(&self, id: InstanceID, modal_action: &ModalAction) -> Result<(), String> {
         let chain = self.inherited_local_chain(id)?;

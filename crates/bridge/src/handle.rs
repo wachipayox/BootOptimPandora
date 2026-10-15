@@ -60,7 +60,8 @@ fn probe_dispatch(message: &MessageToBackend) {
         MessageToBackend::StartInstance { modal_action, .. } => {
             crate::launch_probe::backend_dispatch(modal_action.probe_key());
         },
-        MessageToBackend::StartInstanceByName { modal_action, .. } => {
+        MessageToBackend::StartInstanceByName { modal_action, .. }
+        | MessageToBackend::CliStartInstanceByName { modal_action, .. } => {
             crate::launch_probe::backend_dispatch(modal_action.probe_key());
         },
         _ => {},
@@ -72,7 +73,8 @@ fn probe_request(message: &MessageToBackend) {
         MessageToBackend::StartInstance { modal_action, .. } => {
             crate::launch_probe::request(modal_action.probe_key());
         },
-        MessageToBackend::StartInstanceByName { modal_action, .. } => {
+        MessageToBackend::StartInstanceByName { modal_action, .. }
+        | MessageToBackend::CliStartInstanceByName { modal_action, .. } => {
             crate::launch_probe::request(modal_action.probe_key());
         },
         _ => {},

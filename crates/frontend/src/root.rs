@@ -1,6 +1,6 @@
 use std::{
     path::Path,
-    sync::{Arc, LazyLock, atomic::AtomicBool},
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use parking_lot::Mutex;
@@ -54,14 +54,13 @@ impl LauncherRoot {
 }
 
 static RENDER_CUSTOM_TITLEBAR: AtomicBool = AtomicBool::new(true);
-static INHERITED_OPERATIONS: LazyLock<Mutex<FxHashSet<InstanceID>>> = LazyLock::new(|| Mutex::new(FxHashSet::default()));
 
 pub fn inherited_operation_active(id: InstanceID) -> bool {
-    INHERITED_OPERATIONS.lock().contains(&id)
+    bridge::inherited_operations::is_active(id)
 }
 
 fn begin_inherited_operation(id: InstanceID, cx: &mut App) -> bool {
-    let inserted = INHERITED_OPERATIONS.lock().insert(id);
+    let inserted = bridge::inherited_operations::try_begin(id);
     if inserted && matches!(InterfaceConfig::get(cx).main_page, PageType::InstancePage { .. }) {
         InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Quickplay;
     }
@@ -69,7 +68,7 @@ fn begin_inherited_operation(id: InstanceID, cx: &mut App) -> bool {
 }
 
 fn finish_inherited_operation(id: InstanceID, window: &mut Window) {
-    INHERITED_OPERATIONS.lock().remove(&id);
+    bridge::inherited_operations::finish(id);
     window.refresh();
 }
 

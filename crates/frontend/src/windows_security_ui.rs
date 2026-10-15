@@ -1,9 +1,27 @@
-use command::DefenderProcessResult;
+use command::{DefenderProcessAction, DefenderProcessResult};
 use gpui::{App, SharedString, Window};
 use gpui_component::{
     WindowExt,
     notification::{Notification, NotificationType},
 };
+
+/// Runs the elevated Defender action off the UI thread and reports the result when it returns.
+/// The UAC prompt runs a nested Windows message loop; doing that inside a click handler let
+/// GPUI handle window messages while the app was already borrowed ("RefCell already borrowed").
+pub(crate) fn request_action(action: DefenderProcessAction, window: &mut Window, cx: &mut App) {
+    let request = cx
+        .background_executor()
+        .spawn(async move { command::request_defender_process_action(action) });
+    window
+        .spawn(cx, async move |cx| {
+            let result = request.await;
+            _ = cx.update(|window, cx| {
+                push_result(window, cx, result);
+                cx.refresh_windows();
+            });
+        })
+        .detach();
+}
 
 pub(crate) fn push_result(window: &mut Window, cx: &mut App, result: DefenderProcessResult) {
     let (kind, message) = match result {

@@ -660,6 +660,17 @@ impl BackendState {
                     self.start_instance(id, quick_play, None, modal_action).await
                 }
             },
+            MessageToBackend::CliStartInstanceByName {
+                name,
+                modal_action,
+                update_policy,
+                outcome,
+            } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    backend.cli_start_instance_by_name(name, modal_action, update_policy, outcome).await;
+                });
+            },
             MessageToBackend::StartInstance {
                 id,
                 quick_play,
@@ -1707,7 +1718,12 @@ impl BackendState {
                     let _ = channel.send(backend.read_profile_text_file(id, path).await);
                 });
             },
-            MessageToBackend::ReadProfileAncestorText { id, path, level, channel } => {
+            MessageToBackend::ReadProfileAncestorText {
+                id,
+                path,
+                level,
+                channel,
+            } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
                     let _ = channel.send(backend.read_profile_ancestor_text(id, path, level).await);
@@ -2231,6 +2247,7 @@ impl BackendState {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
                     let Some(account) = backend.get_minecraft_profile(account).await else {
+                        log::warn!("Skins: could not get the Minecraft profile for {account}; asking to sign in");
                         _ = result.send(AccountSkinResult::NeedsLogin);
                         return;
                     };
@@ -2307,6 +2324,7 @@ impl BackendState {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
                     let Some(account) = backend.get_minecraft_profile(account).await else {
+                        log::warn!("Capes: could not get the Minecraft profile for {account}; asking to sign in");
                         _ = result.send(AccountCapesResult::NeedsLogin);
                         return;
                     };
@@ -2613,6 +2631,81 @@ impl BackendState {
         }
     }
 
+    /// Headless Start: same lookup as `StartInstanceByName`, gated by the inherited update check.
+    async fn cli_start_instance_by_name(
+        self: &Arc<Self>,
+        name: String,
+        modal_action: ModalAction,
+        update_policy: bridge::message::CliUpdatePolicy,
+        outcome: tokio::sync::oneshot::Sender<bridge::message::CliStartOutcome>,
+    ) {
+        use crate::cli_update_gate::{self as gate, GateAction};
+        let finish = |lines: Vec<String>, exit_code: u8| {
+            for line in &lines {
+                log::info!("{line}");
+            }
+            _ = outcome.send(bridge::message::CliStartOutcome { lines, exit_code });
+        };
+        let mut id = None;
+        let mut display = name.clone();
+        for instance in self.instance_state.read().instances.iter() {
+            if instance.name == &name {
+                id = Some(instance.id);
+                display = instance.name.to_string();
+                break;
+            } else if instance.name.eq_ignore_ascii_case(&name) {
+                id = Some(instance.id);
+                display = instance.name.to_string();
+            }
+        }
+        let Some(id) = id else {
+            finish(
+                vec![format!(
+                    "{} INSTANCE-NOT-FOUND name={}",
+                    gate::PREFIX,
+                    name.replace(['\r', '\n'], " ")
+                )],
+                gate::EXIT_INSTANCE_NOT_FOUND,
+            );
+            return;
+        };
+        let report = self.check_inherited_update_report(id).await;
+        let decision = gate::decide(&display, report.as_ref().map_err(String::as_str), update_policy);
+        match decision.action {
+            GateAction::Exit(code) => finish(decision.lines, code),
+            GateAction::Start => {
+                finish(decision.lines, 0);
+                self.start_instance(id, None, None, modal_action).await;
+            },
+            GateAction::UpdateThenStart => {
+                let mut lines = decision.lines;
+                // Same per-instance lock as the GUI's "Update and start".
+                if !bridge::inherited_operations::try_begin(id) {
+                    lines.push(format!("{} UPDATE-FAILED instance={display} reason=busy", gate::PREFIX));
+                    finish(lines, gate::EXIT_UPDATE_FAILED);
+                    return;
+                }
+                let update_modal = ModalAction::default();
+                let result = self.update_inherited_chain(id, &update_modal).await;
+                bridge::inherited_operations::finish(id);
+                if let Err(error) = result {
+                    update_modal.set_finished_with_error(error.clone().into());
+                    lines.push(format!(
+                        "{} UPDATE-FAILED instance={display} reason={}",
+                        gate::PREFIX,
+                        error.replace(['\r', '\n'], " ")
+                    ));
+                    finish(lines, gate::EXIT_UPDATE_FAILED);
+                    return;
+                }
+                update_modal.set_finished();
+                lines.push(format!("{} UPDATED instance={display}", gate::PREFIX));
+                finish(lines, 0);
+                self.start_instance(id, None, None, modal_action).await;
+            },
+        }
+    }
+
     async fn start_instance(
         self: &Arc<Self>,
         id: InstanceID,
@@ -2832,6 +2925,7 @@ impl BackendState {
         let login_result = self.login(&mut credentials, None, None).await;
 
         if let Err(LoginError::NeedsUserInteraction) | Err(LoginError::CancelledByUser) = login_result {
+            log::info!("Non-interactive login for {account} needs the player to sign in again");
             return None;
         }
 
