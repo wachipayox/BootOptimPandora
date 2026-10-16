@@ -792,6 +792,32 @@ pub(crate) fn remove_all(instance_root: &Path) {
     }
 }
 
+/// What the instance settings show: a ready cache, a recorded profile waiting for the `create`
+/// step, or nothing yet. A cache of an older key still shows as ready until the next Start.
+pub(crate) fn disk_summary(instance_root: &Path) -> bridge::message::AotCacheSummary {
+    use bridge::message::AotCacheSummary;
+    let dir = Dir::new(instance_root);
+    if let Some(state) = dir.read_state()
+        && let Ok(metadata) = fs::metadata(dir.root.join(&state.file))
+        && metadata.len() == state.size
+    {
+        return AotCacheSummary::Ready { bytes: state.size };
+    }
+    if dir.pending_record().is_some() {
+        return AotCacheSummary::Waiting;
+    }
+    AotCacheSummary::NotBuilt
+}
+
+/// Deletes the cache and any training of an idle instance because the player asked for it.
+pub(crate) fn delete_on_request(instance_root: &Path) {
+    let root = instance_root.join(DIR_NAME);
+    if root.exists() {
+        log::info!("[aot-cache] deleting the AOT cache of an instance at the player's request");
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
 /// Bytes of the profile written so far by a record run whose game closed. The JVM creates the
 /// file only when it starts writing at exit, so its presence also tells that the game is closed.
 pub(crate) fn profile_bytes_written(run: &ActiveRun) -> Option<u64> {

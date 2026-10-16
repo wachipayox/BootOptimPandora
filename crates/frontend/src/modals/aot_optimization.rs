@@ -11,7 +11,9 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, WindowExt,
     button::{Button, ButtonVariants},
-    h_flex, v_flex,
+    h_flex,
+    tooltip::Tooltip,
+    v_flex,
 };
 
 use crate::{
@@ -28,6 +30,24 @@ pub fn status_button(id: impl Into<ElementId>, instance_id: InstanceID, data: &D
         .icon(PandoraIcon::Loader)
         .label(t::instance::aot::optimizing())
         .on_click(move |_, window, cx| open(instance_id, &data, window, cx))
+}
+
+/// A small "?" whose explanation opens in a box of fixed width, wrapped and split into paragraphs
+/// at blank lines (a button's own tooltip stays on one line).
+pub fn help_mark(id: impl Into<ElementId>, text: impl Into<SharedString>) -> impl IntoElement {
+    let text: SharedString = text.into();
+    div().id(id).child(Button::new("help").label("?").ghost().small()).tooltip(move |window, cx| {
+        let text = text.clone();
+        Tooltip::element(move |_, _| {
+            v_flex()
+                .w(px(380.0))
+                .p_1()
+                .gap_2()
+                .text_sm()
+                .children(text.split("\n\n").map(|paragraph| div().child(paragraph.to_owned())))
+        })
+        .build(window, cx)
+    })
 }
 
 struct ProgressView {
@@ -93,13 +113,11 @@ pub fn open(id: InstanceID, data: &DataEntities, window: &mut Window, cx: &mut A
         let backend_handle = backend_handle.clone();
         dialog
             .title(
-                h_flex().gap_2().items_center().child(t::instance::aot::optimizing()).child(
-                    Button::new("aot-optimization-help")
-                        .label("?")
-                        .ghost()
-                        .small()
-                        .tooltip(t::instance::aot::help()),
-                ),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(t::instance::aot::optimizing())
+                    .child(help_mark("aot-optimization-help", t::instance::aot::help())),
             )
             .overlay_closable(true)
             .child(view.clone())
@@ -123,6 +141,34 @@ pub fn open(id: InstanceID, data: &DataEntities, window: &mut Window, cx: &mut A
                             .label(t::instance::aot::hide())
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     ),
+            )
+    });
+}
+
+/// Asks before deleting the AOT cache of an instance.
+pub fn confirm_delete(id: InstanceID, data: &DataEntities, window: &mut Window, cx: &mut App) {
+    let backend_handle = data.backend_handle.clone();
+    window.open_dialog(cx, move |dialog, _, _| {
+        let backend_handle = backend_handle.clone();
+        dialog
+            .title(t::instance::aot::delete_title())
+            .overlay_closable(true)
+            .child(t::instance::aot::delete_body())
+            .footer(
+                h_flex()
+                    .gap_2()
+                    .w_full()
+                    .child(
+                        Button::new("aot-delete-cancel")
+                            .label(t::common::cancel())
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(Button::new("aot-delete-confirm").danger().label(t::instance::aot::delete_confirm()).on_click(
+                        move |_, window, cx| {
+                            backend_handle.send(MessageToBackend::DeleteAotCache { id });
+                            window.close_dialog(cx);
+                        },
+                    )),
             )
     });
 }

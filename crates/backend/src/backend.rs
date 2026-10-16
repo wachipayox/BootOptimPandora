@@ -637,6 +637,7 @@ impl BackendState {
                 worlds_state: instance.worlds_state.clone(),
                 servers_state: instance.servers_state.clone(),
                 content_states: enum_map::EnumMap::from_fn(|folder| instance.content_state[folder].load_state.clone()),
+                aot_cache: instance.aot_cache_summary(),
             };
             self.send.send(message);
 

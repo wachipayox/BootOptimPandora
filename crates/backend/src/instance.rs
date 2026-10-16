@@ -38,6 +38,7 @@ use crate::{
     BackendState, BackendStateFileWatching, WatchTarget,
     fs::{FolderChanges, IoOrSerializationError},
     id_slab::{GetId, Id},
+    launch::aot_cache,
     launcher_import,
     mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager},
     persistent::Persistent,
@@ -1224,6 +1225,22 @@ impl Instance {
         }
     }
 
+    /// The AOT cache state shown in the instance settings.
+    pub fn aot_cache_summary(&mut self) -> bridge::message::AotCacheSummary {
+        use bridge::message::AotCacheSummary;
+        if !self.configuration.get().aot_cache_enabled() {
+            return AotCacheSummary::Off;
+        }
+        if self
+            .aot_runs
+            .iter()
+            .any(|(pid, run)| matches!(run.kind, aot_cache::RunKind::Record { .. }) && !self.aot_dumping.contains(pid))
+        {
+            return AotCacheSummary::Training;
+        }
+        aot_cache::disk_summary(&self.root_path)
+    }
+
     pub fn create_modify_message(&mut self) -> MessageToFrontend {
         MessageToFrontend::InstanceModified {
             id: self.id,
@@ -1234,6 +1251,7 @@ impl Instance {
             configuration: self.configuration.get().clone(),
             playtime: self.playtime(),
             status: self.status(),
+            aot_cache: self.aot_cache_summary(),
         }
     }
 

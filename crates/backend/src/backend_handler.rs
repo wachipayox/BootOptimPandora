@@ -473,6 +473,15 @@ impl BackendState {
                     self.send.send(instance.create_modify_message());
                 }
             },
+            MessageToBackend::DeleteAotCache { id } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id)
+                    && instance.status() == InstanceStatus::NotRunning
+                    && instance.aot_create.is_none()
+                {
+                    aot_cache::delete_on_request(&instance.root_path);
+                    self.send.send(instance.create_modify_message());
+                }
+            },
             MessageToBackend::CancelAotOptimization { id } => {
                 let mut instance_state = self.instance_state.write();
                 for instance in instance_state.instances.iter_mut() {

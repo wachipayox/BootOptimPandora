@@ -47,6 +47,10 @@ of that into a job the player can see and cancel.
 - **Instance settings → "Optimize launch (Java 25 AOT cache)"**: on by default, with a **?** that
   explains it, its disk use (~300 MB) and that the first game takes a little longer. Turning it off
   deletes `aot-cache/` (when the instance is idle) and cancels a running optimization.
+  Under it, one plain line says where the cache is: not ready yet (the next game prepares it),
+  preparing during this game, almost ready (the launcher finishes it when free), finishing now, or
+  ready with its size. A ready cache of an idle instance has a small **Delete cache** button that
+  asks first. After a pack update the line still says ready until the next Start retrains.
 
 ### Progress estimate (approximate)
 

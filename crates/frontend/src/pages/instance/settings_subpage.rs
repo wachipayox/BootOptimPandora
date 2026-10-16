@@ -3,7 +3,8 @@ use std::{path::Path, sync::Arc};
 use bridge::{
     handle::BackendHandle,
     instance::InstanceID,
-    message::{EmbeddedOrRaw, MessageToBackend},
+    instance::InstanceStatus,
+    message::{AotCacheSummary, EmbeddedOrRaw, MessageToBackend},
     meta::MetadataRequest,
 };
 use gpui::{prelude::*, *};
@@ -984,9 +985,12 @@ impl InstanceSettingsSubpage {
         basic_content.into_any_element()
     }
 
-    /// "Optimize launch (Java 25 AOT cache)": on by default; shows why the launcher turned it off.
+    /// "Optimize launch (Java 25 AOT cache)": on by default; shows what the cache is doing in plain
+    /// words, and why the launcher turned the option off.
     fn render_aot_cache_setting(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
-        let setting = self.instance.read(cx).configuration.aot_cache.clone();
+        let instance = self.instance.read(cx);
+        let setting = instance.configuration.aot_cache.clone();
+        let (status, summary) = (instance.status, instance.aot_cache);
         let enabled = setting.as_ref().is_none_or(|setting| setting.enabled);
         let auto_disabled = setting.and_then(|setting| setting.auto_disabled_reason).filter(|_| !enabled);
         v_flex()
@@ -1007,17 +1011,57 @@ impl InstanceSettingsSubpage {
                                 cx.notify();
                             })),
                     )
-                    .child(
-                        Button::new("aot_cache_help")
-                            .label("?")
-                            .ghost()
-                            .small()
-                            .tooltip(t::instance::aot::setting_help()),
-                    ),
+                    .child(crate::modals::aot_optimization::help_mark("aot_cache_help", t::instance::aot::setting_help())),
             )
+            .children(enabled.then(|| self.render_aot_cache_state(status, summary, cx)))
             .children(
                 auto_disabled.map(|reason| div().text_sm().pl_6().child(t::instance::aot::auto_disabled(&reason))),
             )
+            .into_any_element()
+    }
+
+    /// One line under the option: whether the cache is ready, being prepared or not built yet.
+    fn render_aot_cache_state(
+        &self,
+        status: InstanceStatus,
+        summary: AotCacheSummary,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let (dot, text) = match (status, summary) {
+            (InstanceStatus::Optimizing, _) => (theme.info, t::instance::aot::state_optimizing().to_string()),
+            (_, AotCacheSummary::Ready { bytes }) => (
+                theme.success,
+                t::instance::aot::state_ready(&format!("{}", bytes.div_ceil(1_000_000))).to_string(),
+            ),
+            (_, AotCacheSummary::Training) => (theme.info, t::instance::aot::state_training().to_string()),
+            (_, AotCacheSummary::Waiting) => (theme.info, t::instance::aot::state_waiting().to_string()),
+            (_, AotCacheSummary::NotBuilt | AotCacheSummary::Off) => {
+                (theme.muted_foreground, t::instance::aot::state_not_built().to_string())
+            },
+        };
+        let can_delete = matches!(summary, AotCacheSummary::Ready { .. }) && status == InstanceStatus::NotRunning;
+        let instance_id = self.instance_id;
+        let data = self.data.clone();
+        h_flex()
+            .pl_6()
+            .gap_2()
+            .items_center()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(div().flex_none().size_2().rounded_full().bg(dot))
+            .child(div().child(text))
+            .when(can_delete, |row| {
+                row.child(
+                    Button::new("aot_cache_delete")
+                        .label(t::instance::aot::delete())
+                        .ghost()
+                        .xsmall()
+                        .on_click(move |_, window, cx| {
+                            crate::modals::aot_optimization::confirm_delete(instance_id, &data, window, cx)
+                        }),
+                )
+            })
             .into_any_element()
     }
 

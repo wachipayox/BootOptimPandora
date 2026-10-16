@@ -91,6 +91,7 @@ impl Processor {
                 worlds_state,
                 servers_state,
                 content_states,
+                aot_cache,
             } => {
                 InstanceEntries::add(
                     &self.data.instances,
@@ -105,6 +106,7 @@ impl Processor {
                     worlds_state,
                     servers_state,
                     ContentStates::new(id, content_states, self.data.backend_handle.clone()),
+                    aot_cache,
                     cx,
                 );
             },
@@ -126,6 +128,7 @@ impl Processor {
                 configuration,
                 playtime,
                 status,
+                aot_cache,
             } => {
                 let was_optimizing = self
                     .data
@@ -169,6 +172,7 @@ impl Processor {
                     configuration,
                     playtime,
                     status,
+                    aot_cache,
                     cx,
                 );
             },

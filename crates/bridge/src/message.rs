@@ -450,6 +450,10 @@ pub enum MessageToBackend {
     },
     /// Cancels and postpones the AOT cache optimization of one instance, or of every instance with
     /// `None` (closing the launcher). A training profile already written is kept.
+    /// Deletes the AOT cache of an idle instance (the player asked for it).
+    DeleteAotCache {
+        id: InstanceID,
+    },
     CancelAotOptimization {
         id: Option<InstanceID>,
     },
@@ -486,6 +490,22 @@ pub struct SaveGroupSummary {
     pub selected: bool,
 }
 
+/// State of an instance's JDK 25 AOT cache, as the instance settings show it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AotCacheSummary {
+    /// The option is off.
+    Off,
+    /// No cache yet: the next game records what it loads.
+    #[default]
+    NotBuilt,
+    /// The running game records what it loads.
+    Training,
+    /// Recorded; the launcher still has to build the cache.
+    Waiting,
+    /// A cache is ready (its size on disk).
+    Ready { bytes: u64 },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AotOptimizationPhase {
     /// The game is closed; its JVM writes the training profile.
@@ -508,6 +528,7 @@ pub enum MessageToFrontend {
         worlds_state: BridgeDataLoadState,
         servers_state: BridgeDataLoadState,
         content_states: enum_map::EnumMap<ContentFolder, BridgeDataLoadState>,
+        aot_cache: AotCacheSummary,
     },
     InstanceRemoved {
         id: InstanceID,
@@ -525,6 +546,7 @@ pub enum MessageToFrontend {
         configuration: InstanceConfiguration,
         playtime: InstancePlaytime,
         status: InstanceStatus,
+        aot_cache: AotCacheSummary,
     },
     InstancePlaytimeUpdated {
         id: InstanceID,
