@@ -1034,6 +1034,12 @@ impl PendingCreate {
         for arg in &self.record.args {
             command.arg(arg.clone());
         }
+        let agent_boot = agent_boot_class_path(&self.record.args);
+        if !agent_boot.is_empty() {
+            let separator = if cfg!(windows) { ";" } else { ":" };
+            let joined: Vec<String> = agent_boot.iter().map(|path| flag_path(path)).collect();
+            command.arg(format!("-Xbootclasspath/a:{}", joined.join(separator)));
+        }
         command.arg("-XX:AOTMode=create");
         command.arg(format!("-XX:AOTConfiguration={}", flag_path(&profile)));
         command.arg(format!("-XX:AOTCache={}", flag_path(&self.output)));
@@ -1046,6 +1052,49 @@ impl PendingCreate {
         command.stderr(command::PandoraStdioReadMode::Null);
         command
     }
+}
+
+/// Boot class path entries that the `-javaagent` JARs of the game add with `Boot-Class-Path` in their
+/// manifest (the zipfs agent of #105 does). The training run records them as part of the boot class
+/// path, but the `create` step loads no agents, so without them the JVM refuses the configuration
+/// ("class path and/or module path are not compatible"). Relative entries are relative to the JAR.
+fn agent_boot_class_path(args: &[String]) -> Vec<PathBuf> {
+    let mut entries = Vec::new();
+    for arg in args {
+        let Some(spec) = arg.strip_prefix("-javaagent:") else {
+            continue;
+        };
+        // `-javaagent:<jar>[=<options>]`
+        let jar = Path::new(spec.split_once('=').map_or(spec, |(jar, _)| jar));
+        let Some(value) = manifest_attribute(jar, "Boot-Class-Path") else {
+            continue;
+        };
+        let base = jar.parent().unwrap_or(Path::new(""));
+        for entry in value.split_whitespace() {
+            let entry = Path::new(entry);
+            entries.push(if entry.is_absolute() { entry.to_path_buf() } else { base.join(entry) });
+        }
+    }
+    entries
+}
+
+/// One main attribute of a JAR manifest (continuation lines start with a space).
+fn manifest_attribute(jar: &Path, name: &str) -> Option<String> {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(fs::File::open(jar).ok()?).ok()?;
+    let mut manifest = String::new();
+    archive.by_name("META-INF/MANIFEST.MF").ok()?.read_to_string(&mut manifest).ok()?;
+    let mut lines: Vec<String> = Vec::new();
+    for line in manifest.lines() {
+        match (line.strip_prefix(' '), lines.last_mut()) {
+            (Some(rest), Some(last)) => last.push_str(rest),
+            _ => lines.push(line.to_owned()),
+        }
+    }
+    lines.into_iter().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim().eq_ignore_ascii_case(name).then(|| value.trim().to_owned())
+    })
 }
 
 /// The instance's recorded profile, if one is intact and waiting. A training directory with
@@ -1471,6 +1520,27 @@ mod tests {
         assert_eq!(args[3], "-XX:AOTMode=create");
         assert!(args[4].starts_with("-XX:AOTConfiguration=") && args[4].ends_with(".aotconf"));
         assert!(args[5].starts_with("-XX:AOTCache=") && !args[5].contains('\\'));
+    }
+
+    #[test]
+    fn the_create_command_gives_the_boot_class_path_of_java_agents() {
+        use std::io::Write;
+        let root = TestRoot::new("agent-boot");
+        let agents = root.0.join("agents");
+        fs::create_dir_all(&agents).unwrap();
+        let jar = agents.join("agent.jar");
+        let mut writer = zip::ZipWriter::new(fs::File::create(&jar).unwrap());
+        writer.start_file("META-INF/MANIFEST.MF", zip::write::SimpleFileOptions::default()).unwrap();
+        writer
+            .write_all(b"Manifest-Version: 1.0\r\nPremain-Class: a.B\r\nBoot-Class-Path: age\r\n nt.jar lib/x.jar\r\n")
+            .unwrap();
+        writer.finish().unwrap();
+        let args = vec![
+            "-Xmx4G".to_owned(),
+            format!("-javaagent:{}=opt", jar.display()),
+            "-javaagent:missing.jar".to_owned(),
+        ];
+        assert_eq!(agent_boot_class_path(&args), vec![agents.join("agent.jar"), agents.join("lib/x.jar")]);
     }
 
     #[test]
