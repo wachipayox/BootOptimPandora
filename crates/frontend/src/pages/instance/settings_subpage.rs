@@ -269,6 +269,8 @@ impl InstanceSettingsSubpage {
         };
         // The page shows the section's "Last Java detected" line, so it redraws when that loads.
         cx.observe(&profile_jvm_section, |_, _, cx| cx.notify()).detach();
+        // The AOT cache option can be turned off by the launcher while this page is open.
+        cx.observe(instance, |_, _, cx| cx.notify()).detach();
 
         let mut page = Self {
             data: data.clone(),
@@ -982,6 +984,43 @@ impl InstanceSettingsSubpage {
         basic_content.into_any_element()
     }
 
+    /// "Optimize launch (Java 25 AOT cache)": on by default; shows why the launcher turned it off.
+    fn render_aot_cache_setting(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let setting = self.instance.read(cx).configuration.aot_cache.clone();
+        let enabled = setting.as_ref().is_none_or(|setting| setting.enabled);
+        let auto_disabled = setting.and_then(|setting| setting.auto_disabled_reason).filter(|_| !enabled);
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Checkbox::new("aot_cache")
+                            .label(t::instance::aot::setting())
+                            .checked(enabled)
+                            .on_click(cx.listener(|page, value: &bool, _, cx| {
+                                page.backend_handle.send(MessageToBackend::SetInstanceAotCache {
+                                    id: page.instance_id,
+                                    enabled: *value,
+                                });
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("aot_cache_help")
+                            .label("?")
+                            .ghost()
+                            .small()
+                            .tooltip(t::instance::aot::setting_help()),
+                    ),
+            )
+            .children(
+                auto_disabled.map(|reason| div().text_sm().pl_6().child(t::instance::aot::auto_disabled(&reason))),
+            )
+            .into_any_element()
+    }
+
     fn render_runtime_content(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let memory_override_enabled = self.memory_override_enabled;
         let wrapper_command_enabled = self.wrapper_command_enabled;
@@ -1036,6 +1075,7 @@ impl InstanceSettingsSubpage {
                     ),
             )
             .child(self.profile_jvm_section.clone())
+            .child(self.render_aot_cache_setting(cx))
             .child(
                 v_flex()
                     .gap_1()

@@ -180,7 +180,9 @@ pub(crate) enum ExitAction {
     /// A record run produced nothing usable; it was discarded.
     Discarded,
     /// The run failed early with an AOT flag: it was dropped, start again without it.
-    RetryWithoutCache { reason: String },
+    RetryWithoutCache {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -346,9 +348,15 @@ fn is_aot_flag(arg: &OsStr) -> bool {
     let Some(arg) = arg.to_str() else {
         return false;
     };
-    ["-XX:AOT", "-Xshare", "-XX:SharedArchiveFile", "-XX:ArchiveClassesAtExit", "-XX:+AutoCreateSharedArchive"]
-        .iter()
-        .any(|prefix| arg.starts_with(prefix))
+    [
+        "-XX:AOT",
+        "-Xshare",
+        "-XX:SharedArchiveFile",
+        "-XX:ArchiveClassesAtExit",
+        "-XX:+AutoCreateSharedArchive",
+    ]
+    .iter()
+    .any(|prefix| arg.starts_with(prefix))
 }
 
 // ---- decision --------------------------------------------------------------------------------
@@ -521,8 +529,13 @@ fn eligibility(request: &LaunchRequest, facts: &Facts) -> Result<(), Disabled> {
 /// The outcome of looking at the instance's cache directory.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Decision {
-    Use { cache: PathBuf, size: u64 },
-    Record { profile: PathBuf },
+    Use {
+        cache: PathBuf,
+        size: u64,
+    },
+    Record {
+        profile: PathBuf,
+    },
     /// A recorded profile for this key waits for its `create` job: plain start, keep it.
     CreatePending,
     Disabled(Disabled),
@@ -645,7 +658,9 @@ pub(crate) fn log_active(java_version: &str, mode: &str, key: &str, detail: &str
 }
 
 pub(crate) fn log_fallback(java_version: &str, reason: &str) {
-    log::warn!("[WBOMBO-COMPAT] FALLBACK project=Pandora mechanism={MECHANISM} mod=java@{java_version} reason={reason}");
+    log::warn!(
+        "[WBOMBO-COMPAT] FALLBACK project=Pandora mechanism={MECHANISM} mod=java@{java_version} reason={reason}"
+    );
 }
 
 /// The launch command as text, for the `create` job. `None` if an argument is not valid Unicode
@@ -678,8 +693,8 @@ pub(crate) fn prepare(request: &LaunchRequest, facts: &Facts) -> Prepared {
         if runtime_major(&version) != Some(java_default::JAVA_MAJOR) {
             return Err(Disabled::Silent("java-not-25"));
         }
-        let classpath = classpath_fingerprint(facts.classpath)
-            .ok_or_else(|| Disabled::Logged("classpath-unreadable".into()))?;
+        let classpath =
+            classpath_fingerprint(facts.classpath).ok_or_else(|| Disabled::Logged("classpath-unreadable".into()))?;
         let spec = command_spec(facts).ok_or_else(|| Disabled::Logged("non-unicode-launch-arguments".into()))?;
         let inputs = KeyInputs {
             jdk: jdk_hash,
@@ -803,9 +818,7 @@ pub(crate) fn finish_run(run: &ActiveRun, exit: ExitKind) -> ExitAction {
 }
 
 fn finish_run_after(run: &ActiveRun, exit: ExitKind, lived: Duration) -> ExitAction {
-    let dir = Dir {
-        root: run.dir.clone(),
-    };
+    let dir = Dir { root: run.dir.clone() };
 
     // A Stop is the player's doing: never an AOT failure, never a retry.
     if let ExitKind::Exited(code) = exit
@@ -850,7 +863,9 @@ fn finish_run_after(run: &ActiveRun, exit: ExitKind, lived: Duration) -> ExitAct
         },
         (RunKind::Record { .. }, ExitKind::Stopped(code)) => {
             dir.discard_training();
-            log::info!("[aot-cache] training discarded: the game was stopped before the profile was written ({code:?})");
+            log::info!(
+                "[aot-cache] training discarded: the game was stopped before the profile was written ({code:?})"
+            );
             ExitAction::Discarded
         },
         (RunKind::Record { .. }, ExitKind::Exited(code)) => {
@@ -958,13 +973,19 @@ pub(crate) enum CreateOutcome {
 }
 
 /// Handles the end of a `create` job. `exit_code` is `None` if the process was killed.
-pub(crate) fn finish_create(job: &PendingCreate, exit_code: Option<i32>, cancelled: bool, took: Duration) -> CreateOutcome {
-    let dir = Dir {
-        root: job.dir.clone(),
-    };
+pub(crate) fn finish_create(
+    job: &PendingCreate,
+    exit_code: Option<i32>,
+    cancelled: bool,
+    took: Duration,
+) -> CreateOutcome {
+    let dir = Dir { root: job.dir.clone() };
     if cancelled {
         let _ = fs::remove_file(&job.output);
-        log::info!("[aot-cache] create step cancelled after {}s; the training profile is kept for later", took.as_secs());
+        log::info!(
+            "[aot-cache] create step cancelled after {}s; the training profile is kept for later",
+            took.as_secs()
+        );
         return CreateOutcome::Postponed;
     }
     if exit_code != Some(0) {
@@ -999,7 +1020,10 @@ pub(crate) fn finish_create(job: &PendingCreate, exit_code: Option<i32>, cancell
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Progress {
     /// The JVM is writing the profile: bytes so far and time since the launcher noticed.
-    Recording { written: u64, elapsed: Duration },
+    Recording {
+        written: u64,
+        elapsed: Duration,
+    },
     /// The `create` job runs.
     Creating { elapsed: Duration },
 }
@@ -1013,7 +1037,10 @@ pub(crate) fn estimate_progress(progress: Progress, timings: &Timings) -> f32 {
     let record_share = record_secs / (record_secs + create_secs);
     let fraction = match progress {
         Progress::Recording { written, elapsed } => {
-            let expected = timings.profile_bytes.filter(|bytes| *bytes >= MIN_CACHE_BYTES).unwrap_or(DEFAULT_PROFILE_BYTES);
+            let expected = timings
+                .profile_bytes
+                .filter(|bytes| *bytes >= MIN_CACHE_BYTES)
+                .unwrap_or(DEFAULT_PROFILE_BYTES);
             let by_size = written as f32 / expected as f32;
             let by_time = elapsed.as_secs_f32() / record_secs;
             record_share * by_size.max(by_time).min(0.99)
@@ -1033,8 +1060,8 @@ mod tests {
 
     impl TestRoot {
         fn new(label: &str) -> Self {
-            let root = std::env::temp_dir()
-                .join(format!("pandora-aot-{label}-{}", uuid::Uuid::from_bytes(rand::random())));
+            let root =
+                std::env::temp_dir().join(format!("pandora-aot-{label}-{}", uuid::Uuid::from_bytes(rand::random())));
             fs::create_dir_all(&root).unwrap();
             Self(root)
         }
@@ -1273,7 +1300,11 @@ mod tests {
         let b = root.jar("b.jar", 20);
         let before = classpath_fingerprint(&[a.clone(), b.clone()]).unwrap();
         assert_eq!(before, classpath_fingerprint(&[a.clone(), b.clone()]).unwrap());
-        assert_ne!(before, classpath_fingerprint(&[b.clone(), a.clone()]).unwrap(), "order matters, as for the JVM");
+        assert_ne!(
+            before,
+            classpath_fingerprint(&[b.clone(), a.clone()]).unwrap(),
+            "order matters, as for the JVM"
+        );
         root.jar("b.jar", 21);
         assert_ne!(before, classpath_fingerprint(&[a.clone(), b.clone()]).unwrap());
         fs::remove_file(&b).unwrap();
@@ -1292,9 +1323,16 @@ mod tests {
 
         big_file(&profile);
         let run = run_for(&dir, &inputs, profile.clone());
-        assert_eq!(finish_run_after(&run, ExitKind::Exited(Some(0)), Duration::from_secs(600)), ExitAction::Recorded);
+        assert_eq!(
+            finish_run_after(&run, ExitKind::Exited(Some(0)), Duration::from_secs(600)),
+            ExitAction::Recorded
+        );
         assert!(profile.exists(), "the profile waits for create");
-        assert_eq!(decide_now(&dir, &inputs), Decision::CreatePending, "a Start before create does not train again");
+        assert_eq!(
+            decide_now(&dir, &inputs),
+            Decision::CreatePending,
+            "a Start before create does not train again"
+        );
         assert!(profile.exists());
 
         assert!(matches!(create(&dir, Some(0)), CreateOutcome::Promoted { .. }));
@@ -1340,7 +1378,9 @@ mod tests {
         let dir = Dir::new(&root.instance());
         let inputs = inputs();
         recorded(&dir, &inputs);
-        assert!(matches!(create(&dir, Some(1)), CreateOutcome::Failed { reason } if reason.starts_with("create-failed")));
+        assert!(
+            matches!(create(&dir, Some(1)), CreateOutcome::Failed { reason } if reason.starts_with("create-failed"))
+        );
         assert!(!dir.training().exists());
         assert!(dir.valid_cache(&inputs.key()).is_none());
         // An exit 0 with no usable output is a failure too.
@@ -1553,7 +1593,10 @@ mod tests {
         let profile = record_profile(&dir, &inputs);
         big_file(&profile);
         let run = run_for(&dir, &inputs, profile);
-        assert_eq!(finish_run_after(&run, ExitKind::Stopped(Some(0)), Duration::from_secs(600)), ExitAction::Recorded);
+        assert_eq!(
+            finish_run_after(&run, ExitKind::Stopped(Some(0)), Duration::from_secs(600)),
+            ExitAction::Recorded
+        );
     }
 
     #[test]
@@ -1582,7 +1625,9 @@ mod tests {
             written: DEFAULT_PROFILE_BYTES / 2,
             elapsed: Duration::from_secs(1),
         });
-        let create_start = at(Progress::Creating { elapsed: Duration::ZERO });
+        let create_start = at(Progress::Creating {
+            elapsed: Duration::ZERO,
+        });
         let create_half = at(Progress::Creating {
             elapsed: Duration::from_secs_f32(DEFAULT_CREATE_SECS / 2.0),
         });
@@ -1590,7 +1635,9 @@ mod tests {
             elapsed: Duration::from_secs(3600),
         });
         assert_eq!(start, 0.0);
-        assert!(start < half_record && half_record < create_start && create_start < create_half && create_half < overdue);
+        assert!(
+            start < half_record && half_record < create_start && create_start < create_half && create_half < overdue
+        );
         assert!(overdue <= 0.99);
         // Time also moves the record part when the file grows late.
         assert!(
@@ -1605,7 +1652,14 @@ mod tests {
             record_secs: Some(10.0),
             create_secs: Some(90.0),
         };
-        assert!(estimate_progress(Progress::Creating { elapsed: Duration::ZERO }, &slow) < create_start);
+        assert!(
+            estimate_progress(
+                Progress::Creating {
+                    elapsed: Duration::ZERO
+                },
+                &slow
+            ) < create_start
+        );
     }
 
     fn facts<'a>(java: &'a Path, classpath: &'a [PathBuf], game_dir: &'a Path) -> Facts<'a> {
@@ -1659,7 +1713,10 @@ mod tests {
         };
         big_file(profile);
         run.dump_started = Some(Instant::now());
-        assert_eq!(finish_run_after(&run, ExitKind::Exited(Some(0)), Duration::from_secs(300)), ExitAction::Recorded);
+        assert_eq!(
+            finish_run_after(&run, ExitKind::Exited(Some(0)), Duration::from_secs(300)),
+            ExitAction::Recorded
+        );
         assert!(Dir::new(&request.instance_root).read_timings().record_secs.is_some());
 
         // Until create ran, a Start is plain and keeps the profile.
@@ -1697,8 +1754,14 @@ mod tests {
             ("java 21", Box::new(|f| f.java_major = 21)),
             ("sandbox", Box::new(|f| f.sandbox = true)),
             ("wrapper command", Box::new(|f| f.wrapper_command = true)),
-            ("player aot flag", Box::new(|f| f.jvm_args.push(OsString::from("-XX:AOTCache=C:/mine.aot")))),
-            ("player cds flag", Box::new(|f| f.jvm_args.push(OsString::from("-XX:SharedArchiveFile=C:/mine.jsa")))),
+            (
+                "player aot flag",
+                Box::new(|f| f.jvm_args.push(OsString::from("-XX:AOTCache=C:/mine.aot"))),
+            ),
+            (
+                "player cds flag",
+                Box::new(|f| f.jvm_args.push(OsString::from("-XX:SharedArchiveFile=C:/mine.jsa"))),
+            ),
             ("player xshare", Box::new(|f| f.jvm_args.push(OsString::from("-Xshare:off")))),
         ];
         for (name, change) in cases {
@@ -1707,7 +1770,10 @@ mod tests {
             let prepared = prepare(&request, &facts);
             assert!(prepared.flags.is_empty() && prepared.run.is_none(), "{name}");
         }
-        assert!(!Dir::new(&request.instance_root).root.exists(), "nothing is created when the cache does not apply");
+        assert!(
+            !Dir::new(&request.instance_root).root.exists(),
+            "nothing is created when the cache does not apply"
+        );
 
         let mut retry = self::request(&root);
         retry.skip_once = true;

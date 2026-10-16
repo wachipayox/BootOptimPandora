@@ -40,7 +40,7 @@ Instances of global profiles `profile_wachiland-*` on PC start with Java 25 (Moj
 
 ## AOT cache for Wachiland profiles
 
-On Java 25, Pandora trains a JDK AOT cache (about 300 MB) per instance while the player plays and uses it on later starts; it is dropped and retrained when the JDK build, the profile revision or the mod list changes, and any problem falls back to a plain start (`[WBOMBO-COMPAT] ... mechanism=jdk25-aot-cache`). Details: [docs/features/jdk25-aot-cache.md](docs/features/jdk25-aot-cache.md).
+On Java 25, Pandora builds a JDK AOT cache (about 300 MB) per instance in two steps: the first game records a training profile when it closes, then the launcher turns it into the cache ("Optimizing launch", cancellable and resumed later). Later starts use it; it is dropped and rebuilt when the JDK build, the profile revision or the mod list changes, the instance settings have an "Optimize launch" option, and any problem falls back to a plain start (`[WBOMBO-COMPAT] ... mechanism=jdk25-aot-cache`). Details: [docs/features/jdk25-aot-cache.md](docs/features/jdk25-aot-cache.md).
 
 ## FAQ
 

@@ -6,7 +6,7 @@ use bridge::{
         ContentFolder, InstanceContentSummary, InstanceID, InstancePlaytime, InstanceServerSummary, InstanceStatus,
         InstanceWorldSummary,
     },
-    message::{BridgeDataLoadState, MessageToBackend},
+    message::{AotOptimizationPhase, BridgeDataLoadState, MessageToBackend},
     serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
@@ -46,6 +46,7 @@ impl InstanceEntries {
                 configuration,
                 playtime,
                 status: InstanceStatus::NotRunning,
+                optimization: None,
                 worlds_state,
                 worlds: cx.new(|_| None),
                 servers_state,
@@ -117,6 +118,9 @@ impl InstanceEntries {
                     instance.configuration = configuration.clone();
                     instance.playtime = playtime;
                     instance.status = status;
+                    if status != InstanceStatus::Optimizing {
+                        instance.optimization = None;
+                    }
                     instance.title = instance.create_title();
                     cx.notify();
 
@@ -186,6 +190,23 @@ impl InstanceEntries {
         });
     }
 
+    pub fn set_optimization(
+        entity: &Entity<Self>,
+        id: InstanceID,
+        progress: f32,
+        phase: AotOptimizationPhase,
+        cx: &mut App,
+    ) {
+        entity.update(cx, |entries, cx| {
+            if let Some(instance) = entries.entries.get_mut(&id) {
+                instance.update(cx, |instance, cx| {
+                    instance.optimization = Some((progress, phase));
+                    cx.notify();
+                });
+            }
+        });
+    }
+
     pub fn set_playtime(entity: &Entity<Self>, id: InstanceID, playtime: InstancePlaytime, cx: &mut App) {
         entity.update(cx, |entries, cx| {
             if let Some(instance) = entries.entries.get_mut(&id) {
@@ -222,6 +243,8 @@ pub struct InstanceEntry {
     pub configuration: InstanceConfiguration,
     pub playtime: InstancePlaytime,
     pub status: InstanceStatus,
+    /// Estimated progress of the AOT cache optimization while `status` is `Optimizing`.
+    pub optimization: Option<(f32, AotOptimizationPhase)>,
     pub worlds_state: BridgeDataLoadState,
     pub worlds: Entity<Option<Arc<[InstanceWorldSummary]>>>,
     pub servers_state: BridgeDataLoadState,

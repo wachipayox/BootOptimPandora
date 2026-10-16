@@ -2538,6 +2538,51 @@ en = "Overridden by your JVM flags or memory setting"
 [instance.profile_jvm.status_not_used]
 en = "Not used: ${reason: &str}"
 
+[instance.aot.optimizing]
+en = "Optimizing launch"
+
+[instance.aot.recording]
+en = "Saving what the game loaded"
+
+[instance.aot.creating]
+en = "Building the launch cache"
+
+[instance.aot.percent]
+en = "${percent: &str} % (approximate)"
+
+[instance.aot.approximate]
+en = "Approximate: Java does not report progress. The estimate compares the size of the file being written and the elapsed time with the last optimization of this instance (about 305 MB and 15 s the first time)."
+
+[instance.aot.help]
+en = "The first game with this option recorded which Java classes the game loads. Pandora now turns that into a Java 25 launch cache (AOT cache), so the next launches reach the main menu faster. This runs once, and again only when the pack, Java or the launch settings change."
+
+[instance.aot.cancel]
+en = "Cancel optimization"
+
+[instance.aot.cancel_note]
+en = "Cancelling postpones the optimization until the next launch. What the game already saved is kept, so it does not have to be recorded again."
+
+[instance.aot.hide]
+en = "Hide"
+
+[instance.aot.setting]
+en = "Optimize launch (Java 25 AOT cache)"
+
+[instance.aot.setting_help]
+en = "Builds a Java 25 cache of the classes this instance loads, so later launches reach the main menu faster (about 4–6 s on a fast PC). It uses about 300 MB of disk for this instance. The first game after turning it on, or after a pack or Java update, takes a little longer to start and to close, and then the launcher spends a few seconds optimizing. Only for Wachiland profiles that run on Java 25. Turning it off deletes the cache."
+
+[instance.aot.auto_disabled]
+en = "Turned off automatically because Java rejected the cache (${reason: &str}). You can turn it on again."
+
+[instance.aot.quit_title]
+en = "Optimization in progress"
+
+[instance.aot.quit_body]
+en = "One or more instances are optimizing their launch. If you close the launcher, their optimization is cancelled until the next launch."
+
+[instance.aot.quit_confirm]
+en = "Confirm"
+
 [instance.jvm_binary]
 en = "Override JVM Binary"
 tr = "JVM Çalıştırılabilir Dosyasını Geçersiz Kıl"

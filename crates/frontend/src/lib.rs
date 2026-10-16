@@ -158,14 +158,6 @@ pub fn start(
                 KeyBinding::new("enter", Confirm, None),
             ]);
 
-            cx.on_action(|_: &Quit, cx| {
-                for window in cx.windows() {
-                    _ = window.update(cx, |_, window, _| {
-                        window.remove_window();
-                    });
-                }
-            });
-
             let instances = cx.new(|_| InstanceEntries {
                 entries: IndexMap::new(),
             });
@@ -183,6 +175,33 @@ pub fn start(
                 }),
             };
 
+            cx.on_action({
+                let data = data.clone();
+                move |_: &Quit, cx| {
+                    // Instances optimizing their launch: ask first, in the main window.
+                    if modals::aot_optimization::any_optimizing(&data, cx) {
+                        let main_window = cx.windows().into_iter().find(|window| {
+                            window
+                                .read(cx, |window: Entity<Root>, cx| {
+                                    window.read(cx).view().clone().downcast::<LauncherRoot>().is_ok()
+                                })
+                                .unwrap_or(false)
+                        });
+                        if let Some(main_window) = main_window {
+                            let data = data.clone();
+                            _ = main_window.update(cx, |_, window, cx| {
+                                window.activate_window();
+                                modals::aot_optimization::confirm_close(&data, window, cx, |_, cx| {
+                                    cx.defer(close_all_windows);
+                                });
+                            });
+                            return;
+                        }
+                    }
+                    close_all_windows(cx);
+                }
+            });
+
             let mut processor = Processor::new(data.clone(), main_window_hidden, quit_coordinator);
 
             while let Some(message) = recv.try_recv() {
@@ -198,6 +217,14 @@ pub fn start(
             })
             .detach();
         });
+}
+
+fn close_all_windows(cx: &mut App) {
+    for window in cx.windows() {
+        _ = window.update(cx, |_, window, _| {
+            window.remove_window();
+        });
+    }
 }
 
 pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: &mut App) -> AnyWindowHandle {
@@ -293,6 +320,14 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     .detach();
 
                     LauncherRoot::new(&data, window, cx)
+                });
+
+                // Closing the main window while instances optimize their launch asks first.
+                window.on_window_should_close(cx, {
+                    let data = data.clone();
+                    move |window, cx| {
+                        modals::aot_optimization::confirm_close(&data, window, cx, |window, _| window.remove_window())
+                    }
                 });
 
                 DataEntities::init_globals(cx);

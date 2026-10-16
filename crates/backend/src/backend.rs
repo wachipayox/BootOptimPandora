@@ -1295,7 +1295,8 @@ impl BackendState {
     }
 
     pub fn restore_mods_folder_if_stopped(&self, instance: &mut Instance) {
-        if !instance.processes.is_empty() || !instance.closing_processes.is_empty() {
+        // The AOT cache's create step reads the same jars as the game.
+        if !instance.processes.is_empty() || !instance.closing_processes.is_empty() || instance.aot_create.is_some() {
             return;
         }
         if let Some(keepalive) = &instance.launch_keepalive

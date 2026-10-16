@@ -87,6 +87,9 @@ impl Page for InstancePage {
                         root::start_instance(id, name.clone(), None, &data, window, cx);
                     })
                     .into_any_element(),
+                InstanceStatus::Optimizing => {
+                    crate::modals::aot_optimization::status_button("optimizing", id, &data).into_any_element()
+                },
                 InstanceStatus::Launching => Button::new("launching")
                     .warning()
                     .icon(PandoraIcon::Loader)
