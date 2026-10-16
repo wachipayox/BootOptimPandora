@@ -38,6 +38,12 @@ The private launcher starts from the instance's existing `.minecraft` directory 
 
 Instances of global profiles `profile_wachiland-*` on PC start with Java 25 (Mojang's `java-runtime-epsilon`, hash-verified). Other instances keep Java 21. Setting a custom Java binary on an instance, or `FORCE_EXTERNAL_JAVA`, always wins; enabling a Java 21 binary there forces Java 21. If a Java 25 start exits with an error within 15 seconds, Pandora logs `[WBOMBO-COMPAT] FALLBACK ... mechanism=java25-default` and uses Java 21 for that instance; remove `java25_fallback` from its `info_v1.json` (with the launcher closed) to try Java 25 again.
 
+## Optional zipfs read-only agent (Windows PC)
+
+When a Wachiland profile starts on Java 25 on Windows, Pandora adds `-javaagent:<launcher>/agents/zipfs-readonly-agent.jar`. The JAR is embedded in the launcher (`crates/backend/src/launch/zipfs-agent/`, with its source commit and SHA-256) and written to `agents/` when that file is missing or different, so it always matches the launcher version. The agent makes the JDK open the mod and library JARs read-only, which avoids a per-open volume lookup while SecureJarHandler loads them. The game's stderr is not kept on a normal start, so the agent writes its own `ACTIVE` and `FALLBACK` lines to `<instance>/.minecraft/logs/wbombo-zipfs-agent.log`. Pandora logs its decision to `launcher.log` as `[WBOMBO-COMPAT] ACTIVE|SKIPPED|FALLBACK ... mechanism=zipfs-readonly-agent`.
+
+Disable it for a session with `WBOMBO_ZIPFS_AGENT=0`. If the JAR cannot be written, Pandora logs `FALLBACK` and starts without it. If the Java 25 start fails early, the Java 25 fallback above also removes the agent, because the Java 21 path does not add it.
+
 ## FAQ
 
 ### Discord Server
