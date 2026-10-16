@@ -1,24 +1,44 @@
 # JDK 25 AOT cache (per instance)
 
-Status: implemented for Wachiland global profiles on PC with Java 25. Research and
-numbers: BootOptim `docs/research/jdk25-aot-cache-reopen-2026-10-15.md` (#364) and
+Status: implemented for Wachiland global profiles on PC with Java 25. Research:
+BootOptim `docs/research/jdk25-aot-cache-reopen-2026-10-15.md` (#364) and
 `docs/research/jdk25-aot-cache-pandora-2026-10-16.md`.
 
 ## What it does
 
-The JDK 25 AOT cache (JEP 483/514) stores loaded and linked classes and JIT profiles. A start
-with a cache reached the main menu about 9 s sooner on the reference PC (Beta rev
-`7d5b9e50…`, 58.7 → 49.5 s). The cache is about 300 MB.
+The JDK 25 AOT cache (JEP 483/514) stores loaded and linked classes and JIT profiles. On the
+reference PC (Java 25.0.1, Beta rev `7d5b9e50…`, startup to `main_menu`, medians of 4) a start
+with the cache is about 5 s faster than one without it (55.5 → 50.5 s, −9 %, ranges do not
+overlap). The cache is about 300 MB. Measurements: BootOptim
+`docs/research/jdk25-aot-cache-pandora-2026-10-16.md`.
 
 Pandora trains the cache **while the player plays**, with no separate start:
 
 1. First Start of an instance with no valid cache: the game runs with
    `-XX:AOTCacheOutput=<instance>/aot-cache/training/train-<nonce>.aot`. When the game closes by
-   itself the JVM assembles the cache before it exits (about 2 min, the process stays alive).
+   itself the JVM assembles the cache before it exits (35–43 s after the title screen in the
+   measured sessions; the process stays alive meanwhile and the launcher cannot quit).
 2. The launcher promotes the file (rename) only if the game exited with code 0, the JVM removed
    its temporary `*.aot.config` file (it does that only when the assembly finished) and the file
    is at least 1 MiB.
 3. Later Starts run with `-XX:AOTCache=<instance>/aot-cache/<key16>.aot`.
+
+## Why one step (and not record + create)
+
+Both ways were measured on the reference PC (BootOptim research entry above). They give the same
+cache and the same gain; the one-step way has fewer parts.
+
+| | One step (`-XX:AOTCacheOutput`), chosen | Two steps (`AOTMode=record`, then `AOTMode=create`) |
+|---|---|---|
+| Gain at the main menu | −5.0 to −6.0 s | −5.7 s |
+| Cost while playing (to the menu) | +8 to +12 s | +6 to +16 s |
+| Extra time to close the game | about +35 s (config write 17 s + assembly 18 s) | about +18 s, then a 15 s job later |
+| Later job | none | `create` at the next launcher start: 15 s, 1 GB RAM, one core; it did not slow a simultaneous start |
+| Parts that can fail | one process; the JVM does the assembly | saved JVM arguments, a background job and its state |
+
+The extra 17 s at close does not justify a launcher-side job, a saved copy of the launch
+arguments and a state machine across two sessions. Reopen it if real play sessions make the
+one-step close much longer than measured here (the measured session ended at the title screen).
 
 ## When it applies
 
