@@ -2538,6 +2538,78 @@ en = "Overridden by your JVM flags or memory setting"
 [instance.profile_jvm.status_not_used]
 en = "Not used: ${reason: &str}"
 
+[instance.aot.optimizing]
+en = "Optimizing launch"
+
+[instance.aot.recording]
+en = "Saving what the game loaded"
+
+[instance.aot.creating]
+en = "Building the launch cache"
+
+[instance.aot.percent]
+en = "${percent: &str} % (approximate)"
+
+[instance.aot.approximate]
+en = "Approximate: Java does not report progress. The estimate compares the size of the file being written and the elapsed time with the last optimization of this instance (about 305 MB and 15 s the first time)."
+
+[instance.aot.help]
+en = "Your last game recorded what Java loads at startup. The launcher now turns that into a launch cache, so the next launches reach the main menu faster.\n\nThis runs once, and again only when the pack, Java or the launch settings change."
+
+[instance.aot.cancel]
+en = "Cancel optimization"
+
+[instance.aot.cancel_note]
+en = "Cancelling postpones the optimization until the next launch. What the game already saved is kept, so it does not have to be recorded again."
+
+[instance.aot.hide]
+en = "Hide"
+
+[instance.aot.setting]
+en = "Optimize launch (Java 25 AOT cache)"
+
+[instance.aot.setting_help]
+en = "Makes the game reach the main menu a few seconds faster (about 4–9 s in our tests), using about 300 MB of disk for this instance.\n\nThe first game after turning it on, or after a pack or Java update, starts and closes a little slower, and then the launcher spends a few seconds optimizing.\n\nOnly for Wachiland profiles that run on Java 25. Turning it off deletes the cache."
+
+[instance.aot.state_not_built]
+en = "Not ready yet: your next game prepares it."
+
+[instance.aot.state_training]
+en = "Preparing during this game. Close the game normally to finish."
+
+[instance.aot.state_waiting]
+en = "Almost ready: the launcher finishes it when it is free."
+
+[instance.aot.state_optimizing]
+en = "Finishing now…"
+
+[instance.aot.state_ready]
+en = "Ready: launches are faster. Uses ${size: &str} MB."
+
+[instance.aot.delete]
+en = "Delete cache"
+
+[instance.aot.delete_title]
+en = "Delete the launch cache?"
+
+[instance.aot.delete_body]
+en = "Launches will be a little slower until your next game prepares it again. You only need this if something seems wrong after an update."
+
+[instance.aot.delete_confirm]
+en = "Delete"
+
+[instance.aot.auto_disabled]
+en = "Turned off automatically because Java rejected the cache (${reason: &str}). You can turn it on again."
+
+[instance.aot.quit_title]
+en = "Optimization in progress"
+
+[instance.aot.quit_body]
+en = "One or more instances are optimizing their launch. If you close the launcher, their optimization is cancelled until the next launch."
+
+[instance.aot.quit_confirm]
+en = "Confirm"
+
 [instance.jvm_binary]
 en = "Override JVM Binary"
 tr = "JVM Çalıştırılabilir Dosyasını Geçersiz Kıl"

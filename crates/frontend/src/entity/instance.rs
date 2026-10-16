@@ -6,7 +6,7 @@ use bridge::{
         ContentFolder, InstanceContentSummary, InstanceID, InstancePlaytime, InstanceServerSummary, InstanceStatus,
         InstanceWorldSummary,
     },
-    message::{BridgeDataLoadState, MessageToBackend},
+    message::{AotCacheSummary, AotOptimizationPhase, BridgeDataLoadState, MessageToBackend},
     serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
@@ -32,6 +32,7 @@ impl InstanceEntries {
         worlds_state: BridgeDataLoadState,
         servers_state: BridgeDataLoadState,
         content_states: ContentStates,
+        aot_cache: AotCacheSummary,
         cx: &mut App,
     ) {
         entity.update(cx, |entries, cx| {
@@ -46,6 +47,8 @@ impl InstanceEntries {
                 configuration,
                 playtime,
                 status: InstanceStatus::NotRunning,
+                optimization: None,
+                aot_cache,
                 worlds_state,
                 worlds: cx.new(|_| None),
                 servers_state,
@@ -105,6 +108,7 @@ impl InstanceEntries {
         configuration: InstanceConfiguration,
         playtime: InstancePlaytime,
         status: InstanceStatus,
+        aot_cache: AotCacheSummary,
         cx: &mut App,
     ) {
         entity.update(cx, |entries, cx| {
@@ -117,6 +121,10 @@ impl InstanceEntries {
                     instance.configuration = configuration.clone();
                     instance.playtime = playtime;
                     instance.status = status;
+                    instance.aot_cache = aot_cache;
+                    if status != InstanceStatus::Optimizing {
+                        instance.optimization = None;
+                    }
                     instance.title = instance.create_title();
                     cx.notify();
 
@@ -186,6 +194,23 @@ impl InstanceEntries {
         });
     }
 
+    pub fn set_optimization(
+        entity: &Entity<Self>,
+        id: InstanceID,
+        progress: f32,
+        phase: AotOptimizationPhase,
+        cx: &mut App,
+    ) {
+        entity.update(cx, |entries, cx| {
+            if let Some(instance) = entries.entries.get_mut(&id) {
+                instance.update(cx, |instance, cx| {
+                    instance.optimization = Some((progress, phase));
+                    cx.notify();
+                });
+            }
+        });
+    }
+
     pub fn set_playtime(entity: &Entity<Self>, id: InstanceID, playtime: InstancePlaytime, cx: &mut App) {
         entity.update(cx, |entries, cx| {
             if let Some(instance) = entries.entries.get_mut(&id) {
@@ -222,6 +247,10 @@ pub struct InstanceEntry {
     pub configuration: InstanceConfiguration,
     pub playtime: InstancePlaytime,
     pub status: InstanceStatus,
+    /// Estimated progress of the AOT cache optimization while `status` is `Optimizing`.
+    pub optimization: Option<(f32, AotOptimizationPhase)>,
+    /// State of the AOT cache, shown in the instance settings.
+    pub aot_cache: AotCacheSummary,
     pub worlds_state: BridgeDataLoadState,
     pub worlds: Entity<Option<Arc<[InstanceWorldSummary]>>>,
     pub servers_state: BridgeDataLoadState,

@@ -112,6 +112,11 @@ fn duplicate_with_content_library(
             if relative == Path::new(CONTROL_DIR_NAME) {
                 continue;
             }
+            // The JDK 25 AOT cache is trained for the source instance's exact files (about 300 MB);
+            // the copy trains its own on its first Start.
+            if relative == Path::new(crate::launch::aot_cache::DIR_NAME) {
+                continue;
+            }
             #[cfg(windows)]
             if let Ok(target) = junction::get_target(&path) {
                 if relative == Path::new(".minecraft/saves")

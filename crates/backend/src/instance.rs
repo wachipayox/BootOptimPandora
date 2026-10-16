@@ -38,10 +38,19 @@ use crate::{
     BackendState, BackendStateFileWatching, WatchTarget,
     fs::{FolderChanges, IoOrSerializationError},
     id_slab::{GetId, Id},
+    launch::aot_cache,
     launcher_import,
     mod_metadata::{ContentUpdateAction, ContentUpdateKey, ModMetadataManager},
     persistent::Persistent,
 };
+
+/// A running `-XX:AOTMode=create` step of an instance's AOT cache.
+#[derive(Debug)]
+pub struct AotCreateJob {
+    pub job: crate::launch::aot_cache::PendingCreate,
+    pub process: PandoraProcess,
+    pub started: Instant,
+}
 
 #[derive(Debug)]
 pub struct Instance {
@@ -61,6 +70,25 @@ pub struct Instance {
     /// Java 25 game starts still tracked by process id, with their start time. Used to decide
     /// whether an early error exit should record a Java 25 fallback.
     pub java25_starts: Vec<(u32, Instant)>,
+    /// Game processes started with a JDK 25 AOT cache flag (`-XX:AOTCache` or
+    /// `-XX:AOTCacheOutput`), by process id.
+    pub aot_runs: Vec<(u32, crate::launch::aot_cache::ActiveRun)>,
+    /// The next Start of this instance must not use the AOT cache (a retry after a failed run);
+    /// holds the failure that caused it.
+    pub aot_skip_next_start: Option<String>,
+    /// The retry without the cache: process id, start time and the failure that caused it. If the
+    /// retry starts fine, the cache was the problem and the instance's option is turned off.
+    pub aot_retry_probe: Option<(u32, Instant, String)>,
+    /// Game processes that showed the JVM launcher's error dialog (the JVM refused to start).
+    pub jvm_error_dialogs: Vec<u32>,
+    /// The launcher's `create` step for this instance, if running.
+    pub aot_create: Option<AotCreateJob>,
+    /// The player cancelled the optimization; it waits for the next Start (or launcher start).
+    pub aot_create_postponed: bool,
+    /// Look for a recorded profile that waits for its `create` step when the instance is idle.
+    pub aot_check_pending: bool,
+    /// Game processes whose JVM is writing the training profile (the game itself is closed).
+    pub aot_dumping: Vec<u32>,
     session_started_at: Option<Instant>,
 
     pub worlds_state: BridgeDataLoadState,
@@ -1024,6 +1052,14 @@ impl Instance {
             processes: Vec::new(),
             closing_processes: Vec::new(),
             java25_starts: Vec::new(),
+            aot_runs: Vec::new(),
+            aot_skip_next_start: None,
+            aot_retry_probe: None,
+            jvm_error_dialogs: Vec::new(),
+            aot_create: None,
+            aot_create_postponed: false,
+            aot_check_pending: true,
+            aot_dumping: Vec::new(),
             session_started_at: None,
 
             worlds_state: BridgeDataLoadState::default(),
@@ -1173,10 +1209,13 @@ impl Instance {
     }
 
     pub fn status(&self) -> InstanceStatus {
-        if !self.processes.is_empty() {
+        let optimizing = |pid: u32| self.aot_dumping.contains(&pid);
+        if self.processes.iter().any(|process| !optimizing(process.id())) {
             InstanceStatus::Running
-        } else if !self.closing_processes.is_empty() {
+        } else if self.closing_processes.iter().any(|(process, _)| !optimizing(process.id())) {
             InstanceStatus::Stopping
+        } else if !self.aot_dumping.is_empty() || self.aot_create.is_some() {
+            InstanceStatus::Optimizing
         } else if let Some(keepalive) = &self.launch_keepalive
             && keepalive.is_alive()
         {
@@ -1184,6 +1223,22 @@ impl Instance {
         } else {
             InstanceStatus::NotRunning
         }
+    }
+
+    /// The AOT cache state shown in the instance settings.
+    pub fn aot_cache_summary(&mut self) -> bridge::message::AotCacheSummary {
+        use bridge::message::AotCacheSummary;
+        if !self.configuration.get().aot_cache_enabled() {
+            return AotCacheSummary::Off;
+        }
+        if self
+            .aot_runs
+            .iter()
+            .any(|(pid, run)| matches!(run.kind, aot_cache::RunKind::Record { .. }) && !self.aot_dumping.contains(pid))
+        {
+            return AotCacheSummary::Training;
+        }
+        aot_cache::disk_summary(&self.root_path)
     }
 
     pub fn create_modify_message(&mut self) -> MessageToFrontend {
@@ -1196,6 +1251,7 @@ impl Instance {
             configuration: self.configuration.get().clone(),
             playtime: self.playtime(),
             status: self.status(),
+            aot_cache: self.aot_cache_summary(),
         }
     }
 

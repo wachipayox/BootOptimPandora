@@ -58,7 +58,9 @@ use crate::{
     },
 };
 
+pub(crate) mod aot_cache;
 pub(crate) mod java_default;
+pub(crate) mod jvm_flags;
 #[cfg(target_os = "linux")]
 mod linux_gpu;
 pub(crate) mod profile_jvm;
@@ -143,7 +145,8 @@ impl Launcher {
         modal_action: &ModalAction,
         profile_jvm_options: Vec<schema::profile_jvm::ManifestJvmOption>,
         java25: bool,
-    ) -> Result<(PandoraChild, u32), LaunchError> {
+        aot: Option<aot_cache::LaunchRequest>,
+    ) -> Result<(PandoraChild, u32, Option<aot_cache::ActiveRun>), LaunchError> {
         log::info!("Launching {:?}", dot_minecraft_path);
 
         launch_tracker.set_total(6);
@@ -334,6 +337,8 @@ impl Launcher {
             rule_context: launch_rule_context,
             login_info,
             profile_jvm_args,
+            aot,
+            java_major,
         };
 
         if modal_action.has_requested_cancel() {
@@ -342,11 +347,11 @@ impl Launcher {
         }
 
         log::info!("Launching game process");
-        let child = launch_context.launch(&version_info, read_game_output).await?;
+        let (child, aot_run) = launch_context.launch(&version_info, read_game_output).await?;
 
         launch_tracker.add_count(1);
 
-        Ok((child, java_major))
+        Ok((child, java_major, aot_run))
     }
 
     async fn create_launch_version(
@@ -2663,6 +2668,10 @@ pub struct LaunchContext {
     /// Profile JVM options decided for this launch. They go before the player's memory setting
     /// and personal JVM arguments so HotSpot's last-occurrence rule lets the player win.
     pub profile_jvm_args: Vec<String>,
+    /// JDK 25 AOT cache request for this Start (Wachiland global profiles only).
+    pub(crate) aot: Option<aot_cache::LaunchRequest>,
+    /// Major version of the runtime that will run the game.
+    pub java_major: u32,
 }
 
 impl LaunchContext {
@@ -2670,7 +2679,7 @@ impl LaunchContext {
         mut self,
         version_info: &MinecraftVersion,
         read_game_output: bool,
-    ) -> std::io::Result<PandoraChild> {
+    ) -> std::io::Result<(PandoraChild, Option<aot_cache::ActiveRun>)> {
         let mut wrapping_command: Vec<Cow<'static, OsStr>> = Vec::new();
 
         #[cfg(target_os = "linux")]
@@ -2692,11 +2701,7 @@ impl LaunchContext {
             ref flags,
         }) = self.configuration.wrapper_command
         {
-            let split = match shell_words::split(&flags) {
-                Ok(split) => split,
-                Err(_) => flags.split_whitespace().map(|f| f.to_string()).collect(),
-            };
-            for arg in split {
+            for arg in jvm_flags::split(flags) {
                 wrapping_command.push(Cow::Owned(OsString::from(arg)));
             }
         }
@@ -2835,24 +2840,39 @@ impl LaunchContext {
         if let Some(jvm_flags) = &self.configuration.jvm_flags
             && jvm_flags.enabled
         {
-            if let Ok(split) = shell_words::split(&jvm_flags.flags) {
-                for arg in split {
-                    command.arg(arg.to_string());
-                }
-            } else {
-                for arg in jvm_flags.flags.split_whitespace() {
-                    command.arg(arg.to_string());
-                }
+            for arg in jvm_flags::split(&jvm_flags.flags) {
+                command.arg(arg);
             }
+        }
+
+        // JDK 25 AOT cache: decided from the final VM arguments, added just before the main class.
+        let mut aot_run = None;
+        if let Some(request) = self.aot.take() {
+            let prepared = aot_cache::prepare(
+                &request,
+                &aot_cache::Facts {
+                    java_path: &self.java_path,
+                    java_major: self.java_major,
+                    classpath: &self.classpath,
+                    jvm_args: command.args_os(),
+                    game_dir: &self.game_dir,
+                    path_env: self.game_path_env(),
+                    jvm_binary_enabled: self.configuration.jvm_binary.as_ref().is_some_and(|binary| binary.enabled),
+                    force_external_java: std::env::var_os("FORCE_EXTERNAL_JAVA").is_some(),
+                    sandbox: self.configuration.sandbox,
+                    wrapper_command: self.configuration.wrapper_command.as_ref().is_some_and(|wrapper| wrapper.enabled),
+                },
+            );
+            for flag in prepared.flags {
+                command.arg(flag);
+            }
+            aot_run = prepared.run;
         }
 
         command.arg("com.moulberry.pandora.LaunchWrapper");
 
-        if let Some(path) = std::env::var_os("PATH") {
-            let new_paths = std::env::split_paths(&path).chain([self.natives_dir.clone()]);
-            if let Ok(new_path_arg) = std::env::join_paths(new_paths) {
-                command.env("PATH", new_path_arg);
-            }
+        if let Some(new_path_arg) = self.game_path_env() {
+            command.env("PATH", new_path_arg);
         }
 
         let mut child = if self.configuration.sandbox {
@@ -2946,7 +2966,14 @@ impl LaunchContext {
         stdin.write_all(stdin_arguments.as_bytes())?;
         stdin.flush()?;
 
-        Ok(child)
+        Ok((child, aot_run))
+    }
+
+    /// `PATH` for the game: the launcher's own with the natives directory appended.
+    fn game_path_env(&self) -> Option<OsString> {
+        let path = std::env::var_os("PATH")?;
+        let new_paths = std::env::split_paths(&path).chain([self.natives_dir.clone()]);
+        std::env::join_paths(new_paths).ok()
     }
 
     fn process_arguments(&self, arguments: &[LaunchArgument], handler: &mut impl FnMut(&OsStr)) {

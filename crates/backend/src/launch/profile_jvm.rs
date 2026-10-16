@@ -39,8 +39,7 @@ pub(crate) enum JavaRuntimeSource {
 
 pub(crate) fn personal_jvm_args(configuration: &InstanceConfiguration) -> Vec<String> {
     match &configuration.jvm_flags {
-        Some(flags) if flags.enabled => shell_words::split(&flags.flags)
-            .unwrap_or_else(|_| flags.flags.split_whitespace().map(str::to_owned).collect()),
+        Some(flags) if flags.enabled => super::jvm_flags::split(&flags.flags),
         _ => Vec::new(),
     }
 }

@@ -9,7 +9,7 @@ use std::{
 use auth::{credentials::AccountCredentials, models::MinecraftAccessToken, secret::PlatformSecretStorage};
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget},
-    instance::{ContentFolder, ContentSummary, ContentType, InstanceID},
+    instance::{ContentFolder, ContentSummary, ContentType, InstanceID, InstanceStatus},
     keep_alive::KeepAlive,
     message::{
         AccountCapesResult, AccountSkinResult, EmbeddedOrRaw, GameOutputMsg, LogFiles, MessageToBackend,
@@ -44,7 +44,7 @@ use crate::{
     arcfactory::ArcStrFactory,
     fs::FolderChanges,
     instance::Instance,
-    launch::{ArgumentExpansionKey, LaunchError, java_default},
+    launch::{ArgumentExpansionKey, LaunchError, aot_cache, java_default},
     library_install_state, log_reader,
     metadata::{
         items::{
@@ -453,6 +453,43 @@ impl BackendState {
                     });
                 }
                 self.apply_syncing_to_instance(id);
+            },
+            MessageToBackend::SetInstanceAotCache { id, enabled } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        // On is the default: store nothing, which also clears an automatic disable.
+                        configuration.aot_cache = (!enabled).then_some(schema::instance::AotCacheSetting {
+                            enabled: false,
+                            auto_disabled_reason: None,
+                            disabled_unix_secs: None,
+                        });
+                    });
+                    if enabled {
+                        instance.aot_create_postponed = false;
+                    } else {
+                        cancel_aot_optimization(instance);
+                    }
+                    instance.aot_check_pending = true;
+                    self.send.send(instance.create_modify_message());
+                }
+            },
+            MessageToBackend::DeleteAotCache { id } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id)
+                    && instance.status() == InstanceStatus::NotRunning
+                    && instance.aot_create.is_none()
+                {
+                    aot_cache::delete_on_request(&instance.root_path);
+                    self.send.send(instance.create_modify_message());
+                }
+            },
+            MessageToBackend::CancelAotOptimization { id } => {
+                let mut instance_state = self.instance_state.write();
+                for instance in instance_state.instances.iter_mut() {
+                    if id.is_none_or(|id| id == instance.id) && instance.status() == InstanceStatus::Optimizing {
+                        cancel_aot_optimization(instance);
+                        self.send.send(instance.create_modify_message());
+                    }
+                }
             },
             MessageToBackend::SetInstanceSandboxing { id, sandbox } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
@@ -2706,7 +2743,7 @@ impl BackendState {
         }
     }
 
-    async fn start_instance(
+    pub(crate) async fn start_instance(
         self: &Arc<Self>,
         id: InstanceID,
         quick_play: Option<QuickPlayLaunch>,
@@ -2826,6 +2863,34 @@ impl BackendState {
             },
         };
 
+        // JDK 25 AOT cache: only Wachiland global profiles. Built from the committed profile state
+        // (revision pin and the stored hashes of the managed mods); no filesystem scan.
+        let mut aot_retry_reason = None;
+        let aot_request = committed_branch.as_ref().and_then(|branch| {
+            let pin = branch.applied_revision.as_ref()?;
+            if !pin.profile_id.starts_with(java_default::WACHILAND_PROFILE_PREFIX) {
+                return None;
+            }
+            let mut instance_state = self.instance_state.write();
+            let instance = instance_state.instances.get_mut(id)?;
+            let other_process_running = !instance.processes.is_empty()
+                || !instance.closing_processes.is_empty()
+                || instance.aot_create.is_some();
+            aot_retry_reason = instance.aot_skip_next_start.take();
+            // A Start resumes an optimization the player postponed (after this game closes).
+            instance.aot_create_postponed = false;
+            instance.aot_check_pending = true;
+            Some(aot_cache::LaunchRequest {
+                instance_root: root_path.to_path_buf(),
+                pin: pin.clone(),
+                mods_fingerprint: aot_cache::mods_fingerprint(&branch.entries),
+                other_process_running,
+                skip_once: aot_retry_reason.is_some(),
+                disabled_by_setting: !instance.configuration.get().aot_cache_enabled(),
+                quick_play: quick_play.clone(),
+            })
+        });
+
         let launch_tracker = modal_action.push_tracker("Launching".into());
         let result = self
             .launcher
@@ -2840,6 +2905,7 @@ impl BackendState {
                 &modal_action,
                 profile_jvm_options,
                 java25,
+                aot_request,
             )
             .await;
         prelaunch_attribution.write_sidecar("launcher_launch_returned");
@@ -2850,7 +2916,7 @@ impl BackendState {
 
         let is_err = result.is_err();
         match result {
-            Ok((mut child, java_major)) => {
+            Ok((mut child, java_major, aot_run)) => {
                 if let Some(live_game_output) = live_game_output {
                     if let Some(stdout) = child.stdout.take() {
                         let receiver = log_reader::start_game_output(stdout, child.stderr.take());
@@ -2866,6 +2932,12 @@ impl BackendState {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     if java25 && java_major == java_default::JAVA_MAJOR {
                         instance.java25_starts.push((child.process.id(), Instant::now()));
+                    }
+                    if let Some(aot_run) = aot_run {
+                        instance.aot_runs.push((child.process.id(), aot_run));
+                    }
+                    if let Some(reason) = aot_retry_reason {
+                        instance.aot_retry_probe = Some((child.process.id(), Instant::now(), reason));
                     }
                     instance.processes.push(child.process);
                     instance.update_session();
@@ -3268,4 +3340,34 @@ async fn send_log_line(
         },
     }
     Ok(())
+}
+
+/// Cancels and postpones the AOT cache optimization of an instance: a running `create` step is
+/// killed (the training profile is kept), a JVM still writing its profile is killed (the profile is
+/// lost; the next Start records again).
+fn cancel_aot_optimization(instance: &mut Instance) {
+    instance.aot_create_postponed = true;
+    if let Some(create) = instance.aot_create.take() {
+        let took = create.started.elapsed();
+        if let Err(error) = create.process.kill() {
+            log::warn!("[aot-cache] could not stop the create step: {error:?}");
+        }
+        aot_cache::finish_create(&create.job, None, true, took);
+    }
+    let dumping = std::mem::take(&mut instance.aot_dumping);
+    if dumping.is_empty() {
+        return;
+    }
+    log::info!("[aot-cache] optimization cancelled while the JVM was writing the training profile");
+    let processes = instance.processes.extract_if(.., |process| dumping.contains(&process.id())).collect::<Vec<_>>();
+    let closing = instance
+        .closing_processes
+        .extract_if(.., |(process, _)| dumping.contains(&process.id()))
+        .map(|(process, _)| process)
+        .collect::<Vec<_>>();
+    for process in processes.into_iter().chain(closing) {
+        if let Err(error) = process.kill() {
+            log::warn!("[aot-cache] could not stop the JVM writing the profile: {error:?}");
+        }
+    }
 }

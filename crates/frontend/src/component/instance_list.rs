@@ -257,6 +257,7 @@ fn render_play_button(item: &InstanceEntry, index: usize, data: DataEntities) ->
             .on_click(move |_, window, cx| {
                 root::start_instance(id, name.clone(), None, &data, window, cx);
             }),
+        InstanceStatus::Optimizing => crate::modals::aot_optimization::status_button(("optimizing", index), id, &data),
         InstanceStatus::Launching => Button::new(("launching", index)).warning().label("..."),
         InstanceStatus::Stopping => Button::new(("launching", index)).danger().label("..."),
         InstanceStatus::Running => {

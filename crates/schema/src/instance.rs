@@ -67,6 +67,13 @@ pub struct InstanceConfiguration {
         skip_serializing_if = "crate::skip_if_none"
     )]
     pub java25_fallback: Option<Java25Fallback>,
+    /// "Optimize launch (Java 25 AOT cache)". `None` means the default: on.
+    #[serde(
+        default,
+        deserialize_with = "crate::try_deserialize",
+        skip_serializing_if = "crate::skip_if_none"
+    )]
+    pub aot_cache: Option<AotCacheSetting>,
     #[serde(
         default,
         deserialize_with = "crate::try_deserialize",
@@ -107,6 +114,7 @@ impl InstanceConfiguration {
             jvm_binary: None,
             profile_jvm_options: std::collections::BTreeMap::new(),
             java25_fallback: None,
+            aot_cache: None,
             linux_wrapper: None,
             system_libraries: None,
             instance_fallback_icon: None,
@@ -308,6 +316,24 @@ fn is_default_jvm_flags_configuration(config: &Option<InstanceJvmFlagsConfigurat
 pub struct InstanceJvmBinaryConfiguration {
     pub enabled: bool,
     pub path: Option<Arc<Path>>,
+}
+
+/// The player's "Optimize launch" choice for the JDK 25 AOT cache.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AotCacheSetting {
+    pub enabled: bool,
+    /// Set when the launcher turned the option off because the JVM rejected the cache.
+    #[serde(default, skip_serializing_if = "crate::skip_if_none")]
+    pub auto_disabled_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "crate::skip_if_none")]
+    pub disabled_unix_secs: Option<u64>,
+}
+
+impl InstanceConfiguration {
+    /// Whether the JDK 25 AOT cache may be used and trained for this instance (on by default).
+    pub fn aot_cache_enabled(&self) -> bool {
+        self.aot_cache.as_ref().is_none_or(|setting| setting.enabled)
+    }
 }
 
 /// Why Java 25 was dropped for this instance. Removing the key from the instance configuration

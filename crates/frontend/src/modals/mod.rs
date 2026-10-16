@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod aot_optimization;
 pub mod change_version;
 pub mod create_instance;
 pub mod curseforge_install;

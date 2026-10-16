@@ -442,6 +442,21 @@ pub enum MessageToBackend {
         option_id: String,
         choice: schema::profile_jvm::ProfileJvmOptionChoice,
     },
+    /// "Optimize launch (Java 25 AOT cache)" for one instance. Turning it on clears an automatic
+    /// disable; turning it off removes the instance's cache.
+    SetInstanceAotCache {
+        id: InstanceID,
+        enabled: bool,
+    },
+    /// Cancels and postpones the AOT cache optimization of one instance, or of every instance with
+    /// `None` (closing the launcher). A training profile already written is kept.
+    /// Deletes the AOT cache of an idle instance (the player asked for it).
+    DeleteAotCache {
+        id: InstanceID,
+    },
+    CancelAotOptimization {
+        id: Option<InstanceID>,
+    },
     GetAccountCapes {
         account: Uuid,
         result: tokio::sync::oneshot::Sender<AccountCapesResult>,
@@ -475,6 +490,30 @@ pub struct SaveGroupSummary {
     pub selected: bool,
 }
 
+/// State of an instance's JDK 25 AOT cache, as the instance settings show it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AotCacheSummary {
+    /// The option is off.
+    Off,
+    /// No cache yet: the next game records what it loads.
+    #[default]
+    NotBuilt,
+    /// The running game records what it loads.
+    Training,
+    /// Recorded; the launcher still has to build the cache.
+    Waiting,
+    /// A cache is ready (its size on disk).
+    Ready { bytes: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AotOptimizationPhase {
+    /// The game is closed; its JVM writes the training profile.
+    Recording,
+    /// The launcher builds the cache from the profile (`-XX:AOTMode=create`).
+    Creating,
+}
+
 #[derive(Debug)]
 pub enum MessageToFrontend {
     InstanceAdded {
@@ -489,6 +528,7 @@ pub enum MessageToFrontend {
         worlds_state: BridgeDataLoadState,
         servers_state: BridgeDataLoadState,
         content_states: enum_map::EnumMap<ContentFolder, BridgeDataLoadState>,
+        aot_cache: AotCacheSummary,
     },
     InstanceRemoved {
         id: InstanceID,
@@ -506,10 +546,18 @@ pub enum MessageToFrontend {
         configuration: InstanceConfiguration,
         playtime: InstancePlaytime,
         status: InstanceStatus,
+        aot_cache: AotCacheSummary,
     },
     InstancePlaytimeUpdated {
         id: InstanceID,
         playtime: InstancePlaytime,
+    },
+    /// Approximate progress (0..1) of the AOT cache optimization of an instance, sent about once a
+    /// second while its status is `Optimizing`.
+    InstanceOptimizationProgress {
+        id: InstanceID,
+        progress: f32,
+        phase: AotOptimizationPhase,
     },
     InstanceWorldsUpdated {
         id: InstanceID,

@@ -3,7 +3,8 @@ use std::{path::Path, sync::Arc};
 use bridge::{
     handle::BackendHandle,
     instance::InstanceID,
-    message::{EmbeddedOrRaw, MessageToBackend},
+    instance::InstanceStatus,
+    message::{AotCacheSummary, EmbeddedOrRaw, MessageToBackend},
     meta::MetadataRequest,
 };
 use gpui::{prelude::*, *};
@@ -269,6 +270,8 @@ impl InstanceSettingsSubpage {
         };
         // The page shows the section's "Last Java detected" line, so it redraws when that loads.
         cx.observe(&profile_jvm_section, |_, _, cx| cx.notify()).detach();
+        // The AOT cache option can be turned off by the launcher while this page is open.
+        cx.observe(instance, |_, _, cx| cx.notify()).detach();
 
         let mut page = Self {
             data: data.clone(),
@@ -982,6 +985,86 @@ impl InstanceSettingsSubpage {
         basic_content.into_any_element()
     }
 
+    /// "Optimize launch (Java 25 AOT cache)": on by default; shows what the cache is doing in plain
+    /// words, and why the launcher turned the option off.
+    fn render_aot_cache_setting(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let instance = self.instance.read(cx);
+        let setting = instance.configuration.aot_cache.clone();
+        let (status, summary) = (instance.status, instance.aot_cache);
+        let enabled = setting.as_ref().is_none_or(|setting| setting.enabled);
+        let auto_disabled = setting.and_then(|setting| setting.auto_disabled_reason).filter(|_| !enabled);
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Checkbox::new("aot_cache")
+                            .label(t::instance::aot::setting())
+                            .checked(enabled)
+                            .on_click(cx.listener(|page, value: &bool, _, cx| {
+                                page.backend_handle.send(MessageToBackend::SetInstanceAotCache {
+                                    id: page.instance_id,
+                                    enabled: *value,
+                                });
+                                cx.notify();
+                            })),
+                    )
+                    .child(crate::modals::aot_optimization::help_mark("aot_cache_help", t::instance::aot::setting_help())),
+            )
+            .children(enabled.then(|| self.render_aot_cache_state(status, summary, cx)))
+            .children(
+                auto_disabled.map(|reason| div().text_sm().pl_6().child(t::instance::aot::auto_disabled(&reason))),
+            )
+            .into_any_element()
+    }
+
+    /// One line under the option: whether the cache is ready, being prepared or not built yet.
+    fn render_aot_cache_state(
+        &self,
+        status: InstanceStatus,
+        summary: AotCacheSummary,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let (dot, text) = match (status, summary) {
+            (InstanceStatus::Optimizing, _) => (theme.info, t::instance::aot::state_optimizing().to_string()),
+            (_, AotCacheSummary::Ready { bytes }) => (
+                theme.success,
+                t::instance::aot::state_ready(&format!("{}", bytes.div_ceil(1_000_000))).to_string(),
+            ),
+            (_, AotCacheSummary::Training) => (theme.info, t::instance::aot::state_training().to_string()),
+            (_, AotCacheSummary::Waiting) => (theme.info, t::instance::aot::state_waiting().to_string()),
+            (_, AotCacheSummary::NotBuilt | AotCacheSummary::Off) => {
+                (theme.muted_foreground, t::instance::aot::state_not_built().to_string())
+            },
+        };
+        let can_delete = matches!(summary, AotCacheSummary::Ready { .. }) && status == InstanceStatus::NotRunning;
+        let instance_id = self.instance_id;
+        let data = self.data.clone();
+        h_flex()
+            .pl_6()
+            .gap_2()
+            .items_center()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(div().flex_none().size_2().rounded_full().bg(dot))
+            .child(div().child(text))
+            .when(can_delete, |row| {
+                row.child(
+                    Button::new("aot_cache_delete")
+                        .label(t::instance::aot::delete())
+                        .ghost()
+                        .xsmall()
+                        .on_click(move |_, window, cx| {
+                            crate::modals::aot_optimization::confirm_delete(instance_id, &data, window, cx)
+                        }),
+                )
+            })
+            .into_any_element()
+    }
+
     fn render_runtime_content(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let memory_override_enabled = self.memory_override_enabled;
         let wrapper_command_enabled = self.wrapper_command_enabled;
@@ -1036,6 +1119,7 @@ impl InstanceSettingsSubpage {
                     ),
             )
             .child(self.profile_jvm_section.clone())
+            .child(self.render_aot_cache_setting(cx))
             .child(
                 v_flex()
                     .gap_1()

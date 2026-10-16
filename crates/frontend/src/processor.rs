@@ -91,6 +91,7 @@ impl Processor {
                 worlds_state,
                 servers_state,
                 content_states,
+                aot_cache,
             } => {
                 InstanceEntries::add(
                     &self.data.instances,
@@ -105,8 +106,12 @@ impl Processor {
                     worlds_state,
                     servers_state,
                     ContentStates::new(id, content_states, self.data.backend_handle.clone()),
+                    aot_cache,
                     cx,
                 );
+            },
+            MessageToFrontend::InstanceOptimizationProgress { id, progress, phase } => {
+                InstanceEntries::set_optimization(&self.data.instances, id, progress, phase, cx);
             },
             MessageToFrontend::InstanceRemoved { id } => {
                 InstanceEntries::remove(&self.data.instances, id, cx);
@@ -123,8 +128,20 @@ impl Processor {
                 configuration,
                 playtime,
                 status,
+                aot_cache,
             } => {
-                if status == InstanceStatus::Running {
+                let was_optimizing = self
+                    .data
+                    .instances
+                    .read(cx)
+                    .entries
+                    .get(&id)
+                    .is_some_and(|entry| entry.read(cx).status == InstanceStatus::Optimizing);
+                if status == InstanceStatus::Optimizing && !was_optimizing {
+                    // The game closed with a training in progress: show the launcher (if it was
+                    // hidden or closed) so the player sees "Optimizing launch".
+                    self.process(MessageToFrontend::OpenOrFocusMainWindow { monitor: None }, cx);
+                } else if status == InstanceStatus::Running {
                     if InterfaceConfig::get(cx).hide_main_window_on_launch {
                         if let Some(handle) = self.main_window_handle.take() {
                             self.main_window_hidden.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -155,6 +172,7 @@ impl Processor {
                     configuration,
                     playtime,
                     status,
+                    aot_cache,
                     cx,
                 );
             },
