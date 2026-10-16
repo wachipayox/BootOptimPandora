@@ -44,7 +44,7 @@ use crate::{
     arcfactory::ArcStrFactory,
     fs::FolderChanges,
     instance::Instance,
-    launch::{ArgumentExpansionKey, LaunchError, java_default},
+    launch::{ArgumentExpansionKey, LaunchError, aot_cache, java_default},
     library_install_state, log_reader,
     metadata::{
         items::{
@@ -2706,7 +2706,7 @@ impl BackendState {
         }
     }
 
-    async fn start_instance(
+    pub(crate) async fn start_instance(
         self: &Arc<Self>,
         id: InstanceID,
         quick_play: Option<QuickPlayLaunch>,
@@ -2826,6 +2826,30 @@ impl BackendState {
             },
         };
 
+        // JDK 25 AOT cache: only Wachiland global profiles. Built from the committed profile state
+        // (revision pin and the stored hashes of the managed mods); no filesystem scan.
+        let aot_request = committed_branch.as_ref().and_then(|branch| {
+            let pin = branch.applied_revision.as_ref()?;
+            if !pin.profile_id.starts_with(java_default::WACHILAND_PROFILE_PREFIX) {
+                return None;
+            }
+            let (other_process_running, skip_once) = match self.instance_state.write().instances.get_mut(id) {
+                Some(instance) => (
+                    !instance.processes.is_empty() || !instance.closing_processes.is_empty(),
+                    std::mem::take(&mut instance.aot_skip_next_start),
+                ),
+                None => (false, false),
+            };
+            Some(aot_cache::LaunchRequest {
+                instance_root: root_path.to_path_buf(),
+                pin: pin.clone(),
+                mods_fingerprint: aot_cache::mods_fingerprint(&branch.entries),
+                other_process_running,
+                skip_once,
+                quick_play: quick_play.clone(),
+            })
+        });
+
         let launch_tracker = modal_action.push_tracker("Launching".into());
         let result = self
             .launcher
@@ -2840,6 +2864,7 @@ impl BackendState {
                 &modal_action,
                 profile_jvm_options,
                 java25,
+                aot_request,
             )
             .await;
         prelaunch_attribution.write_sidecar("launcher_launch_returned");
@@ -2850,7 +2875,7 @@ impl BackendState {
 
         let is_err = result.is_err();
         match result {
-            Ok((mut child, java_major)) => {
+            Ok((mut child, java_major, aot_run)) => {
                 if let Some(live_game_output) = live_game_output {
                     if let Some(stdout) = child.stdout.take() {
                         let receiver = log_reader::start_game_output(stdout, child.stderr.take());
@@ -2866,6 +2891,9 @@ impl BackendState {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     if java25 && java_major == java_default::JAVA_MAJOR {
                         instance.java25_starts.push((child.process.id(), Instant::now()));
+                    }
+                    if let Some(aot_run) = aot_run {
+                        instance.aot_runs.push((child.process.id(), aot_run));
                     }
                     instance.processes.push(child.process);
                     instance.update_session();

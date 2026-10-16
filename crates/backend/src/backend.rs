@@ -23,7 +23,7 @@ use bridge::{
         ContentFolder, ContentType, InstanceContentSummary, InstanceID, ModpackFile, ModpackFilePath, ModpackFileSource,
     },
     manual_download::ManualCurseforgeDownload,
-    message::{EmbeddedOrRaw, MessageToFrontend},
+    message::{EmbeddedOrRaw, MessageToFrontend, QuickPlayLaunch},
     modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType},
     quit::QuitCoordinator,
     safe_path::SafePath,
@@ -53,7 +53,7 @@ use crate::{
     directories::LauncherDirectories,
     id_slab::IdSlab,
     instance::Instance,
-    launch::{Launcher, java_default},
+    launch::{Launcher, aot_cache, java_default},
     metadata::{
         items::{CurseforgeGetFilesMetadataItem, CurseforgeProjectItem, MinecraftVersionManifestMetadataItem},
         manager::MetadataManager,
@@ -250,6 +250,7 @@ pub fn start(
         skin_manager: Default::default(),
         server_list_pinger: Arc::new(ServerListPinger::new()),
         quit_coordinator: quit_handler,
+        aot_retries: Default::default(),
         should_quit: AtomicBool::new(false),
         content_install_semaphore: Semaphore::new(8),
         manual_curseforge_downloads: ManualCurseforgeDownloadSession::default(),
@@ -307,6 +308,12 @@ pub struct BackendStateFileWatching {
     symlink_link_to_src: HashMap<Arc<Path>, Arc<Path>>,
 }
 
+/// A Start to repeat without the AOT cache.
+pub struct AotRetry {
+    pub id: InstanceID,
+    pub quick_play: Option<QuickPlayLaunch>,
+}
+
 pub struct BackendState {
     pub self_handle: BackendHandle,
     pub send: FrontendHandle,
@@ -325,6 +332,8 @@ pub struct BackendState {
     pub skin_manager: Arc<RwLock<SkinManager>>,
     pub server_list_pinger: Arc<ServerListPinger>,
     pub quit_coordinator: QuitCoordinator,
+    /// Starts to repeat without the AOT cache after a run with it failed early.
+    pub aot_retries: Mutex<Vec<AotRetry>>,
     pub should_quit: AtomicBool,
     pub content_install_semaphore: Semaphore,
     pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
@@ -663,6 +672,8 @@ impl BackendState {
                 }
             }
 
+            self.start_aot_retries();
+
             if self.should_quit.load(Ordering::Relaxed) {
                 while let Some(message) = backend_recv.try_recv() {
                     self.handle_message(message).await;
@@ -673,6 +684,19 @@ impl BackendState {
         }
 
         self.send.send(MessageToFrontend::Quit);
+    }
+
+    /// Repeats the Start of every instance whose run with the AOT cache failed early. The retry
+    /// runs without the cache (`aot_skip_next_start`) and keeps the player's quick play.
+    fn start_aot_retries(self: &Arc<Self>) {
+        let retries = std::mem::take(&mut *self.aot_retries.lock());
+        for retry in retries {
+            log::warn!("[aot-cache] starting the instance again without the AOT cache");
+            let backend = self.clone();
+            tokio::spawn(async move {
+                backend.start_instance(retry.id, retry.quick_play, None, ModalAction::normal_launch()).await;
+            });
+        }
     }
 
     fn handle_tick(&self) {
@@ -705,10 +729,29 @@ impl BackendState {
             });
             // Only a game that exits by itself counts; a player's Stop moves it to `closing_processes`.
             for (pid, exit_code) in exited {
+                // A run with an AOT cache flag is judged first: an early error exit is blamed on the
+                // cache (retry without it), not on Java 25. The retry decides about Java 25.
+                let mut retried_without_cache = false;
+                if let Some(index) = instance.aot_runs.iter().position(|(started_pid, _)| *started_pid == pid) {
+                    let (_, run) = instance.aot_runs.swap_remove(index);
+                    if aot_cache::finish_run(&run, aot_cache::ExitKind::Exited(exit_code))
+                        == aot_cache::ExitAction::RetryWithoutCache
+                    {
+                        instance.aot_skip_next_start = true;
+                        self.aot_retries.lock().push(AotRetry {
+                            id: instance.id,
+                            quick_play: run.quick_play,
+                        });
+                        retried_without_cache = true;
+                    }
+                }
                 let Some(index) = instance.java25_starts.iter().position(|(started_pid, _)| *started_pid == pid) else {
                     continue;
                 };
                 let (_, started) = instance.java25_starts.swap_remove(index);
+                if retried_without_cache {
+                    continue;
+                }
                 if let Some(reason) = java_default::early_exit_reason(exit_code, started.elapsed()) {
                     java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), &reason);
                     let recorded_unix_secs = SystemTime::now()
@@ -724,10 +767,13 @@ impl BackendState {
             }
             let running: Vec<u32> = instance.processes.iter().map(|process| process.id()).collect();
             instance.java25_starts.retain(|(pid, _)| running.contains(pid));
+
+            let mut closed: Vec<(u32, Option<i32>)> = Vec::new();
             instance.closing_processes.retain_mut(|(process, _)| match process.try_wait() {
                 Ok(None) => true,
                 Ok(Some(status)) => {
                     log::info!("Child process {} closed: {}", process.id(), status);
+                    closed.push((process.id(), status.exit_code()));
                     killed = true;
                     false
                 },
@@ -737,8 +783,27 @@ impl BackendState {
                     false
                 },
             });
+            for (pid, exit_code) in closed {
+                if let Some(index) = instance.aot_runs.iter().position(|(started_pid, _)| *started_pid == pid) {
+                    let (_, run) = instance.aot_runs.swap_remove(index);
+                    aot_cache::finish_run(&run, aot_cache::ExitKind::Stopped(exit_code));
+                }
+            }
 
             let now = Instant::now();
+            // A Stop on a training run whose JVM is already assembling the cache gets extra time,
+            // once: killing it then would throw the cache away.
+            for (process, deadline) in instance.closing_processes.iter_mut() {
+                if now > *deadline
+                    && let Some((_, run)) = instance.aot_runs.iter_mut().find(|(pid, _)| *pid == process.id())
+                    && !run.assembly_grace_used
+                    && aot_cache::is_assembling(run)
+                {
+                    run.assembly_grace_used = true;
+                    *deadline = now + aot_cache::ASSEMBLY_GRACE;
+                    log::info!("[aot-cache] Stop: letting the JVM finish assembling the AOT cache before killing it");
+                }
+            }
             let to_kill = instance.closing_processes.extract_if(.., |(_, deadline)| now > *deadline);
             for (process, _) in to_kill {
                 log::info!("Force killed process {}", process.id());
@@ -748,6 +813,26 @@ impl BackendState {
                     self.send.send_error("Failed to kill instance");
                     log::error!("Failed to kill instance: {err:?}");
                 }
+            }
+
+            // Runs whose process is gone without an observed exit (killed by Stop or the deadline):
+            // no cache can have been assembled.
+            let alive: Vec<u32> = instance
+                .processes
+                .iter()
+                .map(|process| process.id())
+                .chain(instance.closing_processes.iter().map(|(process, _)| process.id()))
+                .collect();
+            let gone: Vec<usize> = instance
+                .aot_runs
+                .iter()
+                .enumerate()
+                .filter(|(_, (pid, _))| !alive.contains(pid))
+                .map(|(index, _)| index)
+                .collect();
+            for index in gone.into_iter().rev() {
+                let (_, run) = instance.aot_runs.remove(index);
+                aot_cache::finish_run(&run, aot_cache::ExitKind::Stopped(None));
             }
 
             if killed {

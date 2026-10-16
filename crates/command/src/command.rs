@@ -79,6 +79,11 @@ impl PandoraCommand {
         self.args.push(arg.into());
     }
 
+    /// The arguments added so far (not the executable), for callers that fingerprint the command.
+    pub fn args_os(&self) -> Vec<OsString> {
+        self.args.iter().map(|arg| arg.0.to_os_string()).collect()
+    }
+
     pub fn env(&mut self, k: impl Into<PandoraArg>, v: impl Into<PandoraArg>) {
         self.env.insert(k.into(), v.into());
     }

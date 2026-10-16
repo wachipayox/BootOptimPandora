@@ -38,6 +38,10 @@ The private launcher starts from the instance's existing `.minecraft` directory 
 
 Instances of global profiles `profile_wachiland-*` on PC start with Java 25 (Mojang's `java-runtime-epsilon`, hash-verified). Other instances keep Java 21. Setting a custom Java binary on an instance, or `FORCE_EXTERNAL_JAVA`, always wins; enabling a Java 21 binary there forces Java 21. If a Java 25 start exits with an error within 15 seconds, Pandora logs `[WBOMBO-COMPAT] FALLBACK ... mechanism=java25-default` and uses Java 21 for that instance; remove `java25_fallback` from its `info_v1.json` (with the launcher closed) to try Java 25 again.
 
+## AOT cache for Wachiland profiles
+
+On Java 25, Pandora trains a JDK AOT cache (about 300 MB) per instance while the player plays and uses it on later starts; it is dropped and retrained when the JDK build, the profile revision or the mod list changes, and any problem falls back to a plain start (`[WBOMBO-COMPAT] ... mechanism=jdk25-aot-cache`). Details: [docs/features/jdk25-aot-cache.md](docs/features/jdk25-aot-cache.md).
+
 ## FAQ
 
 ### Discord Server
