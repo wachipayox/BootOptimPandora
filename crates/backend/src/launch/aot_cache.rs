@@ -143,8 +143,10 @@ pub struct ActiveRun {
     pub assembly_grace_used: bool,
     /// The player's Stop on a record run was already given time for the game to close normally.
     pub shutdown_grace_used: bool,
-    /// When the launcher first saw the JVM writing the profile (the game had closed).
+    /// When the launcher first saw that the game closed and the JVM went on to the profile.
     pub dump_started: Option<Instant>,
+    /// The game showed a window at some point (so its disappearance means the game closed).
+    pub had_window: bool,
 }
 
 pub(crate) struct Prepared {
@@ -738,6 +740,7 @@ pub(crate) fn prepare(request: &LaunchRequest, facts: &Facts) -> Prepared {
         assembly_grace_used: false,
         shutdown_grace_used: false,
         dump_started: None,
+        had_window: false,
     };
     let (mut flags, active) = match decision {
         Decision::Use { cache, size } => {
@@ -802,6 +805,62 @@ pub(crate) fn profile_bytes_written(run: &ActiveRun) -> Option<u64> {
 /// phase instead of killing the JVM and losing the profile.
 pub(crate) fn is_assembling(run: &ActiveRun) -> bool {
     profile_bytes_written(run).is_some()
+}
+
+/// A record run whose game is closed while its JVM still works on the profile. On the reference PC
+/// the JVM prepares the profile for ≈ 16 s after the game closes before it creates the file, so
+/// the game's window is the earlier signal: it had a visible window and has none now.
+pub(crate) fn is_recording_after_close(run: &mut ActiveRun, pid: u32) -> bool {
+    if !matches!(run.kind, RunKind::Record { .. }) {
+        return false;
+    }
+    if is_assembling(run) {
+        return true;
+    }
+    match has_visible_window(pid) {
+        Some(true) => {
+            run.had_window = true;
+            false
+        },
+        Some(false) => run.had_window,
+        None => false,
+    }
+}
+
+/// Whether the process has a visible top-level window; `None` where this is not known.
+fn has_visible_window(pid: u32) -> Option<bool> {
+    #[cfg(windows)]
+    {
+        use windows::{
+            Win32::{
+                Foundation::{HWND, LPARAM},
+                UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible},
+            },
+            core::BOOL,
+        };
+        struct Search {
+            pid: u32,
+            found: bool,
+        }
+        unsafe extern "system" fn visit(window: HWND, data: LPARAM) -> BOOL {
+            let search = unsafe { &mut *(data.0 as *mut Search) };
+            let mut owner = 0u32;
+            unsafe { GetWindowThreadProcessId(window, Some(&mut owner)) };
+            if owner == search.pid && unsafe { IsWindowVisible(window) }.as_bool() {
+                search.found = true;
+                return BOOL(0);
+            }
+            BOOL(1)
+        }
+        let mut search = Search { pid, found: false };
+        let _ = unsafe { EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize)) };
+        Some(search.found)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        None
+    }
 }
 
 /// Extra time a Stop gives a JVM that is writing the profile before the launcher kills it anyway.
@@ -1152,6 +1211,7 @@ mod tests {
             assembly_grace_used: false,
             shutdown_grace_used: false,
             dump_started: None,
+            had_window: false,
         }
     }
 
@@ -1611,6 +1671,23 @@ mod tests {
         assert!(is_assembling(&run));
         assert_eq!(profile_bytes_written(&run), Some(3));
         assert!(!is_assembling(&use_run(&dir, &inputs)));
+    }
+
+    #[test]
+    fn a_closed_window_counts_only_after_the_game_showed_one() {
+        let root = TestRoot::new("window");
+        let dir = Dir::new(&root.instance());
+        let inputs = inputs();
+        let profile = record_profile(&dir, &inputs);
+        let mut run = run_for(&dir, &inputs, profile.clone());
+        // This test process has no window: before the game ever showed one it is still starting.
+        assert!(!is_recording_after_close(&mut run, std::process::id()));
+        run.had_window = true;
+        assert_eq!(is_recording_after_close(&mut run, std::process::id()), cfg!(windows));
+        run.had_window = false;
+        fs::write(&profile, b"x").unwrap();
+        assert!(is_recording_after_close(&mut run, std::process::id()), "the profile file is always a signal");
+        assert!(!is_recording_after_close(&mut use_run(&dir, &inputs), std::process::id()));
     }
 
     #[test]

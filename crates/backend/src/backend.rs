@@ -933,15 +933,17 @@ impl BackendState {
                 killed = true;
             }
 
-            // Record runs whose game closed: the JVM is writing the profile.
+            // Record runs whose game closed: the JVM is preparing and writing the profile.
             let mut dumping = Vec::new();
             for (pid, run) in instance.aot_runs.iter_mut() {
-                if alive.contains(pid) && aot_cache::is_assembling(run) {
+                if alive.contains(pid) && aot_cache::is_recording_after_close(run, *pid) {
                     if run.dump_started.is_none() {
                         run.dump_started = Some(now);
                         log::info!("[aot-cache] the game closed; the JVM is writing the training profile");
                     }
                     dumping.push(*pid);
+                } else {
+                    run.dump_started = None;
                 }
             }
             instance.aot_dumping = dumping;
