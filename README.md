@@ -42,6 +42,12 @@ Instances of global profiles `profile_wachiland-*` on PC start with Java 25 (Moj
 
 On Java 25, Pandora builds a JDK AOT cache (about 300 MB) per instance in two steps: the first game records a training profile when it closes, then the launcher turns it into the cache ("Optimizing launch", cancellable and resumed later). Later starts use it; it is dropped and rebuilt when the JDK build, the profile revision or the mod list changes, the instance settings have an "Optimize launch" option, and any problem falls back to a plain start (`[WBOMBO-COMPAT] ... mechanism=jdk25-aot-cache`). Details: [docs/features/jdk25-aot-cache.md](docs/features/jdk25-aot-cache.md).
 
+## Optional zipfs read-only agent (Windows PC)
+
+When a Wachiland profile starts on Java 25 on Windows, Pandora adds `-javaagent:<launcher>/agents/zipfs-readonly-agent.jar`. The JAR is embedded in the launcher (`crates/backend/src/launch/zipfs-agent/`, with its source commit and SHA-256) and written to `agents/` when that file is missing or different, so it always matches the launcher version. The agent makes the JDK open the mod and library JARs read-only, which avoids a per-open volume lookup while SecureJarHandler loads them. The game's stderr is not kept on a normal start, so the agent writes its own `ACTIVE` and `FALLBACK` lines to `<instance>/.minecraft/logs/wbombo-zipfs-agent.log`. Pandora logs its decision to `launcher.log` as `[WBOMBO-COMPAT] ACTIVE|SKIPPED|FALLBACK ... mechanism=zipfs-readonly-agent`.
+
+Disable it for a session with `WBOMBO_ZIPFS_AGENT=0`. If the JAR cannot be written, Pandora logs `FALLBACK` and starts without it. If the Java 25 start fails early, the Java 25 fallback above also removes the agent, because the Java 21 path does not add it.
+
 ## FAQ
 
 ### Discord Server

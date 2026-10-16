@@ -64,6 +64,7 @@ pub(crate) mod jvm_flags;
 #[cfg(target_os = "linux")]
 mod linux_gpu;
 pub(crate) mod profile_jvm;
+pub(crate) mod zipfs_agent;
 
 #[derive(Clone)]
 pub struct Launcher {
@@ -304,6 +305,19 @@ impl Launcher {
                 log::warn!("[profile-jvm] planning failed, launching without profile JVM options: {error}");
                 Vec::new()
             })
+        };
+
+        // Optional zipfs read-only agent: only with the Java 25 path, on Windows, unless switched off.
+        let profile_jvm_args = {
+            let mut args = profile_jvm_args;
+            args.extend(zipfs_agent::jvm_args(
+                java25,
+                java_major,
+                &self.directories.agents_dir,
+                &dot_minecraft_path.join("logs").join(zipfs_agent::STATUS_FILE_NAME),
+                std::env::var(zipfs_agent::DISABLE_ENV).ok().as_deref(),
+            ));
+            args
         };
 
         let launch_context = LaunchContext {

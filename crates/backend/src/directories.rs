@@ -32,6 +32,8 @@ pub struct LauncherDirectories {
     pub root_launcher_dir: Arc<Path>,
     pub config_json: Arc<Path>,
     pub accounts_json: Arc<Path>,
+    /// Optional JVM agents (for example the zipfs read-only agent). Empty unless provisioned.
+    pub agents_dir: Arc<Path>,
 }
 
 impl LauncherDirectories {
@@ -65,6 +67,7 @@ impl LauncherDirectories {
 
         let config_json = launcher_dir.join("config.json");
         let accounts_json = launcher_dir.join("accounts.json");
+        let agents_dir = launcher_dir.join("agents");
 
         Self {
             instances_dir: instances_dir.into(),
@@ -95,6 +98,7 @@ impl LauncherDirectories {
             root_launcher_dir: launcher_dir.into(),
             config_json: config_json.into(),
             accounts_json: accounts_json.into(),
+            agents_dir: agents_dir.into(),
         }
     }
 }
