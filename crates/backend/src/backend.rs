@@ -20,10 +20,11 @@ use bridge::{
     handle::{BackendHandle, BackendReceiver, FrontendHandle},
     install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath},
     instance::{
-        ContentFolder, ContentType, InstanceContentSummary, InstanceID, ModpackFile, ModpackFilePath, ModpackFileSource,
+        ContentFolder, ContentType, InstanceContentSummary, InstanceID, InstanceStatus, ModpackFile, ModpackFilePath,
+        ModpackFileSource,
     },
     manual_download::ManualCurseforgeDownload,
-    message::{EmbeddedOrRaw, MessageToFrontend, QuickPlayLaunch},
+    message::{AotOptimizationPhase, EmbeddedOrRaw, MessageToFrontend, QuickPlayLaunch},
     modal_action::{ModalAction, ModalActionVisitUrl, ProgressTracker, ProgressTrackerFinishType},
     quit::QuitCoordinator,
     safe_path::SafePath,
@@ -251,6 +252,7 @@ pub fn start(
         server_list_pinger: Arc::new(ServerListPinger::new()),
         quit_coordinator: quit_handler,
         aot_retries: Default::default(),
+        aot_create_requests: Default::default(),
         should_quit: AtomicBool::new(false),
         content_install_semaphore: Semaphore::new(8),
         manual_curseforge_downloads: ManualCurseforgeDownloadSession::default(),
@@ -308,6 +310,22 @@ pub struct BackendStateFileWatching {
     symlink_link_to_src: HashMap<Arc<Path>, Arc<Path>>,
 }
 
+/// Turns the instance's "Optimize launch" option off because the JVM rejected the AOT cache. The
+/// player can turn it on again; the reason is shown next to the option.
+pub(crate) fn disable_aot_cache(instance: &mut Instance, reason: &str) {
+    aot_cache::log_fallback(&java_default::JAVA_MAJOR.to_string(), &format!("option-turned-off ({reason})"));
+    let disabled_unix_secs =
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
+    instance.configuration.modify(|configuration| {
+        configuration.aot_cache = Some(schema::instance::AotCacheSetting {
+            enabled: false,
+            auto_disabled_reason: Some(reason.to_owned()),
+            disabled_unix_secs: Some(disabled_unix_secs),
+        });
+    });
+    instance.aot_check_pending = true;
+}
+
 /// A Start to repeat without the AOT cache.
 pub struct AotRetry {
     pub id: InstanceID,
@@ -334,6 +352,8 @@ pub struct BackendState {
     pub quit_coordinator: QuitCoordinator,
     /// Starts to repeat without the AOT cache after a run with it failed early.
     pub aot_retries: Mutex<Vec<AotRetry>>,
+    /// Recorded AOT training profiles whose `create` step should start now.
+    pub aot_create_requests: Mutex<Vec<(InstanceID, aot_cache::PendingCreate)>>,
     pub should_quit: AtomicBool,
     pub content_install_semaphore: Semaphore,
     pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
@@ -673,6 +693,7 @@ impl BackendState {
             }
 
             self.start_aot_retries();
+            self.start_aot_creates();
 
             if self.should_quit.load(Ordering::Relaxed) {
                 while let Some(message) = backend_recv.try_recv() {
@@ -699,6 +720,38 @@ impl BackendState {
         }
     }
 
+    /// Starts the queued `create` steps of the JDK 25 AOT cache.
+    fn start_aot_creates(self: &Arc<Self>) {
+        let requests = std::mem::take(&mut *self.aot_create_requests.lock());
+        for (id, job) in requests {
+            let backend = self.clone();
+            tokio::spawn(async move {
+                log::info!("[aot-cache] starting the create step of the AOT cache (java {})", job.java_version());
+                let spawned = job.command().spawn().await;
+                let mut instance_state = backend.instance_state.write();
+                let Some(instance) = instance_state.instances.get_mut(id) else {
+                    return;
+                };
+                match spawned {
+                    Ok(child) => {
+                        instance.aot_create = Some(crate::instance::AotCreateJob {
+                            job,
+                            process: child.process,
+                            started: Instant::now(),
+                        });
+                        backend.quit_coordinator.set_can_quit(false);
+                    },
+                    Err(error) => {
+                        // Not the JVM's verdict on the profile: keep it and try at the next Start.
+                        log::warn!("[aot-cache] could not start the create step: {error}");
+                        instance.aot_create_postponed = true;
+                    },
+                }
+                backend.send.send(instance.create_modify_message());
+            });
+        }
+    }
+
     fn handle_tick(&self) {
         self.meta.expire();
         self.mod_metadata_manager.write_changes();
@@ -710,6 +763,7 @@ impl BackendState {
 
         let mut instance_state = self.instance_state.write();
         for instance in instance_state.instances.iter_mut() {
+            let status_before = instance.status();
             let mut killed = false;
             let mut exited: Vec<(u32, Option<i32>)> = Vec::new();
 
@@ -729,20 +783,32 @@ impl BackendState {
             });
             // Only a game that exits by itself counts; a player's Stop moves it to `closing_processes`.
             for (pid, exit_code) in exited {
+                // The retry without the AOT cache: if it started fine, the cache was the problem.
+                if let Some((probe_pid, started, reason)) = instance.aot_retry_probe.take() {
+                    if probe_pid != pid {
+                        instance.aot_retry_probe = Some((probe_pid, started, reason));
+                    } else if java_default::early_exit_reason(exit_code, started.elapsed()).is_none() {
+                        disable_aot_cache(instance, &reason);
+                    } else {
+                        log::info!("[aot-cache] the retry without the cache failed too: the cache is not the cause");
+                    }
+                }
                 // A run with an AOT cache flag is judged first: an early error exit is blamed on the
                 // cache (retry without it), not on Java 25. The retry decides about Java 25.
                 let mut retried_without_cache = false;
                 if let Some(index) = instance.aot_runs.iter().position(|(started_pid, _)| *started_pid == pid) {
                     let (_, run) = instance.aot_runs.swap_remove(index);
-                    if aot_cache::finish_run(&run, aot_cache::ExitKind::Exited(exit_code))
-                        == aot_cache::ExitAction::RetryWithoutCache
-                    {
-                        instance.aot_skip_next_start = true;
-                        self.aot_retries.lock().push(AotRetry {
-                            id: instance.id,
-                            quick_play: run.quick_play,
-                        });
-                        retried_without_cache = true;
+                    match aot_cache::finish_run(&run, aot_cache::ExitKind::Exited(exit_code)) {
+                        aot_cache::ExitAction::RetryWithoutCache { reason } => {
+                            instance.aot_skip_next_start = Some(reason);
+                            self.aot_retries.lock().push(AotRetry {
+                                id: instance.id,
+                                quick_play: run.quick_play,
+                            });
+                            retried_without_cache = true;
+                        },
+                        aot_cache::ExitAction::Recorded => instance.aot_check_pending = true,
+                        aot_cache::ExitAction::Nothing | aot_cache::ExitAction::Discarded => {},
                     }
                 }
                 let Some(index) = instance.java25_starts.iter().position(|(started_pid, _)| *started_pid == pid) else {
@@ -784,24 +850,42 @@ impl BackendState {
                 },
             });
             for (pid, exit_code) in closed {
+                if instance.aot_retry_probe.as_ref().is_some_and(|(probe_pid, _, _)| *probe_pid == pid) {
+                    instance.aot_retry_probe = None;
+                }
                 if let Some(index) = instance.aot_runs.iter().position(|(started_pid, _)| *started_pid == pid) {
                     let (_, run) = instance.aot_runs.swap_remove(index);
-                    aot_cache::finish_run(&run, aot_cache::ExitKind::Stopped(exit_code));
+                    if aot_cache::finish_run(&run, aot_cache::ExitKind::Stopped(exit_code))
+                        == aot_cache::ExitAction::Recorded
+                    {
+                        instance.aot_check_pending = true;
+                    }
                 }
             }
 
             let now = Instant::now();
-            // A Stop on a training run whose JVM is already assembling the cache gets extra time,
-            // once: killing it then would throw the cache away.
+            // A Stop on a record run gives the game time to close normally and the JVM time to
+            // write the training profile; killing it then would throw the training away.
             for (process, deadline) in instance.closing_processes.iter_mut() {
-                if now > *deadline
-                    && let Some((_, run)) = instance.aot_runs.iter_mut().find(|(pid, _)| *pid == process.id())
-                    && !run.assembly_grace_used
-                    && aot_cache::is_assembling(run)
-                {
-                    run.assembly_grace_used = true;
-                    *deadline = now + aot_cache::ASSEMBLY_GRACE;
-                    log::info!("[aot-cache] Stop: letting the JVM finish assembling the AOT cache before killing it");
+                if now <= *deadline {
+                    continue;
+                }
+                let Some((_, run)) = instance.aot_runs.iter_mut().find(|(pid, _)| *pid == process.id()) else {
+                    continue;
+                };
+                if !matches!(run.kind, aot_cache::RunKind::Record { .. }) {
+                    continue;
+                }
+                if aot_cache::is_assembling(run) {
+                    if !run.assembly_grace_used {
+                        run.assembly_grace_used = true;
+                        *deadline = now + aot_cache::ASSEMBLY_GRACE;
+                        log::info!("[aot-cache] Stop: letting the JVM finish writing the training profile before killing it");
+                    }
+                } else if !run.shutdown_grace_used {
+                    run.shutdown_grace_used = true;
+                    *deadline = now + aot_cache::SHUTDOWN_GRACE;
+                    log::info!("[aot-cache] Stop: giving the game time to close normally so its training profile is kept");
                 }
             }
             let to_kill = instance.closing_processes.extract_if(.., |(_, deadline)| now > *deadline);
@@ -815,8 +899,8 @@ impl BackendState {
                 }
             }
 
-            // Runs whose process is gone without an observed exit (killed by Stop or the deadline):
-            // no cache can have been assembled.
+            // Runs whose process is gone without an observed exit (killed by Stop, the deadline or a
+            // cancel): no profile can have been written.
             let alive: Vec<u32> = instance
                 .processes
                 .iter()
@@ -834,8 +918,98 @@ impl BackendState {
                 let (_, run) = instance.aot_runs.remove(index);
                 aot_cache::finish_run(&run, aot_cache::ExitKind::Stopped(None));
             }
+            if instance.aot_retry_probe.as_ref().is_some_and(|(pid, _, _)| !alive.contains(pid)) {
+                instance.aot_retry_probe = None;
+            }
 
-            if killed {
+            // The retry without the cache is past the early window: the cache was the problem.
+            if instance
+                .aot_retry_probe
+                .as_ref()
+                .is_some_and(|(_, started, _)| started.elapsed() >= java_default::EARLY_EXIT_WINDOW)
+                && let Some((_, _, reason)) = instance.aot_retry_probe.take()
+            {
+                disable_aot_cache(instance, &reason);
+                killed = true;
+            }
+
+            // Record runs whose game closed: the JVM is writing the profile.
+            let mut dumping = Vec::new();
+            for (pid, run) in instance.aot_runs.iter_mut() {
+                if alive.contains(pid) && aot_cache::is_assembling(run) {
+                    if run.dump_started.is_none() {
+                        run.dump_started = Some(now);
+                        log::info!("[aot-cache] the game closed; the JVM is writing the training profile");
+                    }
+                    dumping.push(*pid);
+                }
+            }
+            instance.aot_dumping = dumping;
+
+            // The launcher's create step.
+            let create_result = instance.aot_create.as_mut().map(|create| create.process.try_wait());
+            match create_result {
+                None | Some(Ok(None)) => {},
+                Some(result) => {
+                    let exit_code = result.ok().flatten().and_then(|status| status.exit_code());
+                    if let Some(create) = instance.aot_create.take()
+                        && let aot_cache::CreateOutcome::Failed { reason } =
+                            aot_cache::finish_create(&create.job, exit_code, false, create.started.elapsed())
+                    {
+                        disable_aot_cache(instance, &reason);
+                    }
+                    killed = true;
+                },
+            }
+
+            // A recorded profile waiting for its create step, or a cache to remove, once idle.
+            if instance.aot_check_pending
+                && instance.processes.is_empty()
+                && instance.closing_processes.is_empty()
+                && instance.aot_create.is_none()
+                && instance.launch_keepalive.as_ref().is_none_or(|keepalive| !keepalive.is_alive())
+            {
+                instance.aot_check_pending = false;
+                if !instance.configuration.get().aot_cache_enabled() {
+                    aot_cache::remove_all(&instance.root_path);
+                } else if !instance.aot_create_postponed
+                    && !aot_cache::env_disabled()
+                    && let Some(job) = aot_cache::pending_create(&instance.root_path)
+                {
+                    self.aot_create_requests.lock().push((instance.id, job));
+                }
+            }
+
+            if instance.status() == InstanceStatus::Optimizing {
+                let estimate = if let Some(create) = &instance.aot_create {
+                    Some((
+                        aot_cache::Progress::Creating {
+                            elapsed: create.started.elapsed(),
+                        },
+                        AotOptimizationPhase::Creating,
+                    ))
+                } else {
+                    instance.aot_runs.iter().find(|(pid, _)| instance.aot_dumping.contains(pid)).map(|(_, run)| {
+                        (
+                            aot_cache::Progress::Recording {
+                                written: aot_cache::profile_bytes_written(run).unwrap_or(0),
+                                elapsed: run.dump_started.map_or(Duration::ZERO, |started| started.elapsed()),
+                            },
+                            AotOptimizationPhase::Recording,
+                        )
+                    })
+                };
+                if let Some((progress, phase)) = estimate {
+                    let timings = aot_cache::Dir::new(&instance.root_path).read_timings();
+                    self.send.send(MessageToFrontend::InstanceOptimizationProgress {
+                        id: instance.id,
+                        progress: aot_cache::estimate_progress(progress, &timings),
+                        phase,
+                    });
+                }
+            }
+
+            if killed || instance.status() != status_before {
                 instance.update_session();
                 self.send.send(instance.create_modify_message());
             } else if let Some(launch_keepalive) = &instance.launch_keepalive
@@ -850,8 +1024,11 @@ impl BackendState {
             }
 
             self.restore_mods_folder_if_stopped(instance);
-            any_process_alive |= !instance.processes.is_empty() || !instance.closing_processes.is_empty();
+            any_process_alive |= !instance.processes.is_empty()
+                || !instance.closing_processes.is_empty()
+                || instance.aot_create.is_some();
         }
+        any_process_alive |= !self.aot_create_requests.lock().is_empty();
 
         self.quit_coordinator.set_can_quit(!any_process_alive);
     }

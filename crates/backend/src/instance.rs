@@ -43,6 +43,14 @@ use crate::{
     persistent::Persistent,
 };
 
+/// A running `-XX:AOTMode=create` step of an instance's AOT cache.
+#[derive(Debug)]
+pub struct AotCreateJob {
+    pub job: crate::launch::aot_cache::PendingCreate,
+    pub process: PandoraProcess,
+    pub started: Instant,
+}
+
 #[derive(Debug)]
 pub struct Instance {
     pub id: InstanceID,
@@ -64,8 +72,20 @@ pub struct Instance {
     /// Game processes started with a JDK 25 AOT cache flag (`-XX:AOTCache` or
     /// `-XX:AOTCacheOutput`), by process id.
     pub aot_runs: Vec<(u32, crate::launch::aot_cache::ActiveRun)>,
-    /// The next Start of this instance must not use the AOT cache (a retry after a failed run).
-    pub aot_skip_next_start: bool,
+    /// The next Start of this instance must not use the AOT cache (a retry after a failed run);
+    /// holds the failure that caused it.
+    pub aot_skip_next_start: Option<String>,
+    /// The retry without the cache: process id, start time and the failure that caused it. If the
+    /// retry starts fine, the cache was the problem and the instance's option is turned off.
+    pub aot_retry_probe: Option<(u32, Instant, String)>,
+    /// The launcher's `create` step for this instance, if running.
+    pub aot_create: Option<AotCreateJob>,
+    /// The player cancelled the optimization; it waits for the next Start (or launcher start).
+    pub aot_create_postponed: bool,
+    /// Look for a recorded profile that waits for its `create` step when the instance is idle.
+    pub aot_check_pending: bool,
+    /// Game processes whose JVM is writing the training profile (the game itself is closed).
+    pub aot_dumping: Vec<u32>,
     session_started_at: Option<Instant>,
 
     pub worlds_state: BridgeDataLoadState,
@@ -1030,7 +1050,12 @@ impl Instance {
             closing_processes: Vec::new(),
             java25_starts: Vec::new(),
             aot_runs: Vec::new(),
-            aot_skip_next_start: false,
+            aot_skip_next_start: None,
+            aot_retry_probe: None,
+            aot_create: None,
+            aot_create_postponed: false,
+            aot_check_pending: true,
+            aot_dumping: Vec::new(),
             session_started_at: None,
 
             worlds_state: BridgeDataLoadState::default(),
@@ -1180,10 +1205,13 @@ impl Instance {
     }
 
     pub fn status(&self) -> InstanceStatus {
-        if !self.processes.is_empty() {
+        let optimizing = |pid: u32| self.aot_dumping.contains(&pid);
+        if self.processes.iter().any(|process| !optimizing(process.id())) {
             InstanceStatus::Running
-        } else if !self.closing_processes.is_empty() {
+        } else if self.closing_processes.iter().any(|(process, _)| !optimizing(process.id())) {
             InstanceStatus::Stopping
+        } else if !self.aot_dumping.is_empty() || self.aot_create.is_some() {
+            InstanceStatus::Optimizing
         } else if let Some(keepalive) = &self.launch_keepalive
             && keepalive.is_alive()
         {

@@ -51,6 +51,9 @@ pub enum InstanceStatus {
     Launching,
     Running,
     Stopping,
+    /// The game is closed and the launcher is building the JDK 25 AOT cache for this instance
+    /// (the JVM writing its training profile, then the launcher's `create` step).
+    Optimizing,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

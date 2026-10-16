@@ -2841,6 +2841,8 @@ impl LaunchContext {
                     java_major: self.java_major,
                     classpath: &self.classpath,
                     jvm_args: command.args_os(),
+                    game_dir: &self.game_dir,
+                    path_env: self.game_path_env(),
                     jvm_binary_enabled: self.configuration.jvm_binary.as_ref().is_some_and(|binary| binary.enabled),
                     force_external_java: std::env::var_os("FORCE_EXTERNAL_JAVA").is_some(),
                     sandbox: self.configuration.sandbox,
@@ -2855,11 +2857,8 @@ impl LaunchContext {
 
         command.arg("com.moulberry.pandora.LaunchWrapper");
 
-        if let Some(path) = std::env::var_os("PATH") {
-            let new_paths = std::env::split_paths(&path).chain([self.natives_dir.clone()]);
-            if let Ok(new_path_arg) = std::env::join_paths(new_paths) {
-                command.env("PATH", new_path_arg);
-            }
+        if let Some(new_path_arg) = self.game_path_env() {
+            command.env("PATH", new_path_arg);
         }
 
         let mut child = if self.configuration.sandbox {
@@ -2954,6 +2953,13 @@ impl LaunchContext {
         stdin.flush()?;
 
         Ok((child, aot_run))
+    }
+
+    /// `PATH` for the game: the launcher's own with the natives directory appended.
+    fn game_path_env(&self) -> Option<OsString> {
+        let path = std::env::var_os("PATH")?;
+        let new_paths = std::env::split_paths(&path).chain([self.natives_dir.clone()]);
+        std::env::join_paths(new_paths).ok()
     }
 
     fn process_arguments(&self, arguments: &[LaunchArgument], handler: &mut impl FnMut(&OsStr)) {
