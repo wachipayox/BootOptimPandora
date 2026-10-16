@@ -9,7 +9,7 @@ BootOptim `docs/research/jdk25-aot-cache-reopen-2026-10-15.md` (#364) and
 The JDK 25 AOT cache (JEP 483/514) stores loaded and linked classes and JIT profiles. On the
 reference PC (Java 25.0.1, Beta rev `7d5b9e50…`, startup to `main_menu`, medians of 4) a start
 with the cache is about 5 s faster than one without it (55.5 → 50.5 s, −9 %, ranges do not
-overlap). The cache is about 300 MB. Measurements: BootOptim
+overlap); on the next real revision, retrained, −4.3 s (−7.5 %, 16 runs). The cache is about 300 MB. Measurements: BootOptim
 `docs/research/jdk25-aot-cache-pandora-2026-10-16.md`.
 
 Pandora trains the cache **while the player plays**, with no separate start:
