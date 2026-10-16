@@ -32,6 +32,8 @@ pub fn status_button(id: impl Into<ElementId>, instance_id: InstanceID, data: &D
 
 struct ProgressView {
     instance: Entity<InstanceEntry>,
+    /// Closes the dialog when the optimization ends; dropped with the dialog.
+    _close_when_done: Option<Subscription>,
 }
 
 impl Render for ProgressView {
@@ -75,15 +77,16 @@ pub fn open(id: InstanceID, data: &DataEntities, window: &mut Window, cx: &mut A
         cx.observe(&instance, |_, _, cx| cx.notify()).detach();
         ProgressView {
             instance: instance.clone(),
+            _close_when_done: None,
         }
     });
     let handle = window.window_handle();
-    cx.observe(&instance, move |instance, cx| {
+    let close_when_done = cx.observe(&instance, move |instance, cx| {
         if instance.read(cx).status != InstanceStatus::Optimizing {
             _ = handle.update(cx, |_, window, cx| window.close_dialog(cx));
         }
-    })
-    .detach();
+    });
+    view.update(cx, |view, _| view._close_when_done = Some(close_when_done));
 
     let backend_handle = data.backend_handle.clone();
     window.open_dialog(cx, move |dialog, _, _| {
