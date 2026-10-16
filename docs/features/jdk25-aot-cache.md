@@ -70,6 +70,11 @@ and the reason shown under the option) **only when Java itself rejects the cache
 | AOT error at start (`record` or `use`): the JVM exits with an error in the first 15 s and the immediate retry **without** any AOT flag starts fine (lives 15 s or exits with 0) | retry probe |
 | The create step exits with an error, or exits 0 without a usable output | create exit |
 
+On Windows `javaw` shows a modal "Java Virtual Machine Launcher" error dialog when the JVM refuses to
+start, and exits only when the player closes it. The launcher looks for that dialog once a second, so
+such a run counts as an early error however long the dialog stays open (reason
+`exit-code=1, JVM error dialog`). The same applies to the Java 21 fallback of #103.
+
 It does **not** turn off for a Stop, a game closed by the player, a cancelled optimization, a
 closed or killed launcher, or a game crash after the first 15 s (mods). If the retry without the
 cache also fails early, the cache was not the cause and the option stays on (the Java 21 fallback

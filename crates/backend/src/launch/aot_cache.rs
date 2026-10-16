@@ -827,32 +827,63 @@ pub(crate) fn is_recording_after_close(run: &mut ActiveRun, pid: u32) -> bool {
     }
 }
 
-/// Whether the process has a visible top-level window; `None` where this is not known.
+/// Whether the process has a visible top-level window of the game (the JVM launcher's error dialog
+/// does not count); `None` where this is not known.
 fn has_visible_window(pid: u32) -> Option<bool> {
+    visible_windows(pid).map(|windows| windows.game)
+}
+
+/// Whether the process shows the error dialog of `javaw` ("Java Virtual Machine Launcher"), which
+/// it shows when the JVM refuses to start, e.g. on a rejected AOT flag. Windows only.
+pub(crate) fn shows_jvm_error_dialog(pid: u32) -> bool {
+    visible_windows(pid).is_some_and(|windows| windows.jvm_error_dialog)
+}
+
+struct VisibleWindows {
+    game: bool,
+    jvm_error_dialog: bool,
+}
+
+fn visible_windows(pid: u32) -> Option<VisibleWindows> {
     #[cfg(windows)]
     {
         use windows::{
             Win32::{
                 Foundation::{HWND, LPARAM},
-                UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible},
+                UI::WindowsAndMessaging::{
+                    EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+                },
             },
             core::BOOL,
         };
         struct Search {
             pid: u32,
-            found: bool,
+            found: VisibleWindows,
         }
         unsafe extern "system" fn visit(window: HWND, data: LPARAM) -> BOOL {
             let search = unsafe { &mut *(data.0 as *mut Search) };
             let mut owner = 0u32;
             unsafe { GetWindowThreadProcessId(window, Some(&mut owner)) };
-            if owner == search.pid && unsafe { IsWindowVisible(window) }.as_bool() {
-                search.found = true;
-                return BOOL(0);
+            if owner != search.pid || !unsafe { IsWindowVisible(window) }.as_bool() {
+                return BOOL(1);
+            }
+            let mut class = [0u16; 16];
+            let class_len = unsafe { GetClassNameW(window, &mut class) }.max(0) as usize;
+            let class = &class[..class_len];
+            let mut title = [0u16; 64];
+            let title_len = unsafe { GetWindowTextW(window, &mut title) }.max(0) as usize;
+            let title = &title[..title_len];
+            // A standard dialog (#32770) with the title the `javaw` launcher gives its error box.
+            if String::from_utf16_lossy(class) == "#32770"
+                && String::from_utf16_lossy(title) == "Java Virtual Machine Launcher"
+            {
+                search.found.jvm_error_dialog = true;
+            } else {
+                search.found.game = true;
             }
             BOOL(1)
         }
-        let mut search = Search { pid, found: false };
+        let mut search = Search { pid, found: VisibleWindows { game: false, jvm_error_dialog: false } };
         let _ = unsafe { EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize)) };
         Some(search.found)
     }
@@ -876,7 +907,7 @@ pub(crate) fn finish_run(run: &ActiveRun, exit: ExitKind) -> ExitAction {
     finish_run_after(run, exit, run.started.elapsed())
 }
 
-fn finish_run_after(run: &ActiveRun, exit: ExitKind, lived: Duration) -> ExitAction {
+pub(crate) fn finish_run_after(run: &ActiveRun, exit: ExitKind, lived: Duration) -> ExitAction {
     let dir = Dir { root: run.dir.clone() };
 
     // A Stop is the player's doing: never an AOT failure, never a retry.

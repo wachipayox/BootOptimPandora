@@ -80,6 +80,8 @@ pub(crate) fn early_exit_reason(exit_code: Option<i32>, lived: Duration) -> Opti
         return None;
     }
     Some(match exit_code {
+        // `lived` is zero for a JVM that showed the launcher's error dialog (see `jvm_error_dialogs`).
+        Some(code) if lived.is_zero() => format!("exit-code={code}, JVM error dialog"),
         Some(code) => format!("exit-code={code} after {}s", lived.as_secs()),
         None => format!("signal after {}s", lived.as_secs()),
     })

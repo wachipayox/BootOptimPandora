@@ -783,11 +783,14 @@ impl BackendState {
             });
             // Only a game that exits by itself counts; a player's Stop moves it to `closing_processes`.
             for (pid, exit_code) in exited {
+                // A JVM that refused to start counts as an early error however long its dialog stayed.
+                let error_dialog = instance.jvm_error_dialogs.contains(&pid);
+                let lived = |started: Instant| if error_dialog { Duration::ZERO } else { started.elapsed() };
                 // The retry without the AOT cache: if it started fine, the cache was the problem.
                 if let Some((probe_pid, started, reason)) = instance.aot_retry_probe.take() {
                     if probe_pid != pid {
                         instance.aot_retry_probe = Some((probe_pid, started, reason));
-                    } else if java_default::early_exit_reason(exit_code, started.elapsed()).is_none() {
+                    } else if java_default::early_exit_reason(exit_code, lived(started)).is_none() {
                         disable_aot_cache(instance, &reason);
                     } else {
                         log::info!("[aot-cache] the retry without the cache failed too: the cache is not the cause");
@@ -798,7 +801,7 @@ impl BackendState {
                 let mut retried_without_cache = false;
                 if let Some(index) = instance.aot_runs.iter().position(|(started_pid, _)| *started_pid == pid) {
                     let (_, run) = instance.aot_runs.swap_remove(index);
-                    match aot_cache::finish_run(&run, aot_cache::ExitKind::Exited(exit_code)) {
+                    match aot_cache::finish_run_after(&run, aot_cache::ExitKind::Exited(exit_code), lived(run.started)) {
                         aot_cache::ExitAction::RetryWithoutCache { reason } => {
                             instance.aot_skip_next_start = Some(reason);
                             self.aot_retries.lock().push(AotRetry {
@@ -818,7 +821,7 @@ impl BackendState {
                 if retried_without_cache {
                     continue;
                 }
-                if let Some(reason) = java_default::early_exit_reason(exit_code, started.elapsed()) {
+                if let Some(reason) = java_default::early_exit_reason(exit_code, lived(started)) {
                     java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), &reason);
                     let recorded_unix_secs = SystemTime::now()
                         .duration_since(SystemTime::UNIX_EPOCH)
@@ -922,11 +925,31 @@ impl BackendState {
                 instance.aot_retry_probe = None;
             }
 
+            // On Windows `javaw` shows a modal "Java Virtual Machine Launcher" dialog when the JVM
+            // refuses to start and exits only once the player closes it, so its exit time says
+            // nothing: remember the dialog while it is up.
+            instance.jvm_error_dialogs.retain(|pid| alive.contains(pid));
+            let mut watched: Vec<u32> = instance
+                .aot_runs
+                .iter()
+                .map(|(pid, _)| *pid)
+                .chain(instance.java25_starts.iter().map(|(pid, _)| *pid))
+                .chain(instance.aot_retry_probe.as_ref().map(|(pid, _, _)| *pid))
+                .filter(|pid| alive.contains(pid) && !instance.jvm_error_dialogs.contains(pid))
+                .collect();
+            watched.sort_unstable();
+            watched.dedup();
+            for pid in watched {
+                if aot_cache::shows_jvm_error_dialog(pid) {
+                    log::info!("[aot-cache] process {pid} shows the JVM launcher's error dialog: the JVM refused to start");
+                    instance.jvm_error_dialogs.push(pid);
+                }
+            }
+
             // The retry without the cache is past the early window: the cache was the problem.
-            if instance
-                .aot_retry_probe
-                .as_ref()
-                .is_some_and(|(_, started, _)| started.elapsed() >= java_default::EARLY_EXIT_WINDOW)
+            if instance.aot_retry_probe.as_ref().is_some_and(|(pid, started, _)| {
+                started.elapsed() >= java_default::EARLY_EXIT_WINDOW && !instance.jvm_error_dialogs.contains(pid)
+            })
                 && let Some((_, _, reason)) = instance.aot_retry_probe.take()
             {
                 disable_aot_cache(instance, &reason);

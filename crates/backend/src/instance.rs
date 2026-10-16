@@ -78,6 +78,8 @@ pub struct Instance {
     /// The retry without the cache: process id, start time and the failure that caused it. If the
     /// retry starts fine, the cache was the problem and the instance's option is turned off.
     pub aot_retry_probe: Option<(u32, Instant, String)>,
+    /// Game processes that showed the JVM launcher's error dialog (the JVM refused to start).
+    pub jvm_error_dialogs: Vec<u32>,
     /// The launcher's `create` step for this instance, if running.
     pub aot_create: Option<AotCreateJob>,
     /// The player cancelled the optimization; it waits for the next Start (or launcher start).
@@ -1052,6 +1054,7 @@ impl Instance {
             aot_runs: Vec::new(),
             aot_skip_next_start: None,
             aot_retry_probe: None,
+            jvm_error_dialogs: Vec::new(),
             aot_create: None,
             aot_create_postponed: false,
             aot_check_pending: true,
