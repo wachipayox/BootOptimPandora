@@ -31,7 +31,7 @@ cache and the same gain; the one-step way has fewer parts.
 | | One step (`-XX:AOTCacheOutput`), chosen | Two steps (`AOTMode=record`, then `AOTMode=create`) |
 |---|---|---|
 | Gain at the main menu | −5.0 to −6.0 s | −5.7 s |
-| Cost while playing (to the menu) | +8 to +12 s | +6 to +16 s |
+| Training run, to the menu (control 55.5–57.7 s) | 64.5–69.5 s | 63.1–72.9 s |
 | Extra time to close the game | about +35 s (config write 17 s + assembly 18 s) | about +18 s, then a 15 s job later |
 | Later job | none | `create` at the next launcher start: 15 s, 1 GB RAM, one core; it did not slow a simultaneous start |
 | Parts that can fail | one process; the JVM does the assembly | saved JVM arguments, a background job and its state |
