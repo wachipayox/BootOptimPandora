@@ -1,6 +1,6 @@
 # Reference for the zipfs read-only agent embedded in the launcher with include_bytes!.
 # Rebuild from tools/zipfs-readonly-agent in BootOptim, then update source_commit and sha256 together.
 source_repo=wachipayox/BootOptim
-source_branch=claude/zipfs-readonly-agent-2026-10-16
-source_commit=515ec29ef7ad9b52919221d1e9de0bce591781f4
-sha256=4b59843b5b9c65c50cc810157b0051689ef029fe20cb8cc373720ebd08a9b7d4
+source_branch=claude/zipfs-readonly-agent-remove-transformer
+source_commit=a93515c6ebce62691f9b98d30cbcfdcceb002fcc
+sha256=78b8700a15f77e7c363c2e73cd724d236104b70a54d3ae49f1a096b8aac7ecfe
