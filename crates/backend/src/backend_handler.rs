@@ -708,6 +708,13 @@ impl BackendState {
                     backend.cli_start_instance_by_name(name, modal_action, update_policy, outcome).await;
                 });
             },
+            MessageToBackend::CliInstanceCommand { command, outcome } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let result = crate::cli_instances::run(&backend, command).await;
+                    _ = outcome.send(result);
+                });
+            },
             MessageToBackend::StartInstance {
                 id,
                 quick_play,
@@ -1857,6 +1864,7 @@ impl BackendState {
                             &modal_action,
                             &progress,
                             save_group_target,
+                            false,
                         )
                         .await
                     {
@@ -2122,6 +2130,11 @@ impl BackendState {
             MessageToBackend::SetDistributionConfiguration { config } => {
                 self.config.lock().modify(|backend_config| {
                     backend_config.distribution = config;
+                });
+            },
+            MessageToBackend::SetLauncherChannel { channel } => {
+                self.config.lock().modify(|backend_config| {
+                    backend_config.channel = channel;
                 });
             },
             MessageToBackend::SetProxyPassword { password } => {

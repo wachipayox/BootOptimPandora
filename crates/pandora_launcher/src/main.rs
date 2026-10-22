@@ -38,6 +38,13 @@ impl From<InternalDefenderProcessAction> for command::DefenderProcessAction {
 
 #[derive(Parser, Debug)]
 #[command(group = clap::ArgGroup::new("start_request").args(["run_instance", "run_instance_normal"]))]
+#[command(
+    group = clap::ArgGroup::new("instance_command")
+        .args(["list_instances", "instance_info", "create_instance", "update_instance", "delete_instance"])
+        .conflicts_with("start_request")
+)]
+#[command(group = clap::ArgGroup::new("revision_target").args(["create_instance", "update_instance"]))]
+#[command(group = clap::ArgGroup::new("json_target").args(["list_instances", "instance_info"]))]
 struct Cli {
     /// Open the launcher and launch an instance with full asset verification
     #[arg(long, conflicts_with = "run_instance_normal")]
@@ -54,6 +61,33 @@ struct Cli {
     /// With --run-instance*: start unchanged even if an inherited profile update is pending
     #[arg(long, conflicts_with = "update", requires = "start_request")]
     no_update: bool,
+    /// Print every instance (name, profile, revision, loader, Minecraft version, .minecraft path) and exit
+    #[arg(long)]
+    list_instances: bool,
+    /// Print one instance and exit
+    #[arg(long, value_name = "NAME")]
+    instance_info: Option<String>,
+    /// Create an instance of a global profile (needs --from-profile) and exit
+    #[arg(long, value_name = "NAME", requires = "from_profile")]
+    create_instance: Option<String>,
+    /// With --create-instance: the global profile id, for example profile_wachiland-elite-beta
+    #[arg(long, value_name = "PROFILE_ID", requires = "create_instance")]
+    from_profile: Option<String>,
+    /// Update an instance without starting it, like "Update and start" without the start, and exit
+    #[arg(long, value_name = "NAME")]
+    update_instance: Option<String>,
+    /// Delete an instance made by --create-instance or an instance of a profile_test-* profile (needs --confirm)
+    #[arg(long, value_name = "NAME", requires = "confirm")]
+    delete_instance: Option<String>,
+    /// With --delete-instance: the instance name again
+    #[arg(long, value_name = "NAME", requires = "delete_instance")]
+    confirm: Option<String>,
+    /// With --create-instance or --update-instance: `latest` or an exact revision id (default: what the GUI uses)
+    #[arg(long, value_name = "REVISION", value_parser = parse_revision, requires = "revision_target")]
+    revision: Option<bridge::message::CliRevision>,
+    /// With --list-instances or --instance-info: print JSON on stdout only
+    #[arg(long, requires = "json_target")]
+    json: bool,
     /// Internal function to set traversable ACLs in an elevated context
     #[cfg(windows)]
     #[arg(long, hide = false, num_args = 2..)]
@@ -68,8 +102,11 @@ pub mod panic;
 
 fn main() {
     let cli = Cli::parse();
+    // Instance management never opens a window; the launcher process that runs it exits when it is done.
+    let instance_command = cli_instance_command(&cli).is_some();
+    let json_output = cli.json;
 
-    if cli_start_request(&cli).is_some() {
+    if cli_start_request(&cli).is_some() || instance_command {
         attach_parent_console();
     }
 
@@ -256,8 +293,8 @@ fn main() {
             let listen_cancel = listen_cancel_for_cli.clone();
             runtime.spawn(async move {
                 let Ok(outcome) = outcome.await else { return };
-                print_cli_lines(&outcome.lines);
-                if outcome.exit_code != 0 {
+                print_cli_lines(&outcome.lines, json_output);
+                if outcome.exit_code != 0 || instance_command {
                     // Nothing was started: shut the launcher down cleanly and report the code.
                     CLI_EXIT_CODE.store(outcome.exit_code, std::sync::atomic::Ordering::SeqCst);
                     listen_cancel.cancel();
@@ -337,7 +374,7 @@ fn main() {
                 && let Some((&code, text)) = reply.split_first()
             {
                 let text = String::from_utf8_lossy(text);
-                print_cli_lines(&text.lines().map(str::to_owned).collect::<Vec<_>>());
+                print_cli_lines(&text.lines().map(str::to_owned).collect::<Vec<_>>(), json_output);
                 if code != 0 {
                     std::process::exit(code as i32);
                 }
@@ -531,6 +568,12 @@ fn run_cli(
     frontend: &FrontendHandle,
     backend: &BackendHandle,
 ) -> Option<tokio::sync::oneshot::Receiver<bridge::message::CliStartOutcome>> {
+    if let Some(command) = cli_instance_command(&cli) {
+        let (outcome, receiver) = tokio::sync::oneshot::channel();
+        backend.send(bridge::message::MessageToBackend::CliInstanceCommand { command, outcome });
+        return Some(receiver);
+    }
+
     frontend.send(MessageToFrontend::OpenOrFocusMainWindow { monitor: cli.monitor });
 
     let (name, modal_action) = cli_start_request(&cli)?;
@@ -572,14 +615,67 @@ fn attach_parent_console() {
 #[cfg(not(all(windows, not(debug_assertions))))]
 fn attach_parent_console() {}
 
-/// `[WBOMBO-PROFILE]` lines go to stdout and stderr so wrappers can capture either stream.
-fn print_cli_lines(lines: &[String]) {
+/// `[WBOMBO-PROFILE]` and `[WBOMBO-INSTANCE]` lines go to stdout and stderr so wrappers can capture either
+/// stream. With `--json` they go to stdout only, so the JSON is never printed twice.
+fn print_cli_lines(lines: &[String], stdout_only: bool) {
     use std::io::Write as _;
     for line in lines {
         _ = writeln!(std::io::stdout(), "{line}");
-        _ = writeln!(std::io::stderr(), "{line}");
+        if !stdout_only {
+            _ = writeln!(std::io::stderr(), "{line}");
+        }
     }
     _ = std::io::stdout().flush();
+}
+
+fn parse_revision(value: &str) -> Result<bridge::message::CliRevision, String> {
+    use bridge::message::CliRevision;
+    if value == "latest" {
+        return Ok(CliRevision::Latest);
+    }
+    let valid = value.len() <= 128
+        && value.starts_with("rev_")
+        && value.len() > 4
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
+    if valid {
+        Ok(CliRevision::Id(value.to_owned()))
+    } else {
+        Err(format!("invalid revision {value:?}: use `latest` or a revision id like rev_..."))
+    }
+}
+
+/// The instance-management command the arguments ask for, if any. The parser guarantees the companion options.
+fn cli_instance_command(cli: &Cli) -> Option<bridge::message::CliInstanceCommand> {
+    use bridge::message::CliInstanceCommand;
+    if cli.list_instances {
+        return Some(CliInstanceCommand::List { json: cli.json });
+    }
+    if let Some(name) = &cli.instance_info {
+        return Some(CliInstanceCommand::Info {
+            name: name.clone(),
+            json: cli.json,
+        });
+    }
+    if let Some(name) = &cli.create_instance {
+        return Some(CliInstanceCommand::Create {
+            name: name.clone(),
+            profile_id: cli.from_profile.clone()?,
+            revision: cli.revision.clone().unwrap_or_default(),
+        });
+    }
+    if let Some(name) = &cli.update_instance {
+        return Some(CliInstanceCommand::Update {
+            name: name.clone(),
+            revision: cli.revision.clone().unwrap_or_default(),
+        });
+    }
+    if let Some(name) = &cli.delete_instance {
+        return Some(CliInstanceCommand::Delete {
+            name: name.clone(),
+            confirm: cli.confirm.clone()?,
+        });
+    }
+    None
 }
 
 fn parse_monitor_number(value: &str) -> Result<usize, String> {
@@ -599,8 +695,8 @@ fn cli_start_request(cli: &Cli) -> Option<(String, ModalAction)> {
 
 #[cfg(test)]
 mod cli_tests {
-    use super::{Cli, cli_start_request, cli_update_policy};
-    use bridge::message::CliUpdatePolicy;
+    use super::{Cli, cli_instance_command, cli_start_request, cli_update_policy};
+    use bridge::message::{CliInstanceCommand, CliRevision, CliUpdatePolicy};
     use bridge::modal_action::AssetVerificationMode;
     use clap::Parser;
 
@@ -645,6 +741,144 @@ mod cli_tests {
     fn no_start_flag_only_opens_launcher() {
         let cli = Cli::try_parse_from(["pandora"]).unwrap();
         assert!(cli_start_request(&cli).is_none());
+        assert!(cli_instance_command(&cli).is_none());
+    }
+
+    fn command(args: &[&str]) -> Option<CliInstanceCommand> {
+        let mut full = vec!["pandora"];
+        full.extend_from_slice(args);
+        cli_instance_command(&Cli::try_parse_from(full).unwrap())
+    }
+
+    fn rejected(args: &[&str]) -> bool {
+        let mut full = vec!["pandora"];
+        full.extend_from_slice(args);
+        Cli::try_parse_from(full).is_err()
+    }
+
+    #[test]
+    fn list_and_info_parse_with_optional_json() {
+        assert_eq!(command(&["--list-instances"]), Some(CliInstanceCommand::List { json: false }));
+        assert_eq!(command(&["--list-instances", "--json"]), Some(CliInstanceCommand::List { json: true }));
+        assert_eq!(
+            command(&["--instance-info", "Pack", "--json"]),
+            Some(CliInstanceCommand::Info {
+                name: "Pack".into(),
+                json: true
+            })
+        );
+    }
+
+    #[test]
+    fn create_needs_a_profile_and_takes_an_optional_revision() {
+        assert_eq!(
+            command(&[
+                "--create-instance",
+                "agente-269-x",
+                "--from-profile",
+                "profile_wachiland-elite-beta"
+            ]),
+            Some(CliInstanceCommand::Create {
+                name: "agente-269-x".into(),
+                profile_id: "profile_wachiland-elite-beta".into(),
+                revision: CliRevision::Selected,
+            })
+        );
+        assert_eq!(
+            command(&[
+                "--create-instance",
+                "n",
+                "--from-profile",
+                "profile_test-1-a",
+                "--revision",
+                "latest"
+            ]),
+            Some(CliInstanceCommand::Create {
+                name: "n".into(),
+                profile_id: "profile_test-1-a".into(),
+                revision: CliRevision::Latest,
+            })
+        );
+        assert_eq!(
+            command(&[
+                "--create-instance",
+                "n",
+                "--from-profile",
+                "p",
+                "--revision",
+                "rev_0123abc"
+            ]),
+            Some(CliInstanceCommand::Create {
+                name: "n".into(),
+                profile_id: "p".into(),
+                revision: CliRevision::Id("rev_0123abc".into()),
+            })
+        );
+        assert!(rejected(&["--create-instance", "n"]));
+        assert!(rejected(&["--from-profile", "p"]));
+    }
+
+    #[test]
+    fn update_takes_an_optional_revision() {
+        assert_eq!(
+            command(&["--update-instance", "Pack"]),
+            Some(CliInstanceCommand::Update {
+                name: "Pack".into(),
+                revision: CliRevision::Selected
+            })
+        );
+        assert_eq!(
+            command(&["--update-instance", "Pack", "--revision", "latest"]),
+            Some(CliInstanceCommand::Update {
+                name: "Pack".into(),
+                revision: CliRevision::Latest
+            })
+        );
+    }
+
+    #[test]
+    fn delete_needs_its_confirmation() {
+        assert_eq!(
+            command(&["--delete-instance", "Pack", "--confirm", "Pack"]),
+            Some(CliInstanceCommand::Delete {
+                name: "Pack".into(),
+                confirm: "Pack".into()
+            })
+        );
+        assert!(rejected(&["--delete-instance", "Pack"]));
+        assert!(rejected(&["--confirm", "Pack"]));
+    }
+
+    #[test]
+    fn instance_commands_exclude_each_other_and_starts() {
+        assert!(rejected(&["--list-instances", "--instance-info", "Pack"]));
+        assert!(rejected(&[
+            "--create-instance",
+            "n",
+            "--from-profile",
+            "p",
+            "--delete-instance",
+            "n",
+            "--confirm",
+            "n"
+        ]));
+        assert!(rejected(&["--list-instances", "--run-instance", "Pack"]));
+        assert!(rejected(&["--update-instance", "Pack", "--run-instance-normal", "Pack"]));
+    }
+
+    #[test]
+    fn companion_options_need_their_command() {
+        assert!(rejected(&["--json"]));
+        assert!(rejected(&["--revision", "latest"]));
+        assert!(rejected(&["--delete-instance", "n", "--confirm", "n", "--revision", "latest"]));
+        assert!(rejected(&["--update-instance", "n", "--json"]));
+    }
+
+    #[test]
+    fn revisions_must_be_latest_or_a_revision_id() {
+        for bad in ["", "rev_", "stable", "REV_1", "rev_a b", "rev_a/../b"] {
+            assert!(rejected(&["--update-instance", "n", "--revision", bad]), "{bad:?}");
+        }
     }
 }
 

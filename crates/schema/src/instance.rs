@@ -98,6 +98,14 @@ pub struct InstanceConfiguration {
     pub show_shader_tab: bool,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub sandbox: bool, // Default sandbox to false when loading old configuration json
+    /// Created by `--create-instance` on the command line. Only such instances (and those of test
+    /// profiles) can be deleted by `--delete-instance`. Older launchers ignore the field.
+    #[serde(
+        default,
+        deserialize_with = "crate::try_deserialize",
+        skip_serializing_if = "crate::skip_if_default"
+    )]
+    pub created_by_cli: bool,
 }
 
 impl InstanceConfiguration {
@@ -121,6 +129,7 @@ impl InstanceConfiguration {
             disable_file_syncing: false,
             show_shader_tab: false,
             sandbox: false, // todo: for now, off by default. In the future, turn this on by default
+            created_by_cli: false,
         }
     }
 }

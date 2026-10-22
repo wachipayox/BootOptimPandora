@@ -475,8 +475,19 @@ impl DistributionClient {
         })
     }
 
+    /// The published profiles, as every player sees them.
     pub async fn list_profiles(&self) -> Result<Vec<GlobalProfileSummary>, DistributionError> {
-        let response: ProfilesResponse = self.get_json("/v1/profiles").await?;
+        self.list_profiles_with_tests(false).await
+    }
+
+    /// With `include_test`, the catalog also lists the `profile_test-…` profiles (Distribution 0.3.0 and later;
+    /// an older server ignores the parameter and returns the normal catalog).
+    pub async fn list_profiles_with_tests(
+        &self,
+        include_test: bool,
+    ) -> Result<Vec<GlobalProfileSummary>, DistributionError> {
+        let path = if include_test { "/v1/profiles?include_test=1" } else { "/v1/profiles" };
+        let response: ProfilesResponse = self.get_json(path).await?;
         if response.schema_version != 1 || response.protocol_version != 1 || response.truncated {
             return Err(DistributionError::InvalidResponse("unsupported or truncated profile catalog".into()));
         }
@@ -515,6 +526,35 @@ impl DistributionClient {
     ) -> Result<VerifiedRevision, DistributionError> {
         self.fetch_revision(profile_id, &revision.revision_id, &revision.manifest_sha256, Some(revision.sequence))
             .await
+    }
+
+    /// The catalog pin (sequence and manifest digest) of a revision known only by its id, such as the one a
+    /// `--revision` option names. The revision is then verified like any other: the signature, the digest
+    /// and the identity must all match what the envelope itself announced, so nothing is trusted unsigned.
+    pub async fn lookup_revision_ref(
+        &self,
+        profile_id: &str,
+        revision_id: &str,
+    ) -> Result<RevisionRef, DistributionError> {
+        if !valid_identifier(profile_id, "profile_") || !valid_identifier(revision_id, "rev_") {
+            return Err(DistributionError::InvalidResponse("invalid requested revision".into()));
+        }
+        let response: RevisionResponse =
+            self.get_json(&format!("/v1/profiles/{profile_id}/revisions/{revision_id}")).await?;
+        let sequence = response
+            .envelope
+            .manifest
+            .pointer("/revision/sequence")
+            .and_then(serde_json::Value::as_i64)
+            .filter(|sequence| *sequence > 0)
+            .ok_or_else(|| DistributionError::InvalidResponse("revision has no valid sequence".into()))?;
+        let revision = RevisionRef {
+            revision_id: revision_id.to_owned(),
+            sequence,
+            manifest_sha256: response.envelope.manifest_sha256.clone(),
+        };
+        self.fetch_verified_revision(profile_id, &revision).await?;
+        Ok(revision)
     }
 
     pub(crate) async fn fetch_revision(
@@ -1549,6 +1589,7 @@ impl crate::BackendState {
         modal_action: &ModalAction,
         progress: &ProgressTracker,
         save_group_target: Option<bridge::message::GlobalProfileSaveGroupTarget>,
+        created_by_cli: bool,
     ) -> Result<(), String> {
         progress.set_title("Preparing modpack assets".into());
         progress.set_count(0);
@@ -1563,7 +1604,8 @@ impl crate::BackendState {
         progress.set_title("Applying modpack files".into());
         // The profile's presentation is unversioned and can have a newer icon than the selected
         // immutable revision. Use the current verified catalog icon, matching the carousel.
-        let catalog = client.list_profiles().await.map_err(|error| error.to_string())?;
+        // Test profiles are hidden from the normal catalog; the profile chosen here may be one of them.
+        let catalog = client.list_profiles_with_tests(true).await.map_err(|error| error.to_string())?;
         let published_profile = catalog
             .iter()
             .find(|profile| profile.profile_id == profile_id)
@@ -1616,6 +1658,13 @@ impl crate::BackendState {
             .find(|instance| instance.root_path.as_ref() == root.as_path())
             .map(|instance| instance.id)
             .ok_or_else(|| "Wachiland Launcher created the instance folder but could not load it".to_owned())?;
+        if created_by_cli {
+            // Marked before the profile files are applied, so a failure further on still leaves an instance the
+            // command line can delete.
+            if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                instance.configuration.modify(|configuration| configuration.created_by_cli = true);
+            }
+        }
 
         let lineage = crate::profile_branch::ProfileLineage::from_global(resolved.pin.clone())
             .map_err(|error| error.to_string())?;
@@ -1674,6 +1723,17 @@ impl crate::BackendState {
         id: bridge::instance::InstanceID,
         progress: Option<(&ModalAction, &ProgressTracker)>,
     ) -> Result<bool, String> {
+        self.update_global_profile_instance_to(id, progress, None).await
+    }
+
+    /// Like [`Self::update_global_profile_instance`], but to `target` when one is given (a revision chosen on the
+    /// command line). Without it the profile's selected revision is used, as the GUI does.
+    pub async fn update_global_profile_instance_to(
+        &self,
+        id: bridge::instance::InstanceID,
+        progress: Option<(&ModalAction, &ProgressTracker)>,
+        explicit_target: Option<RevisionRef>,
+    ) -> Result<bool, String> {
         let snapshot = self.persistent_profile_branch_status(id, None).map_err(|error| error.to_string())?;
         let Some(crate::profile_branch::ProfileParentRef::GlobalRevision { pin: parent_pin }) =
             snapshot.branch.lineage.parent.as_ref()
@@ -1689,12 +1749,13 @@ impl crate::BackendState {
 
         let config = self.config.lock().get().distribution.clone();
         let client = DistributionClient::new(&config).map_err(|error| error.to_string())?;
-        let profiles = client.list_profiles().await.map_err(|error| error.to_string())?;
+        // The pinned profile may be a test profile, which the normal catalog hides.
+        let profiles = client.list_profiles_with_tests(true).await.map_err(|error| error.to_string())?;
         let profile = profiles
             .iter()
             .find(|profile| profile.profile_id == parent_pin.profile_id)
             .ok_or_else(|| "The pinned global profile is no longer published".to_owned())?;
-        let target_revision = selected_revision(profile).clone();
+        let target_revision = explicit_target.unwrap_or_else(|| selected_revision(profile).clone());
         let target_pin = GlobalRevisionPin::new(
             profile.profile_id.clone(),
             target_revision.revision_id.clone(),
@@ -2087,8 +2148,9 @@ impl crate::BackendState {
 
     pub async fn load_global_catalog(&self) -> Result<Vec<bridge::message::GlobalProfileSummary>, String> {
         let config = self.config.lock().get().distribution.clone();
+        let include_test = self.config.lock().get().channel.includes_test_profiles();
         let client = DistributionClient::new(&config).map_err(|e| e.to_string())?;
-        let profiles = client.list_profiles().await.map_err(|e| e.to_string())?;
+        let profiles = client.list_profiles_with_tests(include_test).await.map_err(|e| e.to_string())?;
         let mut summaries = Vec::new();
         for profile in profiles {
             let stable = profile.channels.iter().find(|channel| channel.name == "stable");

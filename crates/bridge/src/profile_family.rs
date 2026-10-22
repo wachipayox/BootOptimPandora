@@ -3,6 +3,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub type Parents = BTreeMap<String, Option<String>>;
 
+/// Test profiles of the Distribution service (`profile_test-<agent>-<task>`). The service hides them from
+/// the catalog unless `include_test=1` is asked for, which the `developer` launcher channel does.
+pub const TEST_PROFILE_PREFIX: &str = "profile_test-";
+
+pub fn is_test_profile(profile_id: &str) -> bool {
+    profile_id.starts_with(TEST_PROFILE_PREFIX)
+}
+
 pub fn root_id(id: &str, parents: &Parents) -> String {
     let mut current = id.to_owned();
     let mut path = Vec::new();
@@ -52,6 +60,12 @@ mod tests {
         assert!(related("grandchild", "root", &parents));
         assert!(!related("child", "sibling", &parents));
         assert_eq!(root_id("grandchild", &parents), "root");
+    }
+    #[test]
+    fn test_profiles_are_recognised_by_prefix_only() {
+        assert!(is_test_profile("profile_test-269-cli-smoke"));
+        assert!(!is_test_profile("profile_wachiland-elite-beta"));
+        assert!(!is_test_profile("xprofile_test-1"));
     }
     #[test]
     fn orphans_and_cycles_remain_visible() {

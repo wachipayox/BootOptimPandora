@@ -412,7 +412,8 @@ impl BackendState {
     ) -> Result<Option<crate::cli_update_gate::GlobalUpdate>, String> {
         let config = self.config.lock().get().distribution.clone();
         let client = crate::distribution::DistributionClient::new(&config).map_err(|e| e.to_string())?;
-        let profiles = client.list_profiles().await.map_err(|e| e.to_string())?;
+        // Instances of a test profile are updated like any other, so the hidden test profiles are looked up too.
+        let profiles = client.list_profiles_with_tests(true).await.map_err(|e| e.to_string())?;
         let Some(profile) = profiles.iter().find(|profile| profile.profile_id == pin.profile_id) else {
             // Catalog withdrawal does not invalidate an already installed revision.
             return Ok(None);
