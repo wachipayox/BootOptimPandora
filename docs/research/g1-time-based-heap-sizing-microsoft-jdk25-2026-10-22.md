@@ -52,11 +52,11 @@ and exits with an error on the same arguments. So the flag cannot be passed blin
 - The arguments go with the profile JVM arguments, so they are part of the key of the AOT cache (the JVM shape changed):
   existing instances train the cache once more on their next game.
 
-## Not done
+## Validation
 
-- No validation with a long session inside a world yet: the crash needs 13 to 23 minutes of play, so only the player can
-  confirm that it is gone. A start that reaches the main menu with the flag in the JVM command line is the check CI and the PC
-  can do. Count a clean session of 30 minutes or more as the first signal, not as proof.
+- Player validation (2026-10-22, PC with RTX 3060, Microsoft OpenJDK 25.0.1, build `aced70cd`): `launcher.log` showed
+  `ACTIVE ... arg=-XX:-G1UseTimeBasedHeapSizing` and a session of 30 minutes in a world ended without the crash. One clean
+  session is a first signal, not proof; a new `g1HeapRegionManager.cpp:55` crash with the flag active reopens this.
 - Not an issue for WachilandEliteCompanion: it is a JVM bug, not a defect of the pack.
 
 ## Reopen when
