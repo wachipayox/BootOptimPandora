@@ -149,7 +149,7 @@ fn main() {
     };
 
     if lockfile.try_lock().is_ok() {
-        setup_launcher_logging(&launcher_dir);
+        setup_launcher_logging(&launcher_dir, !instance_command);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -882,14 +882,14 @@ mod cli_tests {
     }
 }
 
-fn setup_launcher_logging(launcher_dir: &Path) {
+fn setup_launcher_logging(launcher_dir: &Path, to_stdout: bool) {
     let log_file = launcher_dir.join("launcher.log");
     if log_file.exists() {
         let old_log_file = launcher_dir.join("launcher.log.old");
         _ = std::fs::rename(&log_file, old_log_file);
     }
 
-    if let Err(error) = init_logging(log::LevelFilter::Debug, &log_file) {
+    if let Err(error) = init_logging(log::LevelFilter::Debug, &log_file, to_stdout) {
         eprintln!("Unable to enable logging: {error:?}");
     }
 
@@ -953,7 +953,7 @@ fn start_deadlock_detection(
     });
 }
 
-fn init_logging(level: log::LevelFilter, log_file: &Path) -> Result<(), fern::InitError> {
+fn init_logging(level: log::LevelFilter, log_file: &Path, to_stdout: bool) -> Result<(), fern::InitError> {
     let base_config = fern::Dispatch::new()
         .level_for("pandora_launcher", level)
         .level_for("auth", level)
@@ -991,7 +991,13 @@ fn init_logging(level: log::LevelFilter, log_file: &Path) -> Result<(), fern::In
         })
         .chain(std::io::stdout());
 
-    base_config.chain(file_config).chain(stdout_config).apply()?;
+    // Instance management prints its results on stdout, so the log goes to the file only.
+    let base_config = base_config.chain(file_config);
+    if to_stdout {
+        base_config.chain(stdout_config).apply()?;
+    } else {
+        base_config.apply()?;
+    }
 
     Ok(())
 }
