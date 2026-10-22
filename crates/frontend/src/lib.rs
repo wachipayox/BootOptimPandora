@@ -271,6 +271,19 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 ..Default::default()
             },
             |window, cx| {
+                let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").ok();
+                match capture_page.as_deref() {
+                    Some("instances") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances,
+                    Some("skins") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins,
+                    Some("import") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Import,
+                    Some("syncing") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Syncing,
+                    Some(name) if name.starts_with("instance:") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::InstancePage {
+                            name: name[9..].into(),
+                        };
+                    },
+                    _ => {},
+                }
                 let launcher_root = cx.new(|cx| {
                     cx.observe_window_bounds(window, move |_, window, cx| {
                         let origin = window.bounds().origin;
@@ -334,7 +347,18 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 cx.set_global(LauncherRootGlobal {
                     root: launcher_root.clone(),
                 });
-                cx.new(|cx| Root::new(launcher_root, window, cx))
+                if capture_page.as_deref() == Some("appearance") {
+                    crate::settings::open_settings_window(window, &data, cx);
+                }
+                let root = cx.new(|cx| Root::new(launcher_root, window, cx));
+                if capture_page.as_deref() == Some("accounts") {
+                    let accounts_data = data.clone();
+                    window.on_next_frame(move |window, cx| {
+                        let build = crate::modals::accounts::build_accounts_sheet(&accounts_data, window, cx);
+                        window.open_sheet_at(gpui_component::Placement::Left, cx, build);
+                    });
+                }
+                root
             },
         )
         .unwrap();

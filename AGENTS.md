@@ -21,5 +21,6 @@ Repository rules:
   mods rebuild or whole-tree hash walk.
 - Android work (launcher fork and Wachiland Android Support mod) is moving to
   its own private repositories; see wbombo `proyectos/android.md`.
+- For UI work, follow [`.claude/skills/ui/SKILL.md`](.claude/skills/ui/SKILL.md).
 - This repository is public: never commit tokens, signing keys, server
   addresses or private community data.

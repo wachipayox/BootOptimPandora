@@ -851,7 +851,7 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
 
     Settings {
         pages: pages.into_boxed_slice(),
-        selected_page: Some(0),
+        selected_page: Some(if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("appearance") { 1 } else { 0 }),
         selected_group: None,
         deferred_scroll_to_group: false,
         searched_pages: None,
