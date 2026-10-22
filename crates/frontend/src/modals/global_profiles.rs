@@ -28,6 +28,19 @@ pub fn family_roots(profiles: &[GlobalProfileSummary]) -> Vec<GlobalProfileSumma
     profiles.iter().filter(|p| roots.contains(&p.profile_id)).cloned().collect()
 }
 
+/// Marks a test profile (`profile_test-…`), which only the `developer` launcher channel lists.
+fn test_label(cx: &App) -> impl IntoElement {
+    div()
+        .flex_shrink_0()
+        .px_1p5()
+        .rounded_sm()
+        .text_xs()
+        .font_semibold()
+        .bg(cx.theme().warning)
+        .text_color(cx.theme().warning_foreground)
+        .child("PRUEBA")
+}
+
 fn profile_icon(profile: &GlobalProfileSummary, size: f32) -> AnyElement {
     match &profile.icon_path {
         Some(path) => img(path.clone()).size(px(size)).flex_shrink_0().rounded_md().into_any_element(),
@@ -125,6 +138,9 @@ impl ProfileFamilyModal {
                         .hover(|s| s.bg(cx.theme().secondary))
                         .child(profile_icon(&profile, 36.0))
                         .child(div().font_semibold().truncate().child(profile.name.clone()))
+                        .when(bridge::profile_family::is_test_profile(&profile.profile_id), |row| {
+                            row.child(test_label(cx))
+                        })
                         .tooltip(move |window, cx| {
                             let p = tooltip_profile.clone();
                             Tooltip::element(move |_, _| {
@@ -370,8 +386,13 @@ impl ProfileDetailsModal {
                 .into_any_element(),
         });
         let state = cx.entity();
+        let title = if bridge::profile_family::is_test_profile(&p.profile_id) {
+            format!("{} (PRUEBA)", p.name)
+        } else {
+            p.name.clone()
+        };
         dialog
-            .title(p.name.clone())
+            .title(title)
             .width(px((window.viewport_size().width.as_f32() - 48.0).min(760.0)))
             .on_ok(move |_, window, cx| {
                 state.update(cx, |this, cx| this.submit(window, cx));

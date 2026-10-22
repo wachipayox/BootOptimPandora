@@ -59,6 +59,7 @@ use crate::{
 };
 
 pub(crate) mod aot_cache;
+pub(crate) mod g1_heap_sizing;
 pub(crate) mod java_default;
 pub(crate) mod jvm_flags;
 #[cfg(target_os = "linux")]
@@ -317,6 +318,30 @@ impl Launcher {
                 &dot_minecraft_path.join("logs").join(zipfs_agent::STATUS_FILE_NAME),
                 std::env::var(zipfs_agent::DISABLE_ENV).ok().as_deref(),
             ));
+            args
+        };
+
+        // Microsoft OpenJDK 25 can crash mid-game from its time-based G1 heap sizing: switched off when this JVM
+        // lists the flag. The probe may start a JVM once per JDK build, so it runs off the async threads.
+        let profile_jvm_args = {
+            // The flag is looked for in the profile's arguments and in the player's, which come later.
+            let mut existing = profile_jvm_args.clone();
+            existing.extend(profile_jvm::personal_jvm_args(&instance_info));
+            let java_path = java_path.clone();
+            let cache_dir = self.directories.root_launcher_dir.clone();
+            let extra = tokio::task::spawn_blocking(move || {
+                g1_heap_sizing::jvm_args(java25, java_major, &java_path, &cache_dir, &existing)
+            })
+            .await
+            .unwrap_or_else(|error| {
+                log::warn!(
+                    "[WBOMBO-COMPAT] FALLBACK project=Pandora mechanism={} reason=task-failed error={error}",
+                    g1_heap_sizing::MECHANISM
+                );
+                Vec::new()
+            });
+            let mut args = profile_jvm_args;
+            args.extend(extra);
             args
         };
 

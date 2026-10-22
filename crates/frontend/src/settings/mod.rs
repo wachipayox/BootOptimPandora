@@ -10,7 +10,7 @@ use gpui_component::{
     switch::Switch,
     v_flex,
 };
-use schema::backend_config::{BackendConfig, DistributionConfig, ProxyConfig};
+use schema::backend_config::{BackendConfig, DistributionConfig, LauncherChannel, ProxyConfig};
 use schema::ignored_profile_paths::IgnoredProfilePaths;
 
 use crate::{
@@ -90,6 +90,22 @@ impl SettingsRoot {
             pending.distribution = config.clone();
         }
         self.backend_handle.send(MessageToBackend::SetDistributionConfiguration { config });
+        self.update_backend_configuration(cx);
+    }
+
+    pub fn set_launcher_channel(&mut self, channel: LauncherChannel, cx: &mut Context<Self>) {
+        if self.actual_backend_config.is_some() {
+            self.on_receive_backend_config = if self.temp_backend_config.is_some() {
+                OnReceiveBackendConfig::RequestAgainThenClearTemp
+            } else {
+                OnReceiveBackendConfig::ClearTemp
+            };
+            let pending = self
+                .temp_backend_config
+                .get_or_insert_with(|| self.actual_backend_config.clone().unwrap());
+            pending.channel = channel;
+        }
+        self.backend_handle.send(MessageToBackend::SetLauncherChannel { channel });
         self.update_backend_configuration(cx);
     }
 

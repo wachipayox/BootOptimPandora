@@ -28,6 +28,63 @@ pub struct BackendConfig {
         deserialize_with = "crate::try_deserialize"
     )]
     pub distribution: DistributionConfig,
+    /// Launcher channel: who the launcher is for. Not the revision channels (`stable`) of a profile.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub channel: LauncherChannel,
+}
+
+/// `player` (default) shows the published profiles. `developer` also shows the test profiles
+/// (`profile_test-…`) that the Distribution service hides from the catalog.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LauncherChannel {
+    #[default]
+    Player,
+    Developer,
+}
+
+impl LauncherChannel {
+    pub fn includes_test_profiles(self) -> bool {
+        self == LauncherChannel::Developer
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LauncherChannel::Player => "Player",
+            LauncherChannel::Developer => "Developer",
+        }
+    }
+}
+
+#[cfg(test)]
+mod launcher_channel_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_to_player_and_is_not_written_while_default() {
+        let config: BackendConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.channel, LauncherChannel::Player);
+        assert!(!serde_json::to_string(&config).unwrap().contains("channel"));
+    }
+
+    #[test]
+    fn developer_is_read_and_written_in_lowercase() {
+        let config: BackendConfig = serde_json::from_str(r#"{"channel":"developer"}"#).unwrap();
+        assert_eq!(config.channel, LauncherChannel::Developer);
+        assert!(config.channel.includes_test_profiles());
+        assert!(serde_json::to_string(&config).unwrap().contains(r#""channel":"developer""#));
+    }
+
+    #[test]
+    fn an_unknown_value_falls_back_to_player() {
+        let config: BackendConfig = serde_json::from_str(r#"{"channel":"beta"}"#).unwrap();
+        assert_eq!(config.channel, LauncherChannel::Player);
+        assert!(!config.channel.includes_test_profiles());
+    }
 }
 
 /// Trust settings for the private BootOptim Distribution service.

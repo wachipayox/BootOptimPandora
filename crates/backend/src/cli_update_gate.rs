@@ -13,6 +13,12 @@ pub const EXIT_UPDATE_AVAILABLE: u8 = 3;
 pub const EXIT_UPDATE_FAILED: u8 = 4;
 /// No instance has the requested name.
 pub const EXIT_INSTANCE_NOT_FOUND: u8 = 5;
+/// `--create-instance`: an instance with that name already exists.
+pub const EXIT_NAME_EXISTS: u8 = 6;
+/// `--delete-instance` (or an invalid `--create-instance` name): refused by the safety rules; nothing changed.
+pub const EXIT_REFUSED: u8 = 7;
+/// An instance command (create, update, delete) failed after it was accepted. Same code as a failed update.
+pub const EXIT_OPERATION_FAILED: u8 = EXIT_UPDATE_FAILED;
 
 pub const PREFIX: &str = "[WBOMBO-PROFILE]";
 pub const RELAUNCH_HINT: &str = "Relaunch with --update (update then start) or --no-update (start unchanged).";

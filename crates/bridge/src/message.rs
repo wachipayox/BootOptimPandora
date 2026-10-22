@@ -205,6 +205,11 @@ pub enum MessageToBackend {
         update_policy: CliUpdatePolicy,
         outcome: tokio::sync::oneshot::Sender<CliStartOutcome>,
     },
+    /// Command-line instance management (list, info, create, update, delete). Never opens a window or starts a game.
+    CliInstanceCommand {
+        command: CliInstanceCommand,
+        outcome: tokio::sync::oneshot::Sender<CliStartOutcome>,
+    },
     StartInstance {
         id: InstanceID,
         quick_play: Option<QuickPlayLaunch>,
@@ -399,6 +404,9 @@ pub enum MessageToBackend {
     },
     SetDistributionConfiguration {
         config: DistributionConfig,
+    },
+    SetLauncherChannel {
+        channel: schema::backend_config::LauncherChannel,
     },
     SetProxyPassword {
         password: String,
@@ -878,6 +886,43 @@ pub enum CliUpdatePolicy {
     Update,
     /// `--no-update`: start the installed files unchanged.
     NoUpdate,
+}
+
+/// Which revision of a global profile a command-line create or update uses.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum CliRevision {
+    /// What the GUI uses: the `stable` revision channel, or the latest revision if the profile has none.
+    #[default]
+    Selected,
+    /// `--revision latest`.
+    Latest,
+    /// `--revision rev_<id>`: that exact signed revision.
+    Id(String),
+}
+
+/// Instance management from the command line. They go through the same backend paths as the GUI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CliInstanceCommand {
+    List {
+        json: bool,
+    },
+    Info {
+        name: String,
+        json: bool,
+    },
+    Create {
+        name: String,
+        profile_id: String,
+        revision: CliRevision,
+    },
+    Update {
+        name: String,
+        revision: CliRevision,
+    },
+    Delete {
+        name: String,
+        confirm: String,
+    },
 }
 
 /// Lines to print and the process exit code for a command-line Start request.
