@@ -311,7 +311,8 @@ impl Processor {
                 }
 
                 #[cfg(windows)]
-                let show_windows_security_prompt = !InterfaceConfig::get(cx).windows_defender_process_prompted
+                let show_windows_security_prompt = std::env::var_os("WBOMBO_UI_CAPTURE_PAGE").is_none()
+                    && !InterfaceConfig::get(cx).windows_defender_process_prompted
                     && command::defender_process_local_state() == command::DefenderProcessLocalState::NotManaged;
 
                 self.main_window_handle = Some(crate::open_main_window(&self.data, self.requested_display_id, cx));
