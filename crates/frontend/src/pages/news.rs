@@ -344,20 +344,20 @@ impl NewsPage {
             .collect::<Vec<_>>();
         items.retain(|n| !n.pinned || n.expired(&self.feed.server_time));
         for n in pinned.iter().skip(self.pinned).take(1) {
-            self.cover(n, "pinned", 1488, 248, ImageCorners::All);
+            self.cover(n, "pinned", 1984, 330, ImageCorners::All);
         }
         for (ix, n) in items.iter().take(self.visible + 1).enumerate() {
             if ix == 0 {
                 self.previews.entry(cover_key(n, "preview")).or_insert_with(|| preview(&n.body));
-                self.cover(n, "featured", 816, 467, ImageCorners::All);
+                self.cover(n, "featured", 1102, 622, ImageCorners::All);
             } else {
-                self.cover(n, "grid", 480, 270, ImageCorners::Top);
+                self.cover(n, "grid", 640, 360, ImageCorners::Top);
             }
         }
         if let Some(article) = &self.article {
             let item = article.item.clone();
             let valid = article.valid;
-            self.cover(&item, "article", 1488, 540, ImageCorners::All);
+            self.cover(&item, "article", 1984, 720, ImageCorners::All);
             if valid {
                 if let Ok(doc) = news_markdown::parse(&item.body, None) {
                     let mut urls = BTreeSet::new();
@@ -570,8 +570,10 @@ impl NewsPage {
             .child(self.image(n, "grid", 320., 180.))
             .child(
                 v_flex()
-                    .p(px(16.))
-                    .gap(px(8.))
+                    .px(px(12.))
+                    .pt(px(10.))
+                    .pb(px(12.))
+                    .gap(px(6.))
                     .child(
                         h_flex()
                             .justify_between()
@@ -586,8 +588,8 @@ impl NewsPage {
                     .child(
                         div()
                             .font_family(theme::DISPLAY)
-                            .text_size(px(18.))
-                            .line_height(px(24.))
+                            .text_size(px(15.))
+                            .line_height(px(20.))
                             .line_clamp(2)
                             .child(n.title.clone()),
                     )
@@ -962,12 +964,13 @@ impl Render for NewsPage {
                         .h(px(311.))
                         .flex()
                         .cursor_pointer()
-                        .child(self.image(n, "featured", 544., 311.))
+                        .child(self.image(n, "featured", 551., 311.))
                         .child(
                             v_flex()
                                 .flex_1()
-                                .p(px(28.))
-                                .gap(px(16.))
+                                .px(px(24.))
+                                .py(px(22.))
+                                .gap(px(12.))
                                 .child(
                                     h_flex()
                                         .justify_between()
@@ -982,15 +985,15 @@ impl Render for NewsPage {
                                 .child(
                                     div()
                                         .font_family(theme::DISPLAY)
-                                        .text_size(px(26.))
-                                        .line_height(px(32.))
+                                        .text_size(px(17.))
+                                        .line_height(px(22.))
                                         .line_clamp(3)
                                         .child(n.title.clone()),
                                 )
                                 .child(
                                     div()
                                         .text_color(rgb(theme::INK_MUTED))
-                                        .text_size(px(14.))
+                                        .text_size(px(15.))
                                         .line_height(px(22.))
                                         .line_clamp(3)
                                         .child(
@@ -1014,11 +1017,18 @@ impl Render for NewsPage {
                 );
             }
             if unpinned.len() > 1 {
-                body = body.child(design::eyebrow("Últimas")).child(
-                    h_flex().flex_wrap().items_start().gap(px(16.)).children(
+                body = body
+                    .child(
+                        div()
+                            .font_family(theme::DISPLAY)
+                            .text_size(px(15.))
+                            .line_height(px(20.))
+                            .font_weight(FontWeight::BOLD)
+                            .child("Últimas"),
+                    )
+                    .child(h_flex().flex_wrap().items_start().gap(px(16.)).children(
                         unpinned.iter().skip(1).take(self.visible).enumerate().map(|(ix, n)| self.card(n, ix, cx)),
-                    ),
-                );
+                    ));
             }
             let shown = (self.visible + 1).min(unpinned.len());
             if !unpinned.is_empty() {
