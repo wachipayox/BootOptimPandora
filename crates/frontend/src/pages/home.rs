@@ -722,17 +722,13 @@ impl Render for HomePage {
         }
         news_section =
             news_section.child(h_flex().gap(px(12.)).children(news.into_iter().enumerate().map(|(ix, n)| {
-                let image = n
-                    .image
-                    .as_ref()
-                    .map(|p| {
-                        img(ImageSource::Resource(Resource::Path(Arc::from(p.as_path()))))
-                            .w_full()
-                            .h(px(137.))
-                            .object_fit(ObjectFit::Cover)
-                            .into_any_element()
-                    })
-                    .unwrap_or_else(|| div().h(px(137.)).bg(rgb(theme::PANEL_RAISED)).into_any_element());
+                let image = n.image.as_ref().map(|p| {
+                    img(ImageSource::Resource(Resource::Path(Arc::from(p.as_path()))))
+                        .w_full()
+                        .h(px(137.))
+                        .object_fit(ObjectFit::Cover)
+                        .into_any_element()
+                });
                 design::notched_panel(0x111114ff)
                     .flex()
                     .flex_col()
@@ -741,12 +737,11 @@ impl Render for HomePage {
                     .flex_shrink_0()
                     .min_w_0()
                     .relative()
-                    .child(image)
+                    .when_some(image, |d, image| d.child(image))
                     .when(n.pinned, |d| {
                         d.child(
                             div()
-                                .absolute()
-                                .top_0()
+                                .when(n.image.is_some(), |d| d.absolute().top_0())
                                 .w_full()
                                 .h(px(15.))
                                 .bg(rgba(0x80808080))
