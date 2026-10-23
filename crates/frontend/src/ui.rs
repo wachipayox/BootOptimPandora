@@ -587,7 +587,8 @@ impl LauncherUI {
             .as_ref()
             .map(|a| a.username(InterfaceConfig::get(cx).hide_usernames))
             .unwrap_or_else(|| "Sin cuenta".into());
-        let head = selected_account.as_ref().and_then(|a| a.head.clone());
+        let hide_skins = InterfaceConfig::get(cx).hide_skins;
+        let head = selected_account.as_ref().filter(|_| !hide_skins).and_then(|a| a.head.clone());
         let head = head
             .map(|b| {
                 png_render_cache::render_with_transform(
@@ -597,7 +598,22 @@ impl LauncherUI {
                 )
                 .into_any_element()
             })
-            .unwrap_or_else(|| gpui_component::Icon::new(PandoraIcon::CircleUser).size(px(26.)).into_any_element());
+            .unwrap_or_else(|| {
+                if selected_account.is_some() {
+                    img(ImageSource::Resource(Resource::Embedded(
+                        if hide_skins {
+                            "images/hidden_head.png"
+                        } else {
+                            "images/default_head.png"
+                        }
+                        .into(),
+                    )))
+                    .size(px(26.))
+                    .into_any_element()
+                } else {
+                    gpui_component::Icon::new(PandoraIcon::CircleUser).size(px(26.)).into_any_element()
+                }
+            });
         let saved_accounts = self.data.accounts.read(cx).accounts.clone();
         let settings_data = self.data.clone();
         footer = footer.child(
