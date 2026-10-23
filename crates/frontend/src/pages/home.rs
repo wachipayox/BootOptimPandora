@@ -239,13 +239,15 @@ impl HomePage {
                 .gap(px(6.))
                 .text_size(px(11.))
                 .text_color(rgb(theme::INK_MUTED))
-                .child(div().size(px(5.)).bg(rgb(if online.is_some() {
+                .child(div().size(px(5.)).bg(rgb(if server.status.is_some() {
                     theme::SUCCESS
                 } else {
                     theme::INK_DISABLED
                 })))
                 .child(if let Some(p) = online {
                     format!("Servidor en línea       {} / {}", p.online, p.max)
+                } else if server.status.is_some() {
+                    "Servidor en línea".into()
                 } else {
                     "Servidor sin respuesta".into()
                 }),
@@ -283,7 +285,13 @@ impl HomePage {
                         "▶  Entrar al servidor{}",
                         server.ping.map(|p| format!("   {} ms", p.as_millis())).unwrap_or_default()
                     ))
-                    .paint(90., [[0x1b291bff, 0x172217ff]; 3], rgb(theme::SUCCESS).into(), rgb(theme::SUCCESS).into())
+                    .paint(
+                        90.,
+                        [[0x86d96f1f; 2], [0x86d96f2e; 2], [0x86d96f1f; 2]],
+                        rgb(0x86d96f).into(),
+                        rgb(0x86d96f).into(),
+                    )
+                    .text_size(px(12.))
                     .h(px(32.))
                     .w_full()
                     .on_click(move |_, w, c| {
@@ -343,7 +351,7 @@ impl Render for HomePage {
                     .font_family(theme::DISPLAY)
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(i.name.to_uppercase()),
+                    .child(crate::component::tracked_text::TrackedText::new(i.name.to_uppercase(), 0.16)),
             );
             for (index, label, tab) in [
                 (0, "Jugar", None),
@@ -494,15 +502,20 @@ impl Render for HomePage {
             window.request_animation_frame();
         }
         let left = if let Some(i) = &instance {
-            let text = if i.playtime.last_played_unix_ms.is_none() {
+            let text = if i.playtime.last_played_unix_ms.is_none() && i.playtime.total_secs == 0 {
                 "Todavía no has jugado".to_string()
             } else {
-                self.presentation.last_destination.clone().unwrap_or_default()
-                    + &i.playtime
-                        .last_played_unix_ms
-                        .and_then(chrono::DateTime::from_timestamp_millis)
-                        .map(|date| format!(" · {}", relative_date(&date.to_rfc3339())))
-                        .unwrap_or_default()
+                let date = i
+                    .playtime
+                    .last_played_unix_ms
+                    .and_then(chrono::DateTime::from_timestamp_millis)
+                    .map(|d| relative_date(&d.to_rfc3339()));
+                [self.presentation.last_destination.clone(), date]
+                    .into_iter()
+                    .flatten()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ")
             };
             h_flex()
                 .w(px(300.))
@@ -764,6 +777,10 @@ impl Render for HomePage {
                 menu = menu.child(
                     DesignButton::new(("home-menu", ix))
                         .label(label)
+                        .h(px(30.))
+                        .text_size(px(13.))
+                        .font_weight(FontWeight::NORMAL)
+                        .justify_start()
                         .w_full()
                         .disabled(if ix == 6 {
                             instance.as_ref().is_none_or(|i| i.status != InstanceStatus::Running)
