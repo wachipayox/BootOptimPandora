@@ -201,12 +201,12 @@ try {
                 Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
             }
         }
-        if ($screen.page -eq 'components') {
+        if ($screen.page -in @('components','home-news')) {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
             if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
             if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x101, [IntPtr]9, [IntPtr]0xc00f0001L)) { throw 'Cannot send capture Tab keyup' }
-            Save-Window (Join-Path $outputPath 'components-focus.png') $proc.MainWindowHandle $proc.Id
+            Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-focus.png')) $proc.MainWindowHandle $proc.Id
         }
         $proc.CloseMainWindow() | Out-Null
         if (-not $proc.WaitForExit(5000)) { $proc.Kill(); $proc.WaitForExit() }

@@ -34,6 +34,8 @@ Home lives in `pages/home.rs`; the existing signed launch gate and native accoun
 
 News lives in `pages/news.rs`, with revision attachments in `pages/news_changelog.rs`.
 `-NewsScreens` captures its native states; `-Pages` selects explicit capture routes.
+`-NewsFixture <private JSON>` supplies local cosmetic input for capture routes only.
+News captures include native Tab focus and scrolled article/body media.
 News captures wait for process-specific feed/media readiness. Fixtures stay outside
 this public repo. Restricted Markdown is validated in `schema::news_markdown` against
 Distribution's shared vectors before native TextView rendering. Its explicit image
