@@ -17,3 +17,5 @@ pub mod profile_overwrites;
 pub mod quit;
 pub mod safe_path;
 pub mod serial;
+
+pub mod home;

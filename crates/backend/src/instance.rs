@@ -113,6 +113,12 @@ pub struct InstanceStats {
     pub session_count: u64,
     #[serde(default)]
     pub last_played_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub daily_playtime_secs: std::collections::BTreeMap<String, u64>,
+    #[serde(default)]
+    pub last_session_secs: u64,
+    #[serde(default)]
+    pub last_destination: Option<String>,
 }
 
 #[derive(Debug)]
@@ -697,6 +703,26 @@ impl Instance {
                 },
             };
 
+            let version = backend
+                .instance_state
+                .write()
+                .instances
+                .get_mut(id)
+                .map(|i| i.configuration.get().minecraft_version);
+            let mut servers = servers.to_vec();
+            if let (Some(server), Some(version)) = (servers.first_mut(), version) {
+                match crate::server_list_pinger::ServerListPinger::load_status(&backend, server.ip.clone(), version, id)
+                {
+                    crate::server_list_pinger::PingResult::Pinging => server.pinging = true,
+                    crate::server_list_pinger::PingResult::Loaded { status, ping } => {
+                        server.pinging = false;
+                        server.status = Some(status);
+                        server.ping = ping;
+                    },
+                    crate::server_list_pinger::PingResult::Error => server.pinging = false,
+                }
+            }
+            let servers: Arc<[InstanceServerSummary]> = servers.into();
             let mut guard = backend.instance_state.write();
             let this = guard.instances.get_mut(id)?;
             let state = this.servers_state.clone();
@@ -1167,6 +1193,13 @@ impl Instance {
         self.configuration = new.configuration;
     }
 
+    pub fn server_name(&self, address: &str) -> Option<String> {
+        self.servers
+            .as_ref()?
+            .iter()
+            .find(|s| s.ip.as_ref() == address)
+            .map(|s| s.name.to_string())
+    }
     pub fn update_session(&mut self) {
         let running = !self.processes.is_empty();
         if running {
@@ -1188,6 +1221,8 @@ impl Instance {
             let elapsed = started_at.elapsed().as_secs();
             self.stats.modify(|stats| {
                 stats.total_playtime_secs = stats.total_playtime_secs.saturating_add(elapsed);
+                stats.last_session_secs = elapsed;
+                record_playtime(&mut stats.daily_playtime_secs, chrono::Local::now().timestamp(), elapsed);
             });
         }
     }
@@ -1199,6 +1234,8 @@ impl Instance {
 
         InstancePlaytime {
             total_secs: stats.total_playtime_secs.saturating_add(current_session_secs),
+            weekly_secs: weekly_playtime(&stats.daily_playtime_secs, current_session_secs),
+            last_session_secs: stats.last_session_secs,
             current_session_secs,
             last_played_unix_ms: stats.last_played_unix_ms,
         }
@@ -1650,5 +1687,53 @@ mod quickplay_tests {
         let guard = QuickplayBackgroundMode::enter();
         assert!(guard.active);
         drop(guard);
+    }
+}
+
+// Split completed sessions at local midnight; never infer a historical distribution from totals.
+fn record_playtime(days: &mut std::collections::BTreeMap<String, u64>, end: i64, seconds: u64) {
+    use chrono::{Datelike, TimeZone};
+    let mut cursor = end.saturating_sub(seconds.min(i64::MAX as u64) as i64);
+    while cursor < end {
+        let Some(at) = chrono::Local.timestamp_opt(cursor, 0).single() else {
+            break;
+        };
+        let next = at
+            .date_naive()
+            .succ_opt()
+            .and_then(|d| chrono::Local.with_ymd_and_hms(d.year(), d.month(), d.day(), 0, 0, 0).earliest())
+            .map(|d| d.timestamp())
+            .unwrap_or(end);
+        let until = next.min(end).max(cursor + 1);
+        let key = at.date_naive().to_string();
+        let count = days.entry(key).or_default();
+        *count = count.saturating_add((until - cursor) as u64);
+        cursor = until;
+    }
+    while days.len() > 60 {
+        days.pop_first();
+    }
+}
+fn weekly_playtime(days: &std::collections::BTreeMap<String, u64>, current: u64) -> [u64; 7] {
+    let mut days = days.clone();
+    record_playtime(&mut days, chrono::Local::now().timestamp(), current);
+    std::array::from_fn(|i| {
+        let date = chrono::Local::now().date_naive() - chrono::Duration::days(6 - i as i64);
+        days.get(&date.to_string()).copied().unwrap_or(0)
+    })
+}
+#[cfg(test)]
+mod home_playtime_tests {
+    use super::*;
+    #[test]
+    fn session_is_split_and_total_preserved() {
+        use chrono::TimeZone;
+        let end = chrono::Local.with_ymd_and_hms(2026, 10, 23, 0, 30, 0).single().unwrap().timestamp();
+        let mut days = Default::default();
+        record_playtime(&mut days, end, 3600);
+        assert_eq!(days["2026-10-22"], 1800);
+        assert_eq!(days["2026-10-23"], 1800);
+        record_playtime(&mut days, end, 0);
+        assert_eq!(days.values().sum::<u64>(), 3600);
     }
 }

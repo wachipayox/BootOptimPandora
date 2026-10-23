@@ -15,6 +15,10 @@ use crate::{
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InstanceConfiguration {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_artwork: Option<std::path::PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_logo: Option<std::path::PathBuf>,
     pub minecraft_version: Ustr,
     pub loader: Loader,
     #[serde(default, skip_serializing_if = "crate::skip_if_none")]
@@ -111,6 +115,8 @@ pub struct InstanceConfiguration {
 impl InstanceConfiguration {
     pub fn new(minecraft_version: Ustr, loader: Loader) -> Self {
         Self {
+            home_artwork: None,
+            home_logo: None,
             minecraft_version,
             loader,
             preferred_loader_version: None,

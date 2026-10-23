@@ -1,0 +1,8 @@
+Wachiland Home resources supplied by the user for redistribution in the launcher.
+artwork-vanilla.png: lossless PNG conversion of handoff/06-recursos/Vanilla/artwork-vanilla.webp.
+logo-vanilla.png: unchanged handoff/06-recursos/Vanilla/logo-vanilla.png.
+fondo-cafe-1800.png: unchanged approved default app background. cafe-ambient.png: downsampled Gaussian blur of that background.
+vanilla-glass.png: the Home button crop from the Vanilla artwork, blurred 14 px and saturated 1.5x.
+wachiland-launcher-ancho.svg: unchanged approved path-only launcher logo from handoff/03-logo/svg/.
+Home navigation icons and instance-default.svg: exact SVG geometry from the approved handoff.
+No resources from ejemplos-no-distribuir are embedded.

@@ -421,6 +421,8 @@ pub struct PlayButton {
     progress: Option<f32>,
     id: ElementId,
     status: SharedString,
+    title: SharedString,
+    add_instance: bool,
     artwork: Option<ImageSource>,
     disabled: bool,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
@@ -431,12 +433,28 @@ impl PlayButton {
             progress: None,
             id: id.into(),
             status: status.into(),
+            title: "Jugar".into(),
+            add_instance: false,
             artwork,
             disabled: false,
             on_click: None,
         }
     }
+    pub fn title(mut self, title: impl Into<SharedString>) -> Self {
+        self.title = title.into();
+        self
+    }
+    pub fn progress(mut self, amount: f32) -> Self {
+        self.progress = Some(amount.clamp(0., 1.));
+        self
+    }
+    pub fn add_instance(mut self) -> Self {
+        self.title = "Añadir instancia".into();
+        self.add_instance = true;
+        self
+    }
     pub fn updating(mut self, amount: f32) -> Self {
+        self.title = "Actualizando".into();
         self.progress = Some(amount.clamp(0., 1.));
         self
     }
@@ -469,7 +487,7 @@ impl RenderOnce for PlayButton {
             .child(
                 DesignButton::new(self.id)
                     .ghost()
-                    .aria_label(if progress.is_some() { "Actualizando" } else { "Jugar" })
+                    .aria_label(self.title.clone())
                     .size_full()
                     .rounded(px(0.))
                     .px_0()
@@ -504,7 +522,13 @@ impl RenderOnce for PlayButton {
                             } else {
                                 rgb(theme::ON_PLAY)
                             })
-                            .child(div().size(px(18.)).text_size(px(18.)).line_height(px(18.)).child("▶"))
+                            .child(
+                                div()
+                                    .size(px(18.))
+                                    .text_size(px(18.))
+                                    .line_height(px(18.))
+                                    .child(if self.add_instance { "+" } else { "▶" }),
+                            )
                             .child(
                                 v_flex()
                                     .items_start()
@@ -514,10 +538,7 @@ impl RenderOnce for PlayButton {
                                             .text_size(px(17.))
                                             .line_height(px(20.))
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .child(TrackedText::new(
-                                                if progress.is_some() { "Actualizando" } else { "Jugar" },
-                                                0.02,
-                                            )),
+                                            .child(TrackedText::new(self.title.clone(), 0.02)),
                                     )
                                     .child(
                                         div()
@@ -599,4 +620,35 @@ pub fn progress(label: impl Into<SharedString>, amount: f32, detail: impl Into<S
             amount,
             ..Default::default()
         })
+}
+
+/// A six-pixel block notch, painted beneath content on the UI thread.
+pub fn notched_panel(color: u32) -> Div {
+    div().relative().child(
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                let x = bounds.origin.x;
+                let y = bounds.origin.y;
+                let w = bounds.size.width;
+                let h = bounds.size.height;
+                let n = px(6.);
+                let mut path = PathBuilder::fill();
+                path.move_to(point(x + n, y));
+                path.line_to(point(x + w - n, y));
+                path.line_to(point(x + w, y + n));
+                path.line_to(point(x + w, y + h - n));
+                path.line_to(point(x + w - n, y + h));
+                path.line_to(point(x + n, y + h));
+                path.line_to(point(x, y + h - n));
+                path.line_to(point(x, y + n));
+                path.close();
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, rgba(color));
+                }
+            },
+        )
+        .absolute()
+        .size_full(),
+    )
 }

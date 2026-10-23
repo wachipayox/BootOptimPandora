@@ -30,6 +30,8 @@ pub struct StatusVersion {
 
 #[derive(Deserialize, Debug, Default)]
 pub struct StatusPlayers {
+    #[serde(default)]
+    pub sample: Vec<StatusPlayer>,
     pub max: i32,
     pub online: i32,
 }

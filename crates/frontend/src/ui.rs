@@ -2,26 +2,13 @@ use std::{collections::VecDeque, sync::Arc};
 
 use bridge::instance::InstanceID;
 use gpui::{prelude::*, *};
-use gpui_component::{
-    ActiveTheme as _, Icon, InteractiveElementExt, WindowExt, h_flex,
-    notification::{Notification, NotificationType},
-    scroll::ScrollableElement,
-    tooltip::Tooltip,
-    v_flex,
-};
+use gpui_component::{h_flex, scroll::ScrollableElement, v_flex};
 use rustc_hash::FxHashMap;
 use schema::pandora_update::UpdatePrompt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    component::{
-        generic_title_bar::TitleBarState,
-        main_title_bar::MainTitleBar,
-        menu::{MenuGroup, MenuGroupItem},
-        page_path::PagePath,
-        resize_panel::{ResizePanel, ResizePanelState},
-        shrinking_text::ShrinkingText,
-    },
+    component::{main_title_bar::MainTitleBar, page_path::PagePath},
     entity::{
         DataEntities,
         account::AccountExt,
@@ -42,8 +29,8 @@ use crate::{
 pub struct LauncherUI {
     data: DataEntities,
     page: LauncherPage,
+    pub(crate) home_account_menu: bool,
     pub update: Option<UpdatePrompt>,
-    sidebar_state: ResizePanelState,
     recent_instances: heapless::Vec<(InstanceID, SharedString), 3>,
     page_history_backwards: VecDeque<(PageType, Arc<[PageType]>)>,
     page_history_forwards: Vec<(PageType, Arc<[PageType]>)>,
@@ -110,6 +97,7 @@ impl PageType {
 
 #[derive(Clone)]
 pub enum LauncherPage {
+    Home(Entity<crate::pages::home::HomePage>),
     Instances(Entity<InstancesPage>),
     Skins(Entity<SkinsPage>),
     Modrinth(Entity<ModrinthSearchPage>),
@@ -122,6 +110,9 @@ pub enum LauncherPage {
 
 impl LauncherPage {
     fn render(self, ui: &LauncherUI, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if let LauncherPage::Home(page) = &self {
+            return div().size_full().child(page.clone()).into_any_element();
+        }
         fn process(entity: Entity<impl Page>, window: &mut Window, cx: &mut App) -> (bool, AnyElement, AnyElement) {
             entity.update(cx, |page, cx| {
                 (
@@ -133,6 +124,7 @@ impl LauncherPage {
         }
 
         let (scrollable, controls, page) = match self {
+            LauncherPage::Home(_) => unreachable!(),
             LauncherPage::Instances(entity) => process(entity, window, cx),
             LauncherPage::Skins(entity) => process(entity, window, cx),
             LauncherPage::Modrinth(entity) => process(entity, window, cx),
@@ -153,14 +145,18 @@ impl LauncherPage {
         };
 
         if scrollable {
-            v_flex().size_full().child(title_bar).child(
-                div()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(v_flex().size_full().overflow_y_scrollbar().child(page)),
-            )
+            v_flex()
+                .size_full()
+                .child(title_bar)
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(v_flex().size_full().overflow_y_scrollbar().child(page)),
+                )
+                .into_any_element()
         } else {
-            v_flex().size_full().child(title_bar).child(page)
+            v_flex().size_full().child(title_bar).child(page).into_any_element()
         }
     }
 }
@@ -177,15 +173,20 @@ impl LauncherUI {
             .collect();
 
         let _instance_added_subscription =
-            cx.subscribe::<_, InstanceAddedEvent>(&data.instances, |this, _, event, cx| {
+            cx.subscribe_in::<_, InstanceAddedEvent>(&data.instances, window, |this, _, event, window, cx| {
                 if this.recent_instances.is_full() {
                     this.recent_instances.pop();
                 }
                 let _ = this.recent_instances.insert(0, (event.instance.id, event.instance.name.clone()));
+                InterfaceConfig::get_mut(cx).home_instance = Some(event.instance.name.clone());
+                this.switch_page_without_history(PageType::Instances, [].into(), window, cx);
                 cx.notify();
             });
         let _instance_modified_subscription =
             cx.subscribe_in::<_, InstanceModifiedEvent>(&data.instances, window, |this, _, event, window, cx| {
+                if matches!(&this.page,LauncherPage::Home(p) if p.read(cx).instance_id(cx)==Some(event.instance.id)) {
+                    InterfaceConfig::get_mut(cx).home_instance = Some(event.instance.name.clone());
+                }
                 if let Some((_, name)) = this.recent_instances.iter_mut().find(|(id, _)| *id == event.instance.id) {
                     *name = event.instance.name.clone();
                     cx.notify();
@@ -208,6 +209,9 @@ impl LauncherUI {
         let _instance_removed_subscription =
             cx.subscribe_in::<_, InstanceRemovedEvent>(&data.instances, window, |this, _, event, window, cx| {
                 this.recent_instances.retain(|entry| entry.0 != event.id);
+                if matches!(&this.page,LauncherPage::Home(p) if p.read(cx).instance_id(cx)==Some(event.id)) {
+                    this.switch_page_without_history(PageType::Instances, [].into(), window, cx);
+                }
 
                 if let LauncherPage::InstancePage(page) = &this.page
                     && page.read(cx).instance.read(cx).id == event.id
@@ -227,16 +231,6 @@ impl LauncherUI {
             });
 
         let config = InterfaceConfig::get(cx);
-
-        let mut default_sidebar_width = config.sidebar_width;
-        if default_sidebar_width <= 0.0 {
-            default_sidebar_width = 150.0;
-        }
-
-        let sidebar_state =
-            ResizePanelState::new(px(default_sidebar_width), px(150.0), px(225.0)).on_resize(|width, _, cx| {
-                InterfaceConfig::get_mut(cx).sidebar_width = width.as_f32();
-            });
 
         let main_page = config.main_page.clone();
         let original_page_path = config.page_path.clone();
@@ -264,8 +258,8 @@ impl LauncherUI {
         Self {
             data: data.clone(),
             page,
+            home_account_menu: false,
             update: None,
-            sidebar_state,
             recent_instances,
             page_history_backwards: VecDeque::with_capacity(32),
             page_history_forwards: Vec::new(),
@@ -285,7 +279,9 @@ impl LauncherUI {
         cx: &mut Context<Self>,
     ) -> Result<LauncherPage, PageType> {
         match page {
-            PageType::Instances => Ok(LauncherPage::Instances(cx.new(|cx| InstancesPage::new(data, window, cx)))),
+            PageType::Instances => {
+                Ok(LauncherPage::Home(cx.new(|cx| crate::pages::home::HomePage::new(data, window, cx))))
+            },
             PageType::Skins => Ok(LauncherPage::Skins(cx.new(|cx| SkinsPage::new(data, window, cx)))),
             PageType::Modrinth { installing_for } => {
                 let installing_for = installing_for
@@ -336,6 +332,12 @@ impl LauncherUI {
                 Ok(LauncherPage::ModrinthProject(page))
             },
             PageType::InstancePage { ref name } => {
+                if InterfaceConfig::get(cx).instance_subpage
+                    == crate::pages::instance::instance_page::InstanceSubpageType::Quickplay
+                {
+                    InterfaceConfig::get_mut(cx).home_instance = Some(name.clone());
+                    return Ok(LauncherPage::Home(cx.new(|cx| crate::pages::home::HomePage::new(data, window, cx))));
+                }
                 let Some(id) = InstanceEntries::find_id_by_name(&data.instances, name, cx) else {
                     return Err(PageType::Instances);
                 };
@@ -445,298 +447,288 @@ impl Render for LauncherUI {
             }
         }
 
-        let (page_type, hide_skins) = {
-            let config = InterfaceConfig::get(cx);
-            (config.main_page.clone(), config.hide_skins)
-        };
-
-        let library_group = MenuGroup::new("Minecraft")
-            .child(
-                MenuGroupItem::new(t::instance::title())
-                    .active(page_type == PageType::Instances)
-                    .on_click(cx.listener(|launcher, _, window, cx| {
-                        launcher.switch_page(PageType::Instances, &[], window, cx);
-                    })),
-            )
-            .when(!hide_skins, |this| {
-                this.child(MenuGroupItem::new(t::skins::title()).active(page_type == PageType::Skins).on_click(
-                    cx.listener(|launcher, _, window, cx| {
-                        launcher.switch_page(PageType::Skins, &[], window, cx);
-                    }),
-                ))
-            });
-
-        let content_group = MenuGroup::new(t::instance::content::title())
-            .child(
-                MenuGroupItem::new(t::modrinth::name())
-                    .active(matches!(
-                        page_type,
-                        PageType::Modrinth { installing_for: None }
-                            | PageType::ModrinthProject { install_for: None, .. }
-                    ))
-                    .on_click(cx.listener(|launcher, _, window, cx| {
-                        launcher.switch_page(PageType::Modrinth { installing_for: None }, &[], window, cx);
-                    })),
-            )
-            .child(
-                MenuGroupItem::new(t::curseforge::name())
-                    .active(matches!(page_type, PageType::Curseforge { installing_for: None }))
-                    .on_click(cx.listener(|launcher, _, window, cx| {
-                        launcher.switch_page(PageType::Curseforge { installing_for: None }, &[], window, cx);
-                    })),
-            );
-
-        let files_group =
-            MenuGroup::new(t::instance::sync::files())
-                .child(MenuGroupItem::new(t::import::label()).active(page_type == PageType::Import).on_click(
-                    cx.listener(|launcher, _, window, cx| {
-                        launcher.switch_page(PageType::Import, &[], window, cx);
-                    }),
-                ))
-                .child(
-                    MenuGroupItem::new(t::instance::sync::label())
-                        .active(page_type == PageType::Syncing)
-                        .on_click(cx.listener(|launcher, _, window, cx| {
-                            launcher.switch_page(PageType::Syncing, &[], window, cx);
-                        })),
-                );
-
-        let mut groups: heapless::Vec<MenuGroup, 4> = heapless::Vec::new();
-
-        let _ = groups.push(library_group);
-        let _ = groups.push(content_group);
-        let _ = groups.push(files_group);
-
-        if !self.recent_instances.is_empty() {
-            let mut recent_instances_group = MenuGroup::new(t::instance::recent());
-
-            for (_, name) in &self.recent_instances {
-                let name = name.clone();
-                let active = page_type == PageType::InstancePage { name: name.clone() };
-                let item = MenuGroupItem::new(name.clone()).active(active).on_click(cx.listener(
-                    move |launcher, _, window, cx| {
-                        launcher.switch_page(
-                            PageType::InstancePage { name: name.clone() },
-                            &[PageType::Instances],
-                            window,
-                            cx,
-                        );
-                    },
-                ));
-                recent_instances_group = recent_instances_group.child(item);
-            }
-
-            let _ = groups.push(recent_instances_group);
-        }
-
-        let accounts = self.data.accounts.read(cx);
-        let (account_head, account_name) = if let Some(account) = &accounts.selected_account {
-            let account_name = account.username(InterfaceConfig::get(cx).hide_usernames);
-            let hide_skins = InterfaceConfig::get(cx).hide_skins;
-
-            let head = if hide_skins {
-                gpui::img(ImageSource::Resource(Resource::Embedded("images/hidden_head.png".into())))
-            } else if let Some(head) = &account.head {
-                let resize = png_render_cache::ImageTransformation::Resize { width: 32, height: 32 };
-                png_render_cache::render_with_transform(head.clone(), resize, cx)
-            } else {
-                gpui::img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into())))
-            };
-            (head, account_name)
-        } else {
-            (
-                gpui::img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into()))),
-                t::account::none().into(),
-            )
-        };
-
-        let account_button = h_flex()
-            .id("account-button")
-            .flex_1()
-            .p_2()
-            .max_w_full()
-            .gap_2()
-            .justify_center()
-            .text_size(rems(0.9375))
-            .line_height(rems(1.0))
-            .rounded(cx.theme().radius)
-            .hover(|this| this.bg(cx.theme().sidebar_accent).text_color(cx.theme().sidebar_accent_foreground))
-            .child(account_head.size_8().min_w_8().min_h_8())
-            .child(ShrinkingText::new(account_name))
-            .on_click({
-                let data = self.data.clone();
-                move |_, window, cx| {
-                    if data.accounts.read(cx).accounts.is_empty() {
-                        crate::root::start_new_account_login(&data.backend_handle, window, cx);
-                        return;
-                    }
-
-                    let build = crate::modals::accounts::build_accounts_sheet(&data, window, cx);
-                    window.open_sheet_at(gpui_component::Placement::Left, cx, build);
-                }
-            });
-
-        let settings_button = div()
-            .id("settings-button")
-            .p_2()
-            .rounded(cx.theme().radius)
-            .hover(|this| this.bg(cx.theme().sidebar_accent).text_color(cx.theme().sidebar_accent_foreground))
-            .child(PandoraIcon::Settings)
-            .on_click({
-                let data = self.data.clone();
-                move |_, window, cx| {
-                    crate::settings::open_settings_window(window, &data, cx);
-                }
-            });
-        let bug_report_button = div()
-            .id("bug-report-button")
-            .p_2()
-            .rounded(cx.theme().radius)
-            .hover(|this| this.bg(cx.theme().sidebar_accent).text_color(cx.theme().sidebar_accent_foreground))
-            .child(PandoraIcon::Bug)
-            .tooltip(move |window, cx| Tooltip::new(t::system::report_bug()).build(window, cx))
-            .on_click({
-                move |_, window, cx| {
-                    open_bug_report_url(window, cx);
-                }
-            });
-        let discord_invite = option_env!("DISCORD_INVITE").unwrap_or("https://pandora.moulberry.com/discord");
-        let discord_button = div()
-            .id("discord-button")
-            .p_2()
-            .rounded(cx.theme().radius)
-            .hover(|this| this.bg(cx.theme().sidebar_accent).text_color(cx.theme().sidebar_accent_foreground))
-            .child(PandoraIcon::Discord)
-            .tooltip(move |window, cx| Tooltip::new(t::system::join_discord()).build(window, cx))
-            .on_click({
-                move |_, _, cx| {
-                    cx.open_url(discord_invite);
-                }
-            });
-
-        let header_drag_state =
-            window.use_keyed_state("sidebar-header-drag-state", cx, |_, _| TitleBarState::default());
-        let header = h_flex()
-            .id("sidebar-header")
-            .window_control_area(WindowControlArea::Drag)
-            .on_mouse_down_out(window.listener_for(&header_drag_state, |state, _, _, _| {
-                state.should_move = false;
-            }))
-            .when(cfg!(target_os = "linux"), |this| {
-                this.on_double_click(|_, window, _| window.zoom_window())
-            })
-            .when(cfg!(target_os = "macos"), |this| {
-                this.on_double_click(|_, window, _| window.titlebar_double_click())
-            })
-            .on_mouse_down(
-                MouseButton::Left,
-                window.listener_for(&header_drag_state, |state, _, _, _| {
-                    state.should_move = true;
-                }),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                window.listener_for(&header_drag_state, |state, _, _, _| {
-                    state.should_move = false;
-                }),
-            )
-            .on_mouse_move(window.listener_for(&header_drag_state, |state, _, window, _| {
-                if state.should_move {
-                    state.should_move = false;
-                    window.start_window_move();
-                }
-            }))
-            .when_else(cfg!(target_os = "macos"), |this| this.pt(px(41.0)), |this| this.pt(px(14.0)))
-            .px_5()
-            .pb_2()
-            .gap_2()
-            .w_full()
-            .justify_center()
-            .text_size(rems(0.9375))
-            .child(Icon::new(PandoraIcon::Pandora).size_8().min_w_8().min_h_8())
-            .child(t::common::app_name());
-        let footer_buttons = h_flex()
-            .child(settings_button)
-            .child(bug_report_button)
-            .when(!discord_invite.is_empty(), |this| this.child(discord_button));
-        let footer = v_flex()
-            .pb_2()
-            .px_2()
-            .items_center()
-            .min_w_full()
-            .max_w_full()
-            .w_full()
-            .child(footer_buttons)
-            .child(account_button);
-        let sidebar = v_flex()
-            .size_full()
-            .min_size_full()
-            .max_size_full()
-            .bg(cx.theme().sidebar)
-            .text_color(cx.theme().sidebar_foreground)
-            .child(header)
-            .child(v_flex().flex_1().min_h_0().px_3().gap_y_3().children(groups).overflow_y_scrollbar())
-            .child(footer);
-
-        ResizePanel::new(&self.sidebar_state, sidebar, self.page.clone().render(&self, window, cx))
+        self.render_wachiland(window, cx)
     }
 }
 
-fn open_bug_report_url(window: &mut Window, cx: &mut App) {
-    let mut body = String::from(
-        r#"## Description of bug
-(Write here)
-
-## Steps to reproduce
-(Write here)
-
-## This issue is unique
-- [ ] I've searched the other issues and didn't see an issue describing the same bug
-
-## Environment
-"#,
-    );
-
-    use std::fmt::Write;
-    _ = writeln!(&mut body, "Version: {:?}", option_env!("PANDORA_RELEASE_VERSION"));
-    _ = writeln!(&mut body, "Distributor: {:?}", option_env!("PANDORA_DISTRIBUTION"));
-    _ = writeln!(&mut body, "OS: {} ({})", std::env::consts::OS, std::env::consts::ARCH);
-
-    if cfg!(target_os = "linux") {
-        if let Ok(os_release) = std::fs::read_to_string("/etc/os-release") {
-            for line in os_release.lines() {
-                let line = line.trim_ascii();
-                if let Some(name) = line.strip_prefix("NAME=") {
-                    _ = writeln!(&mut body, "OS Name: {}", name);
-                } else if let Some(version) = line.strip_prefix("VERSION=") {
-                    _ = writeln!(&mut body, "OS Version: {}", version);
-                }
-            }
+impl LauncherUI {
+    fn render_wachiland(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        use crate::{
+            component::design::{self, DesignButton},
+            theme,
+        };
+        let selected = InterfaceConfig::get(cx).home_instance.clone();
+        let mut instances = v_flex()
+            .gap(px(4.))
+            .child(div().px(px(8.)).pb(px(8.)).child(design::eyebrow("INSTANCIAS")));
+        let entries = self.data.instances.read(cx).entries.clone();
+        for (ix, (_id, entity)) in entries.iter().enumerate() {
+            let i = entity.read(cx).clone();
+            let name = i.name.clone();
+            let active = selected.as_ref() == Some(&name);
+            let icon = i
+                .icon
+                .clone()
+                .map(|bytes| {
+                    png_render_cache::render_with_transform(
+                        bytes,
+                        png_render_cache::ImageTransformation::Resize { width: 28, height: 28 },
+                        cx,
+                    )
+                    .into_any_element()
+                })
+                .unwrap_or_else(|| {
+                    gpui_component::Icon::new(PandoraIcon::InstanceDefault).size(px(28.)).into_any_element()
+                });
+            instances = instances.child(
+                DesignButton::new(("sidebar-instance", ix))
+                    .w_full()
+                    .h(px(42.))
+                    .when(active, |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)))
+                    .justify_start()
+                    .px(px(8.))
+                    .paint(
+                        90.,
+                        if active {
+                            [[0x5bcef51f, 0x5bcef500]; 3]
+                        } else {
+                            [[0x00000000; 2], [0xffffff0d; 2], [0xffffff14; 2]]
+                        },
+                        rgb(theme::INK).into(),
+                        rgb(theme::INK).into(),
+                    )
+                    .child(h_flex().gap(px(8.)).child(icon).child(
+                        v_flex().items_start().child(div().text_size(px(12.)).child(name.clone())).child(
+                            div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(format!(
+                                "{} {}",
+                                i.configuration.loader.pretty_name(),
+                                i.configuration.minecraft_version
+                            )),
+                        ),
+                    ))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        InterfaceConfig::get_mut(cx).home_instance = Some(name.clone());
+                        this.switch_page_without_history(PageType::Instances, [].into(), window, cx);
+                    })),
+            )
         }
-
-        _ = writeln!(&mut body, "Desktop: {:?}", std::env::var_os("XDG_CURRENT_DESKTOP"));
-
-        if let Some(snap_name) = std::env::var_os("SNAP_NAME") {
-            _ = writeln!(&mut body, "Snap: {:?}", snap_name);
+        let data = self.data.clone();
+        instances = instances.child(
+            DesignButton::new("sidebar-add")
+                .label("+   Añadir instancia")
+                .w_full()
+                .h(px(34.))
+                .on_click(move |_, w, c| crate::pages::home::add_instance(&data, w, c)),
+        );
+        let unread = matches!(&self.page,LauncherPage::Home(p) if p.read(cx).has_unread(cx));
+        let news_active = matches!(&self.page,LauncherPage::Home(p) if p.read(cx).is_news());
+        let mut footer = v_flex().gap(px(4.));
+        for (id, label, page) in [
+            ("home", "Inicio", PageType::Instances),
+            ("skin", "Aspecto", PageType::Skins),
+            ("news", "Noticias", PageType::Instances),
+        ] {
+            footer = footer.child(
+                DesignButton::new(id)
+                    .child(
+                        h_flex()
+                            .gap(px(10.))
+                            .child(
+                                gpui_component::Icon::new(match id {
+                                    "home" => PandoraIcon::HomeHouse,
+                                    "skin" => PandoraIcon::HomeHanger,
+                                    _ => PandoraIcon::HomeNews,
+                                })
+                                .size(px(16.)),
+                            )
+                            .child(label)
+                            .when(id == "news" && unread, |d| {
+                                d.child(div().size(px(6.)).bg(rgb(theme::ACCENT_TEXT)).with_animation(
+                                    "news-pulse",
+                                    Animation::new(std::time::Duration::from_secs(2)).repeat(),
+                                    |d, t| d.opacity(0.45 + 0.55 * (t * std::f32::consts::TAU).cos().abs()),
+                                ))
+                            }),
+                    )
+                    .w_full()
+                    .h(px(34.))
+                    .when(
+                        (id == "home"
+                            && matches!(InterfaceConfig::get(cx).main_page, PageType::Instances)
+                            && !news_active)
+                            || (id == "skin" && matches!(InterfaceConfig::get(cx).main_page, PageType::Skins))
+                            || (id == "news" && news_active),
+                        |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)),
+                    )
+                    .justify_start()
+                    .on_click(cx.listener(move |this, _, w, c| {
+                        this.switch_page(page.clone(), &[], w, c);
+                        if id == "home" {
+                            if let LauncherPage::Home(home) = &this.page {
+                                home.update(c, |p, c| p.show_home(c));
+                            }
+                        }
+                        if id == "news" {
+                            if let LauncherPage::Home(home) = &this.page {
+                                home.update(c, |p, c| p.show_news(c));
+                            }
+                        }
+                    })),
+            );
         }
-        if let Some(snap_name) = std::env::var_os("FLATPAK_ID") {
-            _ = writeln!(&mut body, "Flatpak ID: {:?}", snap_name);
+        let accounts = self.data.accounts.read(cx);
+        let selected_account = accounts.selected_account.clone();
+        let account_name = selected_account
+            .as_ref()
+            .map(|a| a.username(InterfaceConfig::get(cx).hide_usernames))
+            .unwrap_or_else(|| "Sin cuenta".into());
+        let head = selected_account.as_ref().and_then(|a| a.head.clone());
+        let head = head
+            .map(|b| {
+                png_render_cache::render_with_transform(
+                    b,
+                    png_render_cache::ImageTransformation::Resize { width: 26, height: 26 },
+                    cx,
+                )
+                .into_any_element()
+            })
+            .unwrap_or_else(|| gpui_component::Icon::new(PandoraIcon::CircleUser).size(px(26.)).into_any_element());
+        let saved_accounts = self.data.accounts.read(cx).accounts.clone();
+        let settings_data = self.data.clone();
+        footer = footer.child(
+            h_flex()
+                .border_t_1()
+                .border_color(rgba(0xffffff0b))
+                .pt(px(8.))
+                .gap(px(4.))
+                .child(
+                    DesignButton::new("home-account")
+                        .flex_1()
+                        .h(px(47.))
+                        .child(
+                            h_flex().gap(px(8.)).child(head).child(
+                                v_flex().items_start().child(account_name).child(
+                                    div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(
+                                        selected_account
+                                            .as_ref()
+                                            .map(|a| if a.offline { "Sin conexión" } else { "Microsoft" })
+                                            .unwrap_or("Añadir cuenta"),
+                                    ),
+                                ),
+                            ),
+                        )
+                        .on_click(cx.listener(|this, _, _, c| {
+                            this.home_account_menu = !this.home_account_menu;
+                            c.notify();
+                        })),
+                )
+                .child(
+                    DesignButton::new("home-settings")
+                        .child(PandoraIcon::Settings)
+                        .w(px(32.))
+                        .on_click(move |_, w, c| crate::settings::open_settings_window(w, &settings_data, c)),
+                ),
+        );
+        let sidebar = v_flex()
+            .w(px(220.))
+            .min_w(px(220.))
+            .h_full()
+            .bg(rgba(0x060607e6))
+            .px(px(10.))
+            .pb(px(12.))
+            .child(
+                div()
+                    .h(px(80.))
+                    .px(px(8.))
+                    .pt(px(16.))
+                    .window_control_area(WindowControlArea::Drag)
+                    .child(
+                        img(ImageSource::Resource(Resource::Embedded("images/wachiland-launcher-ancho.svg".into())))
+                            .w(px(140.))
+                            .h(px(40.))
+                            .object_fit(ObjectFit::Contain),
+                    ),
+            )
+            .child(div().flex_1().min_h_0().overflow_y_scrollbar().child(instances))
+            .child(footer);
+        let mut account_menu = design::notched_panel(0x0a0a0cf2)
+            .flex()
+            .flex_col()
+            .absolute()
+            .left(px(10.))
+            .bottom(px(64.))
+            .w(px(240.))
+            .p(px(6.));
+        for (ix, account) in saved_accounts.iter().enumerate() {
+            let uuid = account.uuid;
+            let active = selected_account.as_ref().is_some_and(|a| a.uuid == uuid);
+            let name = account.username(InterfaceConfig::get(cx).hide_usernames);
+            account_menu = account_menu.child(
+                DesignButton::new(("account-choice", ix))
+                    .label(format!("{name}{}", if active { "  ✓" } else { "" }))
+                    .w_full()
+                    .justify_start()
+                    .when(active, |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)))
+                    .on_click(cx.listener(move |this, _, _, c| {
+                        this.data.backend_handle.send(bridge::message::MessageToBackend::SelectAccount { uuid });
+                        this.home_account_menu = false;
+                        c.notify();
+                    })),
+            );
         }
-        if std::env::var_os("APPIMAGE").is_some() {
-            body.push_str("AppImage: true\n");
+        account_menu = account_menu
+            .child(
+                DesignButton::new("add-microsoft-home")
+                    .label("Añadir cuenta de Microsoft")
+                    .w_full()
+                    .on_click(cx.listener(|this, _, w, c| {
+                        this.home_account_menu = false;
+                        crate::root::start_new_account_login(&this.data.backend_handle, w, c);
+                    })),
+            )
+            .child(
+                DesignButton::new("add-offline-home")
+                    .label("Añadir cuenta sin conexión")
+                    .w_full()
+                    .on_click(cx.listener(|this, _, w, c| {
+                        this.home_account_menu = false;
+                        crate::modals::accounts::open_offline_account(this.data.backend_handle.clone(), w, c);
+                    })),
+            );
+        if let Some(account) = selected_account {
+            let uuid = account.uuid;
+            account_menu = account_menu.child(
+                DesignButton::new("logout-home")
+                    .label(format!("Cerrar sesión en {}", account.username(InterfaceConfig::get(cx).hide_usernames)))
+                    .w_full()
+                    .text_color(rgb(theme::DANGER))
+                    .on_click(cx.listener(move |this, _, _, c| {
+                        this.home_account_menu = false;
+                        this.data.backend_handle.send(bridge::message::MessageToBackend::DeleteAccount { uuid });
+                        c.notify();
+                    })),
+            );
         }
+        h_flex()
+            .size_full()
+            .relative()
+            .bg(rgb(theme::BG))
+            .text_color(rgb(theme::INK))
+            .child(
+                img(ImageSource::Resource(Resource::Embedded("images/cafe-ambient.png".into())))
+                    .absolute()
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+                    .opacity(0.15),
+            )
+            .child(sidebar)
+            .child(div().flex_1().min_w_0().h_full().child(self.page.clone().render(self, window, cx)))
+            .when(self.home_account_menu, |d| {
+                d.child(account_menu.on_mouse_down_out(cx.listener(|this, _, _, c| {
+                    this.home_account_menu = false;
+                    c.notify();
+                })))
+            })
+            .into_any_element()
     }
-
-    let Some(github) = option_env!("GITHUB_REPOSITORY_URL") else {
-        let mut notification: Notification = (
-            NotificationType::Error,
-            SharedString::from("Unable to report bug, GITHUB_REPOSITORY_URL was not set at compile time"),
-        )
-            .into();
-        notification = notification.autohide(false);
-        window.push_notification(notification, cx);
-        return;
-    };
-
-    cx.open_url(&format!("{}/issues/new?body={}", github, urlencoding::encode(&body)));
 }

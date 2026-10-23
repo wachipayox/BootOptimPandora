@@ -41,9 +41,9 @@ pub mod root;
 pub mod settings;
 pub mod skin_renderer;
 pub mod skin_thumbnail_cache;
-pub mod ui;
 pub mod theme;
 mod theme_palette;
+pub mod ui;
 #[cfg(windows)]
 pub mod windows_security_ui;
 
@@ -51,6 +51,7 @@ pub mod windows_security_ui;
 #[folder = "../../assets"]
 #[include = "icons/**/*.svg"]
 #[include = "images/**/*.png"]
+#[include = "images/**/*.svg"]
 #[include = "fonts/**/*.ttf"]
 pub struct Assets;
 
@@ -364,11 +365,15 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 }
                 let root = cx.new(|cx| Root::new(launcher_root, window, cx));
                 if let Some(name) = capture_page.as_deref().and_then(|page| page.strip_prefix("update:")) {
-                    let name: SharedString=name.to_owned().into();
-                    let capture_data=data.clone();
-                    window.on_next_frame(move |window,cx| {
-                        if let Some(id)=crate::entity::instance::InstanceEntries::find_id_by_name(&capture_data.instances,&name,cx) {
-                            crate::root::capture_inherited_update(id,name,&capture_data,window,cx);
+                    let name: SharedString = name.to_owned().into();
+                    let capture_data = data.clone();
+                    window.on_next_frame(move |window, cx| {
+                        if let Some(id) = crate::entity::instance::InstanceEntries::find_id_by_name(
+                            &capture_data.instances,
+                            &name,
+                            cx,
+                        ) {
+                            crate::root::capture_inherited_update(id, name, &capture_data, window, cx);
                         }
                     });
                 }
