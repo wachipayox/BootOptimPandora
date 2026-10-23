@@ -366,6 +366,22 @@ impl Render for HomePage {
         if self.refreshed.elapsed() >= Duration::from_secs(300) {
             self.refresh(window, cx);
         }
+        if self.news_view {
+            if !self.loaded {
+                return div().size_full().into_any_element();
+            }
+            if self.news_page.is_none() {
+                let seed = self
+                    .article
+                    .as_ref()
+                    .and_then(|id| self.presentation.news.iter().find(|n| &n.id == id))
+                    .cloned();
+                self.news_page = Some(cx.new(|c| {
+                    super::news::NewsPage::new(&self.data, self.presentation.profile_id.clone(), seed, window, c)
+                }));
+            }
+            return div().size_full().child(self.news_page.clone().unwrap()).into_any_element();
+        }
         let instance = self.instance.as_ref().map(|i| i.read(cx).clone());
         let mut server = None;
         if let Some(i) = &instance {
@@ -763,22 +779,6 @@ impl Render for HomePage {
                     }))
                     .into_any_element()
             })));
-        if self.news_view {
-            if !self.loaded {
-                return div().size_full().into_any_element();
-            }
-            if self.news_page.is_none() {
-                let seed = self
-                    .article
-                    .as_ref()
-                    .and_then(|id| self.presentation.news.iter().find(|n| &n.id == id))
-                    .cloned();
-                self.news_page = Some(cx.new(|c| {
-                    super::news::NewsPage::new(&self.data, self.presentation.profile_id.clone(), seed, window, c)
-                }));
-            }
-            return div().size_full().child(self.news_page.clone().unwrap()).into_any_element();
-        }
         let mut content = v_flex()
             .relative()
             .size_full()

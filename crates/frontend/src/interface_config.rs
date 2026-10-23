@@ -188,6 +188,8 @@ impl InterfaceConfig {
             theme.font_size = gpui::px(holder.config.font_size.unwrap_or(DEFAULT_FONT_SIZE).clamp(8, 32) as f32);
             theme.scrollbar_mode = gpui_component::scroll::ScrollbarMode::Always;
         });
+        // Native controls and scrollbars keep a separate projection of the theme.
+        gpui_component::Theme::sync_base(cx);
         cx.refresh_windows();
     }
 }

@@ -181,6 +181,9 @@ impl Element for InlineFlow {
         let measure_items = self.items.iter().map(MeasureItem::from).collect::<Vec<_>>();
         let line_height = window.line_height();
         let rem_size = window.rem_size();
+        // Layout callbacks run after the enclosing text-style scope has ended.
+        // Measure with the same inherited font and line height used for painting.
+        let text_style = window.text_style();
         let image_sizes = measure_items
             .iter()
             .enumerate()
@@ -196,7 +199,6 @@ impl Element for InlineFlow {
 
         let layout_id = window.request_measured_layout(Default::default(), {
             move |known_dimensions, available_space, window, _cx| {
-                let text_style = window.text_style();
                 let wrap_width = if text_style.white_space == WhiteSpace::Normal {
                     known_dimensions.width.or(match available_space.width {
                         AvailableSpace::Definite(width) => Some(width),
@@ -205,7 +207,8 @@ impl Element for InlineFlow {
                 } else {
                     None
                 };
-                let layout = layout_flow(&measure_items, &image_sizes, &text_style, wrap_width, window);
+                let layout =
+                    layout_flow(&measure_items, &image_sizes, &text_style, wrap_width, (line_height, rem_size), window);
                 let size = layout.size;
                 if let Ok(mut state) = layout_ref.lock() {
                     *state = Some(layout);
@@ -361,16 +364,16 @@ fn layout_flow(
     image_sizes: &[Option<Size<Pixels>>],
     text_style: &TextStyle,
     wrap_width: Option<Pixels>,
+    metrics: (Pixels, Pixels),
     window: &mut Window,
 ) -> InlineFlowLayout {
-    let line_height = window.line_height();
-    let rem_size = window.rem_size();
+    let (line_height, rem_size) = metrics;
     let total_len = items.iter().map(MeasureItem::len).sum::<usize>();
     if total_len == 0 {
         return InlineFlowLayout::default();
     }
 
-    let line_ranges = line_ranges(items, image_sizes, text_style, wrap_width, window);
+    let line_ranges = line_ranges(items, image_sizes, text_style, wrap_width, rem_size, window);
     let font_size = text_style.font_size.to_pixels(rem_size);
     let mut fragments = Vec::new();
     let mut max_width = Pixels::ZERO;
@@ -481,6 +484,7 @@ fn line_ranges(
     image_sizes: &[Option<Size<Pixels>>],
     text_style: &TextStyle,
     wrap_width: Option<Pixels>,
+    rem_size: Pixels,
     window: &mut Window,
 ) -> Vec<Range<usize>> {
     let total_len = items.iter().map(MeasureItem::len).sum::<usize>();
@@ -503,7 +507,6 @@ fn line_ranges(
     let Some(wrap_width) = wrap_width else {
         return hard_lines;
     };
-    let rem_size = window.rem_size();
     let font_size = text_style.font_size.to_pixels(rem_size);
     let mut wrapper = window.text_system().line_wrapper(text_style.font(), font_size);
     let mut ranges = Vec::new();

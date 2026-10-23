@@ -3,14 +3,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{WindowExt, scroll::ScrollableElement, v_flex};
 use schema::changelog::{ChangelogQuery, ProfileChangelog};
 
-pub fn open(
-    data: &DataEntities,
-    profile_id: String,
-    revision_id: String,
-    date: String,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub fn open(data: &DataEntities, profile_id: String, revision_id: String, window: &mut Window, cx: &mut App) {
     let (send, receive) = tokio::sync::oneshot::channel();
     data.backend_handle.send(bridge::message::MessageToBackend::GetProfileChangelog {
         profile_id,
@@ -20,7 +13,7 @@ pub fn open(
         },
         channel: send,
     });
-    let view = cx.new(|_| ChangelogDialog { date, result: None });
+    let view = cx.new(|_| ChangelogDialog { result: None });
     view.update(cx, |_, cx| {
         cx.spawn_in(window, async move |this, cx| {
             let result = receive.await.unwrap_or_else(|_| Err(String::new()));
@@ -36,15 +29,11 @@ pub fn open(
     });
 }
 struct ChangelogDialog {
-    date: String,
     result: Option<Result<ProfileChangelog, String>>,
 }
 impl Render for ChangelogDialog {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let mut content = v_flex().w_full().max_h(px(500.)).overflow_y_scrollbar().gap(px(16.)).text_size(px(13.));
-        if let Ok(date) = chrono::DateTime::parse_from_rfc3339(&self.date) {
-            content = content.child(div().text_color(rgb(theme::INK_MUTED)).child(date.format("%d/%m/%Y").to_string()));
-        }
         match &self.result {
             Some(Err(_)) => {
                 content = content.child(
@@ -59,6 +48,11 @@ impl Render for ChangelogDialog {
             Some(Ok(result)) => {
                 for entry in &result.entries {
                     let mut section = v_flex().gap(px(8.));
+                    if let Ok(date) = chrono::DateTime::parse_from_rfc3339(&entry.created_at) {
+                        section = section
+                            .child(div().text_color(rgb(theme::INK_MUTED)).child(date.format("%d/%m/%Y").to_string()));
+                    }
+
                     if let Some(revision) = &entry.revision {
                         section = section.child(
                             div()

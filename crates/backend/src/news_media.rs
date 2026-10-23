@@ -63,6 +63,7 @@ impl DistributionClient {
                         // No cookie store, default credentials or inherited origin headers.
                         let http = Client::builder()
                             .https_only(true)
+                            .referer(false)
                             .redirect(reqwest::redirect::Policy::custom(|attempt| {
                                 if attempt.previous().len() > 3
                                     || !schema::news_markdown::https_url(attempt.url().as_str())
