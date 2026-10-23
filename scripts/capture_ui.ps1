@@ -184,6 +184,23 @@ try {
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'No real update prompt was opened; repin the owned test profile before capturing.' }
         }
         Save-Window (Join-Path $outputPath $screen.file) $proc.MainWindowHandle $proc.Id
+        if ($screen.page.StartsWith('news-article')) {
+            # Wheel packets target only the verified capture window. They never
+            # move the pointer or send input to another foreground application.
+            $newsClient = New-Object CaptureWindow+RECT
+            $newsOrigin = New-Object CaptureWindow+POINT
+            [void][CaptureWindow]::GetClientRect($proc.MainWindowHandle,[ref]$newsClient)
+            [void][CaptureWindow]::ClientToScreen($proc.MainWindowHandle,[ref]$newsOrigin)
+            $newsX = $newsOrigin.X + [int]($newsClient.Right * 0.7)
+            $newsY = $newsOrigin.Y + [int]($newsClient.Bottom * 0.7)
+            $newsPoint = [IntPtr](([int64]$newsY -shl 16) -bor ([int64]$newsX -band 0xffff))
+            foreach ($part in @('body','media')) {
+                for ($wheel = 0; $wheel -lt 8; $wheel++) {
+                    if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle,0x20a,[IntPtr](-7864320),$newsPoint)) { throw 'Cannot scroll the article capture window' }
+                }
+                Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
+            }
+        }
         if ($screen.page -eq 'components') {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
