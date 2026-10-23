@@ -82,6 +82,10 @@ pub fn start(
 ) {
     let http_client = Arc::new(reqwest_client::ReqwestClient::user_agent(&*schema::USER_AGENT).unwrap());
 
+    if let Err(error) = theme::install_font_licenses(&launcher_dir) {
+        log::warn!("Could not write bundled font licenses: {error}");
+    }
+
     gpui_platform::application()
         .with_http_client(http_client)
         .with_assets(Assets)

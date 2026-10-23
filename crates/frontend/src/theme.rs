@@ -23,3 +23,19 @@ pub fn init(cx: &mut App) {
         .load_themes_from_str(include_str!("../../../assets/theme/wachiland.json"))
         .expect("embedded Wachiland theme must be valid");
 }
+
+/// Keep the licenses next to the user's launcher data when distributing one exe.
+pub fn install_font_licenses(launcher_dir: &std::path::Path) -> std::io::Result<()> {
+    let directory = launcher_dir.join("licenses").join("fonts");
+    std::fs::create_dir_all(&directory)?;
+    for (name, text) in [
+        ("NotoSans-OFL.txt", include_str!("../../../assets/fonts/notosans/OFL.txt")),
+        ("ChakraPetch-OFL.txt", include_str!("../../../assets/fonts/chakrapetch/OFL.txt")),
+    ] {
+        let destination = directory.join(name);
+        if std::fs::read(&destination).ok().as_deref() != Some(text.as_bytes()) {
+            std::fs::write(destination, text)?;
+        }
+    }
+    Ok(())
+}
