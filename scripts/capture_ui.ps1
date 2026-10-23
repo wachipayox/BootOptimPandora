@@ -36,6 +36,7 @@ using System;
 using System.Runtime.InteropServices;
 public static class CaptureWindow {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
@@ -47,10 +48,12 @@ public static class CaptureWindow {
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int x, int y, int width, int height, bool repaint);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
 }
 '@
 Add-Type -AssemblyName System.Drawing
 $oldDpiContext = [CaptureWindow]::SetThreadDpiAwarenessContext([IntPtr](-4))
+$captureMetadata = @()
 
 function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     [uint32]$owner = 0
@@ -69,26 +72,32 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
         $scale = [CaptureWindow]::GetDpiForWindow($handle) / 96.0
         $frameWidth = ($rect.Right - $rect.Left) - ($client.Right - $client.Left)
         $frameHeight = ($rect.Bottom - $rect.Top) - ($client.Bottom - $client.Top)
-        [void][CaptureWindow]::MoveWindow($handle, $rect.Left, $rect.Top, [int](1280 * $scale + $frameWidth), [int](860 * $scale + $frameHeight), $true)
+        [void][CaptureWindow]::MoveWindow($handle, 32, 32, [int](1280 * $scale + $frameWidth), [int](860 * $scale + $frameHeight), $true)
         Start-Sleep -Milliseconds 700
         [void][CaptureWindow]::GetWindowRect($handle, [ref]$rect)
     }
     if ([CaptureWindow]::IsIconic($handle)) { [void][CaptureWindow]::ShowWindow($handle, 9); Start-Sleep -Milliseconds 500; [void][CaptureWindow]::GetWindowRect($handle, [ref]$rect) }
-    $width = $rect.Right - $rect.Left
-    $height = $rect.Bottom - $rect.Top
+    # Capture the client area, excluding invisible DWM margins and desktop pixels.
+    $client = New-Object CaptureWindow+RECT
+    $clientOrigin = New-Object CaptureWindow+POINT
+    if (-not [CaptureWindow]::GetClientRect($handle, [ref]$client) -or -not [CaptureWindow]::ClientToScreen($handle, [ref]$clientOrigin)) { throw 'Cannot read client capture bounds' }
+    if ($DesignViewport -and ($clientOrigin.X -lt 0 -or $clientOrigin.Y -lt 0)) { throw 'Design viewport is outside the visible desktop' }
+    $width = $client.Right - $client.Left
+    $height = $client.Bottom - $client.Top
     if ($width -lt 480 -or $height -lt 270) { throw "Foreground window is not a Pandora window ($width x $height)" }
     $bitmap = New-Object System.Drawing.Bitmap $width, $height
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     try {
         if ([CaptureWindow]::GetForegroundWindow() -eq $handle) {
-            $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+            $graphics.CopyFromScreen($clientOrigin.X, $clientOrigin.Y, 0, 0, $bitmap.Size)
         } else {
             $dc = $graphics.GetHdc()
             try {
-                if (-not [CaptureWindow]::PrintWindow($handle, $dc, 2)) { throw 'Unable to capture Pandora window' }
+                if (-not [CaptureWindow]::PrintWindow($handle, $dc, 3)) { throw 'Unable to capture Pandora window' }
             } finally { $graphics.ReleaseHdc($dc) }
         }
         $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+        $script:captureMetadata += @{ file=[IO.Path]::GetFileName($Path); width=$width; height=$height; dpi=[CaptureWindow]::GetDpiForWindow($handle) }
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
 
@@ -153,6 +162,7 @@ try {
     @{
         launcher = 'BootOptimPandora'
         viewport = if ($DesignViewport) { '1280 x 860 logical pixels' } else { 'maximized' }
+        captures = $captureMetadata
         dataDirectory = if ($ownsDirectory) { 'temporary portable directory; removed after capture' } else { 'caller-owned isolated portable directory' }
         screens = @($screens | ForEach-Object { @{ page=$_.page; file=$_.file; note=$_.label } })
         unavailable = if ($TestProfile -or $PortableDirectory) { @() } else { @('instance-detail and update-dialog require an owned test profile fixture') }

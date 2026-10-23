@@ -10,7 +10,7 @@
 ## Build and capture
 
 - Build the Windows launcher from the repository root: `cargo build --release -p pandora_launcher`.
-- Capture current UI screens on Windows: `powershell -ExecutionPolicy Bypass -File scripts/capture_ui.ps1`.
+- Capture current UI screens on Windows: `powershell -ExecutionPolicy Bypass -File scripts/capture_ui.ps1 -DesignViewport`. This uses a 1280 x 860 logical client area, Windows per-monitor DPI and records physical dimensions/DPI in the manifest. It excludes DWM margins and keeps the window on-screen.
 - The script copies the exe to a temporary portable directory, uses isolated data, saves PNGs and a manifest, then removes the temporary directory. `WBOMBO_UI_CAPTURE_PAGE` is a debug-only startup route used by the script; supported routes include `instances`, `skins`, `import`, `syncing`, `appearance`, `accounts`, `instance:<name>`, `update:<name>`, `components`, and `components-dialog`.
 - The instances screenshot includes the global profile carousel. The accounts route opens the empty account sheet without signing in. Use `-Components` to capture the shared controls and dialog.
 - For instance/update captures use an owned `profile_test-…` via `-TestProfile`, optionally `-Revision rev_…`. The CLI creates `agente-274-ui` and deletes it in cleanup. Publish/repin a newer revision of that owned test profile before the update capture. Never alter Beta or another agent's profile.
