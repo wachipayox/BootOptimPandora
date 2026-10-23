@@ -28,6 +28,7 @@ pub struct HomePage {
     refreshed: Instant,
     menu: bool,
     news_view: bool,
+    news_page: Option<Entity<super::news::NewsPage>>,
     article: Option<String>,
     heads: std::collections::BTreeMap<String, std::path::PathBuf>,
     head_ids: Vec<String>,
@@ -101,7 +102,9 @@ impl HomePage {
             requested: false,
             refreshed: Instant::now(),
             menu: std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-menu"),
-            news_view: std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-news"),
+            news_view: std::env::var("WBOMBO_UI_CAPTURE_PAGE")
+                .is_ok_and(|p| p == "home-news" || p.starts_with("news-")),
+            news_page: None,
             article: None,
             heads: Default::default(),
             head_ids: Vec::new(),
@@ -154,10 +157,14 @@ impl HomePage {
         .detach();
     }
     pub fn has_unread(&self, cx: &App) -> bool {
-        self.presentation
-            .news
-            .iter()
-            .any(|n| !InterfaceConfig::get(cx).home_read_news.contains(&n.id))
+        self.presentation.news.iter().any(|n| {
+            !InterfaceConfig::get(cx)
+                .news_marks
+                .get(&self.presentation.news_origin_key)
+                .map(|s| &s.read)
+                .unwrap_or(&InterfaceConfig::get(cx).home_read_news)
+                .contains(&n.id)
+        })
     }
     pub fn is_news(&self) -> bool {
         self.news_view
@@ -173,6 +180,7 @@ impl HomePage {
     pub fn show_news(&mut self, cx: &mut Context<Self>) {
         self.news_view = true;
         self.article = None;
+        self.news_page = None;
         cx.notify();
     }
     fn request_heads(&mut self, server: &InstanceServerSummary, window: &mut Window, cx: &mut Context<Self>) {
@@ -680,6 +688,8 @@ impl Render for HomePage {
                         .child(DesignButton::new("home-all-news").label("Ver todas →").h(px(24.)).px_0().on_click(
                             cx.listener(|this, _, _, c| {
                                 this.news_view = true;
+                                this.news_page = None;
+                                this.article = None;
                                 c.notify();
                             }),
                         )),
@@ -748,46 +758,23 @@ impl Render for HomePage {
                     .on_click(cx.listener(move |this, _, _, c| {
                         this.news_view = true;
                         this.article = Some(n.id.clone());
+                        this.news_page = None;
                         c.notify();
                     }))
                     .into_any_element()
             })));
         if self.news_view {
-            let mut screen = v_flex().size_full().p(px(24.)).gap(px(16.)).overflow_y_scrollbar();
-            screen = screen.child(
-                DesignButton::new("news-back")
-                    .label(if self.article.is_some() {
-                        "← Noticias"
-                    } else {
-                        "Inicio"
-                    })
-                    .on_click(cx.listener(|this, _, _, c| {
-                        if this.article.take().is_none() {
-                            this.news_view = false;
-                        }
-                        c.notify();
-                    })),
-            );
-            if let Some(article) =
-                self.article.as_ref().and_then(|id| self.presentation.news.iter().find(|n| &n.id == id))
-            {
-                screen = screen
-                    .child(div().font_family(theme::DISPLAY).text_size(px(26.)).child(article.title.clone()))
-                    .child(div().text_color(rgb(theme::INK_MUTED)).child(format!(
-                        "{} · {}",
-                        article.author,
-                        relative_date(&article.published_at)
-                    )))
-                    .child(div().max_w(px(680.)).text_size(px(15.)).child(article.body.clone()));
-            } else {
-                screen = screen.child(news_section);
+            if self.news_page.is_none() {
+                let seed = self
+                    .article
+                    .as_ref()
+                    .and_then(|id| self.presentation.news.iter().find(|n| &n.id == id))
+                    .cloned();
+                self.news_page = Some(cx.new(|c| {
+                    super::news::NewsPage::new(&self.data, self.presentation.profile_id.clone(), seed, window, c)
+                }));
             }
-            return div()
-                .size_full()
-                .bg(rgb(theme::BG))
-                .text_color(rgb(theme::INK))
-                .child(screen)
-                .into_any_element();
+            return div().size_full().child(self.news_page.clone().unwrap()).into_any_element();
         }
         let mut content = v_flex()
             .relative()

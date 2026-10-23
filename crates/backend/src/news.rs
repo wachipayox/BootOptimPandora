@@ -151,7 +151,58 @@ impl DistributionClient {
     }
 }
 impl crate::BackendState {
+    pub async fn load_profile_changelog(
+        &self,
+        profile_id: String,
+        query: schema::changelog::ChangelogQuery,
+    ) -> Result<schema::changelog::ProfileChangelog, String> {
+        if !valid_identifier(&profile_id, "profile_")
+            || [&query.after, &query.until, &query.revision]
+                .into_iter()
+                .flatten()
+                .any(|id| !valid_identifier(id, "rev_"))
+        {
+            return Err("Invalid changelog identifiers".into());
+        }
+        let config = self.config.lock().get().distribution.clone();
+        let client = DistributionClient::new(&config).map_err(|e| e.to_string())?;
+        let mut url = client.join(&format!("/v1/profiles/{profile_id}/changelog")).map_err(|e| e.to_string())?;
+        {
+            let mut pairs = url.query_pairs_mut();
+            for (key, value) in [
+                ("after", query.after),
+                ("until", query.until),
+                ("revision", query.revision),
+                ("cursor", query.cursor),
+            ] {
+                if let Some(value) = value {
+                    pairs.append_pair(key, &value);
+                }
+            }
+        }
+        let response = client.client.get(url).send().await.map_err(|e| e.to_string())?;
+        let value: schema::changelog::ProfileChangelog =
+            decode_json_response(response).await.map_err(|e| e.to_string())?;
+        if value.schema_version != 1 || value.profile_id != profile_id {
+            return Err("Invalid changelog response".into());
+        }
+        Ok(value)
+    }
     pub async fn load_news_feed(&self) -> Result<NewsFeed, String> {
+        // Explicit local input for the existing UI capture tool. Cosmetic only:
+        // it cannot supply catalogs, manifests, installation objects or launch authority.
+        if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-news" || p.starts_with("news-")) {
+            if let Some(path) = std::env::var_os("WBOMBO_UI_CAPTURE_NEWS") {
+                let bytes = fs::read(path).map_err(|_| "Cannot read news capture fixture".to_owned())?;
+                if bytes.len() > 140 * 1024 * 1024 {
+                    return Err("News capture fixture too large".into());
+                }
+                let mut feed: NewsFeed =
+                    serde_json::from_slice(&bytes).map_err(|_| "Invalid news capture fixture".to_owned())?;
+                feed.origin_key = "capture-fixture".into();
+                return Ok(feed);
+            }
+        }
         let config = self.config.lock().get().distribution.clone();
         let include_tests = self.config.lock().get().channel.includes_test_profiles();
         let client = DistributionClient::new(&config).map_err(|e| e.to_string())?;

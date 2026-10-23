@@ -9,3 +9,7 @@ pub mod skins_page;
 pub mod syncing_page;
 
 pub mod home;
+
+pub mod news;
+
+pub mod news_changelog;

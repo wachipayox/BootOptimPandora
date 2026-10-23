@@ -6,10 +6,10 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, App, DefiniteLength, Div, ElementId, FontStyle, FontWeight, Half, HighlightStyle,
-    Hsla, InteractiveElement as _, IntoElement, Length, ObjectFit, Overflow, ParentElement,
-    ScrollHandle, SharedString, SharedUri, StatefulInteractiveElement, Styled, StyledImage as _,
-    WhiteSpace, Window, div, img, prelude::FluentBuilder as _, px, relative, rems,
+    AnyElement, App, DefiniteLength, Div, ElementId, FontStyle, FontWeight, Half, HighlightStyle, Hsla,
+    InteractiveElement as _, IntoElement, Length, ObjectFit, Overflow, ParentElement, ScrollHandle, SharedString,
+    SharedUri, StatefulInteractiveElement, Styled, StyledImage as _, WhiteSpace, Window, div, img,
+    prelude::FluentBuilder as _, px, relative, rems,
 };
 use markdown::mdast;
 use ropey::Rope;
@@ -32,7 +32,7 @@ use crate::{
 
 use super::{
     SelectionFormat, TextViewStyle,
-    utils::{image_source, list_item_prefix},
+    utils::{list_item_prefix, resolved_image_source},
 };
 
 thread_local! {
@@ -157,7 +157,7 @@ impl BlockNode {
                     text.push_str(&block_text);
                     text.push('\n');
                 }
-            }
+            },
             BlockNode::Paragraph(paragraph) => {
                 let block_text = match kind {
                     BlockTextKind::All => paragraph.text(),
@@ -168,10 +168,8 @@ impl BlockNode {
                     text.push_str(&block_text);
                     text.push('\n');
                 }
-            }
-            BlockNode::Heading {
-                level, children, ..
-            } => {
+            },
+            BlockNode::Heading { level, children, .. } => {
                 let block_text = match kind {
                     BlockTextKind::All => children.text(),
                     BlockTextKind::Selected => children.selected_text(),
@@ -187,10 +185,8 @@ impl BlockNode {
                     text.push_str(&block_text);
                     text.push('\n');
                 }
-            }
-            BlockNode::List {
-                children, ordered, ..
-            } => {
+            },
+            BlockNode::List { children, ordered, .. } => {
                 if matches!(kind, BlockTextKind::SelectedSource) {
                     // Reconstruct the list source, indenting nested lists and
                     // restoring list markers and task-list checkboxes.
@@ -198,10 +194,10 @@ impl BlockNode {
                 } else {
                     text.push_str(&Self::children_text(children, kind));
                 }
-            }
+            },
             BlockNode::ListItem { children, .. } => {
                 text.push_str(&Self::children_text(children, kind));
-            }
+            },
             BlockNode::Blockquote { children, .. } => {
                 let block_text = Self::children_text(children, kind);
 
@@ -227,7 +223,7 @@ impl BlockNode {
                     }
                     text.push('\n');
                 }
-            }
+            },
             BlockNode::Table(table) => {
                 if matches!(kind, BlockTextKind::SelectedSource) {
                     let block_text = table_selected_source(table);
@@ -257,7 +253,7 @@ impl BlockNode {
                         text.push('\n');
                     }
                 }
-            }
+            },
             BlockNode::CodeBlock(code_block) => {
                 let block_text = match kind {
                     BlockTextKind::All => code_block.text(),
@@ -268,7 +264,7 @@ impl BlockNode {
                     text.push_str(&block_text);
                     text.push('\n');
                 }
-            }
+            },
             BlockNode::Custom(node) => {
                 if let BlockTextKind::All = kind {
                     let content = node.as_text();
@@ -277,11 +273,11 @@ impl BlockNode {
                         text.push('\n');
                     }
                 }
-            }
+            },
             BlockNode::Definition { .. }
             | BlockNode::Break { .. }
             | BlockNode::HorizontalRule { .. }
-            | BlockNode::Unknown { .. } => {}
+            | BlockNode::Unknown { .. } => {},
         }
 
         text
@@ -311,16 +307,13 @@ impl BlockNode {
             BlockNode::Root { children, .. }
             | BlockNode::Blockquote { children, .. }
             | BlockNode::List { children, .. }
-            | BlockNode::ListItem { children, .. } => {
-                children.iter().any(|child| child.has_selection())
-            }
+            | BlockNode::ListItem { children, .. } => children.iter().any(|child| child.has_selection()),
             BlockNode::Paragraph(paragraph) => paragraph.has_selection(),
             BlockNode::Heading { children, .. } => children.has_selection(),
-            BlockNode::Table(table) => table.children.iter().any(|row| {
-                row.children
-                    .iter()
-                    .any(|cell| cell.children.has_selection())
-            }),
+            BlockNode::Table(table) => table
+                .children
+                .iter()
+                .any(|row| row.children.iter().any(|cell| cell.children.has_selection())),
             BlockNode::CodeBlock(code_block) => code_block.has_selection(),
             BlockNode::Custom { .. }
             | BlockNode::Definition { .. }
@@ -339,7 +332,7 @@ impl BlockNode {
                 for child in children.iter() {
                     child.clear_selection();
                 }
-            }
+            },
             BlockNode::Paragraph(paragraph) => paragraph.clear_selection(),
             BlockNode::Heading { children, .. } => children.clear_selection(),
             BlockNode::Table(table) => {
@@ -348,13 +341,13 @@ impl BlockNode {
                         cell.children.clear_selection();
                     }
                 }
-            }
+            },
             BlockNode::CodeBlock(code_block) => code_block.clear_selection(),
             BlockNode::Custom { .. }
             | BlockNode::Definition { .. }
             | BlockNode::Break { .. }
             | BlockNode::HorizontalRule { .. }
-            | BlockNode::Unknown { .. } => {}
+            | BlockNode::Unknown { .. } => {},
         }
     }
 }
@@ -460,10 +453,7 @@ pub struct ImageNode {
 
 impl ImageNode {
     pub fn title(&self) -> String {
-        self.title
-            .clone()
-            .unwrap_or_else(|| self.alt.clone().unwrap_or_default())
-            .to_string()
+        self.title.clone().unwrap_or_else(|| self.alt.clone().unwrap_or_default()).to_string()
     }
 }
 
@@ -584,11 +574,7 @@ fn emit_run(
         }
         selected.emitted = true;
 
-        out.push_str(&reconstruct_markdown(
-            &child.text,
-            &child.marks,
-            (lo - start)..(hi - start),
-        ));
+        out.push_str(&reconstruct_markdown(&child.text, &child.marks, (lo - start)..(hi - start)));
     }
 
     selected
@@ -597,10 +583,7 @@ fn emit_run(
 /// The Markdown source for an inline image, e.g. `![alt](url "title")`.
 fn image_markdown(image: &ImageNode) -> String {
     let alt = image.alt.clone().unwrap_or_default();
-    let title = image
-        .title
-        .clone()
-        .map_or(String::new(), |title| format!(" \"{}\"", title));
+    let title = image.title.clone().map_or(String::new(), |title| format!(" \"{}\"", title));
     format!("![{}]({}{})", alt, image.url, title)
 }
 
@@ -612,11 +595,7 @@ fn image_markdown(image: &ImageNode) -> String {
 /// (see [`wrap_with_mark`]); slices not covered by any mark are emitted
 /// verbatim. This lets a rendered-offset selection be copied back as Markdown
 /// source (e.g. selecting inside a `**bold**` run yields `**bold**`).
-pub(crate) fn reconstruct_markdown(
-    text: &str,
-    marks: &[(Range<usize>, TextMark)],
-    selection: Range<usize>,
-) -> String {
+pub(crate) fn reconstruct_markdown(text: &str, marks: &[(Range<usize>, TextMark)], selection: Range<usize>) -> String {
     let start = selection.start.min(text.len());
     let end = selection.end.min(text.len());
     if start >= end {
@@ -655,22 +634,17 @@ pub(crate) fn reconstruct_markdown(
 fn table_selected_source(table: &Table) -> String {
     let cell_source = |cell: &TableCell| cell.children.selected_source().replace('\n', " ");
 
-    let any_selected = table.children.iter().any(|row| {
-        row.children
-            .iter()
-            .any(|cell| !cell_source(cell).trim().is_empty())
-    });
+    let any_selected = table
+        .children
+        .iter()
+        .any(|row| row.children.iter().any(|cell| !cell_source(cell).trim().is_empty()));
     if !any_selected {
         return String::new();
     }
 
     let mut lines: Vec<String> = Vec::new();
     for (row_ix, row) in table.children.iter().enumerate() {
-        let cells: Vec<String> = row
-            .children
-            .iter()
-            .map(|cell| cell_source(cell).trim().to_string())
-            .collect();
+        let cells: Vec<String> = row.children.iter().map(|cell| cell_source(cell).trim().to_string()).collect();
         lines.push(format!("| {} |", cells.join(" | ")));
 
         // The Markdown delimiter row carries the column alignments and must
@@ -739,11 +713,7 @@ fn list_selected_source(children: &[BlockNode], ordered: bool, indent: &str) -> 
                 ..
             } = sub
             {
-                nested.push_str(&list_selected_source(
-                    sub_children,
-                    *sub_ordered,
-                    &child_indent,
-                ));
+                nested.push_str(&list_selected_source(sub_children, *sub_ordered, &child_indent));
             } else {
                 content.push_str(&sub.text_by_kind(BlockTextKind::SelectedSource));
             }
@@ -825,9 +795,7 @@ pub(crate) struct Paragraph {
 
 impl PartialEq for Paragraph {
     fn eq(&self, other: &Self) -> bool {
-        self.span == other.span
-            && self.children == other.children
-            && self.link_refs == other.link_refs
+        self.span == other.span && self.children == other.children && self.link_refs == other.link_refs
     }
 }
 
@@ -932,13 +900,8 @@ impl Paragraph {
     ///
     /// Mirrors the [`selected_text`](Self::selected_text) traversal.
     pub(super) fn has_selection(&self) -> bool {
-        self.children
-            .iter()
-            .any(|c| c.state.lock().is_ok_and(|state| state.selection.is_some()))
-            || self
-                .state
-                .lock()
-                .is_ok_and(|state| state.selection.is_some())
+        self.children.iter().any(|c| c.state.lock().is_ok_and(|state| state.selection.is_some()))
+            || self.state.lock().is_ok_and(|state| state.selection.is_some())
     }
 
     pub(super) fn clear_selection(&self) {
@@ -999,13 +962,7 @@ impl Table {
             let cells: Vec<String> = row
                 .children
                 .iter()
-                .map(|cell| {
-                    cell.children
-                        .to_markdown()
-                        .trim()
-                        .replace('\n', " ")
-                        .replace('|', "\\|")
-                })
+                .map(|cell| cell.children.to_markdown().trim().replace('\n', " ").replace('|', "\\|"))
                 .collect();
             lines.push(format!("| {} |", cells.join(" | ")));
 
@@ -1100,9 +1057,8 @@ impl Paragraph {
     }
 
     pub(crate) fn push_str(&mut self, text: &str) {
-        self.children.push(
-            InlineNode::new(text.to_string()).marks(vec![(0..text.len(), TextMark::default())]),
-        );
+        self.children
+            .push(InlineNode::new(text.to_string()).marks(vec![(0..text.len(), TextMark::default())]));
     }
 
     pub(crate) fn push(&mut self, text: InlineNode) {
@@ -1114,19 +1070,12 @@ impl Paragraph {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.children.is_empty()
-            || self
-                .children
-                .iter()
-                .all(|node| node.text.is_empty() && node.image.is_none())
+        self.children.is_empty() || self.children.iter().all(|node| node.text.is_empty() && node.image.is_none())
     }
 
     /// Return length of children text.
     pub(crate) fn text_len(&self) -> usize {
-        self.children
-            .iter()
-            .map(|node| node.text.len())
-            .sum::<usize>()
+        self.children.iter().map(|node| node.text.len()).sum::<usize>()
     }
 
     pub(crate) fn merge(&mut self, other: Self) {
@@ -1163,17 +1112,10 @@ impl CodeBlock {
 
     /// Get the code content of the code block.
     pub fn code(&self) -> SharedString {
-        self.state
-            .lock()
-            .map(|state| state.text.clone())
-            .unwrap_or_default()
+        self.state.lock().map(|state| state.text.clone()).unwrap_or_default()
     }
 
-    pub(crate) fn new(
-        code: SharedString,
-        lang: Option<SharedString>,
-        span: Option<impl Into<Span>>,
-    ) -> Self {
+    pub(crate) fn new(code: SharedString, lang: Option<SharedString>, span: Option<impl Into<Span>>) -> Self {
         let state = Arc::new(Mutex::new(InlineState::default()));
         if let Ok(mut state) = state.lock() {
             state.set_text(code);
@@ -1187,10 +1129,7 @@ impl CodeBlock {
         }
     }
 
-    pub(crate) fn styles(
-        &self,
-        highlight_theme: &Arc<HighlightTheme>,
-    ) -> Vec<(Range<usize>, HighlightStyle)> {
+    pub(crate) fn styles(&self, highlight_theme: &Arc<HighlightTheme>) -> Vec<(Range<usize>, HighlightStyle)> {
         let Some(lang) = &self.lang else {
             return Vec::new();
         };
@@ -1216,9 +1155,7 @@ impl CodeBlock {
         let code = self.code();
         let computed_styles = CODE_BLOCK_HIGHLIGHTERS.with(|cache| {
             let mut cache = cache.borrow_mut();
-            let highlighter = cache
-                .entry(lang.clone())
-                .or_insert_with(|| SyntaxHighlighter::new(lang));
+            let highlighter = cache.entry(lang.clone()).or_insert_with(|| SyntaxHighlighter::new(lang));
 
             if let Some(config) = LanguageRegistry::singleton().language(lang)
                 && highlighter.language() != &config.name
@@ -1281,19 +1218,14 @@ impl CodeBlock {
     }
 
     pub(super) fn text(&self) -> String {
-        self.state
-            .lock()
-            .map(|state| state.text.to_string())
-            .unwrap_or_default()
+        self.state.lock().map(|state| state.text.to_string()).unwrap_or_default()
     }
 
     /// Synchronously clear the selection stored in the inline state.
     ///
     /// Mirrors the [`selected_text`](Self::selected_text) traversal.
     pub(super) fn has_selection(&self) -> bool {
-        self.state
-            .lock()
-            .is_ok_and(|state| state.selection.is_some())
+        self.state.lock().is_ok_and(|state| state.selection.is_some())
     }
 
     pub(super) fn clear_selection(&self) {
@@ -1381,13 +1313,28 @@ impl PartialEq for NodeContext {
 
 impl Paragraph {
     fn render(&self, node_cx: &NodeContext, _window: &mut Window, cx: &mut App) -> AnyElement {
-        let span = self.span;
-        let children = &self.children;
+        let mut resolved;
+        let paragraph = if node_cx.style.image_sources.is_some() {
+            resolved = self.clone();
+            for child in &mut resolved.children {
+                if let Some(image) = &child.image {
+                    if resolved_image_source(&image.url, &node_cx.style).is_none() {
+                        child.text = image.alt.clone().unwrap_or_default();
+                        child.image = None;
+                    }
+                }
+            }
+            &resolved
+        } else {
+            self
+        };
+        let span = paragraph.span;
+        let children = &paragraph.children;
 
-        if self.should_render_inline_flow() {
+        if paragraph.should_render_inline_flow() {
             return InlineFlow::new(
                 span.unwrap_or_default(),
-                self.inline_flow_items(node_cx, cx),
+                paragraph.inline_flow_items(node_cx, cx),
                 node_cx.link_click_handler.clone(),
             )
             .into_any_element();
@@ -1423,7 +1370,7 @@ impl Paragraph {
                 }
                 let link_click_handler = node_cx.link_click_handler.clone();
                 child_nodes.push(
-                    img(image_source(&image.url))
+                    img(resolved_image_source(&image.url, &node_cx.style).expect("resolved paragraph image"))
                         .id(ix)
                         .object_fit(ObjectFit::Contain)
                         .max_w(relative(1.))
@@ -1434,19 +1381,11 @@ impl Paragraph {
                             let aux_link = link.clone();
                             let aux_link_click_handler = link_click_handler.clone();
                             this.cursor_pointer()
-                                .tooltip(move |window, cx| {
-                                    Tooltip::new(title.clone()).build(window, cx)
-                                })
+                                .tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
                                 .on_click(move |event, window, cx| {
                                     gpui_base::TextSelection::end(window, cx);
                                     cx.stop_propagation();
-                                    handle_link_click(
-                                        &link_click_handler,
-                                        link.url.clone(),
-                                        event.clone(),
-                                        window,
-                                        cx,
-                                    );
+                                    handle_link_click(&link_click_handler, link.url.clone(), event.clone(), window, cx);
                                 })
                                 .on_aux_click(move |event, window, cx| {
                                     gpui_base::TextSelection::end(window, cx);
@@ -1530,21 +1469,12 @@ impl Paragraph {
                 state.set_text(text.into());
             }
             child_nodes.push(
-                Inline::new(
-                    ix,
-                    self.state.clone(),
-                    links,
-                    highlights,
-                    node_cx.link_click_handler.clone(),
-                )
-                .into_any_element(),
+                Inline::new(ix, self.state.clone(), links, highlights, node_cx.link_click_handler.clone())
+                    .into_any_element(),
             );
         }
 
-        div()
-            .id(span.unwrap_or_default())
-            .children(child_nodes)
-            .into_any_element()
+        div().id(span.unwrap_or_default()).children(child_nodes).into_any_element()
     }
 
     fn should_render_inline_flow(&self) -> bool {
@@ -1578,7 +1508,7 @@ impl Paragraph {
                 }
 
                 items.push(InlineFlowItem::Image {
-                    url: image.url.clone(),
+                    source: resolved_image_source(&image.url, &node_cx.style).expect("resolved inline image"),
                     link: image.link.clone(),
                     title: image.title(),
                     width: image.width,
@@ -1690,10 +1620,7 @@ impl Paragraph {
 
                 if let Some(image) = &text_node.image {
                     let alt = image.alt.clone().unwrap_or_default();
-                    let title = image
-                        .title
-                        .clone()
-                        .map_or(String::new(), |t| format!(" \"{}\"", t));
+                    let title = image.title.clone().map_or(String::new(), |t| format!(" \"{}\"", t));
                     text.push_str(&format!("![{}]({}{})", alt, image.url, title))
                 }
 
@@ -1714,34 +1641,20 @@ impl BlockNode {
     #[allow(dead_code)]
     pub(crate) fn to_markdown(&self) -> String {
         match self {
-            BlockNode::Root { children, .. } => children
-                .iter()
-                .map(|child| child.to_markdown())
-                .collect::<Vec<_>>()
-                .join("\n\n"),
+            BlockNode::Root { children, .. } => {
+                children.iter().map(|child| child.to_markdown()).collect::<Vec<_>>().join("\n\n")
+            },
             BlockNode::Paragraph(paragraph) => paragraph.to_markdown(),
-            BlockNode::Heading {
-                level, children, ..
-            } => {
+            BlockNode::Heading { level, children, .. } => {
                 let hashes = "#".repeat(*level as usize);
                 format!("{} {}", hashes, children.to_markdown())
-            }
+            },
             BlockNode::Blockquote { children, .. } => {
-                let content = children
-                    .iter()
-                    .map(|child| child.to_markdown())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
+                let content = children.iter().map(|child| child.to_markdown()).collect::<Vec<_>>().join("\n\n");
 
-                content
-                    .lines()
-                    .map(|line| format!("> {}", line))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-            BlockNode::List {
-                children, ordered, ..
-            } => children
+                content.lines().map(|line| format!("> {}", line)).collect::<Vec<_>>().join("\n")
+            },
+            BlockNode::List { children, ordered, .. } => children
                 .iter()
                 .enumerate()
                 .map(|(i, child)| {
@@ -1754,9 +1667,7 @@ impl BlockNode {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            BlockNode::ListItem {
-                children, checked, ..
-            } => {
+            BlockNode::ListItem { children, checked, .. } => {
                 let checkbox = if let Some(checked) = checked {
                     if *checked { "[x] " } else { "[ ] " }
                 } else {
@@ -1765,20 +1676,12 @@ impl BlockNode {
                 format!(
                     "{}{}",
                     checkbox,
-                    children
-                        .iter()
-                        .map(|child| child.to_markdown())
-                        .collect::<Vec<_>>()
-                        .join("\n")
+                    children.iter().map(|child| child.to_markdown()).collect::<Vec<_>>().join("\n")
                 )
-            }
+            },
             BlockNode::CodeBlock(code_block) => {
-                format!(
-                    "```{}\n{}\n```",
-                    code_block.lang.clone().unwrap_or_default(),
-                    code_block.code()
-                )
-            }
+                format!("```{}\n{}\n```", code_block.lang.clone().unwrap_or_default(), code_block.code())
+            },
             BlockNode::Table(table) => table.to_markdown(),
             BlockNode::Break { html, .. } => {
                 if *html {
@@ -1786,21 +1689,18 @@ impl BlockNode {
                 } else {
                     "\n".to_string()
                 }
-            }
+            },
             BlockNode::HorizontalRule { .. } => "---".to_string(),
             BlockNode::Custom(node) => node.to_markdown(),
             BlockNode::Definition {
-                identifier,
-                url,
-                title,
-                ..
+                identifier, url, title, ..
             } => {
                 if let Some(title) = title {
                     format!("[{}]: {} \"{}\"", identifier, url, title)
                 } else {
                     format!("[{}]: {}", identifier, url)
                 }
-            }
+            },
             BlockNode::Unknown { .. } => "".to_string(),
         }
         .trim()
@@ -1841,8 +1741,7 @@ impl BlockNode {
                         .border_color(cx.theme().primary)
                         .text_color(cx.theme().primary_foreground)
                         .when(checked, |this| {
-                            this.bg(cx.theme().tokens.primary)
-                                .child(Icon::new(IconName::Check).size_2().text_xs())
+                            this.bg(cx.theme().tokens.primary).child(Icon::new(IconName::Check).size_2().text_xs())
                         }),
                 )
             })
@@ -1874,8 +1773,8 @@ impl BlockNode {
                     for (child_ix, child) in children.iter().enumerate() {
                         match child {
                             BlockNode::Paragraph { .. } => {
-                                let last_not_list = child_ix > 0
-                                    && !matches!(children[child_ix - 1], BlockNode::List { .. });
+                                let last_not_list =
+                                    child_ix > 0 && !matches!(children[child_ix - 1], BlockNode::List { .. });
 
                                 let text = child.render_block(
                                     NodeRenderOptions {
@@ -1895,22 +1794,16 @@ impl BlockNode {
                                 if last_not_list {
                                     if let Some(preceding_row) = items.pop() {
                                         items.push(
-                                            v_flex().child(preceding_row).child(
-                                                div()
-                                                    .w_full()
-                                                    .pl(rems(1.))
-                                                    .overflow_hidden()
-                                                    .child(text),
-                                            ),
+                                            v_flex()
+                                                .child(preceding_row)
+                                                .child(div().w_full().pl(rems(1.)).overflow_hidden().child(text)),
                                         );
                                         continue;
                                     }
                                 }
 
-                                items.push(Self::render_list_item_row(
-                                    text, ix, options, *checked, cx,
-                                ));
-                            }
+                                items.push(Self::render_list_item_row(text, ix, options, *checked, cx));
+                            },
                             BlockNode::List { .. } => {
                                 items.push(div().ml(rems(1.)).child(child.render_block(
                                     NodeRenderOptions {
@@ -1923,7 +1816,7 @@ impl BlockNode {
                                     window,
                                     cx,
                                 )));
-                            }
+                            },
                             BlockNode::Root { .. }
                             | BlockNode::Heading { .. }
                             | BlockNode::Blockquote { .. }
@@ -1944,27 +1837,18 @@ impl BlockNode {
                                 );
 
                                 if child_ix == 0 {
-                                    items.push(Self::render_list_item_row(
-                                        block, ix, options, *checked, cx,
-                                    ));
+                                    items.push(Self::render_list_item_row(block, ix, options, *checked, cx));
                                 } else {
                                     // Indent continuation blocks to align with a
                                     // nested sub-list (`ml(rems(1.))`) and with
                                     // continuation paragraphs.
-                                    items.push(
-                                        div()
-                                            .w_full()
-                                            .min_w_0()
-                                            .pl(rems(1.))
-                                            .overflow_hidden()
-                                            .child(block),
-                                    );
+                                    items.push(div().w_full().min_w_0().pl(rems(1.)).overflow_hidden().child(block));
                                 }
-                            }
+                            },
                             BlockNode::ListItem { .. }
                             | BlockNode::Break { .. }
                             | BlockNode::Definition { .. }
-                            | BlockNode::Unknown => {}
+                            | BlockNode::Unknown => {},
                         }
                     }
                     items
@@ -2068,19 +1952,12 @@ impl BlockNode {
                         continue;
                     }
                     let run = text_style.to_run(line.len());
-                    let line_w = window
-                        .text_system()
-                        .layout_line(line, font_size, &[run], None)
-                        .width;
+                    let line_w = window.text_system().layout_line(line, font_size, &[run], None).width;
                     w = w.max(f32::from(line_w));
                 }
                 // Border-box widths, so the padding and border the cell draws
                 // must leave the measured text its full width.
-                let border = if ix + 1 < col_count {
-                    CELL_BORDER_PX
-                } else {
-                    0.
-                };
+                let border = if ix + 1 < col_count { CELL_BORDER_PX } else { 0. };
                 *slot = slot.max(w + CELL_PAD_PX + border);
             }
         }
@@ -2094,28 +1971,15 @@ impl BlockNode {
         } else {
             col_w
                 .iter()
-                .map(|w| {
-                    (w / CELL_WRAP_MAX_LINES)
-                        .clamp(CELL_WRAP_MIN_PX, CELL_WRAP_MAX_PX)
-                        .min(*w)
-                })
+                .map(|w| (w / CELL_WRAP_MAX_LINES).clamp(CELL_WRAP_MIN_PX, CELL_WRAP_MAX_PX).min(*w))
                 .collect()
         };
         let min_total_w: f32 = col_min_w.iter().sum::<f32>() + TABLE_BORDER_PX;
 
         let table_scroll_key = if let Some(span) = table.span {
-            SharedString::from(format!(
-                "{}-table-scroll-{}:{}",
-                window.current_view(),
-                span.start,
-                span.end
-            ))
+            SharedString::from(format!("{}-table-scroll-{}:{}", window.current_view(), span.start, span.end))
         } else {
-            SharedString::from(format!(
-                "{}-table-scroll-{}",
-                window.current_view(),
-                options.ix
-            ))
+            SharedString::from(format!("{}-table-scroll-{}", window.current_view(), options.ix))
         };
         let scroll_handle = window
             .use_keyed_state(table_scroll_key, cx, |_, _| ScrollHandle::default())
@@ -2148,9 +2012,7 @@ impl BlockNode {
                         .when(align == ColumnumnAlign::Right, |this| this.text_right())
                         .px_2()
                         .py_1()
-                        .when(!is_last_col, |this| {
-                            this.border_r_1().border_color(cx.theme().table_row_border)
-                        })
+                        .when(!is_last_col, |this| this.border_r_1().border_color(cx.theme().table_row_border))
                         .refine_style(&style.table_cell)
                         .child(cell.children.render(node_cx, window, cx)),
                 );
@@ -2208,13 +2070,12 @@ impl BlockNode {
             // backgrounds of the action buttons off the table border, and the
             // id scopes the caller's element ids per table, so plain ids like
             // `"copy"` don't collide across tables (same as code blocks).
-            .children(node_cx.table_actions.clone().map(|f| {
-                div().id(("table-actions", options.ix)).mt_1().child(f(
-                    &table.table_data(),
-                    window,
-                    cx,
-                ))
-            }))
+            .children(
+                node_cx
+                    .table_actions
+                    .clone()
+                    .map(|f| div().id(("table-actions", options.ix)).mt_1().child(f(&table.table_data(), window, cx))),
+            )
             .into_any_element()
     }
 
@@ -2238,11 +2099,7 @@ impl BlockNode {
             for (ix, cell) in row.children.iter().enumerate() {
                 let align = table.column_align(ix);
                 let is_last_col = ix == row.children.len() - 1;
-                let len = col_lens
-                    .get(ix)
-                    .copied()
-                    .unwrap_or(MAX_LENGTH)
-                    .min(MAX_LENGTH);
+                let len = col_lens.get(ix).copied().unwrap_or(MAX_LENGTH).min(MAX_LENGTH);
 
                 cells.push(
                     div()
@@ -2254,9 +2111,7 @@ impl BlockNode {
                         .w(Length::Definite(relative(len as f32)))
                         .px_2()
                         .py_1()
-                        .when(!is_last_col, |this| {
-                            this.border_r_1().border_color(cx.theme().table_row_border)
-                        })
+                        .when(!is_last_col, |this| this.border_r_1().border_color(cx.theme().table_row_border))
                         .refine_style(&style.table_cell)
                         .child(cell.children.render(node_cx, window, cx)),
                 );
@@ -2303,13 +2158,12 @@ impl BlockNode {
             // backgrounds of the action buttons off the table border, and the
             // id scopes the caller's element ids per table, so plain ids like
             // `"copy"` don't collide across tables (same as code blocks).
-            .children(node_cx.table_actions.clone().map(|f| {
-                div().id(("table-actions", options.ix)).mt_1().child(f(
-                    &table.table_data(),
-                    window,
-                    cx,
-                ))
-            }))
+            .children(
+                node_cx
+                    .table_actions
+                    .clone()
+                    .map(|f| div().id(("table-actions", options.ix)).mt_1().child(f(&table.table_data(), window, cx))),
+            )
             .into_any_element()
     }
 
@@ -2328,20 +2182,18 @@ impl BlockNode {
         };
 
         match self {
-            BlockNode::Root { children, .. } => div()
-                .id(("div", ix))
-                .children(children.into_iter().enumerate().map(move |(ix, node)| {
-                    node.render_block(NodeRenderOptions { ix, ..options }, node_cx, window, cx)
-                }))
-                .into_any_element(),
-            BlockNode::Paragraph(paragraph) => div()
-                .id(("p", ix))
-                .pb(mb)
-                .child(paragraph.render(node_cx, window, cx))
-                .into_any_element(),
-            BlockNode::Heading {
-                level, children, ..
-            } => {
+            BlockNode::Root { children, .. } => {
+                div()
+                    .id(("div", ix))
+                    .children(children.into_iter().enumerate().map(move |(ix, node)| {
+                        node.render_block(NodeRenderOptions { ix, ..options }, node_cx, window, cx)
+                    }))
+                    .into_any_element()
+            },
+            BlockNode::Paragraph(paragraph) => {
+                div().id(("p", ix)).pb(mb).child(paragraph.render(node_cx, window, cx)).into_any_element()
+            },
+            BlockNode::Heading { level, children, .. } => {
                 let (text_size, font_weight) = match level {
                     1 => (rems(2.), FontWeight::BOLD),
                     2 => (rems(1.5), FontWeight::SEMIBOLD),
@@ -2362,10 +2214,11 @@ impl BlockNode {
                     .pb(rems(0.3))
                     .whitespace_normal()
                     .text_size(text_size)
+                    .when_some(node_cx.style.heading_font_family.clone(), |this, family| this.font_family(family))
                     .font_weight(font_weight)
                     .child(children.render(node_cx, window, cx))
                     .into_any_element()
-            }
+            },
             BlockNode::Blockquote { children, .. } => div()
                 .w_full()
                 .pb(mb)
@@ -2386,9 +2239,7 @@ impl BlockNode {
                         }),
                 )
                 .into_any_element(),
-            BlockNode::List {
-                children, ordered, ..
-            } => v_flex()
+            BlockNode::List { children, ordered, .. } => v_flex()
                 .id((if *ordered { "ol" } else { "ul" }, ix))
                 .w_full()
                 .min_w_0()
@@ -2427,10 +2278,8 @@ impl BlockNode {
                 };
 
                 div().pb(mb).child(inner).into_any_element()
-            }
-            BlockNode::Table { .. } => {
-                Self::render_table(self, &options, node_cx, window, cx).into_any_element()
-            }
+            },
+            BlockNode::Table { .. } => Self::render_table(self, &options, node_cx, window, cx).into_any_element(),
             BlockNode::HorizontalRule { .. } => div()
                 .pb(mb)
                 .child(div().id("horizontal-rule").bg(cx.theme().border).h(px(2.)))
@@ -2443,7 +2292,7 @@ impl BlockNode {
                 }
 
                 div().into_any_element()
-            }
+            },
         }
     }
 }
@@ -2473,26 +2322,14 @@ mod tests {
 
     #[test]
     fn reconstruct_markdown_handles_code_italic_strike_link() {
-        assert_eq!(
-            reconstruct_markdown("x", &[(0..1, TextMark::default().code())], 0..1),
-            "`x`"
-        );
-        assert_eq!(
-            reconstruct_markdown("x", &[(0..1, TextMark::default().italic())], 0..1),
-            "*x*"
-        );
-        assert_eq!(
-            reconstruct_markdown("x", &[(0..1, TextMark::default().strikethrough())], 0..1),
-            "~~x~~"
-        );
+        assert_eq!(reconstruct_markdown("x", &[(0..1, TextMark::default().code())], 0..1), "`x`");
+        assert_eq!(reconstruct_markdown("x", &[(0..1, TextMark::default().italic())], 0..1), "*x*");
+        assert_eq!(reconstruct_markdown("x", &[(0..1, TextMark::default().strikethrough())], 0..1), "~~x~~");
         let link = TextMark::default().link(LinkMark {
             url: "https://example.com".into(),
             ..Default::default()
         });
-        assert_eq!(
-            reconstruct_markdown("x", &[(0..1, link)], 0..1),
-            "[x](https://example.com)"
-        );
+        assert_eq!(reconstruct_markdown("x", &[(0..1, link)], 0..1), "[x](https://example.com)");
     }
 
     #[test]
@@ -2552,8 +2389,7 @@ mod tests {
 
     #[test]
     fn paragraph_selected_source_matches_text_when_no_marks() {
-        let children =
-            vec![InlineNode::new("plain words").marks(vec![(0..11, TextMark::default())])];
+        let children = vec![InlineNode::new("plain words").marks(vec![(0..11, TextMark::default())])];
         let paragraph = paragraph_with_children(children);
         set_paragraph_selection(&paragraph, 0..11);
         assert_eq!(paragraph.selected_source(), "plain words");
@@ -2562,9 +2398,7 @@ mod tests {
 
     fn selected_paragraph(text: &str) -> Paragraph {
         let len = text.len();
-        let paragraph = paragraph_with_children(vec![
-            InlineNode::new(text).marks(vec![(0..len, TextMark::default())]),
-        ]);
+        let paragraph = paragraph_with_children(vec![InlineNode::new(text).marks(vec![(0..len, TextMark::default())])]);
         set_paragraph_selection(&paragraph, 0..len);
         paragraph
     }
@@ -2601,10 +2435,7 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(
-            list.selected_text(SelectionFormat::Source),
-            "- one\n- two\n"
-        );
+        assert_eq!(list.selected_text(SelectionFormat::Source), "- one\n- two\n");
     }
 
     #[test]
@@ -2627,10 +2458,7 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(
-            list.selected_text(SelectionFormat::Source),
-            "1. first\n2. second\n"
-        );
+        assert_eq!(list.selected_text(SelectionFormat::Source), "1. first\n2. second\n");
     }
 
     #[test]
@@ -2666,10 +2494,7 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(
-            list.selected_text(SelectionFormat::Source),
-            "- one\n  - nested\n- two\n"
-        );
+        assert_eq!(list.selected_text(SelectionFormat::Source), "- one\n  - nested\n- two\n");
     }
 
     #[test]
@@ -2692,10 +2517,7 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(
-            list.selected_text(SelectionFormat::Source),
-            "- [x] done\n- [ ] todo\n"
-        );
+        assert_eq!(list.selected_text(SelectionFormat::Source), "- [x] done\n- [ ] todo\n");
     }
 
     #[test]
@@ -2704,10 +2526,7 @@ mod tests {
             span: None,
             children: vec![BlockNode::Paragraph(selected_paragraph("quoted text"))],
         };
-        assert_eq!(
-            quote.selected_text(SelectionFormat::Source),
-            "> quoted text\n"
-        );
+        assert_eq!(quote.selected_text(SelectionFormat::Source), "> quoted text\n");
     }
 
     #[test]
@@ -2746,10 +2565,7 @@ mod tests {
 
     fn table_of(rows: Vec<Vec<TableCell>>, column_aligns: Vec<ColumnumnAlign>) -> Table {
         Table {
-            children: rows
-                .into_iter()
-                .map(|children| TableRow { children })
-                .collect(),
+            children: rows.into_iter().map(|children| TableRow { children }).collect(),
             column_aligns,
             span: None,
         }
@@ -2762,30 +2578,17 @@ mod tests {
                 vec![plain_cell("Name"), plain_cell("Age"), plain_cell("Score")],
                 vec![plain_cell("Alice"), plain_cell("30"), plain_cell("9.5")],
             ],
-            vec![
-                ColumnumnAlign::Left,
-                ColumnumnAlign::Center,
-                ColumnumnAlign::Right,
-            ],
+            vec![ColumnumnAlign::Left, ColumnumnAlign::Center, ColumnumnAlign::Right],
         );
 
-        assert_eq!(
-            table.to_markdown(),
-            "| Name | Age | Score |\n| :-- | :-: | --: |\n| Alice | 30 | 9.5 |"
-        );
+        assert_eq!(table.to_markdown(), "| Name | Age | Score |\n| :-- | :-: | --: |\n| Alice | 30 | 9.5 |");
         // The block arm delegates to it.
-        assert_eq!(
-            BlockNode::Table(table.clone()).to_markdown(),
-            table.to_markdown()
-        );
+        assert_eq!(BlockNode::Table(table.clone()).to_markdown(), table.to_markdown());
     }
 
     #[test]
     fn table_to_markdown_keeps_outer_pipes_for_a_single_column() {
-        let table = table_of(
-            vec![vec![plain_cell("Symbol")], vec![plain_cell("TSLA.US")]],
-            vec![ColumnumnAlign::Left],
-        );
+        let table = table_of(vec![vec![plain_cell("Symbol")], vec![plain_cell("TSLA.US")]], vec![ColumnumnAlign::Left]);
 
         assert_eq!(table.to_markdown(), "| Symbol |\n| :-- |\n| TSLA.US |");
     }
@@ -2806,10 +2609,7 @@ mod tests {
             vec![ColumnumnAlign::Left, ColumnumnAlign::Left],
         );
 
-        assert_eq!(
-            table.to_markdown(),
-            "| a \\| b | plain |\n| :-- | :-- |\n| c | **bold** |"
-        );
+        assert_eq!(table.to_markdown(), "| a \\| b | plain |\n| :-- | :-- |\n| c | **bold** |");
     }
 
     #[test]
@@ -2870,10 +2670,7 @@ mod tests {
         assert_eq!(wrap(TextMark::default().italic()), "*x*");
         assert_eq!(wrap(TextMark::default().code()), "`x`");
         assert_eq!(wrap(TextMark::default().strikethrough()), "~~x~~");
-        assert_eq!(
-            wrap(TextMark::default().highlight(crate::yellow(200))),
-            "==x=="
-        );
+        assert_eq!(wrap(TextMark::default().highlight(crate::yellow(200))), "==x==");
         // No Markdown syntax for underline, so it keeps the tag it came from.
         assert_eq!(wrap(TextMark::default().underline()), "<u>x</u>");
 
@@ -2975,18 +2772,11 @@ mod tests {
             ]
             .into(),
         };
-        assert_eq!(
-            document.selected_text(SelectionFormat::Source, None),
-            "before"
-        );
+        assert_eq!(document.selected_text(SelectionFormat::Source, None), "before");
     }
 
     fn selected_code_block(code: &str, lang: Option<&str>) -> BlockNode {
-        let block = CodeBlock::new(
-            code.to_string().into(),
-            lang.map(|l| l.to_string().into()),
-            None::<Span>,
-        );
+        let block = CodeBlock::new(code.to_string().into(), lang.map(|l| l.to_string().into()), None::<Span>);
         if let Ok(mut state) = block.state.lock() {
             let len = state.text.len();
             state.selection = Some((0..len).into());
@@ -3002,21 +2792,9 @@ mod tests {
         // The source wraps the (trailing-newline-trimmed) selected code in a
         // fenced block carrying the language; the block arm adds one trailing
         // newline.
-        assert_eq!(
-            block.selected_text(SelectionFormat::Source),
-            format!("```rust\n{}\n```\n", code_trimmed)
-        );
-        assert!(
-            block
-                .selected_text(SelectionFormat::Source)
-                .starts_with("```rust\n")
-        );
-        assert!(
-            block
-                .selected_text(SelectionFormat::Source)
-                .trim_end()
-                .ends_with("\n```")
-        );
+        assert_eq!(block.selected_text(SelectionFormat::Source), format!("```rust\n{}\n```\n", code_trimmed));
+        assert!(block.selected_text(SelectionFormat::Source).starts_with("```rust\n"));
+        assert!(block.selected_text(SelectionFormat::Source).trim_end().ends_with("\n```"));
     }
 
     #[test]
@@ -3024,10 +2802,7 @@ mod tests {
         let block = selected_code_block("plain\n", None);
         let code_trimmed = block.selected_text(SelectionFormat::Plain);
         let code_trimmed = code_trimmed.trim_end_matches('\n');
-        assert_eq!(
-            block.selected_text(SelectionFormat::Source),
-            format!("```\n{}\n```\n", code_trimmed)
-        );
+        assert_eq!(block.selected_text(SelectionFormat::Source), format!("```\n{}\n```\n", code_trimmed));
     }
 
     #[test]
@@ -3110,16 +2885,11 @@ mod tests {
             cache.borrow_mut().remove(&lang);
         });
 
-        let unknown_block =
-            CodeBlock::new("{\"value\": 1}".into(), Some(lang.clone()), None::<Span>);
+        let unknown_block = CodeBlock::new("{\"value\": 1}".into(), Some(lang.clone()), None::<Span>);
         _ = unknown_block.styles(&theme);
 
-        let cached_language = CODE_BLOCK_HIGHLIGHTERS.with(|cache| {
-            cache
-                .borrow()
-                .get(&lang)
-                .map(|highlighter| highlighter.language().clone())
-        });
+        let cached_language = CODE_BLOCK_HIGHLIGHTERS
+            .with(|cache| cache.borrow().get(&lang).map(|highlighter| highlighter.language().clone()));
         assert_eq!(cached_language.as_deref(), Some("text"));
 
         LanguageRegistry::singleton().register(
@@ -3138,16 +2908,11 @@ mod tests {
             ),
         );
 
-        let registered_block =
-            CodeBlock::new("{\"value\": 2}".into(), Some(lang.clone()), None::<Span>);
+        let registered_block = CodeBlock::new("{\"value\": 2}".into(), Some(lang.clone()), None::<Span>);
         _ = registered_block.styles(&theme);
 
-        let cached_language = CODE_BLOCK_HIGHLIGHTERS.with(|cache| {
-            cache
-                .borrow()
-                .get(&lang)
-                .map(|highlighter| highlighter.language().clone())
-        });
+        let cached_language = CODE_BLOCK_HIGHLIGHTERS
+            .with(|cache| cache.borrow().get(&lang).map(|highlighter| highlighter.language().clone()));
         assert_eq!(cached_language.as_deref(), Some(lang.as_ref()));
     }
 
@@ -3162,10 +2927,7 @@ mod tests {
 
         let light_number = light_theme.style("number").and_then(|style| style.color);
         let dark_number = dark_theme.style("number").and_then(|style| style.color);
-        assert_ne!(
-            light_number, dark_number,
-            "the test themes must use different number colors"
-        );
+        assert_ne!(light_number, dark_number, "the test themes must use different number colors");
 
         CODE_BLOCK_HIGHLIGHTERS.with(|cache| {
             cache.borrow_mut().remove(&lang);
@@ -3191,26 +2953,18 @@ mod tests {
         let repeated_light_styles = block.styles(&equivalent_light_theme);
         assert_eq!(repeated_light_styles, light_styles);
         assert!(
-            Arc::ptr_eq(
-                &cached_highlight_theme(&block).unwrap(),
-                &equivalent_light_theme
-            ),
+            Arc::ptr_eq(&cached_highlight_theme(&block).unwrap(), &equivalent_light_theme),
             "an equivalent replacement should become the cache identity"
         );
         assert_eq!(block.styles(&equivalent_light_theme), light_styles);
 
         let dark_styles = block.styles(&dark_theme);
-        assert_eq!(
-            cached_highlight_theme(&block).as_deref(),
-            Some(dark_theme.as_ref())
-        );
+        assert_eq!(cached_highlight_theme(&block).as_deref(), Some(dark_theme.as_ref()));
 
         let color_for_number = |styles: &[(Range<usize>, HighlightStyle)]| -> Option<Hsla> {
             styles
                 .iter()
-                .find(|(range, _)| {
-                    range.start <= number_range.start && range.end >= number_range.end
-                })
+                .find(|(range, _)| range.start <= number_range.start && range.end >= number_range.end)
                 .and_then(|(_, style)| style.color)
         };
 
@@ -3230,11 +2984,7 @@ mod tests {
         }
 
         impl Render for CodeBlockThemeRoot {
-            fn render(
-                &mut self,
-                _window: &mut Window,
-                _cx: &mut Context<Self>,
-            ) -> impl IntoElement {
+            fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
                 div().w(px(480.)).child(TextView::new(&self.text_view))
             }
         }
@@ -3273,8 +3023,8 @@ mod tests {
 
             block.clone()
         });
-        let cached_light_theme = cached_highlight_theme(&light_block)
-            .expect("initial render should populate the highlight cache");
+        let cached_light_theme =
+            cached_highlight_theme(&light_block).expect("initial render should populate the highlight cache");
         assert_eq!(cached_light_theme.as_ref(), light_theme.as_ref());
 
         cx.update(|window, cx| {
@@ -3291,8 +3041,8 @@ mod tests {
 
             block.clone()
         });
-        let cached_dark_theme = cached_highlight_theme(&dark_block)
-            .expect("theme-change render should refresh the highlight cache");
+        let cached_dark_theme =
+            cached_highlight_theme(&dark_block).expect("theme-change render should refresh the highlight cache");
 
         assert_ne!(
             light_theme.as_ref(),

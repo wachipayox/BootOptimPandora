@@ -44,6 +44,8 @@ pub struct InterfaceConfig {
     pub home_general_news: bool,
     #[serde(default)]
     pub home_read_news: std::collections::BTreeSet<String>,
+    #[serde(default)]
+    pub news_marks: std::collections::BTreeMap<String, schema::news::NewsLocalState>,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub page_path: Arc<[PageType]>,
 
@@ -305,6 +307,7 @@ impl Default for InterfaceConfig {
             home_instance: None,
             home_general_news: true,
             home_read_news: Default::default(),
+            news_marks: Default::default(),
             page_path: Default::default(),
             quick_delete_mods: Default::default(),
             quick_delete_instance: Default::default(),

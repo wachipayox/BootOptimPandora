@@ -104,6 +104,7 @@ pub fn start(
 
             gpui_component::init(cx);
             theme::init(cx);
+            pages::news::init(cx);
             InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
 
             t::set_lang(&InterfaceConfig::get(cx).language);
@@ -308,6 +309,9 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 match capture_page.as_deref() {
                     Some("instances" | "home-menu" | "home-news") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances
+                    },
+                    Some(name) if name.starts_with("news-") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
                     },
                     Some("skins") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins,
                     Some("import") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Import,

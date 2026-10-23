@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
-use gpui::{App, HighlightStyle, Pixels, Rems, StyleRefinement, px, rems};
+use gpui::{App, HighlightStyle, Pixels, Rems, SharedString, StyleRefinement, px, rems};
 
 use crate::{ActiveTheme as _, highlighter::HighlightTheme};
 
@@ -9,6 +9,11 @@ use crate::{ActiveTheme as _, highlighter::HighlightTheme};
 pub struct TextViewStyle {
     /// Gap of each paragraphs, default is 1 rem.
     pub paragraph_gap: Rems,
+    /// Explicit, application-verified images. When set, unmapped images render alt text.
+    /// Document URLs never become filesystem paths on their own.
+    pub image_sources: Option<Arc<BTreeMap<String, PathBuf>>>,
+    /// Optional heading family; paragraph text keeps its inherited font.
+    pub heading_font_family: Option<SharedString>,
     /// Base font size for headings, default is 14px.
     pub heading_base_font_size: Pixels,
     /// Function to calculate heading font size based on heading level (1-6).
@@ -49,11 +54,12 @@ pub struct TextViewStyle {
 impl PartialEq for TextViewStyle {
     fn eq(&self, other: &Self) -> bool {
         self.paragraph_gap == other.paragraph_gap
+            && self.image_sources == other.image_sources
+            && self.heading_font_family == other.heading_font_family
             && self.heading_base_font_size == other.heading_base_font_size
             && match (&self.heading_font_size, &other.heading_font_size) {
                 (Some(left), Some(right)) => (1..=6).all(|level| {
-                    left(level, self.heading_base_font_size)
-                        == right(level, other.heading_base_font_size)
+                    left(level, self.heading_base_font_size) == right(level, other.heading_base_font_size)
                 }),
                 (None, None) => true,
                 _ => false,
@@ -72,6 +78,8 @@ impl Default for TextViewStyle {
     fn default() -> Self {
         Self {
             paragraph_gap: rems(1.),
+            image_sources: None,
+            heading_font_family: None,
             heading_base_font_size: px(14.),
             heading_font_size: None,
             highlight_theme: HighlightTheme::default_light().clone(),

@@ -4,11 +4,11 @@ use std::{
 };
 
 use gpui::{
-    AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, DefiniteLength, Element, ElementId,
-    GlobalElementId, HighlightStyle, InspectorElementId, InteractiveElement as _, IntoElement,
-    LayoutId, LineFragment as WrapLineFragment, ObjectFit, Pixels, ShapedLine, SharedString,
-    SharedUri, Size, StatefulInteractiveElement as _, Styled, StyledImage as _, TextRun, TextStyle,
-    WhiteSpace, Window, img, point, prelude::FluentBuilder as _, px, relative, size,
+    AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, DefiniteLength, Element, ElementId, GlobalElementId,
+    HighlightStyle, ImageSource, InspectorElementId, InteractiveElement as _, IntoElement, LayoutId,
+    LineFragment as WrapLineFragment, ObjectFit, Pixels, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement as _, Styled, StyledImage as _, TextRun, TextStyle, WhiteSpace, Window, img, point,
+    prelude::FluentBuilder as _, px, relative, size,
 };
 
 use crate::{
@@ -19,7 +19,6 @@ use crate::{
 use super::{
     inline::{Inline, InlineState},
     node::LinkMark,
-    utils::image_source,
 };
 
 const IMAGE_LEN: usize = 1;
@@ -38,7 +37,7 @@ pub(super) enum InlineFlowItem {
         highlights: Vec<(Range<usize>, HighlightStyle)>,
     },
     Image {
-        url: SharedUri,
+        source: ImageSource,
         link: Option<LinkMark>,
         title: String,
         width: Option<DefiniteLength>,
@@ -82,7 +81,7 @@ enum MeasureItem {
         highlights: Vec<(Range<usize>, HighlightStyle)>,
     },
     Image {
-        url: SharedUri,
+        source: ImageSource,
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     },
@@ -119,13 +118,13 @@ impl InlineFlow {
 
     fn image_element(
         ix: usize,
-        url: &SharedUri,
+        source: &ImageSource,
         link: &Option<LinkMark>,
         title: &str,
         size: Size<Pixels>,
         link_click_handler: Option<Arc<LinkClickHandlerFn>>,
     ) -> AnyElement {
-        img(image_source(url))
+        img(source.clone())
             .id(ix)
             .object_fit(ObjectFit::Contain)
             .max_w(relative(1.))
@@ -140,24 +139,12 @@ impl InlineFlow {
                     .on_click(move |event, window, cx| {
                         gpui_base::TextSelection::end(window, cx);
                         cx.stop_propagation();
-                        handle_link_click(
-                            &link_click_handler,
-                            link.url.clone(),
-                            event.clone(),
-                            window,
-                            cx,
-                        );
+                        handle_link_click(&link_click_handler, link.url.clone(), event.clone(), window, cx);
                     })
                     .on_aux_click(move |event, window, cx| {
                         gpui_base::TextSelection::end(window, cx);
                         cx.stop_propagation();
-                        handle_link_click(
-                            &aux_link_click_handler,
-                            aux_link.url.clone(),
-                            event.clone(),
-                            window,
-                            cx,
-                        );
+                        handle_link_click(&aux_link_click_handler, aux_link.url.clone(), event.clone(), window, cx);
                     })
             })
             .into_any_element()
@@ -198,16 +185,9 @@ impl Element for InlineFlow {
             .iter()
             .enumerate()
             .map(|(ix, item)| match item {
-                MeasureItem::Image { url, width, height } => Some(measure_image_size(
-                    ix,
-                    url,
-                    *width,
-                    *height,
-                    line_height,
-                    rem_size,
-                    window,
-                    cx,
-                )),
+                MeasureItem::Image { source, width, height } => {
+                    Some(measure_image_size(ix, source, *width, *height, line_height, rem_size, window, cx))
+                },
                 MeasureItem::Text { .. } => None,
             })
             .collect::<Vec<_>>();
@@ -225,13 +205,7 @@ impl Element for InlineFlow {
                 } else {
                     None
                 };
-                let layout = layout_flow(
-                    &measure_items,
-                    &image_sizes,
-                    &text_style,
-                    wrap_width,
-                    window,
-                );
+                let layout = layout_flow(&measure_items, &image_sizes, &text_style, wrap_width, window);
                 let size = layout.size;
                 if let Ok(mut state) = layout_ref.lock() {
                     *state = Some(layout);
@@ -274,9 +248,7 @@ impl Element for InlineFlow {
                 } => {
                     let state = match &self.items[item_ix] {
                         InlineFlowItem::Text {
-                            state,
-                            text: source,
-                            ..
+                            state, text: source, ..
                         } if source_range == (0..source.len()) => state.clone(),
                         _ => Arc::new(Mutex::new(InlineState::default())),
                     };
@@ -284,14 +256,9 @@ impl Element for InlineFlow {
                         state.set_text(text);
                     }
 
-                    let mut element = Inline::new(
-                        elements.len(),
-                        state,
-                        links,
-                        highlights,
-                        self.link_click_handler.clone(),
-                    )
-                    .into_any_element();
+                    let mut element =
+                        Inline::new(elements.len(), state, links, highlights, self.link_click_handler.clone())
+                            .into_any_element();
                     element.prepaint_as_root(
                         bounds.origin + origin,
                         size(
@@ -302,21 +269,21 @@ impl Element for InlineFlow {
                         cx,
                     );
                     elements.push(element);
-                }
+                },
                 PositionedFragment::Image {
                     item_ix,
                     origin,
                     size: fragment_size,
                 } => {
                     let InlineFlowItem::Image {
-                        url, link, title, ..
+                        source, link, title, ..
                     } = &self.items[item_ix]
                     else {
                         continue;
                     };
                     let mut element = Self::image_element(
                         elements.len(),
-                        url,
+                        source,
                         link,
                         title.as_str(),
                         fragment_size,
@@ -332,7 +299,7 @@ impl Element for InlineFlow {
                         cx,
                     );
                     elements.push(element);
-                }
+                },
             }
         }
 
@@ -370,9 +337,9 @@ impl From<&InlineFlowItem> for MeasureItem {
                 highlights: highlights.clone(),
             },
             InlineFlowItem::Image {
-                url, width, height, ..
+                source, width, height, ..
             } => MeasureItem::Image {
-                url: url.clone(),
+                source: source.clone(),
                 width: *width,
                 height: *height,
             },
@@ -436,12 +403,8 @@ fn layout_flow(
                     if local_start < local_end {
                         let subtext = SharedString::from(text[local_start..local_end].to_string());
                         let highlights =
-                            slice_ranges(highlights, local_start, local_end, |range, style| {
-                                (range, *style)
-                            });
-                        let links = slice_ranges(links, local_start, local_end, |range, link| {
-                            (range, link.clone())
-                        });
+                            slice_ranges(highlights, local_start, local_end, |range, style| (range, *style));
+                        let links = slice_ranges(links, local_start, local_end, |range, link| (range, link.clone()));
                         let runs = runs_for_highlights(&subtext, text_style, highlights.clone());
                         let shaped_line = shape_line(subtext.clone(), font_size, &runs, window);
                         let width = shaped_line.width();
@@ -457,11 +420,10 @@ fn layout_flow(
                             source_range: local_start..local_end,
                         });
                     }
-                }
+                },
                 MeasureItem::Image { .. } => {
                     if line_range.start <= item_start && item_end <= line_range.end {
-                        let size = image_sizes[item_ix]
-                            .expect("image size should be measured before layout");
+                        let size = image_sizes[item_ix].expect("image size should be measured before layout");
                         line_width += size.width;
                         actual_line_height = actual_line_height.max(size.height);
                         line_fragments.push(LineFragmentLayout {
@@ -471,7 +433,7 @@ fn layout_flow(
                             source_range: 0..IMAGE_LEN,
                         });
                     }
-                }
+                },
             }
 
             item_start = item_end;
@@ -543,9 +505,7 @@ fn line_ranges(
     };
     let rem_size = window.rem_size();
     let font_size = text_style.font_size.to_pixels(rem_size);
-    let mut wrapper = window
-        .text_system()
-        .line_wrapper(text_style.font(), font_size);
+    let mut wrapper = window.text_system().line_wrapper(text_style.font(), font_size);
     let mut ranges = Vec::new();
 
     for hard_line in hard_lines {
@@ -563,17 +523,15 @@ fn line_ranges(
                             let start = hard_line.start.max(item_start) - item_start;
                             let end = hard_line.end.min(item_end) - item_start;
                             (start < end).then(|| WrapLineFragment::text(&text[start..end]))
-                        }
-                        MeasureItem::Image { .. } => (hard_line.start <= item_start
-                            && item_end <= hard_line.end)
-                            .then(|| {
+                        },
+                        MeasureItem::Image { .. } => {
+                            (hard_line.start <= item_start && item_end <= hard_line.end).then(|| {
                                 WrapLineFragment::element(
-                                    image_sizes[ix]
-                                        .expect("image size should be measured before wrapping")
-                                        .width,
+                                    image_sizes[ix].expect("image size should be measured before wrapping").width,
                                     IMAGE_LEN,
                                 )
-                            }),
+                            })
+                        },
                     }
                 };
                 item_start = item_end;
@@ -605,7 +563,7 @@ fn line_ranges(
 #[allow(clippy::too_many_arguments)]
 fn measure_image_size(
     ix: usize,
-    url: &SharedUri,
+    source: &ImageSource,
     width: Option<DefiniteLength>,
     height: Option<DefiniteLength>,
     line_height: Pixels,
@@ -616,20 +574,20 @@ fn measure_image_size(
     let intrinsic_size = if width.is_some() && height.is_some() {
         None
     } else {
-        intrinsic_image_size(ix, url, width, height, window, cx)
+        intrinsic_image_size(ix, source, width, height, window, cx)
     };
     image_size(width, height, intrinsic_size, line_height, rem_size)
 }
 
 fn intrinsic_image_size(
     ix: usize,
-    url: &SharedUri,
+    source: &ImageSource,
     width: Option<DefiniteLength>,
     height: Option<DefiniteLength>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<Size<Pixels>> {
-    let mut element = img(image_source(url))
+    let mut element = img(source.clone())
         .id(ix)
         .object_fit(ObjectFit::Contain)
         .max_w(relative(1.))
@@ -654,10 +612,9 @@ fn image_size(
 ) -> Size<Pixels> {
     let base_size = AbsoluteLength::Pixels(line_height);
     match (width, height) {
-        (Some(width), Some(height)) => size(
-            width.to_pixels(base_size, rem_size),
-            height.to_pixels(base_size, rem_size),
-        ),
+        (Some(width), Some(height)) => {
+            size(width.to_pixels(base_size, rem_size), height.to_pixels(base_size, rem_size))
+        },
         (Some(width), None) => {
             let width = width.to_pixels(base_size, rem_size);
             let height = intrinsic_size
@@ -667,7 +624,7 @@ fn image_size(
                 })
                 .unwrap_or(line_height);
             size(width, height)
-        }
+        },
         (None, Some(height)) => {
             let height = height.to_pixels(base_size, rem_size);
             let width = intrinsic_size
@@ -677,15 +634,12 @@ fn image_size(
                 })
                 .unwrap_or(height);
             size(width, height)
-        }
+        },
         (None, None) => inline_image_size_for_line(intrinsic_size, line_height),
     }
 }
 
-fn inline_image_size_for_line(
-    intrinsic_size: Option<Size<Pixels>>,
-    line_height: Pixels,
-) -> Size<Pixels> {
+fn inline_image_size_for_line(intrinsic_size: Option<Size<Pixels>>, line_height: Pixels) -> Size<Pixels> {
     let height = line_height * 0.75;
     let aspect_ratio = intrinsic_size
         .and_then(|intrinsic_size| {
@@ -709,12 +663,7 @@ fn runs_for_highlights(
         if ix < range.start {
             runs.push(default_style.clone().to_run(range.start - ix));
         }
-        runs.push(
-            default_style
-                .clone()
-                .highlight(highlight)
-                .to_run(range.len()),
-        );
+        runs.push(default_style.clone().highlight(highlight).to_run(range.len()));
         ix = range.end;
     }
 
@@ -725,12 +674,7 @@ fn runs_for_highlights(
     runs
 }
 
-fn shape_line(
-    text: SharedString,
-    font_size: Pixels,
-    runs: &[TextRun],
-    window: &mut Window,
-) -> ShapedLine {
+fn shape_line(text: SharedString, font_size: Pixels, runs: &[TextRun], window: &mut Window) -> ShapedLine {
     window.text_system().shape_line(text, font_size, runs, None)
 }
 
@@ -745,8 +689,7 @@ fn slice_ranges<T, U>(
         .filter_map(|(range, value)| {
             let clipped_start = range.start.max(start);
             let clipped_end = range.end.min(end);
-            (clipped_start < clipped_end)
-                .then(|| map((clipped_start - start)..(clipped_end - start), value))
+            (clipped_start < clipped_end).then(|| map((clipped_start - start)..(clipped_end - start), value))
         })
         .collect()
 }

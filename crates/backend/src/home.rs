@@ -42,19 +42,7 @@ impl DistributionClient {
                 let cached = cached
                     .as_ref()
                     .ok_or_else(|| DistributionError::InvalidResponse("304 without cache".into()))?;
-                let mut value = cached.value.clone();
-                // The cursor does not change when a pin expires. The verified origin's HTTP Date
-                // advances server time on a 304, without trusting the workstation clock.
-                if route == "/v1/news" {
-                    if let Some(date) = response
-                        .headers()
-                        .get(reqwest::header::DATE)
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(|v| chrono::DateTime::parse_from_rfc2822(v).ok())
-                    {
-                        value["server_time"] = Value::String(date.with_timezone(&chrono::Utc).to_rfc3339());
-                    }
-                }
+                let value = cached.value.clone();
                 return Ok(CachedDocument {
                     etag: cached.etag.clone(),
                     value,

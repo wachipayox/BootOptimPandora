@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$Output = (Join-Path $PSScriptRoot '..\..\..\coordination\272-estetica-launchers\pandora'),
     [switch]$SkipBuild,
     [string]$Executable,
@@ -7,6 +7,9 @@
     [string]$InstanceName = 'agente-274-ui',
     [switch]$Components,
     [switch]$HomeScreens,
+    [switch]$NewsScreens,
+    [string]$NewsFixture,
+    [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
     [string]$PortableDirectory
@@ -107,6 +110,8 @@ function Invoke-CaptureCli([string[]]$Arguments) {
     $cli = Start-Process -FilePath $portableExe -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Join-Path $tempRoot 'capture-cli.out') -RedirectStandardError (Join-Path $tempRoot 'capture-cli.err')
     if ($cli.ExitCode -ne 0) { throw "Capture CLI failed ($($cli.ExitCode)); inspect isolated capture-cli files." }
 }
+$oldNewsFixture = $env:WBOMBO_UI_CAPTURE_NEWS
+if ($NewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS = (Resolve-Path -LiteralPath $NewsFixture).Path }
 $createdInstance = $false
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
 $screens = @(
@@ -129,6 +134,12 @@ try {
         $screens += @{ page='home-menu'; file='home-menu.png'; label='Menú de la instancia seleccionada' }
         $screens += @{ page='home-news'; file='home-news.png'; label='Destino de Ver todas (pantalla completa en paso 3)' }
     }
+    if ($NewsScreens) {
+        foreach ($newsPage in @('home-news','news-history','news-saved','news-search','news-profiles','news-article','news-changelog')) {
+            $screens += @{ page=$newsPage; file="$newsPage.png"; label='Native News screen/state' }
+        }
+    }
+    if ($Pages) { $screens = @($Pages | ForEach-Object { @{ page=$_; file=(($_ -replace ':','-') + '.png'); label='Explicit native capture route' } }) }
     if ($Components) {
         $screens += @{ page = 'components'; file = 'components.png'; label = 'Wachiland base controls' }
         $screens += @{ page = 'components-dialog'; file = 'components-dialog.png'; label = 'Wachiland base dialog' }
@@ -153,6 +164,17 @@ try {
             $deadline = (Get-Date).AddSeconds(120)
             while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Home presentation did not settle before capture.' }
+        }
+        if ($screen.page -eq 'home-news' -or $screen.page.StartsWith('news-')) {
+            $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $ready = "news-ready pid=$($proc.Id)"
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'News did not settle before capture.' }
+            $ready = "news-media-ready pid=$($proc.Id)"
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'News media did not settle before capture.' }
         }
         if ($screen.page.StartsWith('update:')) {
             $ready = "update-dialog-ready pid=$($proc.Id)"
@@ -182,6 +204,7 @@ try {
         unavailable = if ($TestProfile -or $PortableDirectory) { @() } else { @('instance-detail and update-dialog require an owned test profile fixture') }
     } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $outputPath 'capture-manifest.json')
 } finally {
+    if ($null -ne $oldNewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS=$oldNewsFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_NEWS -ErrorAction SilentlyContinue }
     if ($null -ne $proc -and -not $proc.HasExited) {
         $proc.CloseMainWindow() | Out-Null
         if (-not $proc.WaitForExit(5000)) { $proc.Kill(); $proc.WaitForExit() }

@@ -63,7 +63,15 @@ impl DistributionClient {
                         // No cookie store, default credentials or inherited origin headers.
                         let http = Client::builder()
                             .https_only(true)
-                            .redirect(reqwest::redirect::Policy::limited(3))
+                            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                                if attempt.previous().len() > 3
+                                    || !schema::news_markdown::https_url(attempt.url().as_str())
+                                {
+                                    attempt.stop()
+                                } else {
+                                    attempt.follow()
+                                }
+                            }))
                             .timeout(Duration::from_secs(30))
                             .build()?;
                         let bytes = image_bytes(http.get(url).send().await?).await?;

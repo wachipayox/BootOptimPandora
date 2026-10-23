@@ -311,6 +311,11 @@ pub enum MessageToBackend {
     RefreshHomeServer {
         id: InstanceID,
     },
+    GetProfileChangelog {
+        profile_id: String,
+        query: schema::changelog::ChangelogQuery,
+        channel: tokio::sync::oneshot::Sender<Result<schema::changelog::ProfileChangelog, String>>,
+    },
     GetNews {
         channel: tokio::sync::oneshot::Sender<Result<schema::news::NewsFeed, String>>,
     },

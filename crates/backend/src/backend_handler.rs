@@ -1748,6 +1748,16 @@ impl BackendState {
                     instance.mark_servers_dirty(self, true);
                 }
             },
+            MessageToBackend::GetProfileChangelog {
+                profile_id,
+                query,
+                channel,
+            } => {
+                let backend = self.clone();
+                tokio::spawn(async move {
+                    let _ = channel.send(backend.load_profile_changelog(profile_id, query).await);
+                });
+            },
             MessageToBackend::GetNews { channel } => {
                 let backend = self.clone();
                 tokio::spawn(async move {
