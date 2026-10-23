@@ -20,6 +20,7 @@ pub fn open(data: &DataEntities, profile_id: String, revision_id: String, window
             let _ = this.update(cx, |this, cx| {
                 this.result = Some(result);
                 cx.notify();
+                log::info!("news-changelog-ready pid={}", std::process::id());
             });
         })
         .detach()

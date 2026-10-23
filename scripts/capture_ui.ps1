@@ -184,6 +184,13 @@ try {
             while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'No real update prompt was opened; repin the owned test profile before capturing.' }
         }
+        if ($screen.page -eq 'news-changelog') {
+            $ready = "news-changelog-ready pid=$($proc.Id)"
+            $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'News changelog did not settle before capture.' }
+        }
         Save-Window (Join-Path $outputPath $screen.file) $proc.MainWindowHandle $proc.Id
         if ($screen.page.StartsWith('news-article')) {
             # Wheel packets target only the verified capture window. They never
