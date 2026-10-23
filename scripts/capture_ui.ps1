@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Output = (Join-Path $PSScriptRoot '..\..\..\coordination\272-estetica-launchers\pandora'),
     [switch]$SkipBuild,
     [string]$Executable,
@@ -6,6 +6,7 @@ param(
     [string]$Revision,
     [string]$InstanceName = 'agente-274-ui',
     [switch]$Components,
+    [switch]$Home,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
     [string]$PortableDirectory
@@ -109,9 +110,9 @@ function Invoke-CaptureCli([string[]]$Arguments) {
 $createdInstance = $false
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
 $screens = @(
-    @{ page = 'instances'; file = 'instances.png'; label = 'Carrusel de perfiles globales y lista de instancias (vacía en datos limpios)' },
+    @{ page = 'instances'; file = 'instances.png'; label = 'Inicio con la instancia seleccionada o el fallback Vanilla' },
     @{ page = 'appearance'; file = 'settings-appearance.png'; label = 'Ajustes y apariencia' },
-    @{ page = 'accounts'; file = 'accounts.png'; label = 'Hoja de cuentas vacía (sin iniciar sesión)' }
+    @{ page = 'accounts'; file = 'accounts.png'; label = 'Menú de cuentas (sin iniciar sesión)' }
 )
 try {
     if ($TestProfile) {
@@ -123,6 +124,10 @@ try {
     if ($TestProfile -or $PortableDirectory) {
         $screens += @{ page = "instance:$InstanceName"; file = 'instance-detail.png'; label = 'Owned CLI instance detail' }
         if (-not $SkipUpdateCapture) { $screens += @{ page = "update:$InstanceName"; file = 'update-dialog.png'; label = 'Real inherited update check on owned CLI instance' } }
+    }
+    if ($Home) {
+        $screens += @{ page='home-menu'; file='home-menu.png'; label='Menú de la instancia seleccionada' }
+        $screens += @{ page='home-news'; file='home-news.png'; label='Destino de Ver todas (pantalla completa en paso 3)' }
     }
     if ($Components) {
         $screens += @{ page = 'components'; file = 'components.png'; label = 'Wachiland base controls' }
@@ -142,6 +147,13 @@ try {
         [void][CaptureWindow]::ShowWindow($proc.MainWindowHandle, 3)
         [void][CaptureWindow]::SetForegroundWindow($proc.MainWindowHandle)
         Start-Sleep -Seconds 5
+        if ($Home -and $screen.page -in @('instances','accounts','home-menu','home-news')) {
+            $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $ready = "home-ready pid=$($proc.Id)"
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Home presentation did not settle before capture.' }
+        }
         if ($screen.page.StartsWith('update:')) {
             $ready = "update-dialog-ready pid=$($proc.Id)"
             $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'

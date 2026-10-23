@@ -100,8 +100,8 @@ impl HomePage {
             loaded: false,
             requested: false,
             refreshed: Instant::now(),
-            menu: false,
-            news_view: false,
+            menu: std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-menu"),
+            news_view: std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-news"),
             article: None,
             heads: Default::default(),
             head_ids: Vec::new(),
@@ -144,6 +144,7 @@ impl HomePage {
                     news_failed: true,
                     ..Default::default()
                 });
+                log::info!("home-ready pid={}", std::process::id());
                 this.loaded = true;
                 this.requested = false;
                 this.refreshed = Instant::now();

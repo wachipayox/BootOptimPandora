@@ -286,7 +286,9 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
             |window, cx| {
                 let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").ok();
                 match capture_page.as_deref() {
-                    Some("instances") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances,
+                    Some("instances" | "home-menu" | "home-news") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances
+                    },
                     Some("skins") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins,
                     Some("import") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Import,
                     Some("syncing") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Syncing,
@@ -381,11 +383,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     window.on_next_frame(crate::component::design_review::open_review_dialog);
                 }
                 if capture_page.as_deref() == Some("accounts") {
-                    let accounts_data = data.clone();
-                    window.on_next_frame(move |window, cx| {
-                        let build = crate::modals::accounts::build_accounts_sheet(&accounts_data, window, cx);
-                        window.open_sheet_at(gpui_component::Placement::Left, cx, build);
-                    });
+                    window.on_next_frame(|_, cx| crate::root::open_home_accounts(cx));
                 }
                 root
             },
