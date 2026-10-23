@@ -311,6 +311,13 @@ pub enum MessageToBackend {
     RefreshHomeServer {
         id: InstanceID,
     },
+    GetNews {
+        channel: tokio::sync::oneshot::Sender<Result<schema::news::NewsFeed, String>>,
+    },
+    GetNewsImages {
+        requests: Vec<schema::news::NewsImageRequest>,
+        channel: tokio::sync::oneshot::Sender<Vec<schema::news::NewsLoadedImage>>,
+    },
     GetHomePlayerHeads {
         uuids: Vec<String>,
         channel: tokio::sync::oneshot::Sender<Vec<(String, std::path::PathBuf)>>,

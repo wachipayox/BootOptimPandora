@@ -2268,3 +2268,7 @@ mod catalog_presentation_tests {
 
 #[path = "home.rs"]
 mod home;
+#[path = "news.rs"]
+mod news;
+#[path = "news_media.rs"]
+mod news_media;

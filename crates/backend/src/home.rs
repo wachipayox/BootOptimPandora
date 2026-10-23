@@ -13,7 +13,12 @@ struct CachedDocument {
     fetched_at: u64,
 }
 impl DistributionClient {
-    async fn cosmetic_document(&self, route: &str, root: &Path, interval: u64) -> Result<Value, DistributionError> {
+    pub(super) async fn cosmetic_document(
+        &self,
+        route: &str,
+        root: &Path,
+        interval: u64,
+    ) -> Result<Value, DistributionError> {
         fs::create_dir_all(root)?;
         let key = hex::encode(Sha256::digest(format!("{}{}", self.base_url, route).as_bytes()));
         let path = root.join(format!("{key}.json"));
@@ -282,13 +287,16 @@ impl crate::BackendState {
                 }
             }
         }
-        let news = match client.cosmetic_document("/v1/news", &cache, 300).await {
+        let feed = match client.news_snapshot(&self.directories.root_launcher_dir.join("news-state")).await {
             Ok(v) => v,
             Err(_) => {
                 out.news_failed = true;
                 return Ok(out);
             },
         };
+        out.news_origin_key = feed.origin_key.clone();
+        out.news_failed = feed.load_failed;
+        let news = serde_json::to_value(feed).map_err(|e| e.to_string())?;
         let lineage = home_lineage(&profiles, profile_id);
         let server_time = news["server_time"].as_str().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
         if let Some(items) = news["items"].as_array() {

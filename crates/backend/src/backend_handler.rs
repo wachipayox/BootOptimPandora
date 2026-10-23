@@ -1748,6 +1748,18 @@ impl BackendState {
                     instance.mark_servers_dirty(self, true);
                 }
             },
+            MessageToBackend::GetNews { channel } => {
+                let backend = self.clone();
+                tokio::spawn(async move {
+                    let _ = channel.send(backend.load_news_feed().await);
+                });
+            },
+            MessageToBackend::GetNewsImages { requests, channel } => {
+                let backend = self.clone();
+                tokio::spawn(async move {
+                    let _ = channel.send(backend.load_news_images(requests).await);
+                });
+            },
             MessageToBackend::GetHomePlayerHeads { uuids, channel } => {
                 let backend = self.clone();
                 tokio::spawn(async move {
