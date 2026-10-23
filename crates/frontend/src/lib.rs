@@ -220,18 +220,24 @@ pub fn start(
             // Backend startup has already queued the complete instance snapshot. Create
             // the window after that snapshot, so loading existing instances is not
             // mistaken for adding new instances and replacing the saved Home selection.
-            let mut initial_window_requests = Vec::new();
+            let mut startup_messages = Vec::new();
             while let Some(message) = recv.try_recv() {
-                if matches!(&message, bridge::message::MessageToFrontend::OpenOrFocusMainWindow { .. }) {
-                    initial_window_requests.push(message);
-                } else {
+                if matches!(
+                    &message,
+                    bridge::message::MessageToFrontend::InstanceAdded { .. }
+                        | bridge::message::MessageToFrontend::AccountsUpdated { .. }
+                ) {
                     processor.process(message, cx);
+                } else {
+                    startup_messages.push(message);
                 }
             }
             // Flush the snapshot's deferred entity events before installing window
             // subscriptions; otherwise those events would still look like new adds.
             cx.defer(move |cx| {
-                for message in initial_window_requests {
+                // Replay window, launch and notification messages in their original
+                // order, including CLI launch/hide behavior.
+                for message in startup_messages {
                     processor.process(message, cx);
                 }
                 cx.spawn(async move |cx| {
