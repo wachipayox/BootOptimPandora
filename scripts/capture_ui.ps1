@@ -6,7 +6,7 @@
     [string]$Revision,
     [string]$InstanceName = 'agente-274-ui',
     [switch]$Components,
-    [switch]$Home,
+    [switch]$HomeScreens,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
     [string]$PortableDirectory
@@ -125,7 +125,7 @@ try {
         $screens += @{ page = "instance:$InstanceName"; file = 'instance-detail.png'; label = 'Owned CLI instance detail' }
         if (-not $SkipUpdateCapture) { $screens += @{ page = "update:$InstanceName"; file = 'update-dialog.png'; label = 'Real inherited update check on owned CLI instance' } }
     }
-    if ($Home) {
+    if ($HomeScreens) {
         $screens += @{ page='home-menu'; file='home-menu.png'; label='Menú de la instancia seleccionada' }
         $screens += @{ page='home-news'; file='home-news.png'; label='Destino de Ver todas (pantalla completa en paso 3)' }
     }
@@ -147,7 +147,7 @@ try {
         [void][CaptureWindow]::ShowWindow($proc.MainWindowHandle, 3)
         [void][CaptureWindow]::SetForegroundWindow($proc.MainWindowHandle)
         Start-Sleep -Seconds 5
-        if ($Home -and $screen.page -in @('instances','accounts','home-menu','home-news')) {
+        if ($HomeScreens -and $screen.page -in @('instances','accounts','home-menu','home-news')) {
             $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
             $ready = "home-ready pid=$($proc.Id)"
             $deadline = (Get-Date).AddSeconds(120)

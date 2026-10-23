@@ -600,7 +600,6 @@ impl Render for HomePage {
                 ),
         );
         if self.loaded && news.is_empty() {
-            let show_news = instance.is_some() || !news.is_empty();
             news_section = news_section.child(div().py(px(24.)).text_color(rgb(theme::INK_MUTED)).child(
                 if self.presentation.news_failed {
                     "No se han podido cargar las noticias."
