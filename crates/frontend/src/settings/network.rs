@@ -1,3 +1,4 @@
+use crate::component::design::YesNo as Switch;
 use std::rc::Rc;
 
 use bridge::message::MessageToBackend;
@@ -6,7 +7,6 @@ use gpui_component::{
     ActiveTheme, FocusableExt,
     input::{Input, InputEvent, InputState, NumberInput},
     select::{Select, SelectEvent, SelectState},
-    switch::Switch,
 };
 use schema::backend_config::ProxyProtocol;
 

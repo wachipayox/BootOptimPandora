@@ -65,7 +65,7 @@ impl RenderOnce for ProgressBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         // Match the theme radius, if theme radius is zero use it.
         let radius = px(4.0).min(cx.theme().radius);
-        let relative_w = relative(self.amount);
+        let relative_w = relative(self.amount.clamp(0., 1.));
 
         let progress_bar_color = cx.theme().progress_bar;
         let color = match self.color {
@@ -74,7 +74,7 @@ impl RenderOnce for ProgressBar {
             ProgressBarColor::Success => lerp(progress_bar_color, cx.theme().green, self.color_scale),
         };
 
-        div().w_full().relative().h(px(8.0)).rounded(radius).bg(color.opacity(0.2)).child(
+        div().w_full().relative().h(px(3.0)).rounded(radius).bg(gpui::rgba(0xffffff0f)).child(
             div()
                 .absolute()
                 .top_0()
@@ -82,6 +82,7 @@ impl RenderOnce for ProgressBar {
                 .h_full()
                 .w(relative_w)
                 .bg(color)
+                .when(self.amount > 0. && self.amount < 1., |this| this.child(div().absolute().right_0().top(px(-2.)).w(px(2.)).h(px(7.)).bg(gpui::rgb(0xd9f4ff))))
                 .map(|this| match self.amount {
                     v if v >= 1.0 => this.rounded(radius),
                     _ => this.rounded_l(radius),

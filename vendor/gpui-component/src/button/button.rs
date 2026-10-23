@@ -39,6 +39,8 @@ pub struct ButtonCustomVariant {
     shadow: bool,
     hover: Hsla,
     active: Hsla,
+    backgrounds: Option<[Background; 3]>,
+    hover_foreground: Option<Hsla>,
 }
 
 pub trait ButtonVariants: Sized {
@@ -103,7 +105,21 @@ impl ButtonCustomVariant {
             hover: cx.theme().transparent,
             active: cx.theme().transparent,
             shadow: false,
+            backgrounds: None,
+            hover_foreground: None,
         }
+    }
+
+    /// Exact normal/hover/pressed backgrounds, including translucent gradients.
+    /// Existing solid custom variants retain their legacy tinting behavior.
+    pub fn backgrounds(mut self, normal: Background, hover: Background, pressed: Background) -> Self {
+        self.backgrounds = Some([normal, hover, pressed]);
+        self
+    }
+
+    pub fn hover_foreground(mut self, color: Hsla) -> Self {
+        self.hover_foreground = Some(color);
+        self
     }
 
     /// Set background color, default is transparent.
@@ -848,7 +864,7 @@ impl ButtonVariant {
             Self::Success => cx.theme().tokens.button_success.into(),
             Self::Info => cx.theme().tokens.button_info.into(),
             Self::Ghost | Self::Link | Self::Text => cx.theme().transparent.into(),
-            Self::Custom(colors) => colors.color.mix_oklab(cx.theme().transparent, 0.2).into(),
+            Self::Custom(colors) => colors.backgrounds.map(|b| b[0]).unwrap_or_else(|| colors.color.mix_oklab(cx.theme().transparent, 0.2).into()),
         }
     }
 
@@ -1029,7 +1045,7 @@ impl ButtonVariant {
                     cx.theme().tokens.button_info_hover.into()
                 }
             }
-            Self::Custom(colors) => colors.hover.into(),
+            Self::Custom(colors) => colors.backgrounds.map(|b| b[1]).unwrap_or_else(|| colors.hover.into()),
             Self::Ghost => if cx.theme().mode.is_dark() {
                 cx.theme().secondary.lighten(0.1).opacity(0.8)
             } else {
@@ -1042,6 +1058,7 @@ impl ButtonVariant {
 
         let border = self.border_color(outline, cx);
         let fg = match self {
+            Self::Custom(colors) => colors.hover_foreground.unwrap_or(colors.foreground),
             Self::Link => cx.theme().link_hover,
             Self::Text => cx.theme().foreground,
             _ => self.text_color(outline, cx),
@@ -1116,7 +1133,7 @@ impl ButtonVariant {
                     cx.theme().tokens.button_info_active.into()
                 }
             }
-            Self::Custom(colors) => colors.active.into(),
+            Self::Custom(colors) => colors.backgrounds.map(|b| b[2]).unwrap_or_else(|| colors.active.into()),
             Self::Link => cx.theme().transparent.into(),
             Self::Text => cx.theme().transparent.into(),
         };
@@ -1159,7 +1176,7 @@ impl ButtonVariant {
             Self::Info => cx.theme().tokens.button_info_active.into(),
             Self::Link => cx.theme().transparent.into(),
             Self::Text => cx.theme().transparent.into(),
-            Self::Custom(colors) => colors.active.into(),
+            Self::Custom(colors) => colors.backgrounds.map(|b| b[2]).unwrap_or_else(|| colors.active.into()),
         };
 
         let border = self.border_color(outline, cx);

@@ -116,14 +116,10 @@ pub struct InterfaceConfig {
     pub player_model_zoom: i32,
 }
 
-pub const DEFAULT_THEME: &'static str = "Default Dark";
+pub const DEFAULT_THEME: &'static str = "Wachiland Dark";
 
-#[cfg(windows)]
-pub const DEFAULT_FONT: &'static str = "Inter 24pt 24pt";
-#[cfg(not(windows))]
-pub const DEFAULT_FONT: &'static str = "Inter 24pt";
-
-pub const DEFAULT_FONT_SIZE: i32 = 16;
+pub const DEFAULT_FONT: &'static str = "Noto Sans";
+pub const DEFAULT_FONT_SIZE: i32 = 14;
 
 impl InterfaceConfig {
     pub fn set_active_theme(&mut self, theme: SharedString) {
@@ -151,6 +147,8 @@ impl InterfaceConfig {
     }
 
     pub fn apply_theme(cx: &mut App, log: bool) {
+        // Directory reloads replace the registry; restore the bundled default first.
+        crate::theme::init(cx);
         cx.update_global::<InterfaceConfigHolder, _>(|holder, cx| {
             let registry = gpui_component::ThemeRegistry::global(cx);
             let theme_config = if let Some(active_theme) = &holder.config.active_theme {
@@ -160,10 +158,10 @@ impl InterfaceConfig {
                     if log {
                         log::warn!("Unable to find theme with name {}, using default theme", active_theme);
                     }
-                    registry.default_dark_theme().clone()
+                    registry.themes().get(DEFAULT_THEME).cloned().unwrap_or_else(|| registry.default_dark_theme().clone())
                 }
             } else {
-                registry.default_dark_theme().clone()
+                registry.themes().get(DEFAULT_THEME).cloned().unwrap_or_else(|| registry.default_dark_theme().clone())
             };
 
             let theme = gpui_component::Theme::global_mut(cx);

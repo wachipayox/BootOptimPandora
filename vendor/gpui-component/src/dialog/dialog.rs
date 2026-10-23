@@ -239,6 +239,7 @@ pub struct Dialog {
     children: Vec<AnyElement>,
     trigger: Option<AnyElement>,
     title: Option<AnyElement>,
+    decoration: Option<AnyElement>,
     pub(crate) header: Option<AnyElement>,
     pub(crate) footer: Option<AnyElement>,
     pub(crate) content_builder: Option<ContentBuilderFn>,
@@ -269,6 +270,7 @@ impl Dialog {
             style: StyleRefinement::default(),
             trigger: None,
             title: None,
+            decoration: None,
             header: None,
             footer: None,
             content_builder: None,
@@ -278,6 +280,12 @@ impl Dialog {
             selection_scope: TextSelectionScopeId::default(),
             button_props: DialogButtonProps::default(),
         }
+    }
+
+    /// A non-interactive decoration anchored to the outer dialog surface.
+    pub fn decoration(mut self, element: impl IntoElement) -> Self {
+        self.decoration = Some(element.into_any_element());
+        self
     }
 
     /// Sets the trigger element for the dialog.
@@ -519,6 +527,7 @@ impl RenderOnce for Dialog {
         // preserving the trajectory this dialog was tuned with before
         // `cubic_bezier` solved for x; vaul's (0.32, 0.72, 0., 1.) is far
         // more front-loaded under the CSS-correct solver.
+        let custom_shadow = self.style.box_shadow.clone();
         let animation = Animation::new(*ANIMATION_DURATION).with_easing(cubic_bezier(
             1. / 3.,
             0.72,
@@ -588,6 +597,7 @@ impl RenderOnce for Dialog {
                                     .left(x)
                                     .top(y)
                                     .w(self.props.width)
+                                    .when_some(self.decoration, |this, element| this.child(element))
                                     .when_some(self.props.max_width, |this, w| this.max_w(w))
                                     .child(
                                         v_flex()
@@ -678,6 +688,10 @@ impl RenderOnce for Dialog {
                                                     inset: false,
                                                 },
                                             ];
+                                            let shadow = custom_shadow.clone().map(|mut shadows| {
+                                                for shadow in &mut shadows { shadow.color.a *= delta; }
+                                                shadows
+                                            }).unwrap_or(shadow);
                                             this.top(y * delta).shadow(shadow)
                                         },
                                     )

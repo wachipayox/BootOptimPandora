@@ -1,3 +1,4 @@
+use crate::component::design::YesNo as Switch;
 use std::rc::Rc;
 
 use bridge::{handle::BackendHandle, message::MessageToBackend};
@@ -7,7 +8,6 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     separator::Separator,
     spinner::Spinner,
-    switch::Switch,
     v_flex,
 };
 use schema::backend_config::{BackendConfig, DistributionConfig, LauncherChannel, ProxyConfig};
@@ -456,6 +456,7 @@ impl SettingsRoot {
                     let item_element = h_flex()
                         .justify_between()
                         .items_center()
+                        .py(px(8.)).gap(px(20.))
                         .w_full()
                         .child(
                             v_flex()
@@ -472,10 +473,9 @@ impl SettingsRoot {
 
                 let items = v_flex()
                     .w_full()
-                    .p_3()
-                    .gap_3()
-                    .border_1()
-                    .border_color(cx.theme().border)
+                    .px(px(18.)).py(px(16.))
+                    .gap(px(10.))
+                    .bg(gpui::rgb(crate::theme::PANEL))
                     .rounded(cx.theme().radius_lg)
                     .line_height(rems(1.0))
                     .when(has_backend_missing, |this| {
