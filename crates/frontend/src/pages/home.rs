@@ -222,34 +222,47 @@ impl HomePage {
             .flex()
             .flex_col()
             .absolute()
-            .top(px(76.))
+            .top(px(60.))
             .right(px(18.))
             .w(px(212.))
-            .p(px(14.))
+            .px(px(14.))
+            .py(px(12.))
             .gap(px(6.))
             .child(
                 div()
-                    .font_family(theme::DISPLAY)
+                    .font_family(theme::SANS)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_size(px(13.))
+                    .line_height(px(18.))
                     .child("Jugadores conectados"),
             );
         panel = panel.child(
             h_flex()
-                .gap(px(6.))
-                .text_size(px(11.))
+                .justify_between()
+                .text_size(px(12.))
+                .line_height(px(20.))
                 .text_color(rgb(theme::INK_MUTED))
-                .child(div().size(px(5.)).rounded_full().bg(rgb(if server.status.is_some() {
-                    theme::SUCCESS
-                } else {
-                    theme::INK_DISABLED
-                })))
-                .child(if let Some(p) = online {
-                    format!("Servidor en línea       {} / {}", p.online, p.max)
-                } else if server.status.is_some() {
-                    "Servidor en línea".into()
-                } else {
-                    "Servidor sin respuesta".into()
+                .child(
+                    h_flex()
+                        .gap(px(6.))
+                        .child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(rgb(if server.status.is_some() {
+                            theme::SUCCESS
+                        } else {
+                            theme::INK_DISABLED
+                        })))
+                        .child(if server.status.is_some() {
+                            "Servidor en línea"
+                        } else {
+                            "Servidor sin respuesta"
+                        }),
+                )
+                .when_some(online, |d, p| {
+                    d.child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(rgb(theme::INK))
+                            .child(format!("{} / {}", p.online, p.max)),
+                    )
                 }),
         );
         if let Some(players) = online.filter(|p| !p.sample.is_empty()) {
