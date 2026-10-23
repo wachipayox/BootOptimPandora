@@ -141,7 +141,7 @@ impl Render for LauncherRoot {
 
         v_flex()
             .size_full()
-            .child(if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("components") {
+            .child(if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page.starts_with("components")) {
                 crate::component::design_review::render(window, cx)
             } else { self.ui.clone().into_any_element() })
             .children(sheet_layer)
@@ -511,7 +511,10 @@ pub fn capture_inherited_update(id: InstanceID, name: SharedString, data: &DataE
         let result=receive.await;
         _=cx.update_window(handle,|_,window,cx| {
             match result {
-                Ok(Ok(updates)) if !updates.is_empty()=>show_inherited_update(id,name,None,data,updates,window,cx),
+                Ok(Ok(updates)) if !updates.is_empty()=>{
+                    show_inherited_update(id,name,None,data,updates,window,cx);
+                    log::info!("[WBOMBO-UI-CAPTURE] update-dialog-ready pid={}",std::process::id());
+                },
                 _=>log::warn!("UI capture has no pending inherited update"),
             }
         });

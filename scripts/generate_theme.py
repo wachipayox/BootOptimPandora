@@ -18,7 +18,17 @@ lines += ['pub mod dark {']
 for t in colors:
     lines.append(f"    pub const {t['name'].replace('-', '_').upper()}: u32 = 0x{t['value']['dark'][1:]};")
 lines += ['}']
-(ROOT/'crates/frontend/src/theme_palette.rs').write_text('\n'.join(lines)+'\n')
+lines += ['pub mod metric {']
+for section in ('spacing', 'radius', 'size', 'stroke'):
+    for t in j[section]['tokens']:
+        lines.append(f"    pub const {t['name'].replace('-', '_').upper()}: f32 = {float(t['value'].removesuffix('px'))};")
+lines += ['}', '#[derive(Clone, Copy, Debug)]', 'pub struct TextToken { pub family: &\'static str, pub size: f32, pub line_height: f32, pub weight: f32, pub letter_spacing_em: f32 }', 'pub mod typography {', '    use super::TextToken;']
+for group in j['type']['groups']:
+    for t in group['styles']:
+        family = 'Chakra Petch' if group['family'] == 'display' else 'Noto Sans'
+        lines.append(f"    pub const {t['name'].replace('-', '_').upper()}: TextToken = TextToken {{ family: \"{family}\", size: {float(t['fontSize'].removesuffix('px'))}, line_height: {float(t['lineHeight'].removesuffix('px'))}, weight: {float(t['fontWeight'])}, letter_spacing_em: {float(t.get('letterSpacing','0').removesuffix('em'))} }};")
+lines += ['}']
+(ROOT/'crates/frontend/src/theme_palette.rs').write_text('\n'.join(lines)+'\n', encoding='utf-8')
 c = {t['name']:t['value']['dark'] for t in colors}
 mapping = {
  'background':'bg','foreground':'ink','border':'border','accent.background':'accent-soft','accent.foreground':'accent-text',

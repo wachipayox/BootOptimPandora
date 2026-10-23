@@ -368,6 +368,9 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                         }
                     });
                 }
+                if capture_page.as_deref() == Some("components-dialog") {
+                    window.on_next_frame(crate::component::design_review::open_review_dialog);
+                }
                 if capture_page.as_deref() == Some("accounts") {
                     let accounts_data = data.clone();
                     window.on_next_frame(move |window, cx| {

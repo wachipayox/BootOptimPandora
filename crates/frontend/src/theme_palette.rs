@@ -161,3 +161,43 @@ pub mod dark {
     pub const DANGER_PRESSED: u32 = 0x8c1d17;
     pub const ON_DANGER: u32 = 0xffffff;
 }
+pub mod metric {
+    pub const SPACE_1: f32 = 4.0;
+    pub const SPACE_2: f32 = 8.0;
+    pub const SPACE_3: f32 = 12.0;
+    pub const SPACE_4: f32 = 16.0;
+    pub const SPACE_5: f32 = 24.0;
+    pub const SPACE_6: f32 = 32.0;
+    pub const SPACE_7: f32 = 48.0;
+    pub const RADIUS_SM: f32 = 0.0;
+    pub const RADIUS_MD: f32 = 0.0;
+    pub const RADIUS_LG: f32 = 0.0;
+    pub const TOUCH_MIN: f32 = 48.0;
+    pub const CONTROL_H: f32 = 32.0;
+    pub const PLAY_H: f32 = 52.0;
+    pub const ICON_MD: f32 = 24.0;
+    pub const STROKE_HAIRLINE: f32 = 1.0;
+    pub const STROKE_FOCUS: f32 = 2.0;
+    pub const FOCUS_GAP: f32 = 2.0;
+    pub const EDGE_PLAY: f32 = 0.0;
+    pub const SINK_PLAY: f32 = 0.0;
+    pub const EDGE_BTN: f32 = 0.0;
+    pub const SINK_BTN: f32 = 0.0;
+}
+#[derive(Clone, Copy, Debug)]
+pub struct TextToken { pub family: &'static str, pub size: f32, pub line_height: f32, pub weight: f32, pub letter_spacing_em: f32 }
+pub mod typography {
+    use super::TextToken;
+    pub const DISPLAY: TextToken = TextToken { family: "Chakra Petch", size: 34.0, line_height: 38.0, weight: 600.0, letter_spacing_em: 0.0 };
+    pub const TITLE: TextToken = TextToken { family: "Chakra Petch", size: 20.0, line_height: 26.0, weight: 600.0, letter_spacing_em: 0.01 };
+    pub const HEADING: TextToken = TextToken { family: "Chakra Petch", size: 15.0, line_height: 20.0, weight: 600.0, letter_spacing_em: 0.01 };
+    pub const SUBHEADING: TextToken = TextToken { family: "Noto Sans", size: 14.0, line_height: 20.0, weight: 600.0, letter_spacing_em: 0.0 };
+    pub const BODY: TextToken = TextToken { family: "Noto Sans", size: 14.0, line_height: 20.0, weight: 400.0, letter_spacing_em: 0.0 };
+    pub const BODY_STRONG: TextToken = TextToken { family: "Noto Sans", size: 14.0, line_height: 20.0, weight: 500.0, letter_spacing_em: 0.0 };
+    pub const BODY_SM: TextToken = TextToken { family: "Noto Sans", size: 12.0, line_height: 17.0, weight: 400.0, letter_spacing_em: 0.0 };
+    pub const CAPTION: TextToken = TextToken { family: "Noto Sans", size: 11.0, line_height: 14.0, weight: 400.0, letter_spacing_em: 0.0 };
+    pub const LABEL: TextToken = TextToken { family: "Noto Sans", size: 13.0, line_height: 18.0, weight: 500.0, letter_spacing_em: 0.0 };
+    pub const BUTTON: TextToken = TextToken { family: "Noto Sans", size: 13.0, line_height: 16.0, weight: 500.0, letter_spacing_em: 0.0 };
+    pub const BUTTON_PLAY: TextToken = TextToken { family: "Noto Sans", size: 17.0, line_height: 20.0, weight: 600.0, letter_spacing_em: 0.02 };
+    pub const EYEBROW: TextToken = TextToken { family: "Chakra Petch", size: 10.0, line_height: 14.0, weight: 600.0, letter_spacing_em: 0.16 };
+}

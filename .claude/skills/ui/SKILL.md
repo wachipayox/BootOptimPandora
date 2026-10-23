@@ -11,11 +11,17 @@
 
 - Build the Windows launcher from the repository root: `cargo build --release -p pandora_launcher`.
 - Capture current UI screens on Windows: `powershell -ExecutionPolicy Bypass -File scripts/capture_ui.ps1`.
-- The script copies the exe to a temporary portable directory, uses isolated data, saves PNGs and a manifest, then removes the temporary directory. `WBOMBO_UI_CAPTURE_PAGE` is a debug-only startup route used by the script; supported routes include `instances`, `skins`, `import`, `syncing`, `appearance`, `accounts`, and `instance:<name>`.
-- The instances screenshot includes the global profile carousel. The accounts route opens the empty account sheet without signing in. The clean data folder has no installed instance for its detail view or signed update fixture; the manifest lists those unavailable views.
+- The script copies the exe to a temporary portable directory, uses isolated data, saves PNGs and a manifest, then removes the temporary directory. `WBOMBO_UI_CAPTURE_PAGE` is a debug-only startup route used by the script; supported routes include `instances`, `skins`, `import`, `syncing`, `appearance`, `accounts`, `instance:<name>`, `update:<name>`, `components`, and `components-dialog`.
+- The instances screenshot includes the global profile carousel. The accounts route opens the empty account sheet without signing in. Use `-Components` to capture the shared controls and dialog.
+- For instance/update captures use an owned `profile_test-…` via `-TestProfile`, optionally `-Revision rev_…`. The CLI creates `agente-274-ui` and deletes it in cleanup. Publish/repin a newer revision of that owned test profile before the update capture. Never alter Beta or another agent's profile.
+- `-PortableDirectory` reuses caller-owned isolated data (the caller cleans it up), and `-Executable` chooses a binary. `-SkipUpdateCapture` supports baseline binaries without the new update route. Capture data contains community presentation: retain it in private wbombo, not this public repository.
 
 ## Visual changes
 
 Every visual change must include before and after screenshots in its PR.
 
-## Sistema de diseño: pendiente (agente 274)
+## Wachiland design foundation
+
+`assets/theme/tokens.json` is the approved source. Regenerate the Rust palette (including light, metrics and typography) and GPUI JSON with `python scripts/generate_theme.py`. The embedded default is `Wachiland Dark`; `theme.rs` holds component measurements that the handoff defines outside the tokens. Bundled Noto Sans / Chakra Petch carry their OFL files in `assets/fonts/`.
+
+Use `component/design.rs` for new screens: button A, glass Play (pass its prepared cached artwork crop), NO/SÍ, chips, tabs, field, setting row, eyebrow and dialog. Preserve native keyboard interaction. Existing layouts migrate in subsequent PRs; do not mistake the capture-only component review for the redesigned Home screen.

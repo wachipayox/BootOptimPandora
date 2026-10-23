@@ -98,7 +98,10 @@ try {
         $screens += @{ page = "instance:$InstanceName"; file = 'instance-detail.png'; label = 'Owned CLI instance detail' }
         if (-not $SkipUpdateCapture) { $screens += @{ page = "update:$InstanceName"; file = 'update-dialog.png'; label = 'Real inherited update check on owned CLI instance' } }
     }
-    if ($Components) { $screens += @{ page = 'components'; file = 'components.png'; label = 'Wachiland base controls' } }
+    if ($Components) {
+        $screens += @{ page = 'components'; file = 'components.png'; label = 'Wachiland base controls' }
+        $screens += @{ page = 'components-dialog'; file = 'components-dialog.png'; label = 'Wachiland base dialog' }
+    }
     foreach ($screen in $screens) {
         $env:WBOMBO_UI_CAPTURE_PAGE = $screen.page
         # The user requested visible UI captures; SW_HIDE prevents GPUI's first
@@ -113,7 +116,20 @@ try {
         [void][CaptureWindow]::ShowWindow($proc.MainWindowHandle, 3)
         [void][CaptureWindow]::SetForegroundWindow($proc.MainWindowHandle)
         Start-Sleep -Seconds 5
+        if ($screen.page.StartsWith('update:')) {
+            $ready = "update-dialog-ready pid=$($proc.Id)"
+            $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $deadline = (Get-Date).AddSeconds(45)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'No real update prompt was opened; repin the owned test profile before capturing.' }
+        }
         Save-Window (Join-Path $outputPath $screen.file) $proc.MainWindowHandle $proc.Id
+        if ($screen.page -eq 'components') {
+            if ([CaptureWindow]::GetForegroundWindow() -ne $proc.MainWindowHandle) { throw 'Pandora must own focus before the keyboard capture' }
+            $shell = New-Object -ComObject WScript.Shell
+            $shell.SendKeys('{TAB}')
+            Save-Window (Join-Path $outputPath 'components-focus.png') $proc.MainWindowHandle $proc.Id
+        }
         $proc.CloseMainWindow() | Out-Null
         if (-not $proc.WaitForExit(5000)) { $proc.Kill(); $proc.WaitForExit() }
         Write-Output "CAPTURE_OK page=$($screen.page) file=$($screen.file)"

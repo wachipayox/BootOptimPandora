@@ -1,7 +1,7 @@
 //! Application design tokens. The generated palette retains both specified modes;
 //! only the approved dark mode is installed as the default GPUI theme.
-pub use crate::theme_palette::{Palette, dark, light};
 pub use crate::theme_palette::dark::*;
+pub use crate::theme_palette::{Palette, TextToken, dark, light, metric, typography};
 use gpui::App;
 pub const SANS: &str = "Noto Sans";
 pub const DISPLAY: &str = "Chakra Petch";
