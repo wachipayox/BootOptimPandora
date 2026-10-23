@@ -126,6 +126,7 @@ pub fn action_button(id: impl Into<ElementId>, label: impl Into<SharedString>, a
                 .child(label),
         )
         .h(px(theme::BUTTON_H))
+        .self_start()
         .px(px(16.))
         .rounded(px(0.))
         .font_family(theme::SANS)
@@ -298,6 +299,7 @@ pub fn tab(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: b
 pub fn dialog(dialog: gpui_component::dialog::Dialog) -> gpui_component::dialog::Dialog {
     dialog
         .w(px(416.))
+        .close_button(false)
         .bg(rgba(theme::DIALOG_BG))
         .border_1()
         .border_color(rgba(theme::DIALOG_OUTLINE))
@@ -312,7 +314,7 @@ pub fn dialog(dialog: gpui_component::dialog::Dialog) -> gpui_component::dialog:
             spread_radius: px(0.),
             inset: false,
         }])
-        .child(div().absolute().top_0().left_0().w(px(44.)).h(px(2.)).bg(rgb(theme::ACCENT_TEXT)))
+        .decoration(div().absolute().top_0().left_0().w(px(44.)).h(px(2.)).bg(rgb(theme::ACCENT_TEXT)))
 }
 
 /// The caller supplies the cached, blurred crop of the artwork behind this control.

@@ -239,6 +239,7 @@ pub struct Dialog {
     children: Vec<AnyElement>,
     trigger: Option<AnyElement>,
     title: Option<AnyElement>,
+    decoration: Option<AnyElement>,
     pub(crate) header: Option<AnyElement>,
     pub(crate) footer: Option<AnyElement>,
     pub(crate) content_builder: Option<ContentBuilderFn>,
@@ -269,6 +270,7 @@ impl Dialog {
             style: StyleRefinement::default(),
             trigger: None,
             title: None,
+            decoration: None,
             header: None,
             footer: None,
             content_builder: None,
@@ -278,6 +280,12 @@ impl Dialog {
             selection_scope: TextSelectionScopeId::default(),
             button_props: DialogButtonProps::default(),
         }
+    }
+
+    /// A non-interactive decoration anchored to the outer dialog surface.
+    pub fn decoration(mut self, element: impl IntoElement) -> Self {
+        self.decoration = Some(element.into_any_element());
+        self
     }
 
     /// Sets the trigger element for the dialog.
@@ -589,6 +597,7 @@ impl RenderOnce for Dialog {
                                     .left(x)
                                     .top(y)
                                     .w(self.props.width)
+                                    .when_some(self.decoration, |this, element| this.child(element))
                                     .when_some(self.props.max_width, |this, w| this.max_w(w))
                                     .child(
                                         v_flex()

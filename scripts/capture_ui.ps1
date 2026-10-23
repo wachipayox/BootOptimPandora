@@ -7,6 +7,7 @@ param(
     [string]$InstanceName = 'agente-274-ui',
     [switch]$Components,
     [switch]$SkipUpdateCapture,
+    [switch]$DesignViewport,
     [string]$PortableDirectory
 )
 $ErrorActionPreference = 'Stop'
@@ -42,9 +43,14 @@ public static class CaptureWindow {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int x, int y, int width, int height, bool repaint);
 }
 '@
 Add-Type -AssemblyName System.Drawing
+$oldDpiContext = [CaptureWindow]::SetThreadDpiAwarenessContext([IntPtr](-4))
 
 function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     [uint32]$owner = 0
@@ -52,11 +58,21 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     if ($owner -ne $processId) { throw "Window handle belongs to PID $owner, expected $processId" }
     $shell = New-Object -ComObject WScript.Shell
     [void]$shell.AppActivate($processId)
-    [void][CaptureWindow]::ShowWindow($handle, 3)
+    [void][CaptureWindow]::ShowWindow($handle, $(if ($DesignViewport) { 9 } else { 3 }))
     [void][CaptureWindow]::SetForegroundWindow($handle)
     Start-Sleep -Milliseconds 700
     $rect = New-Object CaptureWindow+RECT
     if (-not [CaptureWindow]::GetWindowRect($handle, [ref]$rect)) { throw 'Cannot read foreground window bounds' }
+    if ($DesignViewport) {
+        $client = New-Object CaptureWindow+RECT
+        [void][CaptureWindow]::GetClientRect($handle, [ref]$client)
+        $scale = [CaptureWindow]::GetDpiForWindow($handle) / 96.0
+        $frameWidth = ($rect.Right - $rect.Left) - ($client.Right - $client.Left)
+        $frameHeight = ($rect.Bottom - $rect.Top) - ($client.Bottom - $client.Top)
+        [void][CaptureWindow]::MoveWindow($handle, $rect.Left, $rect.Top, [int](1280 * $scale + $frameWidth), [int](860 * $scale + $frameHeight), $true)
+        Start-Sleep -Milliseconds 700
+        [void][CaptureWindow]::GetWindowRect($handle, [ref]$rect)
+    }
     if ([CaptureWindow]::IsIconic($handle)) { [void][CaptureWindow]::ShowWindow($handle, 9); Start-Sleep -Milliseconds 500; [void][CaptureWindow]::GetWindowRect($handle, [ref]$rect) }
     $width = $rect.Right - $rect.Left
     $height = $rect.Bottom - $rect.Top
@@ -136,6 +152,7 @@ try {
     }
     @{
         launcher = 'BootOptimPandora'
+        viewport = if ($DesignViewport) { '1280 x 860 logical pixels' } else { 'maximized' }
         dataDirectory = if ($ownsDirectory) { 'temporary portable directory; removed after capture' } else { 'caller-owned isolated portable directory' }
         screens = @($screens | ForEach-Object { @{ page=$_.page; file=$_.file; note=$_.label } })
         unavailable = if ($TestProfile -or $PortableDirectory) { @() } else { @('instance-detail and update-dialog require an owned test profile fixture') }
@@ -153,4 +170,5 @@ try {
         if (-not $resolvedTempRoot.StartsWith($allowedTemp, [StringComparison]::OrdinalIgnoreCase) -or -not ([IO.Path]::GetFileName($resolvedTempRoot)).StartsWith('wb274-')) { throw 'Refusing cleanup outside capture temp directory' }
         Remove-Item -LiteralPath $resolvedTempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
+    if ($oldDpiContext -ne [IntPtr]::Zero) { [void][CaptureWindow]::SetThreadDpiAwarenessContext($oldDpiContext) }
 }
