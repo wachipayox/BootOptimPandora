@@ -492,7 +492,8 @@ mod tests {
             manifest_sha256: "a".repeat(64),
         };
         GlobalProfileSummary {
-            presentation: None,
+            description: String::new(),
+            icon: None,
             profile_id: "profile_test-1".into(),
             name: "Test".into(),
             latest_revision: revision("rev_latest", 9),

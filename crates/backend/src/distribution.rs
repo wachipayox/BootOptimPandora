@@ -56,20 +56,15 @@ pub enum DistributionError {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GlobalProfileSummary {
-    #[serde(default)]
-    pub presentation: Option<ProfilePresentation>,
     pub profile_id: String,
     pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub icon: Option<ManifestObjectRef>,
     pub latest_revision: RevisionRef,
     #[serde(default)]
     pub channels: Vec<ChannelRef>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub struct ProfilePresentation {
-    pub name: String,
-    pub description: String,
-    pub icon: Option<ManifestObjectRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1610,14 +1605,9 @@ impl crate::BackendState {
             .iter()
             .find(|profile| profile.profile_id == profile_id)
             .ok_or_else(|| "The selected global profile is no longer published".to_owned())?;
-        let profile_icon = match &published_profile.presentation {
-            Some(presentation) => match &presentation.icon {
-                Some(icon) => {
-                    Some(client.fetch_verified_icon(icon, &cache_root).await.map_err(|error| error.to_string())?)
-                },
-                None => None,
-            },
-            None => resolved.icon_path.clone(),
+        let profile_icon = match &published_profile.icon {
+            Some(icon) => Some(client.fetch_verified_icon(icon, &cache_root).await.map_err(|error| error.to_string())?),
+            None => None,
         };
         validate_game_identity(&resolved.minecraft_version, &resolved.loader_version)?;
 
@@ -2159,10 +2149,7 @@ impl crate::BackendState {
                 .fetch_verified_revision(&profile.profile_id, revision)
                 .await
                 .map_err(|e| e.to_string())?;
-            let metadata = &verified.manifest.profile;
-            let presentation = profile.presentation.as_ref();
-            let display_icon = presentation.map(|p| &p.icon).unwrap_or(&metadata.icon);
-            let icon_path = if let Some(icon) = display_icon {
+            let icon_path = if let Some(icon) = &profile.icon {
                 Some(
                     client
                         .fetch_verified_icon(icon, &self.directories.root_launcher_dir.join("distribution-objects"))
@@ -2175,14 +2162,8 @@ impl crate::BackendState {
             summaries.push(bridge::message::GlobalProfileSummary {
                 parent_profile_id: verified.manifest.base.as_ref().map(|base| base.profile_id.clone()),
                 profile_id: profile.profile_id.clone(),
-                name: presentation.map(|p| p.name.clone()).unwrap_or_else(|| metadata.name.clone()),
-                description: presentation.map(|p| p.description.clone()).unwrap_or_else(|| {
-                    if metadata.description.is_empty() {
-                        verified.manifest.revision.release_notes.clone().unwrap_or_default()
-                    } else {
-                        metadata.description.clone()
-                    }
-                }),
+                name: profile.name.clone(),
+                description: profile.description.clone(),
                 minecraft: verified.manifest.game.minecraft.clone(),
                 loader: verified.manifest.game.resolved_loader().0.loader(),
                 loader_version: verified.manifest.game.resolved_loader().1.to_owned(),
@@ -2244,5 +2225,35 @@ mod manifest_game_loader_tests {
         let fabric = game(r#"{"minecraft":"1.21.1","loader":{"kind":"fabric","version":"21.1.1"}}"#).unwrap();
         assert!(old.same_game(&new));
         assert!(!old.same_game(&fabric));
+    }
+}
+
+#[cfg(test)]
+mod catalog_presentation_tests {
+    use super::*;
+
+    #[test]
+    fn effective_catalog_fields_override_historical_presentation() {
+        let profile: GlobalProfileSummary = serde_json::from_value(serde_json::json!({
+            "profile_id": "profile_example", "name": "Current name",
+            "description": "Inherited description", "icon": null,
+            "presentation": {"name": "Stale name", "description": "Stale", "icon": null},
+            "latest_revision": {"revision_id": "rev_example", "sequence": 2, "manifest_sha256": "a".repeat(64)}
+        })).unwrap();
+        assert_eq!(profile.name, "Current name");
+        assert_eq!(profile.description, "Inherited description");
+        assert!(profile.icon.is_none());
+    }
+
+    #[test]
+    fn inherited_icon_is_read_from_the_catalog() {
+        let icon = serde_json::json!({"sha256": "b".repeat(64), "size": 123, "media_type": "image/png"});
+        let profile: GlobalProfileSummary = serde_json::from_value(serde_json::json!({
+            "profile_id": "profile_example-child", "name": "Child", "description": "",
+            "icon": icon,
+            "latest_revision": {"revision_id": "rev_child", "sequence": 1, "manifest_sha256": "a".repeat(64)}
+        })).unwrap();
+        assert_eq!(profile.icon.unwrap().sha256, "b".repeat(64));
+        assert!(profile.description.is_empty());
     }
 }
