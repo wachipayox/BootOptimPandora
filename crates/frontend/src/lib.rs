@@ -228,18 +228,21 @@ pub fn start(
                     processor.process(message, cx);
                 }
             }
-            for message in initial_window_requests {
-                processor.process(message, cx);
-            }
-
-            cx.spawn(async move |cx| {
-                while let Some(message) = recv.recv().await {
-                    _ = cx.update(|cx| {
-                        processor.process(message, cx);
-                    });
+            // Flush the snapshot's deferred entity events before installing window
+            // subscriptions; otherwise those events would still look like new adds.
+            cx.defer(move |cx| {
+                for message in initial_window_requests {
+                    processor.process(message, cx);
                 }
-            })
-            .detach();
+                cx.spawn(async move |cx| {
+                    while let Some(message) = recv.recv().await {
+                        _ = cx.update(|cx| {
+                            processor.process(message, cx);
+                        });
+                    }
+                })
+                .detach();
+            });
         });
 }
 
