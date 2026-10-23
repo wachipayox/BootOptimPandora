@@ -764,6 +764,9 @@ impl Render for HomePage {
                     .into_any_element()
             })));
         if self.news_view {
+            if !self.loaded {
+                return div().size_full().into_any_element();
+            }
             if self.news_page.is_none() {
                 let seed = self
                     .article

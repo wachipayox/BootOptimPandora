@@ -756,7 +756,7 @@ impl Render for NewsPage {
         let counts = self.filtered(cx, false);
         let query = self.search.read(cx).value();
         let mut categories = h_flex().gap(px(6.)).child(
-            design::chip("category-all", format!("Todas  {}", counts.len()), self.category.is_none()).on_click(
+            category_chip("category-all", format!("Todas  {}", counts.len()), self.category.is_none()).on_click(
                 cx.listener(|this, _, w, c| {
                     this.category = None;
                     this.visible = 6;
