@@ -543,7 +543,7 @@ impl LauncherUI {
                             )
                             .child(label)
                             .when(id == "news" && unread, |d| {
-                                d.child(div().size(px(6.)).bg(rgb(theme::ACCENT_TEXT)).with_animation(
+                                d.child(div().size(px(6.)).rounded_full().bg(rgb(theme::ACCENT_TEXT)).with_animation(
                                     "news-pulse",
                                     Animation::new(std::time::Duration::from_secs(2)).repeat(),
                                     |d, t| d.opacity(0.45 + 0.55 * (t * std::f32::consts::TAU).cos().abs()),

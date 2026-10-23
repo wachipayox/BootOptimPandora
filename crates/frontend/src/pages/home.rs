@@ -281,6 +281,7 @@ impl HomePage {
         panel
             .child(
                 DesignButton::new("quick-server")
+                    .notched()
                     .label(format!(
                         "▶  Entrar al servidor{}",
                         server.ping.map(|p| format!("   {} ms", p.as_millis())).unwrap_or_default()
@@ -566,12 +567,23 @@ impl Render for HomePage {
                 .justify_between()
                 .child(left)
                 .child(h_flex().gap(px(16.)).child(play).when(instance.is_some(), |d| {
-                    d.child(DesignButton::new("home-more").label("⋯").w(px(44.)).h(px(52.)).on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.menu = !this.menu;
-                            cx.notify();
-                        },
-                    )))
+                    d.child(
+                        DesignButton::new("home-more")
+                            .notched()
+                            .paint(
+                                0.,
+                                [[0xffffff0a; 2], [0xffffff14; 2], [0xffffff08; 2]],
+                                rgb(theme::INK_MUTED).into(),
+                                rgb(theme::INK).into(),
+                            )
+                            .label("⋯")
+                            .w(px(44.))
+                            .h(px(52.))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.menu = !this.menu;
+                                cx.notify();
+                            })),
+                    )
                 }))
                 .child(h_flex().w(px(300.)).justify_end().gap(px(14.)).when_some(instance.as_ref(), |d, i| {
                     d.child(h_flex().h(px(28.)).gap(px(3.)).items_end().children(

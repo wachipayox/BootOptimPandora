@@ -20,6 +20,7 @@ pub struct DesignButton {
     inner: Button,
     paint: Option<(f32, Colors, Hsla, Hsla)>,
     action: bool,
+    notched: bool,
     disabled: bool,
 }
 impl DesignButton {
@@ -27,11 +28,16 @@ impl DesignButton {
         let id = id.into();
         Self {
             id: id.clone(),
-            inner: Button::new(id).ghost(),
+            inner: Button::new(id).ghost().border_0(),
             paint: None,
             action: false,
+            notched: false,
             disabled: false,
         }
+    }
+    pub fn notched(mut self) -> Self {
+        self.notched = true;
+        self
     }
     pub fn action(mut self) -> Self {
         self.action = true;
@@ -91,6 +97,7 @@ impl ButtonVariants for DesignButton {
 }
 impl RenderOnce for DesignButton {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let mut outer_fill = None;
         if let Some((angle, colors, fg, hover_fg)) = self.paint {
             let motion = window.use_keyed_state((self.id.clone(), "background-motion"), cx, |_, _| {
                 Motion::new(colors, Instant::now())
@@ -113,9 +120,17 @@ impl RenderOnce for DesignButton {
             };
             let background =
                 linear_gradient(angle, linear_color_stop(color(stops[0]), 0.), linear_color_stop(color(stops[1]), 1.));
+            if self.notched {
+                outer_fill = Some(background);
+            }
+            let native_fill = if self.notched {
+                rgba(0xffffff00).into()
+            } else {
+                background.into()
+            };
             self.inner = self.inner.custom(
                 ButtonCustomVariant::new(cx)
-                    .backgrounds(background, background, background)
+                    .backgrounds(native_fill, native_fill, native_fill)
                     .foreground(fg)
                     .hover_foreground(hover_fg),
             );
@@ -163,7 +178,11 @@ impl RenderOnce for DesignButton {
         if self.action && self.disabled {
             self.inner = self.inner.border_0().bg(rgba(0xffffff00)).text_color(rgb(theme::INK_DISABLED));
         }
-        self.inner
+        if let Some(fill) = outer_fill {
+            notched_fill(fill.into()).flex().child(self.inner).into_any_element()
+        } else {
+            self.inner.into_any_element()
+        }
     }
 }
 
@@ -624,6 +643,9 @@ pub fn progress(label: impl Into<SharedString>, amount: f32, detail: impl Into<S
 
 /// A six-pixel block notch, painted beneath content on the UI thread.
 pub fn notched_panel(color: u32) -> Div {
+    notched_fill(rgba(color).into())
+}
+fn notched_fill(fill: Background) -> Div {
     div().relative().child(
         canvas(
             |_, _, _| {},
@@ -644,7 +666,7 @@ pub fn notched_panel(color: u32) -> Div {
                 path.line_to(point(x, y + n));
                 path.close();
                 if let Ok(path) = path.build() {
-                    window.paint_path(path, rgba(color));
+                    window.paint_path(path, fill);
                 }
             },
         )
