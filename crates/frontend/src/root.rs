@@ -141,7 +141,9 @@ impl Render for LauncherRoot {
 
         v_flex()
             .size_full()
-            .child(self.ui.clone())
+            .child(if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("components") {
+                crate::component::design_review::render(window, cx)
+            } else { self.ui.clone().into_any_element() })
             .children(sheet_layer)
             .children(dialog_layer)
             .children(notification_layer)

@@ -42,6 +42,8 @@ pub mod settings;
 pub mod skin_renderer;
 pub mod skin_thumbnail_cache;
 pub mod ui;
+pub mod theme;
+mod theme_palette;
 #[cfg(windows)]
 pub mod windows_security_ui;
 
@@ -86,11 +88,17 @@ pub fn start(
         .run(move |cx: &mut App| {
             let _ = cx.text_system().add_fonts(vec![
                 Assets.load("fonts/inter/Inter-Regular.ttf").unwrap().unwrap(),
+                Assets.load("fonts/notosans/NotoSans[wdth,wght].ttf").unwrap().unwrap(),
+                Assets.load("fonts/chakrapetch/ChakraPetch-Regular.ttf").unwrap().unwrap(),
+                Assets.load("fonts/chakrapetch/ChakraPetch-Medium.ttf").unwrap().unwrap(),
+                Assets.load("fonts/chakrapetch/ChakraPetch-SemiBold.ttf").unwrap().unwrap(),
+                Assets.load("fonts/chakrapetch/ChakraPetch-Bold.ttf").unwrap().unwrap(),
                 Assets.load("fonts/roboto-mono/RobotoMono-Regular.ttf").unwrap().unwrap(),
                 Assets.load("fonts/minecraft.ttf").unwrap().unwrap(),
             ]);
 
             gpui_component::init(cx);
+            theme::init(cx);
             InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
 
             t::set_lang(&InterfaceConfig::get(cx).language);

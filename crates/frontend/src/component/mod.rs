@@ -1,3 +1,5 @@
+pub mod design_review;
+pub mod design;
 pub mod content_list;
 pub mod error_alert;
 pub mod generic_title_bar;
