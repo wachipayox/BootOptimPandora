@@ -217,7 +217,18 @@ pub fn start(
 
             let mut processor = Processor::new(data.clone(), main_window_hidden, quit_coordinator);
 
+            // Backend startup has already queued the complete instance snapshot. Create
+            // the window after that snapshot, so loading existing instances is not
+            // mistaken for adding new instances and replacing the saved Home selection.
+            let mut initial_window_requests = Vec::new();
             while let Some(message) = recv.try_recv() {
+                if matches!(&message, bridge::message::MessageToFrontend::OpenOrFocusMainWindow { .. }) {
+                    initial_window_requests.push(message);
+                } else {
+                    processor.process(message, cx);
+                }
+            }
+            for message in initial_window_requests {
                 processor.process(message, cx);
             }
 
