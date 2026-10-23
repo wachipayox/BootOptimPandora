@@ -27,7 +27,7 @@ impl DesignButton {
         let id = id.into();
         Self {
             id: id.clone(),
-            inner: Button::new(id),
+            inner: Button::new(id).ghost(),
             paint: None,
             action: false,
             disabled: false,

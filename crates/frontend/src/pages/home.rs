@@ -262,12 +262,19 @@ impl HomePage {
                 ))
                 .size(px(18.))
             })));
-            panel = panel.child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(rgb(theme::INK_MUTED))
-                    .child(players.sample.iter().take(12).map(|p| p.name.as_ref()).collect::<Vec<_>>().join(", ")),
-            );
+            panel = panel.child(div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child(
+                if InterfaceConfig::get(cx).hide_usernames {
+                    String::new()
+                } else {
+                    let names = players.sample.iter().take(3).map(|p| p.name.as_ref()).collect::<Vec<_>>().join(", ");
+                    let remaining = players.online.saturating_sub(players.sample.len().min(3) as i32);
+                    if remaining > 0 {
+                        format!("{names} y {remaining} más")
+                    } else {
+                        names
+                    }
+                },
+            ));
         }
         panel
             .child(
@@ -380,12 +387,20 @@ impl Render for HomePage {
             )
             .child(div().absolute().bottom_0().w_full().h(relative(0.55)).bg(shade(0x06060700, 0x060607ff)))
             .child(
-                div().absolute().top(px(70.)).left_0().w_full().pr(px(50.)).flex().justify_center().child(
-                    img(picture(&self.presentation.logo, "images/logo-vanilla.png"))
-                        .w(px(370.))
-                        .h(px(70.))
-                        .object_fit(ObjectFit::Contain),
-                ),
+                div()
+                    .absolute()
+                    .top(px(70.))
+                    .left_0()
+                    .w_full()
+                    .pr(px(if instance.is_some() { 60. } else { 0. }))
+                    .flex()
+                    .justify_center()
+                    .child(
+                        img(picture(&self.presentation.logo, "images/logo-vanilla.png"))
+                            .w(px(370.))
+                            .h(px(70.))
+                            .object_fit(ObjectFit::Contain),
+                    ),
             )
             .child(div().absolute().top_0().w_full().child(header))
             .when_some(server.as_ref(), |d, s| d.child(self.server_panel(s, cx)))
@@ -464,6 +479,20 @@ impl Render for HomePage {
         } else {
             play = play.add_instance().on_click(move |_, w, c| add_instance(&data, w, c));
         }
+        if let Some((progress, count, total)) = instance.as_ref().and_then(|i| root::home_update_progress(i.id)) {
+            let detail = if total > 0 {
+                format!("{:.0} % · {} de {} MB", progress * 100., count / 1024 / 1024, total / 1024 / 1024)
+            } else {
+                String::new()
+            };
+            play = PlayButton::new(
+                "home-play",
+                detail,
+                Some(picture(&self.presentation.glass, "images/vanilla-glass.png")),
+            )
+            .updating(progress);
+            window.request_animation_frame();
+        }
         let left = if let Some(i) = &instance {
             let text = if i.playtime.last_played_unix_ms.is_none() {
                 "Todavía no has jugado".to_string()
@@ -523,7 +552,7 @@ impl Render for HomePage {
                 .items_center()
                 .justify_between()
                 .child(left)
-                .child(h_flex().gap(px(6.)).child(play).when(instance.is_some(), |d| {
+                .child(h_flex().gap(px(16.)).child(play).when(instance.is_some(), |d| {
                     d.child(DesignButton::new("home-more").label("⋯").w(px(44.)).h(px(52.)).on_click(cx.listener(
                         |this, _, _, cx| {
                             this.menu = !this.menu;
@@ -625,7 +654,8 @@ impl Render for HomePage {
                     .flex()
                     .flex_col()
                     .id(("home-news", ix))
-                    .flex_1()
+                    .w(px(244.))
+                    .flex_shrink_0()
                     .min_w_0()
                     .relative()
                     .child(image)

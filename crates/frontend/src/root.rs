@@ -55,6 +55,21 @@ impl LauncherRoot {
 
 static RENDER_CUSTOM_TITLEBAR: AtomicBool = AtomicBool::new(true);
 
+static HOME_UPDATES: std::sync::LazyLock<Mutex<std::collections::HashMap<InstanceID, ModalAction>>> =
+    std::sync::LazyLock::new(|| Mutex::new(Default::default()));
+pub fn home_update_progress(id: InstanceID) -> Option<(f32, usize, usize)> {
+    let modal = HOME_UPDATES.lock().get(&id).cloned()?;
+    Some(modal.write_trackers(|trackers| {
+        trackers
+            .iter()
+            .find(|t| t.get_title().as_ref() == "Downloading modpack assets")
+            .map(|t| {
+                let (count, total) = t.get();
+                (t.get_float().unwrap_or(0.), count, total)
+            })
+            .unwrap_or((0., 0, 0))
+    }))
+}
 pub fn inherited_operation_active(id: InstanceID) -> bool {
     bridge::inherited_operations::is_active(id)
 }
@@ -68,6 +83,7 @@ fn begin_inherited_operation(id: InstanceID, cx: &mut App) -> bool {
 }
 
 fn finish_inherited_operation(id: InstanceID, window: &mut Window) {
+    HOME_UPDATES.lock().remove(&id);
     bridge::inherited_operations::finish(id);
     window.refresh();
 }
@@ -78,6 +94,7 @@ pub fn update_inherited_files(id: InstanceID, data: &DataEntities, window: &mut 
     }
     window.refresh();
     let modal = ModalAction::default();
+    HOME_UPDATES.lock().insert(id, modal.clone());
     let (send, receive) = tokio::sync::oneshot::channel();
     data.backend_handle.send(MessageToBackend::UpdateInheritedChain {
         id,
@@ -290,6 +307,7 @@ fn update_then_start(
 ) {
     let (send, receive) = tokio::sync::oneshot::channel();
     let modal = ModalAction::default();
+    HOME_UPDATES.lock().insert(id, modal.clone());
     data.backend_handle.send(MessageToBackend::UpdateInheritedChain {
         id,
         channel: send,
