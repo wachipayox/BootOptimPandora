@@ -226,29 +226,7 @@ pub fn start_instance(
         _ = cx.update_window(handle, |_, window, cx| {
             match result {
                 Ok(updates) if !updates.is_empty() => {
-                    let caption = format!("Updates are available for: {}", updates.join(", "));
-                    window.open_dialog(cx, move |dialog, _, _| {
-                        let skip_data = data.clone(); let skip_name = name.clone(); let skip_quick = quick_play.clone();
-                        let update_data = data.clone(); let update_name = name.clone(); let update_quick = quick_play.clone();
-                        let enter_data = data.clone(); let enter_name = name.clone(); let enter_quick = quick_play.clone();
-                        dialog.title("Inherited profile update")
-                            .overlay_closable(false).keyboard(false).close_button(false)
-                            .on_ok(move |_, window, cx| {
-                                update_then_start(id, enter_name.clone(), enter_quick.clone(), &enter_data, window, cx);
-                                true
-                            })
-                            .child(caption.clone())
-                            .footer(h_flex().gap_2()
-                                .child(Button::new("skip-update").label("Start without updating").on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    finish_inherited_operation(id, window);
-                                    start_instance_unchecked(id, skip_name.clone(), skip_quick.clone(), &skip_data, window, cx);
-                                }))
-                                .child(Button::new("update-start").label("Update and start").on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    update_then_start(id, update_name.clone(), update_quick.clone(), &update_data, window, cx);
-                                })))
-                    });
+                    show_inherited_update(id,name,quick_play,data,updates,window,cx);
                 },
                 Ok(_) => { finish_inherited_operation(id, window); start_instance_unchecked(id, name, quick_play, &data, window, cx); },
                 Err(error) => {
@@ -495,4 +473,47 @@ pub fn switch_page(page: PageType, breadcrumbs: &[PageType], window: &mut Window
             });
         });
     });
+}
+
+fn show_inherited_update(id: InstanceID, name: SharedString, quick_play: Option<QuickPlayLaunch>, data: DataEntities, updates: Vec<String>, window: &mut Window, cx: &mut App) {
+                    let caption = format!("Updates are available for: {}", updates.join(", "));
+                    window.open_dialog(cx, move |dialog, _, _| {
+                        let skip_data = data.clone(); let skip_name = name.clone(); let skip_quick = quick_play.clone();
+                        let update_data = data.clone(); let update_name = name.clone(); let update_quick = quick_play.clone();
+                        let enter_data = data.clone(); let enter_name = name.clone(); let enter_quick = quick_play.clone();
+                        dialog.title("Inherited profile update")
+                            .overlay_closable(false).keyboard(false).close_button(false)
+                            .on_ok(move |_, window, cx| {
+                                update_then_start(id, enter_name.clone(), enter_quick.clone(), &enter_data, window, cx);
+                                true
+                            })
+                            .child(caption.clone())
+                            .footer(h_flex().gap_2()
+                                .child(Button::new("skip-update").label("Start without updating").on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    finish_inherited_operation(id, window);
+                                    start_instance_unchecked(id, skip_name.clone(), skip_quick.clone(), &skip_data, window, cx);
+                                }))
+                                .child(Button::new("update-start").label("Update and start").on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    update_then_start(id, update_name.clone(), update_quick.clone(), &update_data, window, cx);
+                                })))
+                    });
+}
+
+/// Capture only checks metadata and opens the real update prompt; it never auto-starts.
+pub fn capture_inherited_update(id: InstanceID, name: SharedString, data: &DataEntities, window: &mut Window, cx: &mut App) {
+    let (send, receive)=tokio::sync::oneshot::channel();
+    data.backend_handle.send(MessageToBackend::CheckInheritedUpdates {id,channel:send});
+    let data=data.clone();
+    let handle=window.window_handle();
+    cx.spawn(async move |cx| {
+        let result=receive.await;
+        _=cx.update_window(handle,|_,window,cx| {
+            match result {
+                Ok(Ok(updates)) if !updates.is_empty()=>show_inherited_update(id,name,None,data,updates,window,cx),
+                _=>log::warn!("UI capture has no pending inherited update"),
+            }
+        });
+    }).detach();
 }

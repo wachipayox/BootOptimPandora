@@ -285,9 +285,9 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     Some("skins") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins,
                     Some("import") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Import,
                     Some("syncing") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Syncing,
-                    Some(name) if name.starts_with("instance:") => {
+                    Some(name) if name.starts_with("instance:") || name.starts_with("update:") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::InstancePage {
-                            name: name[9..].into(),
+                            name: name.split_once(':').unwrap().1.into(),
                         };
                     },
                     _ => {},
@@ -359,6 +359,15 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     crate::settings::open_settings_window(window, &data, cx);
                 }
                 let root = cx.new(|cx| Root::new(launcher_root, window, cx));
+                if let Some(name) = capture_page.as_deref().and_then(|page| page.strip_prefix("update:")) {
+                    let name: SharedString=name.to_owned().into();
+                    let capture_data=data.clone();
+                    window.on_next_frame(move |window,cx| {
+                        if let Some(id)=crate::entity::instance::InstanceEntries::find_id_by_name(&capture_data.instances,&name,cx) {
+                            crate::root::capture_inherited_update(id,name,&capture_data,window,cx);
+                        }
+                    });
+                }
                 if capture_page.as_deref() == Some("accounts") {
                     let accounts_data = data.clone();
                     window.on_next_frame(move |window, cx| {

@@ -1,25 +1,34 @@
 param(
     [string]$Output = (Join-Path $PSScriptRoot '..\..\..\coordination\272-estetica-launchers\pandora'),
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [string]$Executable,
+    [string]$TestProfile,
+    [string]$Revision,
+    [string]$InstanceName = 'agente-274-ui',
+    [switch]$Components,
+    [switch]$SkipUpdateCapture,
+    [string]$PortableDirectory
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $outputPath = [IO.Path]::GetFullPath($Output)
 $null = New-Item -ItemType Directory -Force -Path $outputPath
 
-if (-not $SkipBuild) {
+if ($TestProfile -and (-not $TestProfile.StartsWith('profile_test-') -or -not $InstanceName.StartsWith('agente-274-'))) { throw 'Capture requires an owned test profile and agent-274 instance.' }
+if (-not $SkipBuild -and -not $Executable) {
     cargo build --release -p pandora_launcher --manifest-path (Join-Path $repo 'Cargo.toml')
     if ($LASTEXITCODE -ne 0) { throw "Pandora build failed ($LASTEXITCODE)" }
 }
-$builtExe = Join-Path $repo 'target\release\pandora_launcher.exe'
+$builtExe = if ($Executable) { [IO.Path]::GetFullPath($Executable) } else { Join-Path $repo 'target\release\pandora_launcher.exe' }
 if (-not (Test-Path $builtExe)) { throw "Missing executable: $builtExe" }
 
-$tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("wbombo-272-pandora-" + [guid]::NewGuid().ToString('N'))
-$null = New-Item -ItemType Directory -Path $tempRoot
+$ownsDirectory = -not $PortableDirectory
+$tempRoot = if ($PortableDirectory) { [IO.Path]::GetFullPath($PortableDirectory) } else { Join-Path ([IO.Path]::GetTempPath()) ("wb274-" + [guid]::NewGuid().ToString('N').Substring(0,8)) }
+$null = New-Item -ItemType Directory -Force -Path $tempRoot
 # Pandora treats an executable whose name contains "portable" as an isolated
 # portable install, so this run never resolves to the user's regular data folder.
 $portableExe = Join-Path $tempRoot 'pandora-portable.exe'
-Copy-Item -LiteralPath $builtExe -Destination $portableExe
+if (-not (Test-Path $portableExe) -or $ownsDirectory) { Copy-Item -LiteralPath $builtExe -Destination $portableExe }
 
 Add-Type @'
 using System;
@@ -67,6 +76,11 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
 
+function Invoke-CaptureCli([string[]]$Arguments) {
+    $cli = Start-Process -FilePath $portableExe -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Join-Path $tempRoot 'capture-cli.out') -RedirectStandardError (Join-Path $tempRoot 'capture-cli.err')
+    if ($cli.ExitCode -ne 0) { throw "Capture CLI failed ($($cli.ExitCode)); inspect isolated capture-cli files." }
+}
+$createdInstance = $false
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
 $screens = @(
     @{ page = 'instances'; file = 'instances.png'; label = 'Carrusel de perfiles globales y lista de instancias (vacía en datos limpios)' },
@@ -74,8 +88,21 @@ $screens = @(
     @{ page = 'accounts'; file = 'accounts.png'; label = 'Hoja de cuentas vacía (sin iniciar sesión)' }
 )
 try {
+    if ($TestProfile) {
+        $createArgs = @('--create-instance', $InstanceName, '--from-profile', $TestProfile)
+        if ($Revision) { $createArgs += @('--revision', $Revision) }
+        Invoke-CaptureCli $createArgs
+        $createdInstance = $true
+    }
+    if ($TestProfile -or $PortableDirectory) {
+        $screens += @{ page = "instance:$InstanceName"; file = 'instance-detail.png'; label = 'Owned CLI instance detail' }
+        if (-not $SkipUpdateCapture) { $screens += @{ page = "update:$InstanceName"; file = 'update-dialog.png'; label = 'Real inherited update check on owned CLI instance' } }
+    }
+    if ($Components) { $screens += @{ page = 'components'; file = 'components.png'; label = 'Wachiland base controls' } }
     foreach ($screen in $screens) {
         $env:WBOMBO_UI_CAPTURE_PAGE = $screen.page
+        # The user requested visible UI captures; SW_HIDE prevents GPUI's first
+        # window from becoming visible and makes MainWindowHandle remain zero.
         $proc = Start-Process -FilePath $portableExe -PassThru
         $deadline = (Get-Date).AddSeconds(45)
         while ((Get-Date) -lt $deadline -and ($proc.MainWindowHandle -eq 0 -or $proc.HasExited)) {
@@ -85,7 +112,7 @@ try {
         if ($proc.HasExited -or $proc.MainWindowHandle -eq 0) { throw "Pandora did not open for $($screen.page)" }
         [void][CaptureWindow]::ShowWindow($proc.MainWindowHandle, 3)
         [void][CaptureWindow]::SetForegroundWindow($proc.MainWindowHandle)
-        Start-Sleep -Seconds 3
+        Start-Sleep -Seconds 5
         Save-Window (Join-Path $outputPath $screen.file) $proc.MainWindowHandle $proc.Id
         $proc.CloseMainWindow() | Out-Null
         if (-not $proc.WaitForExit(5000)) { $proc.Kill(); $proc.WaitForExit() }
@@ -93,12 +120,9 @@ try {
     }
     @{
         launcher = 'BootOptimPandora'
-        dataDirectory = 'temporary portable directory; removed after capture'
+        dataDirectory = if ($ownsDirectory) { 'temporary portable directory; removed after capture' } else { 'caller-owned isolated portable directory' }
         screens = @($screens | ForEach-Object { @{ page=$_.page; file=$_.file; note=$_.label } })
-        unavailable = @(
-            @{ page='instance-detail'; reason='The isolated environment has no installed instance fixture.' },
-            @{ page='update-dialog'; reason='No signed update fixture is available in the isolated data directory.' }
-        )
+        unavailable = if ($TestProfile -or $PortableDirectory) { @() } else { @('instance-detail and update-dialog require an owned test profile fixture') }
     } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $outputPath 'capture-manifest.json')
 } finally {
     if ($null -ne $proc -and -not $proc.HasExited) {
@@ -106,5 +130,11 @@ try {
         if (-not $proc.WaitForExit(5000)) { $proc.Kill(); $proc.WaitForExit() }
     }
     if ($null -ne $oldPage) { $env:WBOMBO_UI_CAPTURE_PAGE = $oldPage } else { Remove-Item Env:WBOMBO_UI_CAPTURE_PAGE -ErrorAction SilentlyContinue }
-    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    if ($createdInstance) { Invoke-CaptureCli @('--delete-instance', $InstanceName, '--confirm', $InstanceName) }
+    if ($ownsDirectory) {
+        $resolvedTempRoot = [IO.Path]::GetFullPath($tempRoot)
+        $allowedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+        if (-not $resolvedTempRoot.StartsWith($allowedTemp, [StringComparison]::OrdinalIgnoreCase) -or -not ([IO.Path]::GetFileName($resolvedTempRoot)).StartsWith('wb274-')) { throw 'Refusing cleanup outside capture temp directory' }
+        Remove-Item -LiteralPath $resolvedTempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }

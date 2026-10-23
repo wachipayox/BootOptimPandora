@@ -44,7 +44,7 @@
         "table.background": "#0f0f12",
         "table.head.background": "#16161a",
         "table.row.hover.background": "#16161a",
-        "progress_bar.background": "#5bcef5",
+        "progress.bar.background": "#5bcef5",
         "ring": "#5bcef5",
         "caret": "#5bcef5",
         "danger.background": "#ff7a70",

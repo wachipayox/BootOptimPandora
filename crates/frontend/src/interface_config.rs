@@ -147,6 +147,8 @@ impl InterfaceConfig {
     }
 
     pub fn apply_theme(cx: &mut App, log: bool) {
+        // Directory reloads replace the registry; restore the bundled default first.
+        crate::theme::init(cx);
         cx.update_global::<InterfaceConfigHolder, _>(|holder, cx| {
             let registry = gpui_component::ThemeRegistry::global(cx);
             let theme_config = if let Some(active_theme) = &holder.config.active_theme {

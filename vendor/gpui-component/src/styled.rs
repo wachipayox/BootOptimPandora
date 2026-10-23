@@ -183,6 +183,10 @@ impl<T: Styled + Sized> ThemeStyled for T {
             return self.border_color(cx.theme().ring);
         }
 
+        let wachiland = cx.theme().theme_name().as_ref() == "Wachiland Dark";
+        let ring_width = if wachiland { px(2.) } else { FOCUS_RING_WIDTH };
+        let ring_gap = if wachiland { px(2.) } else { px(0.) };
+        let ring_opacity = if wachiland { 1. } else { FOCUS_RING_OPACITY };
         let rem_size = window.rem_size();
         let style = self.style();
         let border_widths = Edges::<Pixels> {
@@ -229,13 +233,13 @@ impl<T: Styled + Sized> ThemeStyled for T {
                 .map(|v| v.to_pixels(rem_size))
                 .unwrap_or_default(),
         }
-        .map(|value| *value + FOCUS_RING_WIDTH);
+        .map(|value| if wachiland { px(0.) } else { *value + ring_width });
         let mut ring_style = StyleRefinement::default();
         ring_style.corner_radii.top_left = Some(radius.top_left.into());
         ring_style.corner_radii.top_right = Some(radius.top_right.into());
         ring_style.corner_radii.bottom_left = Some(radius.bottom_left.into());
         ring_style.corner_radii.bottom_right = Some(radius.bottom_right.into());
-        let inset = FOCUS_RING_WIDTH;
+        let inset = ring_width + ring_gap;
 
         self.border_color(cx.theme().ring).child(
             div()
@@ -245,8 +249,8 @@ impl<T: Styled + Sized> ThemeStyled for T {
                 .left(-(inset + border_widths.left))
                 .right(-(inset + border_widths.right))
                 .bottom(-(inset + border_widths.bottom))
-                .border(FOCUS_RING_WIDTH)
-                .border_color(cx.theme().ring.alpha(FOCUS_RING_OPACITY))
+                .border(ring_width)
+                .border_color(cx.theme().ring.alpha(ring_opacity))
                 .refine_style(&ring_style),
         )
     }

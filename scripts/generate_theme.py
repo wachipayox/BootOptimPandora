@@ -30,7 +30,7 @@ mapping = {
  'list.active.background':'accent-soft','list.active.border':'accent-text','list.hover.background':'panel-raised',
  'tab_bar.background':'bg','tab.background':'bg','tab.foreground':'ink-muted','tab.active.background':'bg','tab.active.foreground':'ink',
  'table.background':'panel','table.head.background':'panel-raised','table.row.hover.background':'panel-raised',
- 'progress_bar.background':'accent-text','ring':'focus','caret':'accent-text',
+ 'progress.bar.background':'accent-text','ring':'focus','caret':'accent-text',
  'danger.background':'danger','danger.foreground':'danger','success.background':'success','success.foreground':'success',
  'warning.background':'warning','warning.foreground':'warning','info.background':'accent-text','info.foreground':'accent-text',
 }

@@ -4,21 +4,39 @@ use gpui::{prelude::*, *};
 use gpui_component::{Disableable, StyledExt, button::{Button, ButtonVariants}, h_flex, v_flex};
 use crate::theme;
 
+/// Adds state styling to the native button without changing its input handling.
+#[derive(IntoElement)]
+pub struct DesignButton { inner: Button }
+impl DesignButton {
+    pub fn new(id: impl Into<ElementId>) -> Self { Self { inner: Button::new(id) } }
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self { self.inner=self.inner.label(label); self }
+    pub fn toggled(mut self, value: bool) -> Self { self.inner=self.inner.toggled(value); self }
+    pub fn on_click(mut self, handler: impl Fn(&ClickEvent,&mut Window,&mut App)+'static) -> Self { self.inner=self.inner.on_click(handler);self }
+}
+impl Styled for DesignButton { fn style(&mut self)->&mut StyleRefinement { self.inner.style() } }
+impl InteractiveElement for DesignButton { fn interactivity(&mut self)->&mut Interactivity { self.inner.interactivity() } }
+impl StatefulInteractiveElement for DesignButton {}
+impl ParentElement for DesignButton { fn extend(&mut self,children:impl IntoIterator<Item=AnyElement>) {self.inner.extend(children);} }
+impl Disableable for DesignButton {fn disabled(mut self,value:bool)->Self{self.inner=self.inner.disabled(value);self}}
+impl ButtonVariants for DesignButton {fn with_variant(mut self,variant:gpui_component::button::ButtonVariant)->Self{self.inner=self.inner.with_variant(variant);self}}
+impl RenderOnce for DesignButton {fn render(self,_:&mut Window,_:&mut App)->impl IntoElement{self.inner}}
+
 #[derive(Clone, Copy)]
-pub enum Action { Secondary, Primary, Danger }
+pub enum ButtonAction { Secondary, Primary, Danger }
 
 /// Native button interaction (keyboard, focus, disabled, click), with button A paint.
-pub fn action_button(id: impl Into<ElementId>, label: impl Into<SharedString>, action: Action) -> Button {
-    let color = match action { Action::Secondary => rgb(theme::INK_MUTED), Action::Primary => rgb(theme::ACCENT_TEXT), Action::Danger => rgb(theme::DANGER) };
+pub fn action_button(id: impl Into<ElementId>, label: impl Into<SharedString>, action: ButtonAction) -> DesignButton {
+    let color = match action { ButtonAction::Secondary => rgb(theme::INK_MUTED), ButtonAction::Primary => rgb(theme::ACCENT_TEXT), ButtonAction::Danger => rgb(theme::DANGER) };
     let (from, to, hover_from, hover_to) = match action {
-        Action::Secondary => (0xffffff00, 0xffffff00, 0xffffff0a, 0xffffff0a),
-        Action::Primary => (0x123543ff, 0x0d2029ff, 0x174252ff, 0x0f2731ff),
-        Action::Danger => (0x4a1919ff, 0x2e1010ff, 0x5a1e1eff, 0x361313ff),
+        ButtonAction::Secondary => (0xffffff00, 0xffffff00, 0xffffff0a, 0xffffff0a),
+        ButtonAction::Primary => (0x123543ff, 0x0d2029ff, 0x174252ff, 0x0f2731ff),
+        ButtonAction::Danger => (0x4a1919ff, 0x2e1010ff, 0x5a1e1eff, 0x361313ff),
     };
-    Button::new(id).ghost().child(div().font_family(theme::SANS).text_size(px(13.)).line_height(px(16.)).font_weight(FontWeight::MEDIUM).child(label.into()))
+    let label=label.into();
+    DesignButton::new(id).ghost().aria_label(label.clone()).child(div().font_family(theme::SANS).text_size(px(13.)).line_height(px(16.)).font_weight(FontWeight::MEDIUM).child(label))
         .h(px(theme::BUTTON_H)).px(px(16.)).rounded(px(0.))
         .font_family(theme::SANS).font_weight(FontWeight::MEDIUM)
-        .border_0().when(!matches!(action, Action::Secondary), |b| b.border_l_2().border_color(color))
+        .border_0().when(!matches!(action, ButtonAction::Secondary), |b| b.border_l_2().border_color(color))
         .text_color(color)
         .bg(linear_gradient(90., linear_color_stop(rgba(from), 0.), linear_color_stop(rgba(to), 1.)))
         .hover(move |b| b.bg(linear_gradient(90., linear_color_stop(rgba(hover_from), 0.), linear_color_stop(rgba(hover_to), 1.))))
@@ -57,7 +75,7 @@ impl RenderOnce for YesNo {
         h_flex().flex_shrink_0().when(self.disabled, |d| d.opacity(0.45)).children([false,true].into_iter().map(|value| {
             let selected=value==self.checked;
             let handler=self.on_click.clone();
-            Button::new((self.id.clone(), if value {"yes"} else {"no"})).ghost()
+            DesignButton::new((self.id.clone(), if value {"yes"} else {"no"})).ghost()
                 .child(div().font_family(theme::DISPLAY).text_size(px(11.)).font_weight(FontWeight::SEMIBOLD).child(if value {"SÍ"} else {"NO"}))
                 .h(px(26.)).px(px(9.)).rounded(px(0.)).border_0()
                 .bg(if selected { rgba(0x0f2a35ff) } else { rgba(0xffffff08) })
@@ -68,15 +86,15 @@ impl RenderOnce for YesNo {
     }
 }
 
-pub fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> Button {
-    Button::new(id).ghost().child(div().font_family(theme::DISPLAY).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(label.into()))
+pub fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> DesignButton {
+    DesignButton::new(id).ghost().child(div().font_family(theme::DISPLAY).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(label.into()))
         .h(px(32.)).px(px(12.)).rounded(px(0.)).border_0().toggled(selected)
         .bg(if selected {rgba(0x0f2a35ff)} else {rgba(0xffffff08)})
         .text_color(if selected {rgb(theme::ACCENT_TEXT)} else {rgb(0x7a7a82)})
 }
 
-pub fn tab(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> Button {
-    Button::new(id).ghost().label(label).h(px(42.)).rounded(px(0.)).border_0()
+pub fn tab(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> DesignButton {
+    DesignButton::new(id).ghost().label(label).h(px(42.)).rounded(px(0.)).border_0()
         .when(selected, |b| b.border_b_2().border_color(rgb(theme::ACCENT_TEXT)))
         .text_color(if selected {rgb(theme::INK)} else {rgb(theme::INK_MUTED)})
 }
@@ -109,7 +127,7 @@ impl RenderOnce for PlayButton {
         let disabled=self.disabled;
         div().relative().w(px(theme::PLAY_MIN_W)).h(px(theme::PLAY_H))
             .when(!disabled, |d| d.when_some(self.artwork, |d, image| d.child(img(image).absolute().size_full().object_fit(ObjectFit::Cover))))
-            .child(Button::new(self.id).ghost().size_full().rounded(px(0.)).px_0().border_1()
+            .child(DesignButton::new(self.id).ghost().size_full().rounded(px(0.)).px_0().border_1()
                 .border_color(if disabled {rgba(0x1c1c20ff)} else {rgba(theme::PLAY_EDGE)})
                 .bg(if disabled {rgba(0x111114ff).into()} else {linear_gradient(180.,linear_color_stop(rgba(theme::PLAY),0.),linear_color_stop(rgba(theme::PLAY_PRESSED),1.))})
                 .when(!disabled, |b| b.hover(|b| b.bg(linear_gradient(180.,linear_color_stop(rgba(theme::PLAY_HOVER),0.),linear_color_stop(rgba(0xffffff1f),1.))))
@@ -135,4 +153,13 @@ pub fn prepare_play_artwork(crop: &image::DynamicImage) -> image::RgbaImage {
         pixel.0=[r,g,b,a];
     }
     blurred
+}
+
+
+pub fn dialog_title(title: impl Into<SharedString>) -> Div {
+    div().font_family(theme::DISPLAY).text_size(px(17.)).line_height(px(22.)).font_weight(FontWeight::BOLD).child(title.into())
+}
+
+pub fn text_field(state: &Entity<gpui_component::input::InputState>) -> gpui_component::input::Input {
+    gpui_component::input::Input::new(state).h(px(theme::FIELD_H)).px(px(12.)).rounded(px(0.)).bg(rgb(theme::PANEL_SUNKEN)).text_size(px(14.))
 }
