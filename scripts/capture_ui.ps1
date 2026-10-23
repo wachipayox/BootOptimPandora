@@ -49,6 +49,7 @@ public static class CaptureWindow {
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int x, int y, int width, int height, bool repaint);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
 }
 '@
 Add-Type -AssemblyName System.Drawing
@@ -150,9 +151,10 @@ try {
         }
         Save-Window (Join-Path $outputPath $screen.file) $proc.MainWindowHandle $proc.Id
         if ($screen.page -eq 'components') {
-            if ([CaptureWindow]::GetForegroundWindow() -ne $proc.MainWindowHandle) { throw 'Pandora must own focus before the keyboard capture' }
-            $shell = New-Object -ComObject WScript.Shell
-            $shell.SendKeys('{TAB}')
+            # Target the verified capture window, so a foreground change cannot
+            # send a key to the user's editor or another application.
+            if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
+            if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x101, [IntPtr]9, [IntPtr]0xc00f0001L)) { throw 'Cannot send capture Tab keyup' }
             Save-Window (Join-Path $outputPath 'components-focus.png') $proc.MainWindowHandle $proc.Id
         }
         $proc.CloseMainWindow() | Out-Null

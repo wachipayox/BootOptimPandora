@@ -1,3 +1,4 @@
+mod background_motion;
 pub mod tracked_text;
 pub mod design_review;
 pub mod design;

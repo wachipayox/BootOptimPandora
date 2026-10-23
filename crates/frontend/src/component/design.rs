@@ -1,5 +1,8 @@
 //! Shared controls for the approved Wachiland design.
-use super::tracked_text::TrackedText;
+use super::{
+    background_motion::{Colors, Motion},
+    tracked_text::TrackedText,
+};
 use crate::theme;
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -8,18 +11,22 @@ use gpui_component::{
     h_flex, v_flex,
 };
 use std::rc::Rc;
+use std::time::Instant;
 
 /// Adds state styling to the native button without changing its input handling.
 #[derive(IntoElement)]
 pub struct DesignButton {
+    id: ElementId,
     inner: Button,
-    paint: Option<([Background; 3], Hsla, Hsla)>,
+    paint: Option<(f32, Colors, Hsla, Hsla)>,
     action: bool,
     disabled: bool,
 }
 impl DesignButton {
     pub fn new(id: impl Into<ElementId>) -> Self {
+        let id = id.into();
         Self {
+            id: id.clone(),
             inner: Button::new(id),
             paint: None,
             action: false,
@@ -30,8 +37,14 @@ impl DesignButton {
         self.action = true;
         self
     }
-    pub fn paint(mut self, backgrounds: [Background; 3], foreground: Hsla, hover_foreground: Hsla) -> Self {
-        self.paint = Some((backgrounds, foreground, hover_foreground));
+    pub fn paint(mut self, angle: f32, fills: [[u32; 2]; 3], foreground: Hsla, hover_foreground: Hsla) -> Self {
+        let colors = fills.map(|stops| {
+            stops.map(|v| {
+                let c = rgba(v);
+                [c.r, c.g, c.b, c.a]
+            })
+        });
+        self.paint = Some((angle, colors, foreground, hover_foreground));
         self
     }
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
@@ -77,14 +90,75 @@ impl ButtonVariants for DesignButton {
     }
 }
 impl RenderOnce for DesignButton {
-    fn render(mut self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        if let Some((b, fg, hover_fg)) = self.paint {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if let Some((angle, colors, fg, hover_fg)) = self.paint {
+            let motion = window.use_keyed_state((self.id.clone(), "background-motion"), cx, |_, _| {
+                Motion::new(colors, Instant::now())
+            });
+            motion.update(cx, |m, _| m.event(None, None, Instant::now(), colors));
+            let now = Instant::now();
+            let stops = if self.disabled {
+                colors[0]
+            } else {
+                motion.read(cx).frame(now)
+            };
+            if !self.disabled && motion.read(cx).active(now) {
+                window.request_animation_frame();
+            }
+            let color = |v: [f32; 4]| Rgba {
+                r: v[0],
+                g: v[1],
+                b: v[2],
+                a: v[3],
+            };
+            let background =
+                linear_gradient(angle, linear_color_stop(color(stops[0]), 0.), linear_color_stop(color(stops[1]), 1.));
             self.inner = self.inner.custom(
                 ButtonCustomVariant::new(cx)
-                    .backgrounds(b[0], b[1], b[2])
+                    .backgrounds(background, background, background)
                     .foreground(fg)
                     .hover_foreground(hover_fg),
             );
+            if self.disabled && !self.action {
+                self.inner = self.inner.bg(background).text_color(fg);
+            }
+            if !self.disabled {
+                let hover_motion = motion.clone();
+                let down_motion = motion.clone();
+                let up_motion = motion.clone();
+                let out_motion = motion.clone();
+                let key_motion = motion.clone();
+                self.inner = self
+                    .inner
+                    .on_hover(move |hovered, w, c| {
+                        hover_motion.update(c, |m, _| m.event(Some(*hovered), None, Instant::now(), colors));
+                        w.refresh();
+                    })
+                    .on_mouse_down(MouseButton::Left, move |_, w, c| {
+                        down_motion.update(c, |m, _| m.event(None, Some(true), Instant::now(), colors));
+                        w.refresh();
+                    })
+                    .on_mouse_up(MouseButton::Left, move |_, w, c| {
+                        up_motion.update(c, |m, _| m.event(None, Some(false), Instant::now(), colors));
+                        w.refresh();
+                    })
+                    .on_mouse_up_out(MouseButton::Left, move |_, w, c| {
+                        out_motion.update(c, |m, _| m.event(None, Some(false), Instant::now(), colors));
+                        w.refresh();
+                    })
+                    .on_key_down(move |e, w, c| {
+                        if e.keystroke.key == "enter" || e.keystroke.key == "space" {
+                            key_motion.update(c, |m, _| m.event(None, Some(true), Instant::now(), colors));
+                            w.refresh();
+                        }
+                    })
+                    .on_key_up(move |e, w, c| {
+                        if e.keystroke.key == "enter" || e.keystroke.key == "space" {
+                            motion.update(c, |m, _| m.event(None, Some(false), Instant::now(), colors));
+                            w.refresh();
+                        }
+                    });
+            }
         }
         if self.action && self.disabled {
             self.inner = self.inner.border_0().bg(rgba(0xffffff00)).text_color(rgb(theme::INK_DISABLED));
@@ -134,15 +208,15 @@ pub fn action_button(id: impl Into<ElementId>, label: impl Into<SharedString>, a
         .border_0()
         .when(!matches!(action, ButtonAction::Secondary), |b| b.border_l_2().border_color(color))
         .paint(
+            90.,
             [
-                linear_gradient(90., linear_color_stop(rgba(from), 0.), linear_color_stop(rgba(to), 1.)),
-                linear_gradient(90., linear_color_stop(rgba(hover_from), 0.), linear_color_stop(rgba(hover_to), 1.)),
-                rgba(if matches!(action, ButtonAction::Secondary) {
+                [from, to],
+                [hover_from, hover_to],
+                [if matches!(action, ButtonAction::Secondary) {
                     0xffffff05
                 } else {
                     to
-                })
-                .into(),
+                }; 2],
             ],
             color.into(),
             if matches!(action, ButtonAction::Secondary) {
@@ -237,12 +311,20 @@ impl RenderOnce for YesNo {
                     .px(px(9.))
                     .rounded(px(0.))
                     .border_0()
-                    .bg(if selected { rgba(0x0f2a35ff) } else { rgba(0xffffff08) })
-                    .text_color(if selected {
-                        rgb(theme::ACCENT_TEXT)
-                    } else {
-                        rgb(0x5f5f67)
-                    })
+                    .paint(
+                        0.,
+                        [[if selected { 0x0f2a35ff } else { 0xffffff08 }; 2]; 3],
+                        if selected {
+                            rgb(theme::ACCENT_TEXT).into()
+                        } else {
+                            rgb(0x5f5f67).into()
+                        },
+                        if selected {
+                            rgb(theme::ACCENT_TEXT).into()
+                        } else {
+                            rgb(0x5f5f67).into()
+                        },
+                    )
                     .toggled(selected)
                     .disabled(self.disabled)
                     .on_click(move |_, window, cx| {
@@ -273,27 +355,42 @@ pub fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: 
         .rounded(px(0.))
         .border_0()
         .toggled(selected)
-        .bg(if selected { rgba(0x0f2a35ff) } else { rgba(0xffffff08) })
-        .text_color(if selected {
-            rgb(theme::ACCENT_TEXT)
-        } else {
-            rgb(0x7a7a82)
-        })
+        .paint(
+            0.,
+            [[if selected { 0x0f2a35ff } else { 0xffffff08 }; 2]; 3],
+            if selected {
+                rgb(theme::ACCENT_TEXT).into()
+            } else {
+                rgb(0x7a7a82).into()
+            },
+            if selected {
+                rgb(theme::ACCENT_TEXT).into()
+            } else {
+                rgb(0x7a7a82).into()
+            },
+        )
 }
 
 pub fn tab(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> DesignButton {
+    let label = label.into();
     DesignButton::new(id)
         .ghost()
-        .label(label)
+        .aria_label(label.clone())
+        .child(div().font_family(theme::SANS).text_size(px(13.)).line_height(px(18.)).child(label))
         .h(px(42.))
         .rounded(px(0.))
         .border_0()
         .when(selected, |b| b.border_b_2().border_color(rgb(theme::ACCENT_TEXT)))
-        .text_color(if selected {
-            rgb(theme::INK)
-        } else {
-            rgb(theme::INK_MUTED)
-        })
+        .paint(
+            0.,
+            [[0xffffff00; 2], [0xffffff0a; 2], [0xffffff05; 2]],
+            if selected {
+                rgb(theme::INK).into()
+            } else {
+                rgb(theme::INK_MUTED).into()
+            },
+            rgb(theme::INK).into(),
+        )
 }
 
 pub fn dialog(dialog: gpui_component::dialog::Dialog) -> gpui_component::dialog::Dialog {
@@ -383,25 +480,14 @@ impl RenderOnce for PlayButton {
                         rgba(theme::PLAY_EDGE)
                     })
                     .paint(
+                        180.,
                         if disabled {
-                            [rgba(0x111114ff).into(); 3]
+                            [[0x111114ff; 2]; 3]
                         } else {
                             [
-                                linear_gradient(
-                                    180.,
-                                    linear_color_stop(rgba(theme::PLAY), 0.),
-                                    linear_color_stop(rgba(theme::PLAY_PRESSED), 1.),
-                                ),
-                                linear_gradient(
-                                    180.,
-                                    linear_color_stop(rgba(theme::PLAY_HOVER), 0.),
-                                    linear_color_stop(rgba(0xffffff1f), 1.),
-                                ),
-                                linear_gradient(
-                                    180.,
-                                    linear_color_stop(rgba(0xffffff1f), 0.),
-                                    linear_color_stop(rgba(0xffffff0d), 1.),
-                                ),
+                                [theme::PLAY, theme::PLAY_PRESSED],
+                                [theme::PLAY_HOVER, 0xffffff1f],
+                                [0xffffff1f, 0xffffff0d],
                             ]
                         },
                         rgb(theme::ON_PLAY).into(),
