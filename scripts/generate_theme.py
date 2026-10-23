@@ -32,14 +32,14 @@ lines += ['}']
 c = {t['name']:t['value']['dark'] for t in colors}
 mapping = {
  'background':'bg','foreground':'ink','border':'border','accent.background':'accent-soft','accent.foreground':'accent-text',
- 'muted.background':'panel-raised','muted.foreground':'ink-muted','input.background':'panel-sunken','input.border':'border-strong',
+ 'muted.background':'panel-raised','muted.foreground':'ink-muted','input.border':'border-strong',
  'primary.background':'accent-soft','primary.foreground':'accent-text','primary.hover.background':'accent-soft','primary.active.background':'panel-sunken',
  'secondary.background':'panel-raised','secondary.foreground':'ink-muted',
  'sidebar.background':'panel-sunken','sidebar.foreground':'ink','sidebar.accent.background':'accent-soft','sidebar.accent.foreground':'accent-text',
  'popover.background':'panel','popover.foreground':'ink','list.background':'panel','list.head.background':'panel-raised',
  'list.active.background':'accent-soft','list.active.border':'accent-text','list.hover.background':'panel-raised',
  'tab_bar.background':'bg','tab.background':'bg','tab.foreground':'ink-muted','tab.active.background':'bg','tab.active.foreground':'ink',
- 'table.background':'panel','table.head.background':'panel-raised','table.row.hover.background':'panel-raised',
+ 'table.background':'panel','table.head.background':'panel-raised','table.hover.background':'panel-raised',
  'progress.bar.background':'accent-text','ring':'focus','caret':'accent-text',
  'danger.background':'danger','danger.foreground':'danger','success.background':'success','success.foreground':'success',
  'warning.background':'warning','warning.foreground':'warning','info.background':'accent-text','info.foreground':'accent-text',

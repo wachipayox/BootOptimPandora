@@ -2,7 +2,7 @@
 use crate::theme;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Disableable, StyledExt,
+    Disableable,
     button::{Button, ButtonCustomVariant, ButtonVariants},
     h_flex, v_flex,
 };

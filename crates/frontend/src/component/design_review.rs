@@ -4,7 +4,7 @@ use crate::theme;
 use gpui::{prelude::*, *};
 use gpui_component::{
     Disableable, WindowExt, h_flex,
-    input::{Input, InputState},
+    input::InputState,
     v_flex,
 };
 
