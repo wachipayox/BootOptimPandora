@@ -720,8 +720,8 @@ impl Render for HomePage {
                 },
             ));
         }
-        news_section =
-            news_section.child(h_flex().gap(px(12.)).children(news.into_iter().enumerate().map(|(ix, n)| {
+        news_section = news_section.child(h_flex().items_start().gap(px(12.)).children(
+            news.into_iter().enumerate().map(|(ix, n)| {
                 let image = n.image.as_ref().map(|p| {
                     img(ImageSource::Resource(Resource::Path(Arc::from(p.as_path()))))
                         .w_full()
@@ -773,7 +773,8 @@ impl Render for HomePage {
                         c.notify();
                     }))
                     .into_any_element()
-            })));
+            }),
+        ));
         let mut content = v_flex()
             .relative()
             .size_full()
