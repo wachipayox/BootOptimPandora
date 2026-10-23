@@ -482,6 +482,7 @@ impl LauncherUI {
                 });
             instances = instances.child(
                 DesignButton::new(("sidebar-instance", ix))
+                    .aria_label(name.clone())
                     .w_full()
                     .h(px(42.))
                     .when(active, |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)))
@@ -530,6 +531,7 @@ impl LauncherUI {
         ] {
             footer = footer.child(
                 DesignButton::new(id)
+                    .aria_label(label)
                     .child(
                         h_flex()
                             .w_full()
@@ -606,6 +608,7 @@ impl LauncherUI {
                 .gap(px(4.))
                 .child(
                     DesignButton::new("home-account")
+                        .aria_label(account_name.clone())
                         .flex_1()
                         .h(px(47.))
                         .child(
@@ -627,6 +630,7 @@ impl LauncherUI {
                 )
                 .child(
                     DesignButton::new("home-settings")
+                        .aria_label("Ajustes del launcher")
                         .child(gpui_component::Icon::new(PandoraIcon::Settings).size(px(16.)))
                         .w(px(32.))
                         .px_0()

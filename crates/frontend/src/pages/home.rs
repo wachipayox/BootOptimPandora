@@ -239,7 +239,7 @@ impl HomePage {
                 .gap(px(6.))
                 .text_size(px(11.))
                 .text_color(rgb(theme::INK_MUTED))
-                .child(div().size(px(5.)).bg(rgb(if server.status.is_some() {
+                .child(div().size(px(5.)).rounded_full().bg(rgb(if server.status.is_some() {
                     theme::SUCCESS
                 } else {
                     theme::INK_DISABLED
