@@ -59,6 +59,7 @@ public static class CaptureWindow {
 Add-Type -AssemblyName System.Drawing
 $oldDpiContext = [CaptureWindow]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $captureMetadata = @()
+$captureDiagnostics = @()
 
 function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     [uint32]$owner = 0
@@ -208,14 +209,18 @@ try {
             if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x101, [IntPtr]9, [IntPtr]0xc00f0001L)) { throw 'Cannot send capture Tab keyup' }
             Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-focus.png')) $proc.MainWindowHandle $proc.Id
         }
+        $newsLogPath = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+        $errorsBeforeClose = @(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count
         $proc.CloseMainWindow() | Out-Null
         if (-not $proc.WaitForExit(5000)) { $proc.Kill(); $proc.WaitForExit() }
+        $captureDiagnostics += @{page=$screen.page;errorsBeforeClose=$errorsBeforeClose;errorsAfterClose=@(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count}
         Write-Output "CAPTURE_OK page=$($screen.page) file=$($screen.file)"
     }
     @{
         launcher = 'BootOptimPandora'
         viewport = if ($DesignViewport) { '1280 x 860 logical pixels' } else { 'maximized' }
         captures = $captureMetadata
+        diagnostics = $captureDiagnostics
         dataDirectory = if ($ownsDirectory) { 'temporary portable directory; removed after capture' } else { 'caller-owned isolated portable directory' }
         screens = @($screens | ForEach-Object { @{ page=$_.page; file=$_.file; note=$_.label } })
         unavailable = if ($TestProfile -or $PortableDirectory) { @() } else { @('instance-detail and update-dialog require an owned test profile fixture') }

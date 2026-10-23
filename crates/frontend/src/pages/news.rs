@@ -321,7 +321,7 @@ impl NewsPage {
     fn marks<'a>(&self, cx: &'a App) -> Option<&'a NewsLocalState> {
         InterfaceConfig::get(cx).news_marks.get(&self.feed.origin_key)
     }
-    fn filtered(&self, cx: &App, category: bool) -> Vec<NewsItem> {
+    fn filtered(&self, cx: &App, category: bool) -> Vec<&NewsItem> {
         let query = self.search.read(cx).value().to_lowercase();
         let mut items = self
             .feed
@@ -337,15 +337,13 @@ impl NewsPage {
             .filter(|n| {
                 query.is_empty() || n.title.to_lowercase().contains(&query) || n.body.to_lowercase().contains(&query)
             })
-            .cloned()
             .collect::<Vec<_>>();
-        items.sort_by(|a, b| {
-            let order = chrono::DateTime::parse_from_rfc3339(&a.published_at)
-                .ok()
-                .cmp(&chrono::DateTime::parse_from_rfc3339(&b.published_at).ok())
-                .then(a.id.cmp(&b.id));
-            if self.oldest { order } else { order.reverse() }
+        items.sort_by_cached_key(|item| {
+            (chrono::DateTime::parse_from_rfc3339(&item.published_at).ok(), item.id.clone())
         });
+        if !self.oldest {
+            items.reverse();
+        }
         items
     }
     fn request(&mut self, request: NewsImageRequest) {
@@ -354,13 +352,14 @@ impl NewsPage {
         }
     }
     fn prepare_media(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut items = self.filtered(cx, true);
+        let mut items = self.filtered(cx, true).into_iter().cloned().collect::<Vec<_>>();
         let pinned = items
             .iter()
             .filter(|n| n.pinned && !n.expired(&self.feed.server_time))
             .cloned()
             .collect::<Vec<_>>();
         items.retain(|n| !n.pinned || n.expired(&self.feed.server_time));
+        self.pinned = self.pinned.min(pinned.len().saturating_sub(1));
         for n in pinned.iter().skip(self.pinned).take(1) {
             self.cover(n, "pinned", 1984, 330, ImageCorners::All);
         }
@@ -630,7 +629,7 @@ impl NewsPage {
             .w(px(width))
             .h_auto()
             .p_0()
-            .child(content)
+            .child(div().w_full().whitespace_normal().text_left().text_color(rgb(theme::INK)).child(content))
             .on_click(cx.listener(move |this, _, w, c| this.set_article(item.clone(), w, c)))
     }
     fn card(&self, n: &NewsItem, ix: usize, cx: &Context<Self>) -> AnyElement {
