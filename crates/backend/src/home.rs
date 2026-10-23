@@ -289,18 +289,7 @@ impl crate::BackendState {
                 return Ok(out);
             },
         };
-        let mut lineage = BTreeSet::new();
-        let mut current = profile_id.filter(|id| profiles.iter().any(|p| p["profile_id"].as_str() == Some(id)));
-        while let Some(id) = current {
-            if lineage.len() >= 9 || !lineage.insert(id.clone()) {
-                break;
-            }
-            current = profiles
-                .iter()
-                .find(|p| p["profile_id"].as_str() == Some(&id))
-                .and_then(|p| p["parent_profile_id"].as_str())
-                .map(str::to_owned);
-        }
+        let lineage = home_lineage(&profiles, profile_id);
         let server_time = news["server_time"].as_str().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
         if let Some(items) = news["items"].as_array() {
             for n in items {
@@ -457,6 +446,20 @@ fn cache_local_image(path: &Path, root: &Path, artwork: bool) -> Option<Value> {
     Some(serde_json::json!({"sha256":sha,"size":encoded.len(),"media_type":"image/png"}))
 }
 
+fn home_lineage(profiles: &[Value], mut current: Option<String>) -> BTreeSet<String> {
+    let mut lineage = BTreeSet::new();
+    while let Some(id) = current {
+        let Some(profile) = profiles.iter().find(|p| p["profile_id"].as_str() == Some(&id)) else {
+            break;
+        };
+        if lineage.len() >= 9 || !lineage.insert(id.clone()) {
+            break;
+        }
+        current = profile["parent_profile_id"].as_str().map(str::to_owned);
+    }
+    lineage
+}
+
 fn home_news_visible(
     n: &Value,
     lineage: &BTreeSet<String>,
@@ -501,6 +504,18 @@ mod home_tests {
             &serde_json::json!({"expires_at":"2026-10-23T10:00:00.001Z"}),
             &lineage,
             now
+        ));
+    }
+    #[test]
+    fn missing_catalog_targets_are_not_visible() {
+        let profiles = vec![serde_json::json!({"profile_id":"profile_child","parent_profile_id":"profile_deleted"})];
+        let lineage = home_lineage(&profiles, Some("profile_child".into()));
+        assert!(lineage.contains("profile_child"));
+        assert!(!lineage.contains("profile_deleted"));
+        assert!(!home_news_visible(
+            &serde_json::json!({"target_profile_id":"profile_deleted"}),
+            &lineage,
+            None
         ));
     }
     #[test]
