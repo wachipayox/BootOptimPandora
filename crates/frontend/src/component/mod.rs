@@ -1,3 +1,4 @@
+pub mod tracked_text;
 pub mod design_review;
 pub mod design;
 pub mod content_list;

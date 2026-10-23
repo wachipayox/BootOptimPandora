@@ -519,6 +519,7 @@ impl RenderOnce for Dialog {
         // preserving the trajectory this dialog was tuned with before
         // `cubic_bezier` solved for x; vaul's (0.32, 0.72, 0., 1.) is far
         // more front-loaded under the CSS-correct solver.
+        let custom_shadow = self.style.box_shadow.clone();
         let animation = Animation::new(*ANIMATION_DURATION).with_easing(cubic_bezier(
             1. / 3.,
             0.72,
@@ -678,6 +679,10 @@ impl RenderOnce for Dialog {
                                                     inset: false,
                                                 },
                                             ];
+                                            let shadow = custom_shadow.clone().map(|mut shadows| {
+                                                for shadow in &mut shadows { shadow.color.a *= delta; }
+                                                shadows
+                                            }).unwrap_or(shadow);
                                             this.top(y * delta).shadow(shadow)
                                         },
                                     )

@@ -47,5 +47,7 @@ hex.workspace = true
 enum-map.workspace = true
 casefold.workspace = true
 
+unicode-segmentation.workspace = true
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

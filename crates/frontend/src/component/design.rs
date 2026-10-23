@@ -1,4 +1,5 @@
 //! Shared controls for the approved Wachiland design.
+use super::tracked_text::TrackedText;
 use crate::theme;
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -161,7 +162,7 @@ pub fn eyebrow(label: impl Into<SharedString>) -> Div {
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(theme::INK_DISABLED))
         .child(div().size(px(5.)).bg(rgb(theme::ACCENT_TEXT)))
-        .child(label.into())
+        .child(TrackedText::new(label, 0.16))
 }
 
 pub fn setting_row(title: impl Into<SharedString>, help: impl Into<SharedString>, control: impl IntoElement) -> Div {
@@ -223,12 +224,13 @@ impl RenderOnce for YesNo {
                 let handler = self.on_click.clone();
                 DesignButton::new((self.id.clone(), if value { "yes" } else { "no" }))
                     .ghost()
+                    .aria_label(if value { "Sí" } else { "No" })
                     .child(
                         div()
                             .font_family(theme::DISPLAY)
                             .text_size(px(11.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(if value { "SÍ" } else { "NO" }),
+                            .child(TrackedText::new(if value { "SÍ" } else { "NO" }, 0.1)),
                     )
                     .h(px(26.))
                     .px(px(9.))
@@ -254,14 +256,16 @@ impl RenderOnce for YesNo {
 }
 
 pub fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> DesignButton {
+    let label = label.into();
     DesignButton::new(id)
+        .aria_label(label.clone())
         .ghost()
         .child(
             div()
                 .font_family(theme::DISPLAY)
                 .text_size(px(12.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .child(label.into()),
+                .child(TrackedText::new(label, 0.04)),
         )
         .h(px(32.))
         .px(px(12.))
@@ -301,6 +305,13 @@ pub fn dialog(dialog: gpui_component::dialog::Dialog) -> gpui_component::dialog:
         .px(px(22.))
         .pt(px(20.))
         .pb(px(20.))
+        .shadow(vec![BoxShadow {
+            color: rgba(0x000000cc).into(),
+            offset: point(px(0.), px(24.)),
+            blur_radius: px(60.),
+            spread_radius: px(0.),
+            inset: false,
+        }])
         .child(div().absolute().top_0().left_0().w(px(44.)).h(px(2.)).bg(rgb(theme::ACCENT_TEXT)))
 }
 
@@ -351,6 +362,7 @@ impl RenderOnce for PlayButton {
             .child(
                 DesignButton::new(self.id)
                     .ghost()
+                    .aria_label("Jugar")
                     .size_full()
                     .rounded(px(0.))
                     .px_0()
