@@ -1,12 +1,8 @@
 //! Isolated component review, reached only by the UI capture workflow.
-use super::{design::*, progress_bar::ProgressBar};
+use super::design::*;
 use crate::theme;
 use gpui::{prelude::*, *};
-use gpui_component::{
-    Disableable, WindowExt, h_flex,
-    input::InputState,
-    v_flex,
-};
+use gpui_component::{Disableable, WindowExt, h_flex, input::InputState, v_flex};
 
 pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
     let enabled = window.use_keyed_state("review-toggle", cx, |_, _| true);
@@ -58,10 +54,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                         .child(chip("manual", "Manual", false)),
                 ))
                 .child(text_field(&input))
-                .child(ProgressBar {
-                    amount: 0.62,
-                    ..Default::default()
-                }),
+                .child(progress("Creando la caché de arranque", 0.62, "62 %")),
         )
         .child(
             h_flex()
@@ -74,7 +67,15 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
             h_flex()
                 .gap(px(16.))
                 .child(PlayButton::new("play", "Al día", Some("images/wachiland-glass-review.png".into())))
-                .child(PlayButton::new("play-disabled", "Sin instancia", None).disabled(true)),
+                .child(PlayButton::new("play-disabled", "Sin instancia", None).disabled(true))
+                .child(
+                    PlayButton::new(
+                        "play-updating",
+                        "42 % · 120 de 286 MB",
+                        Some("images/wachiland-glass-review.png".into()),
+                    )
+                    .updating(0.42),
+                ),
         )
         .child(
             action_button("review-dialog", "Revisión nueva", ButtonAction::Primary).on_click(|_, window, cx| {

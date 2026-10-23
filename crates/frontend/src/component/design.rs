@@ -321,6 +321,7 @@ pub fn dialog(dialog: gpui_component::dialog::Dialog) -> gpui_component::dialog:
 /// Keeping texture preparation outside RenderOnce avoids decoding on each frame.
 #[derive(IntoElement)]
 pub struct PlayButton {
+    progress: Option<f32>,
     id: ElementId,
     status: SharedString,
     artwork: Option<ImageSource>,
@@ -330,6 +331,7 @@ pub struct PlayButton {
 impl PlayButton {
     pub fn new(id: impl Into<ElementId>, status: impl Into<SharedString>, artwork: Option<ImageSource>) -> Self {
         Self {
+            progress: None,
             id: id.into(),
             status: status.into(),
             artwork,
@@ -337,6 +339,11 @@ impl PlayButton {
             on_click: None,
         }
     }
+    pub fn updating(mut self, amount: f32) -> Self {
+        self.progress = Some(amount.clamp(0., 1.));
+        self
+    }
+
     pub fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Rc::new(f));
         self
@@ -351,6 +358,7 @@ impl Disableable for PlayButton {
 impl RenderOnce for PlayButton {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let disabled = self.disabled;
+        let progress = self.progress;
         div()
             .relative()
             .w(px(theme::PLAY_MIN_W))
@@ -364,7 +372,7 @@ impl RenderOnce for PlayButton {
             .child(
                 DesignButton::new(self.id)
                     .ghost()
-                    .aria_label("Jugar")
+                    .aria_label(if progress.is_some() { "Actualizando" } else { "Jugar" })
                     .size_full()
                     .rounded(px(0.))
                     .px_0()
@@ -410,7 +418,7 @@ impl RenderOnce for PlayButton {
                             } else {
                                 rgb(theme::ON_PLAY)
                             })
-                            .child(div().text_size(px(18.)).child("▶"))
+                            .child(div().size(px(18.)).text_size(px(18.)).line_height(px(18.)).child("▶"))
                             .child(
                                 v_flex()
                                     .items_start()
@@ -420,7 +428,10 @@ impl RenderOnce for PlayButton {
                                             .text_size(px(17.))
                                             .line_height(px(20.))
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .child("Jugar"),
+                                            .child(TrackedText::new(
+                                                if progress.is_some() { "Actualizando" } else { "Jugar" },
+                                                0.02,
+                                            )),
                                     )
                                     .child(
                                         div()
@@ -436,6 +447,18 @@ impl RenderOnce for PlayButton {
                             ),
                     ),
             )
+            .when_some(progress.filter(|_| !disabled), |d, amount| {
+                d.child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .w_full()
+                        .h(px(3.))
+                        .bg(rgba(0xffffff14))
+                        .child(div().h_full().w(relative(amount)).bg(rgb(0xffffff))),
+                )
+            })
             .when(!disabled, |d| {
                 d.child(div().absolute().top_0().left_0().w_full().h(px(1.)).bg(rgba(theme::PLAY_HIGHLIGHT)))
             })
@@ -470,4 +493,24 @@ pub fn text_field(state: &Entity<gpui_component::input::InputState>) -> gpui_com
         .rounded(px(0.))
         .bg(rgb(theme::PANEL_SUNKEN))
         .text_size(px(14.))
+}
+
+pub fn progress(label: impl Into<SharedString>, amount: f32, detail: impl Into<SharedString>) -> Div {
+    v_flex()
+        .w_full()
+        .gap(px(8.))
+        .child(
+            h_flex()
+                .w_full()
+                .justify_between()
+                .text_size(px(12.))
+                .line_height(px(16.))
+                .text_color(rgb(theme::INK_MUTED))
+                .child(label.into())
+                .child(div().font_family(theme::DISPLAY).font_weight(FontWeight::MEDIUM).child(detail.into())),
+        )
+        .child(super::progress_bar::ProgressBar {
+            amount,
+            ..Default::default()
+        })
 }
