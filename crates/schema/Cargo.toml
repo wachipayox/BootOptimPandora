@@ -19,3 +19,6 @@ urlencoding.workspace = true
 uuid.workspace = true
 parking_lot.workspace = true
 rustc-hash.workspace = true
+markdown.workspace = true
+regex.workspace = true
+url.workspace = true
