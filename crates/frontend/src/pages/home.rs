@@ -252,7 +252,7 @@ impl HomePage {
                     "Servidor sin respuesta".into()
                 }),
         );
-        if let Some(players) = online {
+        if let Some(players) = online.filter(|p| !p.sample.is_empty()) {
             panel = panel.child(h_flex().flex_wrap().gap(px(3.)).children(players.sample.iter().take(12).map(|p| {
                 img(picture(
                     &if InterfaceConfig::get(cx).hide_skins {
@@ -282,10 +282,29 @@ impl HomePage {
             .child(
                 DesignButton::new("quick-server")
                     .notched()
-                    .label(format!(
-                        "▶  Entrar al servidor{}",
-                        server.ping.map(|p| format!("   {} ms", p.as_millis())).unwrap_or_default()
-                    ))
+                    .aria_label("Entrar al servidor")
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap(px(8.))
+                            .child(div().text_size(px(12.)).child("▶"))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(12.))
+                                    .whitespace_nowrap()
+                                    .child("Entrar al servidor"),
+                            )
+                            .when_some(server.ping, |d, p| {
+                                d.child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(rgba(0x86d96f99))
+                                        .child(format!("{} ms", p.as_millis())),
+                                )
+                            }),
+                    )
                     .paint(
                         90.,
                         [[0x86d96f1f; 2], [0x86d96f2e; 2], [0x86d96f1f; 2]],
@@ -640,17 +659,17 @@ impl Render for HomePage {
                 .child(
                     h_flex()
                         .gap(px(18.))
-                        .child(design::chip("home-general", "General", general).on_click(|_, w, c| {
+                        .child(design::chip("home-general", "General", general).h(px(24.)).on_click(|_, w, c| {
                             let conf = InterfaceConfig::get_mut(c);
                             conf.home_general_news = !conf.home_general_news;
                             w.refresh();
                         }))
-                        .child(DesignButton::new("home-all-news").label("Ver todas →").on_click(cx.listener(
-                            |this, _, _, c| {
+                        .child(DesignButton::new("home-all-news").label("Ver todas →").h(px(24.)).px_0().on_click(
+                            cx.listener(|this, _, _, c| {
                                 this.news_view = true;
                                 c.notify();
-                            },
-                        ))),
+                            }),
+                        )),
                 ),
         );
         if self.loaded && news.is_empty() {
@@ -705,7 +724,7 @@ impl Render for HomePage {
                             .child(
                                 div().text_size(px(11.)).text_color(rgb(theme::ACCENT_TEXT)).child(n.category.clone()),
                             )
-                            .child(div().text_size(px(13.)).child(n.title.clone()))
+                            .child(div().text_size(px(13.)).line_height(px(18.)).line_clamp(2).child(n.title.clone()))
                             .child(
                                 div()
                                     .text_size(px(11.))
@@ -788,7 +807,7 @@ impl Render for HomePage {
             {
                 menu = menu.child(
                     DesignButton::new(("home-menu", ix))
-                        .label(label)
+                        .label_left(label)
                         .h(px(30.))
                         .text_size(px(13.))
                         .font_weight(FontWeight::NORMAL)

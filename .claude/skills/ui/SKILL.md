@@ -11,8 +11,8 @@
 
 - Build the Windows launcher from the repository root: `cargo build --release -p pandora_launcher`.
 - Capture current UI screens on Windows: `powershell -ExecutionPolicy Bypass -File scripts/capture_ui.ps1 -DesignViewport`. This uses a 1280 x 860 logical client area, Windows per-monitor DPI and records physical dimensions/DPI in the manifest. It excludes DWM margins and keeps the window on-screen.
-- The script copies the exe to a temporary portable directory, uses isolated data, saves PNGs and a manifest, then removes the temporary directory. `WBOMBO_UI_CAPTURE_PAGE` is a debug-only startup route used by the script; supported routes include `instances`, `skins`, `import`, `syncing`, `appearance`, `accounts`, `instance:<name>`, `update:<name>`, `components`, and `components-dialog`.
-- The instances screenshot includes the global profile carousel. The accounts route opens the empty account sheet without signing in. Use `-Components` to capture the shared controls and dialog.
+- The script copies the exe to a temporary portable directory, uses isolated data, saves PNGs and a manifest, then removes the temporary directory. `WBOMBO_UI_CAPTURE_PAGE` is a debug-only startup route used by the script; supported routes include `instances`, `skins`, `import`, `syncing`, `appearance`, `accounts`, `instance:<name>`, `update:<name>`, `components`, and `components-dialog`, `home-menu`, and `home-news`.
+- The instances screenshot includes the global profile carousel. The accounts route opens the Home account menu without signing in. Use `-Components` to capture the shared controls and dialog. `-HomeScreens` adds the instance menu and the news destination; it waits for a process-specific Home readiness signal before saving. Test-profile captures must use the developer channel in the owned portable config so cosmetic test-profile catalog data is visible.
 - For instance/update captures use an owned `profile_test-…` via `-TestProfile`, optionally `-Revision rev_…`. The CLI creates `agente-274-ui` and deletes it in cleanup. Publish/repin a newer revision of that owned test profile before the update capture. Never alter Beta or another agent's profile.
 - `-PortableDirectory` reuses caller-owned isolated data (the caller cleans it up), and `-Executable` chooses a binary. `-SkipUpdateCapture` supports baseline binaries without the new update route. Capture data contains community presentation: retain it in private wbombo, not this public repository.
 
@@ -29,3 +29,5 @@ Use `component/design.rs` for new screens: button A, glass Play (pass its prepar
 After changing the vendored GPUI component, invalidate both cached profiles with `cargo clean -p gpui-component` and `cargo clean --release -p gpui-component`. Cargo treats vendored git dependencies as immutable; otherwise a local build can reuse stale API/paint code. Update the edited source hashes in its `.cargo-checksum.json` too.
 
 The one-exe distribution writes both font OFL notices to `<launcher data>/licenses/fonts/` at startup.
+
+Home lives in `pages/home.rs`; the existing signed launch gate and native account/instance actions remain the execution boundary. Cosmetic JSON/images are cached separately in `home-presentation`. Game-hour totals and daily buckets are local, and days without recorded data stay empty.

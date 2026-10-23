@@ -515,7 +515,7 @@ impl LauncherUI {
         let data = self.data.clone();
         instances = instances.child(
             DesignButton::new("sidebar-add")
-                .label("+   Añadir instancia")
+                .label_left("+   Añadir instancia")
                 .w_full()
                 .h(px(34.))
                 .on_click(move |_, w, c| crate::pages::home::add_instance(&data, w, c)),
@@ -532,6 +532,9 @@ impl LauncherUI {
                 DesignButton::new(id)
                     .child(
                         h_flex()
+                            .w_full()
+                            .text_size(px(13.))
+                            .font_family(theme::DISPLAY)
                             .gap(px(10.))
                             .child(
                                 gpui_component::Icon::new(match id {
@@ -624,8 +627,9 @@ impl LauncherUI {
                 )
                 .child(
                     DesignButton::new("home-settings")
-                        .child(PandoraIcon::Settings)
+                        .child(gpui_component::Icon::new(PandoraIcon::Settings).size(px(16.)))
                         .w(px(32.))
+                        .px_0()
                         .on_click(move |_, w, c| crate::settings::open_settings_window(w, &settings_data, c)),
                 ),
         );
@@ -665,7 +669,7 @@ impl LauncherUI {
             let name = account.username(InterfaceConfig::get(cx).hide_usernames);
             account_menu = account_menu.child(
                 DesignButton::new(("account-choice", ix))
-                    .label(format!("{name}{}", if active { "  ✓" } else { "" }))
+                    .label_left(format!("{name}{}", if active { "  ✓" } else { "" }))
                     .w_full()
                     .justify_start()
                     .when(active, |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)))
@@ -679,7 +683,7 @@ impl LauncherUI {
         account_menu = account_menu
             .child(
                 DesignButton::new("add-microsoft-home")
-                    .label("Añadir cuenta de Microsoft")
+                    .label_left("Añadir cuenta de Microsoft")
                     .w_full()
                     .on_click(cx.listener(|this, _, w, c| {
                         this.home_account_menu = false;
@@ -688,7 +692,7 @@ impl LauncherUI {
             )
             .child(
                 DesignButton::new("add-offline-home")
-                    .label("Añadir cuenta sin conexión")
+                    .label_left("Añadir cuenta sin conexión")
                     .w_full()
                     .on_click(cx.listener(|this, _, w, c| {
                         this.home_account_menu = false;
@@ -699,7 +703,10 @@ impl LauncherUI {
             let uuid = account.uuid;
             account_menu = account_menu.child(
                 DesignButton::new("logout-home")
-                    .label(format!("Cerrar sesión en {}", account.username(InterfaceConfig::get(cx).hide_usernames)))
+                    .label_left(format!(
+                        "Cerrar sesión en {}",
+                        account.username(InterfaceConfig::get(cx).hide_usernames)
+                    ))
                     .w_full()
                     .text_color(rgb(theme::DANGER))
                     .on_click(cx.listener(move |this, _, _, c| {

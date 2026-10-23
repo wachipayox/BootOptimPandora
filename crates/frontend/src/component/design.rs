@@ -21,6 +21,8 @@ pub struct DesignButton {
     paint: Option<(f32, Colors, Hsla, Hsla)>,
     action: bool,
     notched: bool,
+    label: Option<SharedString>,
+    label_left: bool,
     disabled: bool,
 }
 impl DesignButton {
@@ -32,6 +34,8 @@ impl DesignButton {
             paint: None,
             action: false,
             notched: false,
+            label: None,
+            label_left: false,
             disabled: false,
         }
     }
@@ -54,7 +58,12 @@ impl DesignButton {
         self
     }
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
-        self.inner = self.inner.label(label);
+        self.label = Some(label.into());
+        self
+    }
+    pub fn label_left(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self.label_left = true;
         self
     }
     pub fn toggled(mut self, value: bool) -> Self {
@@ -97,6 +106,18 @@ impl ButtonVariants for DesignButton {
 }
 impl RenderOnce for DesignButton {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if let Some(label) = self.label.take() {
+            self = self.aria_label(label.clone());
+            self.inner = self.inner.child(
+                div()
+                    .w_full()
+                    .font_family(theme::SANS)
+                    .text_size(px(13.))
+                    .line_height(px(16.))
+                    .when_else(self.label_left, |d| d.text_left(), |d| d.text_center())
+                    .child(label),
+            );
+        }
         let mut outer_fill = None;
         if let Some((angle, colors, fg, hover_fg)) = self.paint {
             let motion = window.use_keyed_state((self.id.clone(), "background-motion"), cx, |_, _| {
