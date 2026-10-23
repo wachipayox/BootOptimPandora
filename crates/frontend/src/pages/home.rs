@@ -251,7 +251,15 @@ impl HomePage {
         );
         if let Some(players) = online {
             panel = panel.child(h_flex().flex_wrap().gap(px(3.)).children(players.sample.iter().take(12).map(|p| {
-                img(picture(&self.heads.get(p.id.as_ref()).cloned(), "images/default_head.png")).size(px(18.))
+                img(picture(
+                    &if InterfaceConfig::get(cx).hide_skins {
+                        None
+                    } else {
+                        self.heads.get(p.id.as_ref()).cloned()
+                    },
+                    "images/default_head.png",
+                ))
+                .size(px(18.))
             })));
             panel = panel.child(
                 div()
@@ -369,7 +377,7 @@ impl Render for HomePage {
                     .size_full()
                     .object_fit(ObjectFit::Cover),
             )
-            .child(div().absolute().bottom_0().w_full().h(relative(0.70)).bg(shade(0x06060700, 0x060607ff)))
+            .child(div().absolute().bottom_0().w_full().h(relative(0.55)).bg(shade(0x06060700, 0x060607ff)))
             .child(
                 div().absolute().top(px(70.)).left_0().w_full().pr(px(50.)).flex().justify_center().child(
                     img(picture(&self.presentation.logo, "images/logo-vanilla.png"))

@@ -34,14 +34,27 @@ impl DistributionClient {
             }
             let mut response = request.send().await?;
             if response.status() == reqwest::StatusCode::NOT_MODIFIED {
-                return cached
+                let cached = cached
                     .as_ref()
-                    .map(|c| CachedDocument {
-                        etag: c.etag.clone(),
-                        value: c.value.clone(),
-                        fetched_at: now,
-                    })
-                    .ok_or_else(|| DistributionError::InvalidResponse("304 without cache".into()));
+                    .ok_or_else(|| DistributionError::InvalidResponse("304 without cache".into()))?;
+                let mut value = cached.value.clone();
+                // The cursor does not change when a pin expires. The verified origin's HTTP Date
+                // advances server time on a 304, without trusting the workstation clock.
+                if route == "/v1/news" {
+                    if let Some(date) = response
+                        .headers()
+                        .get(reqwest::header::DATE)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| chrono::DateTime::parse_from_rfc2822(v).ok())
+                    {
+                        value["server_time"] = Value::String(date.with_timezone(&chrono::Utc).to_rfc3339());
+                    }
+                }
+                return Ok(CachedDocument {
+                    etag: cached.etag.clone(),
+                    value,
+                    fetched_at: now,
+                });
             }
             if !response.status().is_success() {
                 return Err(DistributionError::HttpStatus(response.status()));
@@ -168,7 +181,7 @@ impl DistributionClient {
                 .map_err(|e| DistributionError::InvalidResponse(e.to_string()))?;
             if kind == "artwork" {
                 let crop = decoded
-                    .resize_exact(1060, 440, image::imageops::FilterType::Triangle)
+                    .resize_to_fill(1060, 440, image::imageops::FilterType::Triangle)
                     .crop_imm(380, 330, 250, 52);
                 let mut glass = crop.blur(14.).to_rgba8();
                 for p in glass.pixels_mut() {
@@ -249,8 +262,10 @@ impl crate::BackendState {
             if let Some((artwork, logo)) = overrides {
                 if let Some(path) = artwork {
                     if let Some(value) = cache_local_image(&path, &cache, true) {
-                        out.artwork = client.home_image(&value, &cache, "artwork").await;
-                        out.artwork_author = None;
+                        if let Some(path) = client.home_image(&value, &cache, "artwork").await {
+                            out.artwork = Some(path);
+                            out.artwork_author = None;
+                        }
                         out.glass = out
                             .artwork
                             .as_ref()
@@ -260,7 +275,9 @@ impl crate::BackendState {
                 }
                 if let Some(path) = logo {
                     if let Some(value) = cache_local_image(&path, &cache, false) {
-                        out.logo = client.home_image(&value, &cache, "logo").await;
+                        if let Some(path) = client.home_image(&value, &cache, "logo").await {
+                            out.logo = Some(path);
+                        }
                     }
                 }
             }
