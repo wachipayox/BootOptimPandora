@@ -1743,6 +1743,23 @@ impl BackendState {
                     .map(|paths| config.modify(|config| config.ignored_profile_paths = paths));
                 let _ = channel.send(result);
             },
+            MessageToBackend::RefreshHomeServer { id } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.mark_servers_dirty(self, true);
+                }
+            },
+            MessageToBackend::GetHomePlayerHeads { uuids, channel } => {
+                let backend = self.clone();
+                tokio::spawn(async move {
+                    let _ = channel.send(backend.home_player_heads(uuids).await);
+                });
+            },
+            MessageToBackend::GetHomePresentation { id, channel } => {
+                let backend = self.clone();
+                tokio::spawn(async move {
+                    let _ = channel.send(backend.load_home_presentation(id).await);
+                });
+            },
             MessageToBackend::GetGlobalProfiles { channel } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
@@ -2904,6 +2921,23 @@ impl BackendState {
             })
         });
 
+        let last_destination = quick_play.as_ref().map(|quick| match quick {
+            QuickPlayLaunch::Singleplayer(path) => std::path::Path::new(path)
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy()
+                .into_owned(),
+            QuickPlayLaunch::Multiplayer(address) => {
+                let address = address.to_string_lossy();
+                self.instance_state
+                    .read()
+                    .instances
+                    .get(id)
+                    .and_then(|i| i.server_name(&address))
+                    .unwrap_or_else(|| address.into_owned())
+            },
+            QuickPlayLaunch::Realms(name) => name.to_string_lossy().into_owned(),
+        });
         let launch_tracker = modal_action.push_tracker("Launching".into());
         let result = self
             .launcher
@@ -2952,6 +2986,7 @@ impl BackendState {
                     if let Some(reason) = aot_retry_reason {
                         instance.aot_retry_probe = Some((child.process.id(), Instant::now(), reason));
                     }
+                    instance.stats.modify(|stats| stats.last_destination = last_destination.clone());
                     instance.processes.push(child.process);
                     instance.update_session();
                     self.quit_coordinator.set_can_quit(false);
@@ -3372,7 +3407,10 @@ fn cancel_aot_optimization(instance: &mut Instance) {
         return;
     }
     log::info!("[aot-cache] optimization cancelled while the JVM was writing the training profile");
-    let processes = instance.processes.extract_if(.., |process| dumping.contains(&process.id())).collect::<Vec<_>>();
+    let processes = instance
+        .processes
+        .extract_if(.., |process| dumping.contains(&process.id()))
+        .collect::<Vec<_>>();
     let closing = instance
         .closing_processes
         .extract_if(.., |(process, _)| dumping.contains(&process.id()))

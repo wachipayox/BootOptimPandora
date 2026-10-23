@@ -38,6 +38,12 @@ pub struct InterfaceConfig {
     pub sidebar_width: f32,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub main_page: PageType,
+    #[serde(default)]
+    pub home_instance: Option<SharedString>,
+    #[serde(default = "schema::default_true")]
+    pub home_general_news: bool,
+    #[serde(default)]
+    pub home_read_news: std::collections::BTreeSet<String>,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub page_path: Arc<[PageType]>,
 
@@ -158,10 +164,18 @@ impl InterfaceConfig {
                     if log {
                         log::warn!("Unable to find theme with name {}, using default theme", active_theme);
                     }
-                    registry.themes().get(DEFAULT_THEME).cloned().unwrap_or_else(|| registry.default_dark_theme().clone())
+                    registry
+                        .themes()
+                        .get(DEFAULT_THEME)
+                        .cloned()
+                        .unwrap_or_else(|| registry.default_dark_theme().clone())
                 }
             } else {
-                registry.themes().get(DEFAULT_THEME).cloned().unwrap_or_else(|| registry.default_dark_theme().clone())
+                registry
+                    .themes()
+                    .get(DEFAULT_THEME)
+                    .cloned()
+                    .unwrap_or_else(|| registry.default_dark_theme().clone())
             };
 
             let theme = gpui_component::Theme::global_mut(cx);
@@ -288,6 +302,9 @@ impl Default for InterfaceConfig {
             main_window_bounds: Default::default(),
             sidebar_width: Default::default(),
             main_page: Default::default(),
+            home_instance: None,
+            home_general_news: true,
+            home_read_news: Default::default(),
             page_path: Default::default(),
             quick_delete_mods: Default::default(),
             quick_delete_instance: Default::default(),

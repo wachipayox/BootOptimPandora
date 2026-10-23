@@ -313,53 +313,7 @@ impl Render for Accounts {
                     .on_click({
                         let backend_handle = self.backend_handle.clone();
                         move |_, window, cx| {
-                            let name_input = cx.new(|cx| InputState::new(window, cx));
-                            let uuid_input =
-                                cx.new(|cx| InputState::new(window, cx).placeholder(t::account::uuid_random()));
-                            let backend_handle = backend_handle.clone();
-                            window.open_dialog(cx, move |dialog, _, cx| {
-                                let username = name_input.read(cx).value();
-                                let valid_name = username.len() >= 1
-                                    && username.len() <= 16
-                                    && username.as_bytes().iter().all(|c| *c > 32 && *c < 127);
-                                let uuid = uuid_input.read(cx).value();
-                                let valid_uuid = uuid.is_empty() || Uuid::try_parse(&uuid).is_ok();
-
-                                let valid = valid_name && valid_uuid;
-
-                                let backend_handle = backend_handle.clone();
-                                let mut add_button = Button::new("add")
-                                    .label(t::account::add::submit())
-                                    .disabled(!valid)
-                                    .on_click(move |_, window, cx| {
-                                        window.close_all_dialogs(cx);
-
-                                        let uuid = if let Ok(uuid) = Uuid::try_parse(&uuid) {
-                                            uuid
-                                        } else {
-                                            let uuid: u128 = rand::thread_rng().r#gen();
-                                            let uuid = (uuid & !0xF0000000000000000000) | 0x30000000000000000000; // set version to 3
-                                            Uuid::from_u128(uuid)
-                                        };
-
-                                        backend_handle.send(MessageToBackend::AddOfflineAccount {
-                                            name: username.clone().into(),
-                                            uuid,
-                                        });
-                                    });
-
-                                if valid {
-                                    add_button = add_button.success();
-                                }
-
-                                dialog.title(t::account::add::offline()).child(
-                                    v_flex()
-                                        .gap_2()
-                                        .child(crate::labelled(t::account::name(), Input::new(&name_input)))
-                                        .child(crate::labelled(t::account::uuid(), Input::new(&uuid_input)))
-                                        .child(add_button),
-                                )
-                            });
+                            open_offline_account(backend_handle.clone(), window, cx);
                         }
                     }),
             )
@@ -396,4 +350,53 @@ impl Render for Accounts {
                 cx.notify();
             }))
     }
+}
+
+pub fn open_offline_account(backend_handle: BackendHandle, window: &mut Window, cx: &mut App) {
+    let name_input = cx.new(|cx| InputState::new(window, cx));
+    let uuid_input = cx.new(|cx| InputState::new(window, cx).placeholder(t::account::uuid_random()));
+    let backend_handle = backend_handle.clone();
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let username = name_input.read(cx).value();
+        let valid_name =
+            username.len() >= 1 && username.len() <= 16 && username.as_bytes().iter().all(|c| *c > 32 && *c < 127);
+        let uuid = uuid_input.read(cx).value();
+        let valid_uuid = uuid.is_empty() || Uuid::try_parse(&uuid).is_ok();
+
+        let valid = valid_name && valid_uuid;
+
+        let backend_handle = backend_handle.clone();
+        let mut add_button =
+            Button::new("add")
+                .label(t::account::add::submit())
+                .disabled(!valid)
+                .on_click(move |_, window, cx| {
+                    window.close_all_dialogs(cx);
+
+                    let uuid = if let Ok(uuid) = Uuid::try_parse(&uuid) {
+                        uuid
+                    } else {
+                        let uuid: u128 = rand::thread_rng().r#gen();
+                        let uuid = (uuid & !0xF0000000000000000000) | 0x30000000000000000000; // set version to 3
+                        Uuid::from_u128(uuid)
+                    };
+
+                    backend_handle.send(MessageToBackend::AddOfflineAccount {
+                        name: username.clone().into(),
+                        uuid,
+                    });
+                });
+
+        if valid {
+            add_button = add_button.success();
+        }
+
+        dialog.title(t::account::add::offline()).child(
+            v_flex()
+                .gap_2()
+                .child(crate::labelled(t::account::name(), Input::new(&name_input)))
+                .child(crate::labelled(t::account::uuid(), Input::new(&uuid_input)))
+                .child(add_button),
+        )
+    });
 }

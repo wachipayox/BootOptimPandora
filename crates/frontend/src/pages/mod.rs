@@ -7,3 +7,5 @@ pub mod modrinth_project_page;
 pub mod page;
 pub mod skins_page;
 pub mod syncing_page;
+
+pub mod home;

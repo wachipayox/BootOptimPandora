@@ -481,7 +481,11 @@ impl DistributionClient {
         &self,
         include_test: bool,
     ) -> Result<Vec<GlobalProfileSummary>, DistributionError> {
-        let path = if include_test { "/v1/profiles?include_test=1" } else { "/v1/profiles" };
+        let path = if include_test {
+            "/v1/profiles?include_test=1"
+        } else {
+            "/v1/profiles"
+        };
         let response: ProfilesResponse = self.get_json(path).await?;
         if response.schema_version != 1 || response.protocol_version != 1 || response.truncated {
             return Err(DistributionError::InvalidResponse("unsupported or truncated profile catalog".into()));
@@ -2204,7 +2208,8 @@ mod manifest_game_loader_tests {
 
     #[test]
     fn old_and_old_style_forge_versions_are_kept_verbatim() {
-        let forge = game(r#"{"minecraft":"1.7.10","loader":{"kind":"forge","version":"1.7.10-10.13.4.1614-1.7.10"}}"#).unwrap();
+        let forge =
+            game(r#"{"minecraft":"1.7.10","loader":{"kind":"forge","version":"1.7.10-10.13.4.1614-1.7.10"}}"#).unwrap();
         assert_eq!(forge.resolved_loader(), (ManifestLoaderKind::Forge, "1.7.10-10.13.4.1614-1.7.10"));
         assert_eq!(forge.resolved_loader().0.loader(), schema::loader::Loader::Forge);
     }
@@ -2212,7 +2217,8 @@ mod manifest_game_loader_tests {
     #[test]
     fn unknown_loader_kind_and_mixed_spellings_are_rejected() {
         assert!(game(r#"{"minecraft":"1.21.1","loader":{"kind":"quilt","version":"1"}}"#).is_err());
-        let mixed = game(r#"{"minecraft":"1.21.1","neoforge":"21.1.1","loader":{"kind":"fabric","version":"0.16.9"}}"#).unwrap();
+        let mixed = game(r#"{"minecraft":"1.21.1","neoforge":"21.1.1","loader":{"kind":"fabric","version":"0.16.9"}}"#)
+            .unwrap();
         assert!(!mixed.validate_for_schema(3));
         assert!(!mixed.validate_for_schema(4));
         assert!(game(r#"{"minecraft":"1.21.1","loader":{"kind":"fabric","version":"1","x":1}}"#).is_err());
@@ -2239,7 +2245,8 @@ mod catalog_presentation_tests {
             "description": "Inherited description", "icon": null,
             "presentation": {"name": "Stale name", "description": "Stale", "icon": null},
             "latest_revision": {"revision_id": "rev_example", "sequence": 2, "manifest_sha256": "a".repeat(64)}
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(profile.name, "Current name");
         assert_eq!(profile.description, "Inherited description");
         assert!(profile.icon.is_none());
@@ -2252,8 +2259,12 @@ mod catalog_presentation_tests {
             "profile_id": "profile_example-child", "name": "Child", "description": "",
             "icon": icon,
             "latest_revision": {"revision_id": "rev_child", "sequence": 1, "manifest_sha256": "a".repeat(64)}
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(profile.icon.unwrap().sha256, "b".repeat(64));
         assert!(profile.description.is_empty());
     }
 }
+
+#[path = "home.rs"]
+mod home;

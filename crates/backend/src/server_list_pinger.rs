@@ -38,8 +38,11 @@ enum PingEntry {
     Loaded {
         status: Arc<ServerStatus>,
         ping: Option<Duration>,
+        expires: Instant,
     },
-    Failed,
+    Failed {
+        expires: Instant,
+    },
 }
 
 pub enum PingResult {
@@ -103,19 +106,25 @@ impl ServerListPinger {
         let key = (server.clone(), protocol_version);
         {
             let mut data = backend.server_list_pinger.data.write();
+            if data.get(&key).is_some_and(|entry| match entry {
+                PingEntry::Loaded { expires, .. } | PingEntry::Failed { expires } => Instant::now() >= *expires,
+                _ => false,
+            }) {
+                data.remove(&key);
+            }
             if let Some(existing) = data.get_mut(&key) {
                 match existing {
                     PingEntry::Loading { instances } => {
                         instances.insert(instance);
                         return PingResult::Pinging;
                     },
-                    PingEntry::Loaded { status, ping } => {
+                    PingEntry::Loaded { status, ping, .. } => {
                         return PingResult::Loaded {
                             status: status.clone(),
                             ping: ping.clone(),
                         };
                     },
-                    PingEntry::Failed => {
+                    PingEntry::Failed { .. } => {
                         return PingResult::Error;
                     },
                 }
@@ -129,7 +138,13 @@ impl ServerListPinger {
         tokio::spawn(async move {
             let (host, port) = if let Some((host, port)) = server.split_once(':') {
                 let Ok(port) = port.parse::<u16>() else {
-                    backend.server_list_pinger.data.write().insert(key.clone(), PingEntry::Failed);
+                    Self::publish(
+                        &backend,
+                        key.clone(),
+                        PingEntry::Failed {
+                            expires: Instant::now() + Duration::from_secs(30),
+                        },
+                    );
                     return;
                 };
                 (host, Some(port))
@@ -138,29 +153,38 @@ impl ServerListPinger {
             };
             let status = backend.server_list_pinger.request_status(host, port, protocol_version).await;
             let Ok((status, ping)) = status else {
-                backend.server_list_pinger.data.write().insert(key.clone(), PingEntry::Failed);
+                Self::publish(
+                    &backend,
+                    key.clone(),
+                    PingEntry::Failed {
+                        expires: Instant::now() + Duration::from_secs(30),
+                    },
+                );
                 return;
             };
 
             let entry = PingEntry::Loaded {
                 status: Arc::new(status),
                 ping,
+                expires: Instant::now() + Duration::from_secs(30),
             };
-            let old_status = backend.server_list_pinger.data.write().insert(key.clone(), entry);
-
-            if let Some(PingEntry::Loading { instances }) = old_status {
-                let mut instance_state = backend.instance_state.write();
-                for instance in instances {
-                    if let Some(instance) = instance_state.instances.get_mut(instance) {
-                        instance.mark_servers_dirty(&backend, true);
-                    }
-                }
-            }
+            Self::publish(&backend, key, entry);
         });
 
         PingResult::Pinging
     }
 
+    fn publish(backend: &Arc<BackendState>, key: (Arc<str>, i32), entry: PingEntry) {
+        let old = backend.server_list_pinger.data.write().insert(key, entry);
+        if let Some(PingEntry::Loading { instances }) = old {
+            let mut state = backend.instance_state.write();
+            for id in instances {
+                if let Some(instance) = state.instances.get_mut(id) {
+                    instance.mark_servers_dirty(backend, true);
+                }
+            }
+        }
+    }
     pub async fn request_status_as_string(
         &self,
         host: &str,

@@ -41,9 +41,9 @@ pub mod root;
 pub mod settings;
 pub mod skin_renderer;
 pub mod skin_thumbnail_cache;
-pub mod ui;
 pub mod theme;
 mod theme_palette;
+pub mod ui;
 #[cfg(windows)]
 pub mod windows_security_ui;
 
@@ -51,6 +51,7 @@ pub mod windows_security_ui;
 #[folder = "../../assets"]
 #[include = "icons/**/*.svg"]
 #[include = "images/**/*.png"]
+#[include = "images/**/*.svg"]
 #[include = "fonts/**/*.ttf"]
 pub struct Assets;
 
@@ -216,18 +217,38 @@ pub fn start(
 
             let mut processor = Processor::new(data.clone(), main_window_hidden, quit_coordinator);
 
+            // Backend startup has already queued the complete instance snapshot. Create
+            // the window after that snapshot, so loading existing instances is not
+            // mistaken for adding new instances and replacing the saved Home selection.
+            let mut startup_messages = Vec::new();
             while let Some(message) = recv.try_recv() {
-                processor.process(message, cx);
-            }
-
-            cx.spawn(async move |cx| {
-                while let Some(message) = recv.recv().await {
-                    _ = cx.update(|cx| {
-                        processor.process(message, cx);
-                    });
+                if matches!(
+                    &message,
+                    bridge::message::MessageToFrontend::InstanceAdded { .. }
+                        | bridge::message::MessageToFrontend::AccountsUpdated { .. }
+                ) {
+                    processor.process(message, cx);
+                } else {
+                    startup_messages.push(message);
                 }
-            })
-            .detach();
+            }
+            // Flush the snapshot's deferred entity events before installing window
+            // subscriptions; otherwise those events would still look like new adds.
+            cx.defer(move |cx| {
+                // Replay window, launch and notification messages in their original
+                // order, including CLI launch/hide behavior.
+                for message in startup_messages {
+                    processor.process(message, cx);
+                }
+                cx.spawn(async move |cx| {
+                    while let Some(message) = recv.recv().await {
+                        _ = cx.update(|cx| {
+                            processor.process(message, cx);
+                        });
+                    }
+                })
+                .detach();
+            });
         });
 }
 
@@ -285,7 +306,9 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
             |window, cx| {
                 let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").ok();
                 match capture_page.as_deref() {
-                    Some("instances") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances,
+                    Some("instances" | "home-menu" | "home-news") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances
+                    },
                     Some("skins") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins,
                     Some("import") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Import,
                     Some("syncing") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Syncing,
@@ -364,11 +387,15 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 }
                 let root = cx.new(|cx| Root::new(launcher_root, window, cx));
                 if let Some(name) = capture_page.as_deref().and_then(|page| page.strip_prefix("update:")) {
-                    let name: SharedString=name.to_owned().into();
-                    let capture_data=data.clone();
-                    window.on_next_frame(move |window,cx| {
-                        if let Some(id)=crate::entity::instance::InstanceEntries::find_id_by_name(&capture_data.instances,&name,cx) {
-                            crate::root::capture_inherited_update(id,name,&capture_data,window,cx);
+                    let name: SharedString = name.to_owned().into();
+                    let capture_data = data.clone();
+                    window.on_next_frame(move |window, cx| {
+                        if let Some(id) = crate::entity::instance::InstanceEntries::find_id_by_name(
+                            &capture_data.instances,
+                            &name,
+                            cx,
+                        ) {
+                            crate::root::capture_inherited_update(id, name, &capture_data, window, cx);
                         }
                     });
                 }
@@ -376,11 +403,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     window.on_next_frame(crate::component::design_review::open_review_dialog);
                 }
                 if capture_page.as_deref() == Some("accounts") {
-                    let accounts_data = data.clone();
-                    window.on_next_frame(move |window, cx| {
-                        let build = crate::modals::accounts::build_accounts_sheet(&accounts_data, window, cx);
-                        window.open_sheet_at(gpui_component::Placement::Left, cx, build);
-                    });
+                    window.on_next_frame(|_, cx| crate::root::open_home_accounts(cx));
                 }
                 root
             },

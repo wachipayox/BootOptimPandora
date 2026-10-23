@@ -20,6 +20,9 @@ pub struct DesignButton {
     inner: Button,
     paint: Option<(f32, Colors, Hsla, Hsla)>,
     action: bool,
+    notched: bool,
+    label: Option<SharedString>,
+    label_left: bool,
     disabled: bool,
 }
 impl DesignButton {
@@ -27,11 +30,18 @@ impl DesignButton {
         let id = id.into();
         Self {
             id: id.clone(),
-            inner: Button::new(id),
+            inner: Button::new(id).ghost().border_0(),
             paint: None,
             action: false,
+            notched: false,
+            label: None,
+            label_left: false,
             disabled: false,
         }
+    }
+    pub fn notched(mut self) -> Self {
+        self.notched = true;
+        self
     }
     pub fn action(mut self) -> Self {
         self.action = true;
@@ -48,7 +58,12 @@ impl DesignButton {
         self
     }
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
-        self.inner = self.inner.label(label);
+        self.label = Some(label.into());
+        self
+    }
+    pub fn label_left(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self.label_left = true;
         self
     }
     pub fn toggled(mut self, value: bool) -> Self {
@@ -91,6 +106,19 @@ impl ButtonVariants for DesignButton {
 }
 impl RenderOnce for DesignButton {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if let Some(label) = self.label.take() {
+            self = self.aria_label(label.clone());
+            self.inner = self.inner.child(
+                div()
+                    .w_full()
+                    .font_family(theme::SANS)
+                    .text_size(px(13.))
+                    .line_height(px(16.))
+                    .when_else(self.label_left, |d| d.text_left(), |d| d.text_center())
+                    .child(label),
+            );
+        }
+        let mut outer_fill = None;
         if let Some((angle, colors, fg, hover_fg)) = self.paint {
             let motion = window.use_keyed_state((self.id.clone(), "background-motion"), cx, |_, _| {
                 Motion::new(colors, Instant::now())
@@ -113,9 +141,17 @@ impl RenderOnce for DesignButton {
             };
             let background =
                 linear_gradient(angle, linear_color_stop(color(stops[0]), 0.), linear_color_stop(color(stops[1]), 1.));
+            if self.notched {
+                outer_fill = Some(background);
+            }
+            let native_fill = if self.notched {
+                rgba(0xffffff00).into()
+            } else {
+                background.into()
+            };
             self.inner = self.inner.custom(
                 ButtonCustomVariant::new(cx)
-                    .backgrounds(background, background, background)
+                    .backgrounds(native_fill, native_fill, native_fill)
                     .foreground(fg)
                     .hover_foreground(hover_fg),
             );
@@ -163,7 +199,11 @@ impl RenderOnce for DesignButton {
         if self.action && self.disabled {
             self.inner = self.inner.border_0().bg(rgba(0xffffff00)).text_color(rgb(theme::INK_DISABLED));
         }
-        self.inner
+        if let Some(fill) = outer_fill {
+            notched_fill(fill.into()).flex().child(self.inner).into_any_element()
+        } else {
+            self.inner.into_any_element()
+        }
     }
 }
 
@@ -421,6 +461,8 @@ pub struct PlayButton {
     progress: Option<f32>,
     id: ElementId,
     status: SharedString,
+    title: SharedString,
+    add_instance: bool,
     artwork: Option<ImageSource>,
     disabled: bool,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
@@ -431,12 +473,28 @@ impl PlayButton {
             progress: None,
             id: id.into(),
             status: status.into(),
+            title: "Jugar".into(),
+            add_instance: false,
             artwork,
             disabled: false,
             on_click: None,
         }
     }
+    pub fn title(mut self, title: impl Into<SharedString>) -> Self {
+        self.title = title.into();
+        self
+    }
+    pub fn progress(mut self, amount: f32) -> Self {
+        self.progress = Some(amount.clamp(0., 1.));
+        self
+    }
+    pub fn add_instance(mut self) -> Self {
+        self.title = "Añadir instancia".into();
+        self.add_instance = true;
+        self
+    }
     pub fn updating(mut self, amount: f32) -> Self {
+        self.title = "Actualizando".into();
         self.progress = Some(amount.clamp(0., 1.));
         self
     }
@@ -469,7 +527,7 @@ impl RenderOnce for PlayButton {
             .child(
                 DesignButton::new(self.id)
                     .ghost()
-                    .aria_label(if progress.is_some() { "Actualizando" } else { "Jugar" })
+                    .aria_label(self.title.clone())
                     .size_full()
                     .rounded(px(0.))
                     .px_0()
@@ -504,7 +562,13 @@ impl RenderOnce for PlayButton {
                             } else {
                                 rgb(theme::ON_PLAY)
                             })
-                            .child(div().size(px(18.)).text_size(px(18.)).line_height(px(18.)).child("▶"))
+                            .child(
+                                div()
+                                    .size(px(18.))
+                                    .text_size(px(18.))
+                                    .line_height(px(18.))
+                                    .child(if self.add_instance { "+" } else { "▶" }),
+                            )
                             .child(
                                 v_flex()
                                     .items_start()
@@ -514,10 +578,7 @@ impl RenderOnce for PlayButton {
                                             .text_size(px(17.))
                                             .line_height(px(20.))
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .child(TrackedText::new(
-                                                if progress.is_some() { "Actualizando" } else { "Jugar" },
-                                                0.02,
-                                            )),
+                                            .child(TrackedText::new(self.title.clone(), 0.02)),
                                     )
                                     .child(
                                         div()
@@ -599,4 +660,38 @@ pub fn progress(label: impl Into<SharedString>, amount: f32, detail: impl Into<S
             amount,
             ..Default::default()
         })
+}
+
+/// A six-pixel block notch, painted beneath content on the UI thread.
+pub fn notched_panel(color: u32) -> Div {
+    notched_fill(rgba(color).into())
+}
+fn notched_fill(fill: Background) -> Div {
+    div().relative().child(
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                let x = bounds.origin.x;
+                let y = bounds.origin.y;
+                let w = bounds.size.width;
+                let h = bounds.size.height;
+                let n = px(6.);
+                let mut path = PathBuilder::fill();
+                path.move_to(point(x + n, y));
+                path.line_to(point(x + w - n, y));
+                path.line_to(point(x + w, y + n));
+                path.line_to(point(x + w, y + h - n));
+                path.line_to(point(x + w - n, y + h));
+                path.line_to(point(x + n, y + h));
+                path.line_to(point(x, y + h - n));
+                path.line_to(point(x, y + n));
+                path.close();
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, fill);
+                }
+            },
+        )
+        .absolute()
+        .size_full(),
+    )
 }
