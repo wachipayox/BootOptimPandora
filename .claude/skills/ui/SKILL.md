@@ -24,7 +24,7 @@ Every visual change must include before and after screenshots in its PR.
 
 `assets/theme/tokens.json` is the approved source. Regenerate the Rust palette (including light, metrics and typography) and GPUI JSON with `python scripts/generate_theme.py`. The embedded default is `Wachiland Dark`; `theme.rs` holds component measurements that the handoff defines outside the tokens. Bundled Noto Sans / Chakra Petch carry their OFL files in `assets/fonts/`.
 
-Use `component/design.rs` for new screens: button A, glass Play (pass its prepared cached artwork crop), NO/SÍ, chips, tabs, field, setting row, eyebrow and dialog. Preserve native keyboard interaction. Existing layouts migrate in subsequent PRs; do not mistake the capture-only component review for the redesigned Home screen.
+Use `component/design.rs` for new screens: button A, glass Play (sample the actual app surface behind its window bounds), NO/SÍ, chips, tabs, field, setting row, eyebrow and dialog. Preserve native keyboard interaction. Existing layouts migrate in subsequent PRs; do not mistake the capture-only component review for the redesigned Home screen.
 
 After changing the vendored GPUI component, invalidate both cached profiles with `cargo clean -p gpui-component` and `cargo clean --release -p gpui-component`. Cargo treats vendored git dependencies as immutable; otherwise a local build can reuse stale API/paint code. Update the edited source hashes in its `.cargo-checksum.json` too.
 
@@ -40,3 +40,7 @@ News captures wait for process-specific feed/media readiness. Fixtures stay outs
 this public repo. Restricted Markdown is validated in `schema::news_markdown` against
 Distribution's shared vectors before native TextView rendering. Its explicit image
 map contains only backend-verified cache paths; an absent image renders alt text.
+
+Instance captures use `-InstanceScreens` with an owned CLI fixture: Content filters, overrides, logs/crashes, Changelog, instance Settings, Create child and Duplicate. The live-output capture feeds synthetic messages through the native viewer; it never starts Minecraft. Explicit routes are `instance-mods:agente-274-…`, `instance-resources:…`, `instance-shaders:…`, `instance-overwrites:…`, `instance-logs:…`, `instance-crashes:…`, `instance-live:…`, `instance-changelog:…`, `instance-settings:…`, `derived:…`, and `duplicate:…`. The script waits for the real data dependencies before saving. Update captures also wait for the exact skipped-revision changelog. Keep every screenshot private in wbombo.
+
+For the owned instance routes, `-CaptureState advanced|version|expanded|editing` opens the existing advanced settings, version editor, expanded update changelog or local overrides editor. This changes presentation only. Settings and timeline captures include middle/bottom scrolling; native Tab focus is captured for instance pages/dialogs.

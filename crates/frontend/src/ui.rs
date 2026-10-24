@@ -113,6 +113,9 @@ impl LauncherPage {
         if let LauncherPage::Home(page) = &self {
             return div().size_full().child(page.clone()).into_any_element();
         }
+        if let LauncherPage::InstancePage(page) = &self {
+            return div().size_full().child(page.clone()).into_any_element();
+        }
         fn process(entity: Entity<impl Page>, window: &mut Window, cx: &mut App) -> (bool, AnyElement, AnyElement) {
             entity.update(cx, |page, cx| {
                 (
@@ -132,7 +135,7 @@ impl LauncherPage {
             LauncherPage::Import(entity) => process(entity, window, cx),
             LauncherPage::Syncing(entity) => process(entity, window, cx),
             LauncherPage::ModrinthProject(entity) => process(entity, window, cx),
-            LauncherPage::InstancePage(entity) => process(entity, window, cx),
+            LauncherPage::InstancePage(_) => unreachable!(),
         };
 
         let config = InterfaceConfig::get(cx);
@@ -741,13 +744,7 @@ impl LauncherUI {
             .relative()
             .bg(rgb(theme::BG))
             .text_color(rgb(theme::INK))
-            .child(
-                img(ImageSource::Resource(Resource::Embedded("images/cafe-ambient.png".into())))
-                    .absolute()
-                    .size_full()
-                    .object_fit(ObjectFit::Cover)
-                    .opacity(0.15),
-            )
+            .child(crate::background::surface(cx))
             .child(sidebar)
             .child(div().flex_1().min_w_0().h_full().child(self.page.clone().render(self, window, cx)))
             .when(self.home_account_menu, |d| {

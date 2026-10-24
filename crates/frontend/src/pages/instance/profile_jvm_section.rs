@@ -5,13 +5,16 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::icon::PandoraIcon;
+use crate::{
+    component::design::{DesignButton, YesNo},
+    icon::PandoraIcon,
+    theme,
+};
 use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Disableable, Sizable, StyledExt,
-    button::{Button, ButtonVariants},
-    checkbox::Checkbox,
+    Disableable, Sizable,
+    button::ButtonVariants,
     h_flex,
     input::{InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
     select::{Select, SelectEvent, SelectState},
@@ -83,9 +86,10 @@ impl ProfileJvmSection {
     /// Known only after this instance has started once in this launcher session.
     pub fn last_java_text(&self) -> Option<SharedString> {
         let facts = &self.view.as_ref()?.facts;
-        Some(match (facts.java_major, facts.java_vm.as_deref()) {
-            (Some(major), vm) => t::instance::profile_jvm::last_java(&major.to_string(), vm.unwrap_or("?")).into(),
-            _ => t::instance::profile_jvm::last_java_unknown().into(),
+        let major = facts.java_major?;
+        Some(match facts.java_vm.as_deref() {
+            Some(vm) => format!("Último detectado: Java {major} ({vm})").into(),
+            None => format!("Último detectado: Java {major}").into(),
         })
     }
 
@@ -208,11 +212,7 @@ impl ProfileJvmSection {
         }
 
         if platform.auto.is_some() {
-            let items: Vec<SharedString> = vec![
-                t::instance::profile_jvm::automatic().into(),
-                t::instance::profile_jvm::on().into(),
-                t::instance::profile_jvm::off().into(),
-            ];
+            let items: Vec<SharedString> = vec!["Automático".into(), "Sí".into(), "No".into()];
             let selected = items[match choice.enabled {
                 None => 0,
                 Some(true) => 1,
@@ -246,20 +246,14 @@ impl ProfileJvmSection {
 }
 
 /// What the next Start does with the option, when the checkbox and value alone do not say it.
-fn status_text(entry: &JvmPlanEntry, java_major: Option<u32>) -> Option<SharedString> {
+fn status_text(entry: &JvmPlanEntry, _java_major: Option<u32>) -> Option<SharedString> {
     match &entry.status {
-        JvmPlanStatus::Applied { arg, .. } => Some(t::instance::profile_jvm::status_applied(arg).into()),
+        JvmPlanStatus::Applied { arg, .. } => Some(format!("Activo en el próximo arranque: {arg}").into()),
         JvmPlanStatus::Disabled { .. } => None,
-        JvmPlanStatus::Overridden { .. } => Some(t::instance::profile_jvm::status_overridden().into()),
+        JvmPlanStatus::Overridden { .. } => Some("Sustituido por tus opciones JVM o tu ajuste de memoria".into()),
         // Unknown until the first Start; the Java line at the end of the section says so.
         JvmPlanStatus::Skipped { reason } if reason == "java-version-unknown" || reason == "java-vm-unknown" => None,
-        JvmPlanStatus::Skipped { reason } => {
-            let detail = match (reason.strip_prefix("requires-java-"), java_major) {
-                (Some(range), Some(major)) => format!("requires Java {range} (this instance: {major})"),
-                _ => reason.clone(),
-            };
-            Some(t::instance::profile_jvm::status_not_used(&detail).into())
-        },
+        JvmPlanStatus::Skipped { reason } => Some(format!("No se aplica: {reason}").into()),
     }
 }
 
@@ -276,10 +270,10 @@ fn effective_enabled(entry: &JvmPlanEntry, choice: Option<&ProfileJvmOptionChoic
 fn tooltip_text(option: &ManifestJvmOption) -> SharedString {
     let mut text = option.help.trim().to_owned();
     text.push('\n');
-    text.push_str(t::instance::profile_jvm::advice());
+    text.push_str("No se recomienda cambiarlo: el perfil ya elige un valor adecuado para la mayoría de equipos.");
     if let (Some(min), Some(max)) = (option.min, option.max) {
         text.push_str("\n\n");
-        text.push_str(&t::instance::profile_jvm::range(&min.to_string(), &max.to_string()));
+        text.push_str(&format!("Valores permitidos: {min}–{max}"));
     }
     text.into()
 }
@@ -299,10 +293,9 @@ impl Render for ProfileJvmSection {
         }
         let java_major = view.facts.java_major;
 
-        let mut list = v_flex()
-            .gap_2()
-            .child(div().font_bold().child(t::instance::profile_jvm::title()))
-            .child(div().text_sm().child(t::instance::profile_jvm::description()));
+        let mut list = v_flex().w_full().px(px(18.)).py(px(16.)).gap(px(10.)).bg(rgb(theme::PANEL))
+            .child(div().font_family(theme::DISPLAY).font_weight(FontWeight::BOLD).text_size(px(20.)).line_height(px(24.)).child("Opciones JVM del perfil heredadas"))
+            .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child("Las pone el perfil global y solo se aplican si encajan con la Java de esta instancia. Tus opciones de arriba siempre mandan."));
 
         for (option, entry) in options {
             self.ensure_controls(&option, window, cx);
@@ -318,24 +311,29 @@ impl Render for ProfileJvmSection {
                     .child(div().w(px(130.0)).child(Select::new(&mode).small()))
                     .child(option.label.clone())
                     .into_any_element(),
-                None => Checkbox::new(SharedString::from(format!("profile-jvm-{}", option.id)))
-                    .label(option.label.clone())
-                    .checked(enabled)
-                    .on_click(cx.listener({
-                        let id = id.clone();
-                        move |section, value: &bool, _, cx| {
-                            let value = *value;
-                            section.set_choice(&id, |choice| choice.enabled = Some(value), cx);
-                        }
-                    }))
+                None => h_flex()
+                    .gap(px(10.))
+                    .child(
+                        YesNo::new(SharedString::from(format!("profile-jvm-{}", option.id)))
+                            .checked(enabled)
+                            .on_click(cx.listener({
+                                let id = id.clone();
+                                move |section, value: &bool, _, cx| {
+                                    let value = *value;
+                                    section.set_choice(&id, |choice| choice.enabled = Some(value), cx);
+                                }
+                            })),
+                    )
+                    .child(div().flex_1().child(option.label.clone()))
                     .into_any_element(),
             };
 
             let mut row = h_flex().gap_2().flex_wrap().items_center().child(toggle).child(
-                Button::new(SharedString::from(format!("profile-jvm-help-{}", option.id)))
+                DesignButton::new(SharedString::from(format!("profile-jvm-help-{}", option.id)))
                     .label("?")
                     .ghost()
-                    .small()
+                    .h(px(24.))
+                    .w(px(24.))
                     .tooltip(tooltip_text(&option)),
             );
             // The value control and the reset icon stay together and wrap below the label as one
@@ -351,11 +349,12 @@ impl Render for ProfileJvmSection {
             }
             if choice.is_some() {
                 value_group = value_group.child(
-                    Button::new(SharedString::from(format!("profile-jvm-reset-{}", option.id)))
-                        .icon(PandoraIcon::RefreshCcw)
+                    DesignButton::new(SharedString::from(format!("profile-jvm-reset-{}", option.id)))
+                        .child(gpui_component::Icon::new(PandoraIcon::RefreshCcw).size(px(14.)))
                         .ghost()
-                        .small()
-                        .tooltip(t::instance::profile_jvm::reset())
+                        .h(px(24.))
+                        .w(px(24.))
+                        .tooltip("Restablecer")
                         .on_click(cx.listener({
                             let id = id.clone();
                             move |section, _, window, cx| section.reset(&id, window, cx)

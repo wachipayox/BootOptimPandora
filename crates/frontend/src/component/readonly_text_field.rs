@@ -62,6 +62,11 @@ impl Default for ReadonlyTextField {
 }
 
 impl ReadonlyTextField {
+    pub fn with_font_family(mut self, family: SharedString) -> Self {
+        self.font.family = family;
+        self
+    }
+
     pub fn add(&mut self, line: Arc<str>) {
         self.pending.push(line);
     }
@@ -682,6 +687,7 @@ fn paint_lines<'a, const REVERSE: bool>(
 }
 
 pub struct ReadonlyTextFieldWithControls {
+    designed: bool,
     scroll_handler: ScrollHandler,
     text_field: Entity<ReadonlyTextField>,
     search_state: Entity<InputState>,
@@ -803,13 +809,39 @@ impl ReadonlyTextFieldWithControls {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::create(text_field, extra, false, window, cx)
+    }
+    pub fn new_designed(
+        text_field: Entity<ReadonlyTextField>,
+        extra: Box<dyn Fn(Div) -> Div>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::create(text_field, extra, true, window, cx)
+    }
+    fn create(
+        text_field: Entity<ReadonlyTextField>,
+        extra: Box<dyn Fn(Div) -> Div>,
+        designed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let scroll_state = Rc::clone(&text_field.read(cx).scroll_state);
 
-        let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(t::common::search()).clean_on_escape());
+        let search_state = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(if designed {
+                    "Buscar en el registro..."
+                } else {
+                    t::common::search()
+                })
+                .clean_on_escape()
+        });
 
         let _search_input_subscription = cx.subscribe_in(&search_state, window, Self::on_search_input_event);
 
         Self {
+            designed,
             scroll_handler: ScrollHandler { state: scroll_state },
             text_field,
             search_state,
@@ -913,27 +945,59 @@ impl ReadonlyTextFieldWithControls {
 
 impl Render for ReadonlyTextFieldWithControls {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let search = Input::new(&self.search_state).prefix(Icon::new(PandoraIcon::Search).small());
+        let search = Input::new(&self.search_state)
+            .prefix(Icon::new(PandoraIcon::Search).small())
+            .when(self.designed, |s| {
+                s.w(px(220.)).h(px(36.)).bg(rgb(crate::theme::PANEL_SUNKEN)).text_size(px(13.))
+            });
 
-        let bar =
-            h_flex()
-                .w_full()
-                .rounded(cx.theme().radius)
-                .flex_1()
-                .gap_4()
-                .child(search)
-                .child(Button::new("top").label(t::common::nav::top()).on_click(cx.listener(|root, _, _, cx| {
-                    let mut state = root.scroll_handler.state.borrow_mut();
-                    state.scrolling = GameOutputScrolling::Top { offset: Pixels::ZERO };
-                    cx.notify();
-                })))
-                .child(Button::new("bottom").label(t::common::nav::bottom()).on_click(cx.listener(
-                    |root, _, _, cx| {
-                        let mut state = root.scroll_handler.state.borrow_mut();
-                        state.scrolling = GameOutputScrolling::Bottom;
-                        cx.notify();
-                    },
-                )));
+        let top = if self.designed {
+            crate::component::design::DesignButton::new("top")
+                .aria_label("Ir al principio")
+                .child(Icon::new(PandoraIcon::ArrowUp).size(px(14.)))
+                .on_click(cx.listener(|this, _, _, c| {
+                    this.scroll_handler.state.borrow_mut().scrolling =
+                        GameOutputScrolling::Top { offset: Pixels::ZERO };
+                    c.notify();
+                }))
+                .into_any_element()
+        } else {
+            Button::new("top")
+                .label(t::common::nav::top())
+                .on_click(cx.listener(|this, _, _, c| {
+                    this.scroll_handler.state.borrow_mut().scrolling =
+                        GameOutputScrolling::Top { offset: Pixels::ZERO };
+                    c.notify();
+                }))
+                .into_any_element()
+        };
+        let bottom = if self.designed {
+            crate::component::design::DesignButton::new("bottom")
+                .aria_label("Ir al final")
+                .child(Icon::new(PandoraIcon::ArrowDown).size(px(14.)))
+                .on_click(cx.listener(|this, _, _, c| {
+                    this.scroll_handler.state.borrow_mut().scrolling = GameOutputScrolling::Bottom;
+                    c.notify();
+                }))
+                .into_any_element()
+        } else {
+            Button::new("bottom")
+                .label(t::common::nav::bottom())
+                .on_click(cx.listener(|this, _, _, c| {
+                    this.scroll_handler.state.borrow_mut().scrolling = GameOutputScrolling::Bottom;
+                    c.notify();
+                }))
+                .into_any_element()
+        };
+        let bar = h_flex()
+            .w_full()
+            .rounded(cx.theme().radius)
+            .flex_1()
+            .gap_4()
+            .child(search)
+            .when(self.designed, |d| d.flex_none().gap(px(8.)).h(px(36.)))
+            .child(top)
+            .child(bottom);
 
         let bar = (self.extra)(bar);
 
@@ -941,6 +1005,9 @@ impl Render for ReadonlyTextFieldWithControls {
             .size_full()
             .border_12()
             .gap_4()
+            .when(self.designed, |d| {
+                d.border_0().p(px(12.)).gap(px(12.)).text_size(px(12.)).text_color(rgb(crate::theme::INK))
+            })
             .child(bar)
             .child(
                 h_flex()

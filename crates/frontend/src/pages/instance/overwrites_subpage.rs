@@ -1,7 +1,12 @@
+use super::overwrites_diff::{DiffRow, DisplayRow, unified_projection};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::entity::instance::InstanceEntry;
 use crate::icon::PandoraIcon;
+use crate::{
+    component::design::{self, DesignButton},
+    entity::instance::InstanceEntry,
+    theme,
+};
 use bridge::{
     handle::BackendHandle,
     instance::InstanceID,
@@ -12,12 +17,11 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable, Icon, Sizable, StyledExt, WindowExt,
+    ActiveTheme as _, Disableable, Icon, StyledExt, WindowExt,
     button::{Button, DropdownButton},
     h_flex,
-    input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    input::{InputEvent, InputState, Textarea, TextareaState},
     menu::{ContextMenuExt, PopupMenuItem},
-    resizable::{h_resizable, resizable_panel},
     scroll::{ScrollableElement, Scrollbar},
     v_flex,
 };
@@ -33,6 +37,7 @@ pub struct InstanceOverwritesSubpage {
     ancestor_level: usize,
     ancestor_cache: BTreeMap<(String, usize), ProfileAncestorText>,
     diff_rows: Vec<DiffRow>,
+    display_rows: Vec<DisplayRow>,
     diff_hunks: Vec<(usize, usize, bool, bool)>,
     diff_width: f32,
     diff_scroll: UniformListScrollHandle,
@@ -40,7 +45,7 @@ pub struct InstanceOverwritesSubpage {
     _ancestor_read: Task<()>,
     editor: Entity<TextareaState>,
     search: Entity<InputState>,
-    only_changes: bool,
+    change_filter: usize,
     notice: Option<String>,
     busy: bool,
     _load: Task<()>,
@@ -53,12 +58,6 @@ struct TreeRow {
     path: String,
     folder: bool,
     connector: String,
-}
-
-struct DiffRow {
-    left: Option<(usize, String)>,
-    right: Option<(usize, String)>,
-    changed: bool,
 }
 
 // Bounded LCS for ordinary configs; large files use a bounded alignment window.
@@ -136,14 +135,6 @@ fn diff_lines(left: &str, right: &str) -> Vec<DiffRow> {
     rows
 }
 
-fn ancestor_label(level: usize) -> String {
-    match level {
-        0 => "Madre".into(),
-        1 => "Abuela".into(),
-        _ => format!("Antepasado {}", level + 1),
-    }
-}
-
 fn diff_cell(line: &Option<(usize, String)>, changed: bool, left: bool, muted: Hsla, border: Hsla) -> Div {
     let background = if changed && line.is_some() {
         if left {
@@ -161,7 +152,7 @@ fn diff_cell(line: &Option<(usize, String)>, changed: bool, left: bool, muted: H
     h_flex()
         .w_full()
         .min_w_0()
-        .h(px(24.))
+        .h(px(20.))
         .bg(background)
         .border_r_1()
         .border_color(border)
@@ -173,19 +164,20 @@ fn tree_rows(
     report: &ProfileOverwritesReport,
     expanded: &BTreeSet<String>,
     query: &str,
-    only_changes: bool,
+    change_filter: usize,
 ) -> Vec<TreeRow> {
     let query = query.trim().to_lowercase();
     let changed: BTreeSet<&str> = report
         .local_changes
         .iter()
         .chain(&report.global_changes)
+        .filter(|change| filter_change(change.change, change_filter))
         .map(|change| change.path.as_str())
         .collect();
     let represented: BTreeSet<&str> = report.files.iter().map(|file| file.comparison_path.as_str()).collect();
     let mut leaves = BTreeSet::new();
     for file in &report.files {
-        if only_changes && !changed.contains(file.comparison_path.as_str()) {
+        if change_filter != 0 && !changed.contains(file.comparison_path.as_str()) {
             continue;
         }
         if !query.is_empty() && !file.path.to_lowercase().contains(&query) {
@@ -194,6 +186,9 @@ fn tree_rows(
         leaves.insert(file.path.clone());
     }
     for change in report.local_changes.iter().chain(&report.global_changes) {
+        if !filter_change(change.change, change_filter) {
+            continue;
+        }
         if represented.contains(change.path.as_str()) {
             continue;
         }
@@ -226,8 +221,8 @@ fn tree_rows(
                     return 100;
                 }
                 match path {
-                    "mods" => 0,
-                    "config" => 1,
+                    "config" => 0,
+                    "mods" => 1,
                     "resourcepacks" => 2,
                     "shaderpacks" => 3,
                     "defaultconfigs" => 4,
@@ -301,6 +296,7 @@ impl InstanceOverwritesSubpage {
             ancestor_level: 0,
             ancestor_cache: BTreeMap::new(),
             diff_rows: Vec::new(),
+            display_rows: Vec::new(),
             diff_hunks: Vec::new(),
             diff_width: 0.,
             diff_scroll: UniformListScrollHandle::new(),
@@ -308,7 +304,7 @@ impl InstanceOverwritesSubpage {
             _ancestor_read: Task::ready(()),
             editor: cx.new(|cx| TextareaState::new(window, cx).auto_grow(10, 24)),
             search,
-            only_changes: false,
+            change_filter: 1,
             notice: None,
             busy: false,
             _load: Task::ready(()),
@@ -339,6 +335,21 @@ impl InstanceOverwritesSubpage {
                 page.report = Some(result);
                 if let Some(path) = page.selected.clone() {
                     page.select(path, window, cx);
+                } else if std::env::var("WBOMBO_UI_CAPTURE_PAGE")
+                    .is_ok_and(|route| route.starts_with("instance-overwrites:agente-274-"))
+                {
+                    let path = "config/agent274-instance.properties";
+                    if page
+                        .report
+                        .as_ref()
+                        .and_then(|r| r.as_ref().ok())
+                        .is_some_and(|report| report.files.iter().any(|file| file.path == path))
+                    {
+                        page.expanded.insert("config".into());
+                        page.select(path.into(), window, cx);
+                    } else {
+                        log::info!("[WBOMBO-UI] instance-overwrites-ready pid={}", std::process::id());
+                    }
                 }
                 cx.notify();
             });
@@ -393,6 +404,8 @@ impl InstanceOverwritesSubpage {
         self.ancestor_level = 0;
         self.ancestor = None;
         self.diff_rows.clear();
+        self.display_rows.clear();
+        self.diff_hunks.clear();
         let editable = matches!(
             path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str(),
             "toml" | "properties" | "txt" | "cfg" | "ini" | "json" | "mcmeta" | "yaml" | "yml"
@@ -428,6 +441,8 @@ impl InstanceOverwritesSubpage {
         };
         self.ancestor = None;
         self.diff_rows.clear();
+        self.display_rows.clear();
+        self.diff_hunks.clear();
         let level = self.ancestor_level;
         let cached = self.ancestor_cache.get(&(path.clone(), level)).cloned();
         let local = self
@@ -452,7 +467,7 @@ impl InstanceOverwritesSubpage {
                 receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()))
             };
             let right = result.as_ref().ok().and_then(|r| r.contents.clone()).unwrap_or_default();
-            let (rows, width, hunks) = cx
+            let (rows, display_rows, width, hunks) = cx
                 .background_executor()
                 .spawn(async move {
                     let rows = diff_lines(&local, &right);
@@ -480,7 +495,8 @@ impl InstanceOverwritesSubpage {
                         hunks.push((start, end - start, local, parent));
                         start = end;
                     }
-                    (rows, (width as f32 * 8.5 + 68.) * 2., hunks)
+                    let (display_rows, hunks) = unified_projection(&rows, &hunks);
+                    (rows, display_rows, width as f32 * 7.2 + 68., hunks)
                 })
                 .await;
             _ = page.update_in(cx, |page, _, cx| {
@@ -495,19 +511,24 @@ impl InstanceOverwritesSubpage {
                 }
                 page.ancestor = Some(result);
                 page.diff_rows = rows;
+                page.display_rows = display_rows;
                 page.diff_hunks = hunks;
                 page.diff_width = width;
+                if std::env::var("WBOMBO_UI_CAPTURE_PAGE")
+                    .is_ok_and(|route| route.starts_with("instance-overwrites:agente-274-"))
+                    && std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("editing")
+                    && matches!(page.text, Some(Ok(_)))
+                {
+                    page.editing = true;
+                }
+                log::info!("[WBOMBO-UI] instance-overwrites-ready pid={}", std::process::id());
                 cx.notify();
             });
         });
         cx.notify();
     }
 
-    fn comparison_view(&self, cx: &mut Context<Self>) -> AnyElement {
-        let muted = cx.theme().muted_foreground;
-        let border = cx.theme().border;
-        let secondary = cx.theme().secondary;
-        let mut view = v_flex().flex_1().min_h_0().gap_2();
+    fn ancestor_menu(&self, cx: &mut Context<Self>) -> DropdownButton {
         let names = self
             .ancestor
             .as_ref()
@@ -516,57 +537,52 @@ impl InstanceOverwritesSubpage {
             .unwrap_or_default();
         let label = names
             .get(self.ancestor_level)
-            .map(|name| format!("{} · {name}", ancestor_label(self.ancestor_level)))
-            .unwrap_or_else(|| "Elegir antepasado".into());
-        let label = if label.chars().count() > 45 {
-            format!("{}…", label.chars().take(44).collect::<String>())
-        } else {
-            label
-        };
+            .map(|name| format!("Comparar con: {name}"))
+            .unwrap_or_else(|| "Comparar con:".into());
         let entity = cx.entity().downgrade();
-        view = view.child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(
-                    div()
-                        .flex_1()
-                        .text_sm()
-                        .text_color(muted)
-                        .child("Verde: cambios de esta instancia · Rojo: contenido de la madre"),
-                )
-                .child(
-                    Button::new("edit-comparison-file")
-                        .label("Editar archivo")
-                        .disabled(!matches!(self.text, Some(Ok(_))) || self.busy)
-                        .on_click(cx.listener(|page, _, _, cx| {
-                            page.editing = true;
-                            cx.notify();
-                        })),
-                ),
-        );
-        let ancestor_selector = DropdownButton::new("comparison-ancestor")
-            .small()
+        let selector = DropdownButton::new("comparison-ancestor")
             .button(Button::new("ancestor-label").label(label))
+            .disabled(names.is_empty())
             .dropdown_menu(move |mut menu, window, _| {
                 for (level, name) in names.iter().enumerate() {
                     let Some(entity) = entity.upgrade() else {
                         break;
                     };
-                    menu = menu.item(PopupMenuItem::new(format!("{} · {name}", ancestor_label(level))).on_click(
-                        window.listener_for(&entity, move |page: &mut Self, _, window, cx| {
+                    menu = menu.item(PopupMenuItem::new(name.clone()).on_click(window.listener_for(
+                        &entity,
+                        move |page: &mut Self, _, window, cx| {
                             page.ancestor_level = level;
                             page.load_ancestor(window, cx);
-                        }),
-                    ));
+                        },
+                    )));
                 }
                 menu
             });
+        selector
+    }
+    fn comparison_view(&self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let secondary = cx.theme().secondary;
+        let mut view = v_flex().flex_1().min_h_0().gap_2();
+        view = view.child(
+            h_flex().gap_2().items_center().child(
+                div()
+                    .flex_1()
+                    .text_sm()
+                    .text_color(muted)
+                    .child("Verde: cambios de esta instancia · Rojo: contenido de la madre"),
+            ),
+        );
         match &self.ancestor {
-            None => view = view.child(div().p_4().text_color(muted).child("Cargando comparación…")),
+            None => view = view.child(gpui_component::skeleton::Skeleton::new().w_full().h(px(44.))),
             Some(Err(error)) => {
-                view =
-                    view.child(div().p_4().text_color(muted).child(format!("No se pudo leer el antepasado: {error}")))
+                view = view.child(
+                    div()
+                        .p_4()
+                        .text_color(muted)
+                        .child(overwrite_error("No se ha podido leer el antepasado.", &error)),
+                )
             },
             Some(Ok(result)) if result.ancestors.is_empty() => {
                 view = view.child(
@@ -577,30 +593,6 @@ impl InstanceOverwritesSubpage {
                 )
             },
             Some(Ok(result)) => {
-                view = view.child(
-                    h_flex()
-                        .items_center()
-                        .gap_3()
-                        .child(div().flex_1().text_sm().text_color(muted).child(if self.diff_hunks.is_empty() {
-                            "Sin diferencias con el antepasado seleccionado. Puedes elegir otro en el selector."
-                                .to_string()
-                        } else {
-                            format!(
-                                "{} bloques de cambios · pulsa sus marcas verdes y rojas junto al scroll",
-                                self.diff_hunks.len()
-                            )
-                        }))
-                        .when(!self.diff_hunks.is_empty(), |this| {
-                            this.child(Button::new("first-diff-change").small().label("Ir al primer cambio").on_click(
-                                cx.listener(|page, _, _, cx| {
-                                    if let Some(&(start, _, _, _)) = page.diff_hunks.first() {
-                                        page.diff_scroll.scroll_to_item(start, ScrollStrategy::Center);
-                                        cx.notify();
-                                    }
-                                }),
-                            ))
-                        }),
-                );
                 if result.contents.is_none() {
                     view =
                         view.child(div().text_sm().text_color(muted).child("El archivo no existe en este antepasado."));
@@ -613,60 +605,33 @@ impl InstanceOverwritesSubpage {
                             .child("El archivo no está disponible en esta instancia."),
                     );
                 }
-                let mut panels = h_resizable("config-comparison-split");
-                let mut selector = Some(ancestor_selector);
-                for left in [true, false] {
-                    let mut header = h_flex()
-                        .h(px(44.))
-                        .flex_shrink_0()
-                        .px_3()
-                        .items_center()
-                        .bg(secondary)
-                        .border_b_1()
-                        .border_color(border)
-                        .overflow_hidden();
-                    header = if left {
-                        header.child(div().font_semibold().child("Esta instancia"))
-                    } else {
-                        header.child(selector.take().unwrap())
-                    };
-                    let list = uniform_list(
-                        if left { "config-diff-left" } else { "config-diff-right" },
-                        self.diff_rows.len() + 1,
-                        cx.processor(move |page, range: std::ops::Range<usize>, _, _| {
-                            range
-                                .map(|index| {
-                                    // Extra empty row keeps the final real line above the overlay scrollbar.
-                                    let Some(row) = page.diff_rows.get(index) else {
-                                        return div().w_full().h(px(24.));
-                                    };
-                                    div().w_full().h(px(24.)).font_family("Consolas").text_sm().child(diff_cell(
-                                        if left { &row.left } else { &row.right },
-                                        row.changed,
-                                        left,
-                                        muted,
-                                        border,
-                                    ))
-                                })
-                                .collect::<Vec<_>>()
-                        }),
-                    )
-                    .w_full()
-                    .h_full()
-                    .min_w(px(self.diff_width / 2.))
-                    .track_scroll(&self.diff_scroll);
-                    panels = panels.child(
-                        resizable_panel().size_range(px(180.)..px(10000.)).child(
-                            v_flex()
-                                .size_full()
-                                .min_w_0()
-                                .min_h_0()
-                                .child(header)
-                                .child(div().flex_1().min_h_0().w_full().overflow_x_scrollbar().child(list)),
-                        ),
-                    );
-                }
-                let total = (self.diff_rows.len() + 1) as f32;
+                let list = uniform_list(
+                    "config-unified-diff",
+                    self.display_rows.len() + 1,
+                    cx.processor(move |page, range: std::ops::Range<usize>, _, _| {
+                        range
+                            .map(|index| {
+                                let Some(display) = page.display_rows.get(index) else {
+                                    return div().w_full().h(px(20.));
+                                };
+                                let row = &page.diff_rows[display.pair];
+                                div().w_full().h(px(20.)).font_family("Consolas").text_size(px(12.)).child(diff_cell(
+                                    if display.local { &row.left } else { &row.right },
+                                    row.changed,
+                                    display.local,
+                                    muted,
+                                    border,
+                                ))
+                            })
+                            .collect::<Vec<_>>()
+                    }),
+                )
+                .w_full()
+                .h_full()
+                .min_w(px(self.diff_width))
+                .track_scroll(&self.diff_scroll);
+                let panels = div().size_full().min_w_0().overflow_x_scrollbar().child(list);
+                let total = (self.display_rows.len() + 1) as f32;
                 let mut overview = div()
                     .relative()
                     .w(px(16.))
@@ -718,7 +683,7 @@ impl InstanceOverwritesSubpage {
                         .border_color(border)
                         .child(div().flex_1().min_w_0().h_full().child(panels))
                         .child(
-                            v_flex().w(px(28.)).h_full().flex_none().pt(px(44.)).child(
+                            v_flex().w(px(28.)).h_full().flex_none().pt(px(0.)).child(
                                 h_flex()
                                     .flex_1()
                                     .min_h_0()
@@ -752,7 +717,7 @@ impl InstanceOverwritesSubpage {
             expected_sha256: file.sha256.clone(),
             channel,
         });
-        self.notice = Some("Guardando…".into());
+        self.notice = None;
         self.busy = true;
         self._save = cx.spawn_in(window, async move |page, cx| {
             let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
@@ -766,7 +731,9 @@ impl InstanceOverwritesSubpage {
                             page.notice = Some("Archivo guardado.".into());
                             page.reload(window, cx);
                         },
-                        Err(error) => page.notice = Some(format!("No se pudo guardar: {error}")),
+                        Err(error) => {
+                            page.notice = Some(overwrite_error("No se ha podido guardar el archivo.", &error))
+                        },
                     }
                 }
                 cx.notify();
@@ -789,7 +756,7 @@ impl InstanceOverwritesSubpage {
             channel,
         });
         self.busy = true;
-        self.notice = Some("Cambiando estado del mod…".into());
+        self.notice = None;
         self._save = cx.spawn_in(window, async move |page, cx| {
             let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
             _ = page.update_in(cx, |page, window, cx| {
@@ -801,7 +768,9 @@ impl InstanceOverwritesSubpage {
                         page.notice = Some("Estado del mod cambiado.".into());
                         page.reload(window, cx);
                     },
-                    Err(error) => page.notice = Some(format!("No se pudo cambiar el mod: {error}")),
+                    Err(error) => {
+                        page.notice = Some(overwrite_error("No se ha podido cambiar el estado del mod.", &error))
+                    },
                 }
                 cx.notify();
             });
@@ -836,7 +805,7 @@ impl InstanceOverwritesSubpage {
                             page.apply_ignore_policy(paths.0, cx);
                         }
                     },
-                    Err(error) => page.notice = Some(format!("No se pudo ignorar la ruta: {error}")),
+                    Err(error) => page.notice = Some(overwrite_error("No se ha podido ignorar la ruta.", &error)),
                 }
                 cx.notify();
             });
@@ -846,21 +815,22 @@ impl InstanceOverwritesSubpage {
 
     fn confirm_restore(&mut self, path: String, source: RestoreSource, window: &mut Window, cx: &mut Context<Self>) {
         let label = match source {
-            RestoreSource::LocalParent => "madre local",
-            RestoreSource::PinnedGlobal => "revisión global fijada",
+            RestoreSource::LocalParent => "Restaurar desde madre local",
+            RestoreSource::PinnedGlobal => "Restaurar desde revisión global fijada",
         };
         let entity = cx.entity();
         let display_path = path.clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let entity = entity.clone();
             let path = path.clone();
-            dialog
-                .title("Restaurar archivo")
+            design::dialog(dialog)
+                .title(design::dialog_title("Restaurar archivo"))
                 .width(px(500.0))
                 .child(
                     v_flex()
                         .gap_2()
-                        .child(format!("¿Restaurar {display_path} desde la {label}?"))
+                        .child(display_path.clone())
+                        .child(label)
                         .child("Se sustituirá el archivo local si existe. La madre no cambiará."),
                 )
                 .footer(
@@ -869,14 +839,18 @@ impl InstanceOverwritesSubpage {
                         .justify_end()
                         .gap_2()
                         .child(
-                            Button::new("cancel-restore")
+                            DesignButton::new("cancel-restore")
                                 .label("Cancelar")
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
-                        .child(Button::new("confirm-restore").label("Restaurar").on_click(move |_, window, cx| {
-                            window.close_dialog(cx);
-                            _ = entity.update(cx, |page, cx| page.restore_file(path.clone(), source, window, cx));
-                        })),
+                        .child(
+                            design::action_button("confirm-restore", "Restaurar", design::ButtonAction::Primary)
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = entity
+                                        .update(cx, |page, cx| page.restore_file(path.clone(), source, window, cx));
+                                }),
+                        ),
                 )
         });
     }
@@ -893,7 +867,7 @@ impl InstanceOverwritesSubpage {
             channel,
         });
         self.busy = true;
-        self.notice = Some("Restaurando archivo…".into());
+        self.notice = None;
         self._save = cx.spawn_in(window, async move |page, cx| {
             let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
             _ = page.update_in(cx, |page, window, cx| {
@@ -905,7 +879,7 @@ impl InstanceOverwritesSubpage {
                         page.notice = Some("Archivo restaurado desde su madre.".into());
                         page.reload(window, cx);
                     },
-                    Err(error) => page.notice = Some(format!("No se pudo restaurar: {error}")),
+                    Err(error) => page.notice = Some(overwrite_error("No se ha podido restaurar el archivo.", &error)),
                 }
                 cx.notify();
             });
@@ -924,54 +898,65 @@ impl Render for InstanceOverwritesSubpage {
         let border = cx.theme().border;
         let secondary = cx.theme().secondary;
         let accent = cx.theme().accent;
+        let mut filters = h_flex().gap(px(2.));
+        for (index, label) in ["Todos", "Cambios", "Añadidos", "Eliminados"].into_iter().enumerate() {
+            filters =
+                filters.child(design::chip(("overwrite-filter", index), label, self.change_filter == index).on_click(
+                    cx.listener(move |page, _, _, cx| {
+                        page.change_filter = index;
+                        cx.notify();
+                    }),
+                ));
+        }
         let header = h_flex()
-            .justify_between()
-            .items_center()
+            .w_full()
+            .gap(px(12.))
             .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_2()
-                            .child(Icon::new(PandoraIcon::GitBranch).size_5())
-                            .child(div().text_lg().font_semibold().child("Archivos del perfil")),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child("Explora la rama, revisa lo heredado y edita tus cambios locales."),
-                    ),
+                design::text_field(&self.search)
+                    .prefix(Icon::new(PandoraIcon::Search).size(px(14.)))
+                    .flex_1()
+                    .min_w(px(160.))
+                    .max_w(px(340.)),
             )
-            .child(
-                Button::new("refresh-overwrites")
-                    .label("Volver a comparar")
-                    .on_click(cx.listener(|page, _, window, cx| page.reload(window, cx))),
-            );
+            .child(self.ancestor_menu(cx))
+            .child(filters)
+            .when(!self.diff_hunks.is_empty(), |d| {
+                d.child(DesignButton::new("first-diff-change").label("Ir al primer cambio").on_click(cx.listener(
+                    |page, _, _, cx| {
+                        if let Some(&(start, _, _, _)) = page.diff_hunks.first() {
+                            page.diff_scroll.scroll_to_item(start, ScrollStrategy::Center);
+                            cx.notify();
+                        }
+                    },
+                )))
+            });
+        let header = v_flex().gap(px(10.)).child(header).child(
+            DesignButton::new("refresh-overwrites")
+                .label("Volver a comparar")
+                .self_start()
+                .on_click(cx.listener(|page, _, window, cx| page.reload(window, cx))),
+        );
 
         let content = match &self.report {
             None => v_flex()
                 .flex_1()
                 .items_center()
                 .justify_center()
-                .child(div().text_color(muted).child("Comparando archivos del modpack…"))
+                .child(gpui_component::skeleton::Skeleton::new().w(px(260.)).h(px(44.)))
                 .into_any_element(),
             Some(Err(error)) => v_flex()
                 .flex_1()
                 .items_center()
                 .justify_center()
-                .child(div().text_color(cx.theme().danger).child(format!("No se pudo leer el modpack: {error}")))
+                .child(
+                    div()
+                        .text_color(cx.theme().danger)
+                        .child(overwrite_error("No se ha podido leer el perfil.", &error)),
+                )
                 .into_any_element(),
             Some(Ok(report)) => {
                 let query = self.search.read(cx).value();
-                let changed: BTreeSet<&str> = report
-                    .local_changes
-                    .iter()
-                    .chain(&report.global_changes)
-                    .map(|change| change.path.as_str())
-                    .collect();
-                let rows = tree_rows(report, &self.expanded, &query, self.only_changes);
+                let rows = tree_rows(report, &self.expanded, &query, self.change_filter);
                 let empty = rows.is_empty();
                 let file_index: BTreeMap<_, _> = report.files.iter().map(|file| (file.path.as_str(), file)).collect();
                 let mut tree = v_flex();
@@ -1018,7 +1003,6 @@ impl Render for InstanceOverwritesSubpage {
                         .px_2()
                         .gap_2()
                         .items_center()
-                        .rounded_md()
                         .cursor_pointer()
                         .hover(|style| style.bg(secondary))
                         .child(div().font_family("Consolas").text_sm().text_color(muted).child(row.connector))
@@ -1029,15 +1013,32 @@ impl Render for InstanceOverwritesSubpage {
                             div()
                                 .px_2()
                                 .py_px()
-                                .rounded_md()
                                 .text_xs()
-                                .text_color(cx.theme().warning)
-                                .bg(cx.theme().warning.opacity(0.12))
+                                .border_1()
+                                .border_color(
+                                    rgb(match change.change {
+                                        OverwriteChange::Added | OverwriteChange::AddedDisabled => 0x55bf7a,
+                                        OverwriteChange::Removed => 0xe56b65,
+                                        OverwriteChange::Disabled | OverwriteChange::ModifiedAndDisabled => {
+                                            theme::INK_MUTED
+                                        },
+                                        _ => theme::ACCENT,
+                                    })
+                                    .opacity(0.35),
+                                )
+                                .text_color(rgb(match change.change {
+                                    OverwriteChange::Added | OverwriteChange::AddedDisabled => 0x55bf7a,
+                                    OverwriteChange::Removed => 0xe56b65,
+                                    OverwriteChange::Disabled | OverwriteChange::ModifiedAndDisabled => {
+                                        theme::INK_MUTED
+                                    },
+                                    _ => theme::ACCENT,
+                                }))
                                 .child(change_badge(change.change)),
                         );
                     }
                     if selected {
-                        item = item.bg(accent.opacity(0.35));
+                        item = item.bg(rgba(0x5bcef51a));
                     }
                     let menu_path = path.clone();
                     let menu_entity = page_entity.clone();
@@ -1104,93 +1105,37 @@ impl Render for InstanceOverwritesSubpage {
                     );
                 }
                 if empty {
-                    tree = tree.child(div().p_4().text_sm().text_color(muted).child(if self.only_changes {
-                        "No hay diferencias con este filtro."
-                    } else {
-                        "No hay archivos con este filtro."
-                    }));
+                    tree = tree.child(div().w_full().p_4().text_center().text_sm().text_color(muted).child(
+                        if self.change_filter != 0 {
+                            "No hay diferencias con este filtro."
+                        } else {
+                            "No hay archivos con este filtro."
+                        },
+                    ));
                 }
-                let total = report.files.len();
                 let explorer = v_flex()
-                    .w(px(390.0))
+                    .w(px(340.))
                     .h_full()
                     .flex_shrink_0()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(border)
-                    .bg(secondary.opacity(0.3))
+                    .bg(rgb(theme::PANEL_SUNKEN))
                     .child(
-                        v_flex()
-                            .gap_3()
-                            .p_3()
-                            .border_b_1()
-                            .border_color(border)
-                            .child(
-                                h_flex()
-                                    .justify_between()
-                                    .items_center()
-                                    .child(div().font_semibold().child("Explorador"))
-                                    .child(div().text_xs().text_color(muted).child(format!("{total} archivos"))),
-                            )
-                            .child(Input::new(&self.search).prefix(Icon::new(PandoraIcon::Search).small()))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(muted)
-                                    .child("Clic derecho en un archivo o carpeta para ver sus opciones."),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .id("overwrite-all")
-                                            .px_3()
-                                            .py_1()
-                                            .rounded_md()
-                                            .cursor_pointer()
-                                            .bg(if self.only_changes {
-                                                secondary
-                                            } else {
-                                                accent.opacity(0.45)
-                                            })
-                                            .child("Todos")
-                                            .on_click(cx.listener(|page, _, _, cx| {
-                                                page.only_changes = false;
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("overwrite-changed")
-                                            .px_3()
-                                            .py_1()
-                                            .rounded_md()
-                                            .cursor_pointer()
-                                            .bg(if self.only_changes {
-                                                accent.opacity(0.45)
-                                            } else {
-                                                secondary
-                                            })
-                                            .child(format!("Diferencias · {}", changed.len()))
-                                            .on_click(cx.listener(|page, _, _, cx| {
-                                                page.only_changes = true;
-                                                cx.notify();
-                                            })),
-                                    ),
-                            ),
+                        h_flex()
+                            .justify_between()
+                            .px(px(14.))
+                            .py(px(12.))
+                            .child("Explorador")
+                            .child(div().text_size(px(11.)).text_color(muted).child("Clic derecho: opciones")),
                     )
-                    .child(v_flex().flex_1().overflow_y_scrollbar().p_2().child(tree));
+                    .child(v_flex().flex_1().min_h_0().overflow_y_scrollbar().p_2().child(tree));
 
                 let mut details = v_flex()
                     .gap_4()
                     .flex_1()
                     .h_full()
                     .min_w_0()
-                    .rounded_lg()
                     .border_1()
                     .border_color(border)
-                    .bg(secondary.opacity(0.18))
+                    .bg(rgb(theme::PANEL_SUNKEN))
                     .p_4();
                 if let Some(path) = &self.selected {
                     let file_name = path.rsplit('/').next().unwrap_or(path);
@@ -1208,31 +1153,41 @@ impl Render for InstanceOverwritesSubpage {
                                     .child(div().text_lg().font_semibold().truncate().child(file_name.to_string()))
                                     .child(div().text_sm().text_color(muted).child(directory.to_string())),
                             )
-                            .child(
-                                div().text_xs().text_color(muted).child(
-                                    selected_file
-                                        .map(|file| format_size(file.size))
-                                        .unwrap_or_else(|| "Archivo eliminado".into()),
-                                ),
-                            ),
+                            .child(div().text_xs().text_color(muted).child(
+                                selected_file.map(|file| format_size(file.size)).unwrap_or_else(|| "Eliminado".into()),
+                            )),
                     );
-                    let mut sources = h_flex().gap_3();
-                    if let Some(parent) = &report.local_parent {
-                        let change = report.local_changes.iter().find(|c| c.path == comparison).map(|c| c.change);
-                        sources = sources.child(source_card("MADRE LOCAL", parent, change, border, secondary, muted));
-                    }
-                    if let Some(profile) = &report.global_profile {
-                        let change = report.global_changes.iter().find(|c| c.path == comparison).map(|c| c.change);
-                        let name = profile.split_once(" · ").map(|(name, _)| name).unwrap_or(profile);
-                        sources = sources.child(source_card("PERFIL GLOBAL", name, change, border, secondary, muted));
-                    }
-                    if report.local_parent.is_some() || report.global_profile.is_some() {
-                        details = details.child(sources);
-                    }
                     let is_text = matches!(
                         path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str(),
                         "toml" | "properties" | "txt" | "cfg" | "ini" | "json" | "mcmeta" | "yaml" | "yml"
                     );
+                    let restore_source = if report
+                        .local_changes
+                        .iter()
+                        .any(|change| change.path == comparison && can_restore(change.change))
+                    {
+                        Some(RestoreSource::LocalParent)
+                    } else if report
+                        .global_changes
+                        .iter()
+                        .any(|change| change.path == comparison && can_restore(change.change))
+                    {
+                        Some(RestoreSource::PinnedGlobal)
+                    } else {
+                        None
+                    };
+                    let mut file_actions = h_flex().w_full().items_center().gap(px(8.));
+                    if let Some(source) = restore_source {
+                        let restore_path = path.clone();
+                        file_actions = file_actions.child(
+                            DesignButton::new("restore-selected-parent")
+                                .label("Restaurar desde la madre")
+                                .disabled(self.busy)
+                                .on_click(cx.listener(move |page, _, window, cx| {
+                                    page.confirm_restore(restore_path.clone(), source, window, cx)
+                                })),
+                        );
+                    }
                     if is_text && !self.editing {
                         details = details.child(self.comparison_view(cx));
                     } else {
@@ -1240,77 +1195,84 @@ impl Render for InstanceOverwritesSubpage {
                             Some(Ok(file)) => {
                                 let dirty = self.editor.read(cx).value().as_str() != file.contents;
                                 details = details
+                                    .child(v_flex().child(div().font_semibold().child("Contenido")).child(
+                                        div().text_xs().text_color(muted).child(if dirty {
+                                            "Cambios sin guardar"
+                                        } else {
+                                            "Sin cambios"
+                                        }),
+                                    ))
                                     .child(
-                                        h_flex()
-                                            .justify_between()
-                                            .items_center()
-                                            .child(v_flex().child(div().font_semibold().child("Contenido")).child(
-                                                div().text_xs().text_color(muted).child(if dirty {
-                                                    "Cambios sin guardar"
-                                                } else {
-                                                    "Edición local de esta rama"
-                                                }),
-                                            ))
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(
-                                                        Button::new("back-to-comparison")
-                                                            .label("Comparar")
-                                                            .disabled(dirty || self.busy)
-                                                            .on_click(cx.listener(|page, _, window, cx| {
-                                                                page.editing = false;
-                                                                page.load_ancestor(window, cx);
-                                                            })),
-                                                    )
-                                                    .child(
-                                                        Button::new("discard-overwrite-text")
-                                                            .label("Descartar")
-                                                            .disabled(!dirty || self.busy)
-                                                            .on_click(cx.listener(|page, _, window, cx| {
-                                                                if let Some(Ok(file)) = &page.text {
-                                                                    let original = file.contents.clone();
-                                                                    page.editor.update(cx, |editor, cx| {
-                                                                        editor.set_value(original, window, cx)
-                                                                    });
-                                                                }
-                                                            })),
-                                                    )
-                                                    .child(
-                                                        Button::new("save-overwrite-text")
-                                                            .label("Guardar cambios")
-                                                            .disabled(!dirty || self.busy)
-                                                            .on_click(
-                                                                cx.listener(|page, _, window, cx| {
-                                                                    page.save(window, cx)
-                                                                }),
-                                                            ),
-                                                    ),
-                                            ),
+                                        v_flex()
+                                            .flex_1()
+                                            .overflow_y_scrollbar()
+                                            .child(Textarea::new(&self.editor).bg(rgb(theme::PANEL_SUNKEN))),
+                                    );
+                                file_actions = file_actions
+                                    .child(div().flex_1())
+                                    .child(
+                                        DesignButton::new("back-to-comparison")
+                                            .label("Comparar")
+                                            .disabled(dirty || self.busy)
+                                            .on_click(cx.listener(|page, _, window, cx| {
+                                                page.editing = false;
+                                                page.load_ancestor(window, cx);
+                                            })),
                                     )
-                                    .child(v_flex().flex_1().overflow_y_scrollbar().child(Textarea::new(&self.editor)));
+                                    .child(
+                                        DesignButton::new("discard-overwrite-text")
+                                            .label("Descartar")
+                                            .disabled(!dirty || self.busy)
+                                            .on_click(cx.listener(|page, _, window, cx| {
+                                                if let Some(Ok(file)) = &page.text {
+                                                    let original = file.contents.clone();
+                                                    page.editor.update(cx, |editor, cx| {
+                                                        editor.set_value(original, window, cx)
+                                                    });
+                                                }
+                                            })),
+                                    )
+                                    .child(
+                                        design::action_button(
+                                            "save-overwrite-text",
+                                            "Guardar cambios",
+                                            design::ButtonAction::Primary,
+                                        )
+                                        .disabled(!dirty || self.busy)
+                                        .on_click(cx.listener(|page, _, window, cx| page.save(window, cx))),
+                                    );
                             },
                             Some(Err(error)) => {
                                 details = details.child(
                                     div()
                                         .p_4()
-                                        .rounded_md()
                                         .bg(secondary)
-                                        .child(format!("No se puede previsualizar este archivo: {error}")),
+                                        .child(overwrite_error("No se ha podido previsualizar el archivo.", &error)),
                                 );
                             },
                             None if selected_file.is_some_and(|file| file.editable) => {
-                                details = details.child(div().text_color(muted).child("Abriendo archivo de texto…"));
+                                details = details.child(gpui_component::skeleton::Skeleton::new().w_full().h(px(44.)));
                             },
                             None => {
-                                details =
-                                    details.child(
-                                        div().p_4().rounded_md().bg(secondary).child(
-                                            "Archivo binario o eliminado. La edición de texto no está disponible.",
-                                        ),
-                                    );
+                                details = details.child(
+                                    div()
+                                        .p_4()
+                                        .bg(secondary)
+                                        .child("Archivo binario o eliminado. La edición de texto no está disponible."),
+                                );
                             },
                         }
+                    }
+                    if is_text && !self.editing {
+                        file_actions = file_actions.child(
+                            DesignButton::new("edit-comparison-file")
+                                .label("Editar archivo")
+                                .disabled(!matches!(self.text, Some(Ok(_))) || self.busy)
+                                .on_click(cx.listener(|page, _, _, cx| {
+                                    page.editing = true;
+                                    cx.notify();
+                                })),
+                        );
                     }
                     if selected_file.is_some()
                         && path.to_ascii_lowercase().starts_with("mods/")
@@ -1322,116 +1284,52 @@ impl Render for InstanceOverwritesSubpage {
                         } else {
                             "Desactivar mod"
                         };
-                        details = details.child(
-                            Button::new("toggle-profile-mod")
+                        file_actions = file_actions.child(
+                            DesignButton::new("toggle-profile-mod")
                                 .label(label)
                                 .disabled(self.busy)
                                 .on_click(cx.listener(|page, _, window, cx| page.toggle_mod(window, cx))),
                         );
                     }
-                } else {
-                    details = details.child(
-                        v_flex()
-                            .flex_1()
-                            .items_center()
-                            .justify_center()
-                            .gap_3()
-                            .child(Icon::new(PandoraIcon::GitBranch).size_8().text_color(muted))
-                            .child(div().font_semibold().child("Explora tu rama"))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(muted)
-                                    .child("Elige un archivo del árbol para ver su origen y sus cambios."),
-                            ),
-                    );
+                    details = details.child(file_actions);
                 }
                 if let Some(notice) = &self.notice {
                     details = details.child(div().text_sm().child(notice.clone()));
-                }
-                let mut summary = h_flex().gap_2().items_center();
-                if let Some(parent) = &report.local_parent {
-                    summary = summary.child(summary_chip(
-                        "Madre local",
-                        parent,
-                        report.local_changes.len(),
-                        border,
-                        secondary,
-                    ));
-                }
-                if let Some(profile) = &report.global_profile {
-                    let name = profile.split_once(" · ").map(|(name, _)| name).unwrap_or(profile);
-                    summary = summary.child(summary_chip(
-                        "Perfil global",
-                        name,
-                        report.global_changes.len(),
-                        border,
-                        secondary,
-                    ));
-                }
-                if report.skipped_entries > 0 {
-                    summary = summary.child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(format!("{} enlaces omitidos", report.skipped_entries)),
-                    );
                 }
                 let mut section = v_flex()
                     .gap_3()
                     .flex_1()
                     .min_h_0()
-                    .child(summary)
                     .child(h_flex().gap_3().flex_1().min_h_0().child(explorer).child(details));
                 if let Some(error) = &report.local_error {
-                    section = section.child(div().text_sm().text_color(cx.theme().danger).child(error.clone()));
+                    section = section.child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().danger)
+                            .child(overwrite_error("No se ha podido leer el antepasado.", error)),
+                    );
                 }
                 if let Some(error) = &report.global_error {
-                    section = section.child(div().text_sm().text_color(cx.theme().danger).child(error.clone()));
+                    section = section.child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().danger)
+                            .child(overwrite_error("No se ha podido leer el antepasado.", error)),
+                    );
                 }
                 section.into_any_element()
             },
         };
-        v_flex().size_full().gap_4().p_4().child(header).child(content)
+        v_flex()
+            .size_full()
+            .gap(px(16.))
+            .px(px(24.))
+            .py(px(20.))
+            .text_size(px(13.))
+            .child(header)
+            .child(content)
+            .when(self.busy, |d| d.child(gpui_component::skeleton::Skeleton::new().w_full().h(px(8.))))
     }
-}
-
-fn summary_chip(label: &str, name: &str, count: usize, border: Hsla, background: Hsla) -> AnyElement {
-    h_flex()
-        .gap_2()
-        .items_center()
-        .px_3()
-        .py_2()
-        .rounded_md()
-        .border_1()
-        .border_color(border)
-        .bg(background)
-        .child(div().text_xs().child(label.to_string()))
-        .child(div().font_semibold().text_sm().child(name.to_string()))
-        .child(div().text_xs().child(format!("{count} cambios")))
-        .into_any_element()
-}
-
-fn source_card(
-    label: &str,
-    name: &str,
-    change: Option<OverwriteChange>,
-    border: Hsla,
-    background: Hsla,
-    muted: Hsla,
-) -> AnyElement {
-    v_flex()
-        .flex_1()
-        .gap_1()
-        .p_3()
-        .rounded_md()
-        .border_1()
-        .border_color(border)
-        .bg(background)
-        .child(div().text_xs().text_color(muted).child(label.to_string()))
-        .child(div().text_sm().font_semibold().truncate().child(name.to_string()))
-        .child(div().text_sm().child(change.map(change_name).unwrap_or("Sin cambios").to_string()))
-        .into_any_element()
 }
 
 fn format_size(size: u64) -> String {
@@ -1444,25 +1342,29 @@ fn format_size(size: u64) -> String {
     }
 }
 
-fn change_name(change: OverwriteChange) -> &'static str {
+fn change_badge(change: OverwriteChange) -> &'static str {
     match change {
-        OverwriteChange::Added => "Añadido",
-        OverwriteChange::AddedDisabled => "Añadido y desactivado",
-        OverwriteChange::Modified => "Modificado",
+        OverwriteChange::Added | OverwriteChange::AddedDisabled => "Añadido",
         OverwriteChange::Removed => "Eliminado",
-        OverwriteChange::Disabled => "Desactivado",
-        OverwriteChange::Enabled => "Activado",
-        OverwriteChange::ModifiedAndDisabled => "Modificado y desactivado",
-        OverwriteChange::ModifiedAndEnabled => "Modificado y activado",
+        OverwriteChange::Disabled | OverwriteChange::ModifiedAndDisabled => "Desactivado",
+        OverwriteChange::Enabled | OverwriteChange::ModifiedAndEnabled => "Activado",
+        OverwriteChange::Modified => "Modificado",
     }
 }
 
-fn change_badge(change: OverwriteChange) -> &'static str {
-    match change {
-        OverwriteChange::Added | OverwriteChange::AddedDisabled => "Nuevo",
-        OverwriteChange::Removed => "Quitado",
-        OverwriteChange::Disabled | OverwriteChange::ModifiedAndDisabled => "Off",
-        OverwriteChange::Enabled | OverwriteChange::ModifiedAndEnabled => "On",
-        OverwriteChange::Modified => "Editado",
+fn filter_change(change: OverwriteChange, filter: usize) -> bool {
+    match filter {
+        2 => matches!(change, OverwriteChange::Added | OverwriteChange::AddedDisabled),
+        3 => change == OverwriteChange::Removed,
+        _ => true,
     }
+}
+fn overwrite_error(message: &str, detail: &str) -> String {
+    let detail = detail
+        .split_whitespace()
+        .map(|part| if part.contains("://") { "[URL omitted]" } else { part })
+        .collect::<Vec<_>>()
+        .join(" ");
+    log::warn!("Instance overwrite operation failed: {detail}");
+    message.to_owned()
 }

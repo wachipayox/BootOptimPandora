@@ -190,6 +190,11 @@ pub enum MessageToBackend {
         id: InstanceID,
         icon: Option<EmbeddedOrRaw>,
     },
+    SetInstanceHomeArtwork {
+        id: InstanceID,
+        path: Option<std::path::PathBuf>,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     KillInstance {
         id: InstanceID,
     },
@@ -327,6 +332,10 @@ pub enum MessageToBackend {
         uuids: Vec<String>,
         channel: tokio::sync::oneshot::Sender<Vec<(String, std::path::PathBuf)>>,
     },
+    GetInstanceProfileInfo {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<crate::instance::InstanceProfileInfo, String>>,
+    },
     GetHomePresentation {
         id: Option<InstanceID>,
         channel: tokio::sync::oneshot::Sender<Result<crate::home::HomePresentation, String>>,
@@ -369,7 +378,7 @@ pub enum MessageToBackend {
     },
     CheckInheritedUpdates {
         id: InstanceID,
-        channel: tokio::sync::oneshot::Sender<Result<Vec<String>, String>>,
+        channel: tokio::sync::oneshot::Sender<Result<InheritedUpdateCheck, String>>,
     },
     UpdateInheritedChain {
         id: InstanceID,
@@ -664,8 +673,16 @@ pub struct GlobalProfileSaveGroupTarget {
 
 #[derive(Debug, Default)]
 pub struct LogFiles {
-    pub paths: Vec<Arc<Path>>,
+    pub files: Vec<LogFileInfo>,
     pub total_gzipped_size: usize,
+}
+#[derive(Debug, Clone)]
+pub struct LogFileInfo {
+    pub path: Arc<Path>,
+    pub modified_unix_ms: u64,
+    pub size: u64,
+    pub crash: bool,
+    pub launcher: bool,
 }
 
 #[derive(Debug)]
@@ -953,4 +970,22 @@ pub enum CliInstanceCommand {
 pub struct CliStartOutcome {
     pub lines: Vec<String>,
     pub exit_code: u8,
+}
+
+/// Display metadata from the existing signed update check. Never installation authority.
+#[derive(Clone, Debug, Default)]
+pub struct InheritedUpdateCheck {
+    pub pending_names: Vec<String>,
+    pub global: Option<InheritedGlobalUpdate>,
+}
+impl InheritedUpdateCheck {
+    pub fn is_empty(&self) -> bool {
+        self.pending_names.is_empty()
+    }
+}
+#[derive(Clone, Debug)]
+pub struct InheritedGlobalUpdate {
+    pub profile_id: String,
+    pub current_revision: String,
+    pub available_revision: String,
 }

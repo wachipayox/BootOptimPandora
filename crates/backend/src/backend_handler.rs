@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, Read},
     path::Path,
     sync::{Arc, atomic::Ordering},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
 use auth::{credentials::AccountCredentials, models::MinecraftAccessToken, secret::PlatformSecretStorage};
@@ -12,8 +12,8 @@ use bridge::{
     instance::{ContentFolder, ContentSummary, ContentType, InstanceID, InstanceStatus},
     keep_alive::KeepAlive,
     message::{
-        AccountCapesResult, AccountSkinResult, EmbeddedOrRaw, GameOutputMsg, LogFiles, MessageToBackend,
-        MessageToFrontend, QuickPlayLaunch,
+        AccountCapesResult, AccountSkinResult, EmbeddedOrRaw, GameOutputMsg, MessageToBackend, MessageToFrontend,
+        QuickPlayLaunch,
     },
     meta::MetadataResult,
     modal_action::{ModalAction, ModalActionVisitUrl, ProgressTrackerFinishType},
@@ -579,6 +579,12 @@ impl BackendState {
                         configuration.system_libraries = Some(system_libraries);
                     });
                 }
+            },
+            MessageToBackend::SetInstanceHomeArtwork { id, path, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = channel.send(backend.set_instance_home_artwork(id, path.as_deref()));
+                });
             },
             MessageToBackend::SetInstanceIcon { id, icon } => {
                 let root_path = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
@@ -1624,46 +1630,13 @@ impl BackendState {
                 });
             },
             MessageToBackend::GetLogFiles { instance: id, channel } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    let logs = instance.dot_minecraft_path.join("logs");
-
-                    if let Ok(read_dir) = std::fs::read_dir(logs) {
-                        let mut paths_with_time = Vec::new();
-                        let mut total_gzipped_size = 0;
-
-                        for file in read_dir {
-                            let Ok(entry) = file else {
-                                continue;
-                            };
-                            let Ok(metadata) = entry.metadata() else {
-                                continue;
-                            };
-                            let filename = entry.file_name();
-                            let Some(filename) = filename.to_str() else {
-                                continue;
-                            };
-
-                            if filename.ends_with(".log.gz") {
-                                total_gzipped_size += metadata.len();
-                            } else if !filename.ends_with(".log") {
-                                continue;
-                            }
-
-                            let created = metadata.created().unwrap_or(SystemTime::UNIX_EPOCH);
-                            let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-
-                            paths_with_time.push((Arc::from(entry.path()), created.max(modified)));
-                        }
-
-                        paths_with_time.sort_by_key(|(_, t)| *t);
-                        let paths = paths_with_time.into_iter().map(|(p, _)| p).rev().collect();
-
-                        let _ = channel.send(LogFiles {
-                            paths,
-                            total_gzipped_size: total_gzipped_size.min(usize::MAX as u64) as usize,
-                        });
-                    }
-                }
+                let root = self.instance_state.read().instances.get(id).map(|i| i.dot_minecraft_path.clone());
+                let launcher = self.directories.root_launcher_dir.join("launcher.log");
+                tokio::task::spawn_blocking(move || {
+                    let files =
+                        root.map(|root| crate::log_listing::list_logs(&root, Some(&launcher))).unwrap_or_default();
+                    let _ = channel.send(files);
+                });
             },
             MessageToBackend::GetImportFromOtherLauncherJob {
                 channel,
@@ -1776,6 +1749,12 @@ impl BackendState {
                     let _ = channel.send(backend.home_player_heads(uuids).await);
                 });
             },
+            MessageToBackend::GetInstanceProfileInfo { id, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = channel.send(backend.instance_profile_info(id));
+                });
+            },
             MessageToBackend::GetHomePresentation { id, channel } => {
                 let backend = self.clone();
                 tokio::spawn(async move {
@@ -1844,7 +1823,7 @@ impl BackendState {
             MessageToBackend::CheckInheritedUpdates { id, channel } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
-                    let result = backend.check_inherited_updates(id).await;
+                    let result = backend.check_inherited_ui_updates(id).await;
                     let _ = channel.send(result);
                 });
             },

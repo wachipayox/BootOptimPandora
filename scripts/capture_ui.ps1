@@ -8,7 +8,9 @@ param(
     [switch]$Components,
     [switch]$HomeScreens,
     [switch]$NewsScreens,
+    [switch]$InstanceScreens,
     [string]$NewsFixture,
+    [ValidateSet('advanced','version','expanded','editing')][string]$CaptureState,
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
@@ -132,6 +134,8 @@ $oldNewsFixture = $env:WBOMBO_UI_CAPTURE_NEWS
 if ($NewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS = (Resolve-Path -LiteralPath $NewsFixture).Path }
 $createdInstance = $false
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
+$oldCaptureState = $env:WBOMBO_UI_CAPTURE_STATE
+if ($CaptureState) { $env:WBOMBO_UI_CAPTURE_STATE = $CaptureState }
 $screens = @(
     @{ page = 'instances'; file = 'instances.png'; label = 'Inicio con la instancia seleccionada o el fallback Vanilla' },
     @{ page = 'appearance'; file = 'settings-appearance.png'; label = 'Ajustes y apariencia' },
@@ -155,6 +159,12 @@ try {
     if ($NewsScreens) {
         foreach ($newsPage in @('home-news','news-history','news-saved','news-search','news-profiles','news-article','news-changelog')) {
             $screens += @{ page=$newsPage; file="$newsPage.png"; label='Native News screen/state' }
+        }
+    }
+    if ($InstanceScreens) {
+        if (-not ($TestProfile -or $PortableDirectory) -or -not $InstanceName.StartsWith('agente-274-')) { throw 'Instance screenshots require an owned agent-274 CLI fixture.' }
+        foreach ($instanceRoute in @('instance-mods','instance-resources','instance-shaders','instance-overwrites','instance-logs','instance-crashes','instance-live','instance-changelog','instance-settings','derived','duplicate')) {
+            $screens += @{page="$($instanceRoute):$InstanceName";file="$instanceRoute.png";label='Owned instance screen; live output is synthetic and never starts Minecraft'}
         }
     }
     if ($Pages) { $screens = @($Pages | ForEach-Object { @{ page=$_; file=(($_ -replace ':','-') + '.png'); label='Explicit native capture route' } }) }
@@ -182,6 +192,12 @@ try {
             $deadline = (Get-Date).AddSeconds(120)
             while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Home presentation did not settle before capture.' }
+            if ($screen.page -in @('instances','accounts','home-menu')) {
+                $ready = "glass-ready pid=$($proc.Id)"
+                $deadline = (Get-Date).AddSeconds(60)
+                while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+                if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Glass backdrop did not settle before capture.' }
+            }
         }
         if ($screen.page -eq 'home-news' -or $screen.page.StartsWith('news-')) {
             $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
@@ -208,6 +224,22 @@ try {
             while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'News changelog did not settle before capture.' }
         }
+        $instanceReadyMarkers = @()
+        if ($screen.page -match '^instance-(mods|resources|shaders):') { $instanceReadyMarkers=@('instance-content-ready','instance-content-origin-ready') }
+        if ($screen.page -match '^(instance-settings|derived|duplicate):') { $instanceReadyMarkers=@('instance-settings-profile-ready','instance-settings-group-ready','instance-artwork-ready','instance-memory-ready') }
+        if ($screen.page -match '^(derived|duplicate):') { $instanceReadyMarkers += 'instance-derived-ready' }
+        if ($screen.page -match '^instance-overwrites:') { $instanceReadyMarkers=@('instance-overwrites-ready') }
+        if ($screen.page -match '^instance-(logs|crashes):') { $instanceReadyMarkers=@('instance-log-ready') }
+        if ($screen.page -match '^instance-changelog:') { $instanceReadyMarkers=@('instance-changelog-ready','instance-stone-ready') }
+        if ($screen.page -match '^instance-live:') { $instanceReadyMarkers=@('instance-live-fixture-ready') }
+        if ($screen.page.StartsWith('update:')) { $instanceReadyMarkers=@('instance-update-changelog-ready') }
+        foreach ($instanceMarker in $instanceReadyMarkers) {
+            $ready="$instanceMarker pid=$($proc.Id)"
+            $log=Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $deadline=(Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { if ($proc.HasExited) { throw "Capture process exited before $instanceMarker" };Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw "Instance capture did not settle: $instanceMarker" }
+        }
         Save-Window (Join-Path $outputPath $screen.file) $proc.MainWindowHandle $proc.Id
         if ($screen.page.StartsWith('news-article')) {
             # Wheel packets target only the verified capture window. They never
@@ -226,7 +258,22 @@ try {
                 Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
             }
         }
-        if ($screen.page -in @('components','home-news')) {
+        if ($screen.page -match '^instance-(settings|changelog):') {
+            $instanceClient = New-Object CaptureWindow+RECT
+            $instanceOrigin = New-Object CaptureWindow+POINT
+            [void][CaptureWindow]::GetClientRect($proc.MainWindowHandle,[ref]$instanceClient)
+            [void][CaptureWindow]::ClientToScreen($proc.MainWindowHandle,[ref]$instanceOrigin)
+            $instanceX = $instanceOrigin.X + [int]($instanceClient.Right * 0.5)
+            $instanceY = $instanceOrigin.Y + [int]($instanceClient.Bottom * 0.7)
+            $instancePoint = [IntPtr](([int64]$instanceY -shl 16) -bor ([int64]$instanceX -band 0xffff))
+            foreach ($part in @('middle','bottom')) {
+                for ($wheel = 0; $wheel -lt 8; $wheel++) {
+                    if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle,0x20a,[IntPtr](-7864320),$instancePoint)) { throw 'Cannot scroll the instance capture window' }
+                }
+                Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
+            }
+        }
+        if ($screen.page -in @('components','home-news') -or $screen.page -match '^(instance-|derived:|duplicate:|update:)') {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
             if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
@@ -253,6 +300,7 @@ try {
     if ($null -ne $proc -and -not $proc.HasExited) {
         Close-CapturedProcess $proc
     }
+    if ($null -ne $oldCaptureState) { $env:WBOMBO_UI_CAPTURE_STATE=$oldCaptureState } else { Remove-Item Env:WBOMBO_UI_CAPTURE_STATE -ErrorAction SilentlyContinue }
     if ($null -ne $oldPage) { $env:WBOMBO_UI_CAPTURE_PAGE = $oldPage } else { Remove-Item Env:WBOMBO_UI_CAPTURE_PAGE -ErrorAction SilentlyContinue }
     if ($createdInstance) { Invoke-CaptureCli @('--delete-instance', $InstanceName, '--confirm', $InstanceName) }
     if ($ownsDirectory) {

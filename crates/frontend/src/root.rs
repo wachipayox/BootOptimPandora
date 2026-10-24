@@ -13,7 +13,7 @@ use bridge::{
     modal_action::ModalAction,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{Root, Theme, WindowExt, button::Button, h_flex, scroll::ScrollableElement, v_flex};
+use gpui_component::{Root, Theme, WindowExt, h_flex, scroll::ScrollableElement, v_flex};
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -585,11 +585,19 @@ fn show_inherited_update(
     name: SharedString,
     quick_play: Option<QuickPlayLaunch>,
     data: DataEntities,
-    updates: Vec<String>,
+    updates: bridge::message::InheritedUpdateCheck,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let caption = format!("Updates are available for: {}", updates.join(", "));
+    let changelog = cx.new(|cx| {
+        crate::pages::instance::update_changelog::UpdateChangelog::new(
+            data.backend_handle.clone(),
+            updates.global.clone(),
+            name.clone(),
+            window,
+            cx,
+        )
+    });
     window.open_dialog(cx, move |dialog, _, _| {
         let skip_data = data.clone();
         let skip_name = name.clone();
@@ -600,8 +608,8 @@ fn show_inherited_update(
         let enter_data = data.clone();
         let enter_name = name.clone();
         let enter_quick = quick_play.clone();
-        dialog
-            .title("Inherited profile update")
+        crate::component::design::dialog(dialog)
+            .w(px(560.))
             .overlay_closable(false)
             .keyboard(false)
             .close_button(false)
@@ -609,19 +617,45 @@ fn show_inherited_update(
                 update_then_start(id, enter_name.clone(), enter_quick.clone(), &enter_data, window, cx);
                 true
             })
-            .child(caption.clone())
+            .child(changelog.clone())
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(crate::theme::INK_MUTED))
+                    .child("Tus cambios locales se conservan"),
+            )
             .footer(
                 h_flex()
+                    .w_full()
+                    .justify_end()
                     .gap_2()
-                    .child(Button::new("skip-update").label("Start without updating").on_click(move |_, window, cx| {
-                        window.close_dialog(cx);
-                        finish_inherited_operation(id, window);
-                        start_instance_unchecked(id, skip_name.clone(), skip_quick.clone(), &skip_data, window, cx);
-                    }))
-                    .child(Button::new("update-start").label("Update and start").on_click(move |_, window, cx| {
-                        window.close_dialog(cx);
-                        update_then_start(id, update_name.clone(), update_quick.clone(), &update_data, window, cx);
-                    })),
+                    .child(
+                        crate::component::design::DesignButton::new("skip-update")
+                            .label("Jugar sin actualizar")
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                finish_inherited_operation(id, window);
+                                start_instance_unchecked(
+                                    id,
+                                    skip_name.clone(),
+                                    skip_quick.clone(),
+                                    &skip_data,
+                                    window,
+                                    cx,
+                                );
+                            }),
+                    )
+                    .child(
+                        crate::component::design::action_button(
+                            "update-start",
+                            "Actualizar y jugar",
+                            crate::component::design::ButtonAction::Primary,
+                        )
+                        .on_click(move |_, window, cx| {
+                            window.close_dialog(cx);
+                            update_then_start(id, update_name.clone(), update_quick.clone(), &update_data, window, cx);
+                        }),
+                    ),
             )
     });
 }

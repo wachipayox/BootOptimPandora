@@ -23,6 +23,11 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub language: t::Language,
 
+    #[serde(default)]
+    pub app_background: crate::background::AppBackground,
+    #[serde(default)]
+    pub last_played_artwork: Option<std::path::PathBuf>,
+
     // Theme
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub active_theme: Option<SharedString>,
@@ -216,15 +221,13 @@ pub enum InstanceContentSortKey {
 
 impl InstanceContentSortKey {
     pub fn name(self) -> DropdownName {
-        match self {
-            InstanceContentSortKey::Name => DropdownName::translated(t::instance::content::sort_key::name),
-            InstanceContentSortKey::ModId => DropdownName::translated(t::instance::content::sort_key::mod_id),
-            InstanceContentSortKey::Filename => DropdownName::translated(t::instance::content::sort_key::filename),
-            InstanceContentSortKey::ModifiedTime => {
-                DropdownName::translated(t::instance::content::sort_key::modified_time)
-            },
-            InstanceContentSortKey::FileSize => DropdownName::translated(t::instance::content::sort_key::filesize),
-        }
+        DropdownName::new(match self {
+            Self::Name => "Nombre",
+            Self::ModId => "ID del mod",
+            Self::Filename => "Nombre del archivo",
+            Self::ModifiedTime => "Fecha de modificación",
+            Self::FileSize => "Tamaño",
+        })
     }
 
     pub fn compare(self, a: &InstanceContentSummary, b: &InstanceContentSummary) -> Ordering {
@@ -300,6 +303,8 @@ impl Default for InterfaceConfig {
     fn default() -> Self {
         Self {
             language: Default::default(),
+            app_background: Default::default(),
+            last_played_artwork: None,
             active_theme: Default::default(),
             font_family: None,
             font_size: None,

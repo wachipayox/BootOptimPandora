@@ -229,6 +229,7 @@ impl crate::BackendState {
             last_destination,
             profile_id: profile_id.clone(),
             mod_count,
+            recommended_memory_mib: id.map(|_| crate::launch::memory::recommendation().recommended_mib),
             ..Default::default()
         };
         if let Some(profile) = profile {
@@ -410,6 +411,35 @@ async fn bounded_get(client: &Client, url: &str, max: usize) -> Option<Vec<u8>> 
     Some(bytes)
 }
 
+impl crate::BackendState {
+    /// Validate and normalize outside the UI thread. Keep a launcher-owned copy
+    /// so moving the selected source does not break the instance presentation.
+    pub(crate) fn set_instance_home_artwork(&self, id: InstanceID, path: Option<&Path>) -> Result<(), String> {
+        let error = || "No se ha podido abrir la imagen.".to_owned();
+        let root = self.instance_state.read().instances.get(id).ok_or_else(error)?.root_path.clone();
+        let stored = if let Some(path) = path {
+            let cache = self.directories.root_launcher_dir.join("home-presentation");
+            let value = cache_local_image(path, &cache, true).ok_or_else(error)?;
+            let sha = value["sha256"].as_str().ok_or_else(error)?;
+            let directory = root.join("launcher-artwork");
+            fs::create_dir_all(&directory).map_err(|_| error())?;
+            let name = path.file_stem().ok_or_else(error)?;
+            let mut target = directory.join(name);
+            target.set_extension("png");
+            let bytes = fs::read(cache.join("sha256").join(&sha[..2]).join(sha)).map_err(|_| error())?;
+            crate::fs::write_safe(&target, &bytes).map_err(|_| error())?;
+            Some(target)
+        } else {
+            None
+        };
+        let mut state = self.instance_state.write();
+        let instance = state.instances.get_mut(id).ok_or_else(error)?;
+        instance.configuration.modify(|configuration| configuration.home_artwork = stored);
+        self.send.send(instance.create_modify_message());
+        Ok(())
+    }
+}
+
 fn cache_local_image(path: &Path, root: &Path, artwork: bool) -> Option<Value> {
     if fs::metadata(path).ok()?.len() > 16 * 1024 * 1024 {
         return None;
@@ -438,7 +468,7 @@ fn cache_local_image(path: &Path, root: &Path, artwork: bool) -> Option<Value> {
     let sha = hex::encode(Sha256::digest(&encoded));
     let dir = root.join("sha256").join(&sha[..2]);
     fs::create_dir_all(&dir).ok()?;
-    fs::write(dir.join(&sha), &encoded).ok()?;
+    crate::fs::write_safe(&dir.join(&sha), &encoded).ok()?;
     Some(serde_json::json!({"sha256":sha,"size":encoded.len(),"media_type":"image/png"}))
 }
 

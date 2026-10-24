@@ -10,15 +10,13 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, IndexPath, Sizable, WindowExt,
-    button::{Button, ButtonVariants, DropdownButton},
+    ActiveTheme as _, WindowExt,
+    button::{Button, ButtonVariants},
     h_flex,
-    input::SelectAll,
+    input::{InputEvent, InputState, SelectAll},
     list::{List, ListState},
-    menu::PopupMenuItem,
+    menu::{DropdownMenu, PopupMenuItem},
     notification::{Notification, NotificationType},
-    select::{Select, SelectEvent, SelectState},
-    switch::Switch,
     v_flex,
 };
 use parking_lot::Mutex;
@@ -34,14 +32,14 @@ use ustr::Ustr;
 use crate::{
     component::{
         content_list::ContentListDelegate,
-        named_dropdown::{NamedDropdown, NamedDropdownItem},
+        design::{self, DesignButton},
     },
     entity::{
         DataEntities,
         instance::{ContentStates, InstanceEntry},
     },
     interface_config::{InstanceContentSortKey, InterfaceConfig, PreferredAddContentSource},
-    root,
+    root, theme,
     ui::PageType,
 };
 
@@ -56,7 +54,7 @@ pub struct InstanceContentSubpage {
     content_list: Entity<ListState<ContentListDelegate>>,
     updating: Arc<Mutex<FxHashSet<u64>>>,
     content: Entity<Option<Arc<[InstanceContentSummary]>>>,
-    sort_dropdown: Entity<SelectState<NamedDropdown<InstanceContentSortKey>>>,
+    search: Entity<InputState>,
 
     needs_update_check: bool,
     update_count: usize,
@@ -77,14 +75,6 @@ impl ContentType {
             ContentType::Mods => ContentFolder::Mods,
             ContentType::ResourcePacks => ContentFolder::ResourcePacks,
             ContentType::Shaders => ContentFolder::Shaders,
-        }
-    }
-
-    fn title(self) -> &'static str {
-        match self {
-            ContentType::Mods => t::instance::content::mods(),
-            ContentType::ResourcePacks => t::instance::content::resourcepacks(),
-            ContentType::Shaders => t::instance::content::shaders(),
         }
     }
 
@@ -194,6 +184,7 @@ impl InstanceContentSubpage {
         let mut content_list_delegate = ContentListDelegate::new(
             instance_id,
             data,
+            content_type.content_folder(),
             instance_loader,
             instance_version,
             sort_key,
@@ -208,21 +199,8 @@ impl InstanceContentSubpage {
             (false, 0)
         };
 
-        let sort_dropdown = cx.new(|cx| {
-            let items = valid_sort_modes
-                .iter()
-                .map(|key| NamedDropdownItem {
-                    name: key.name(),
-                    item: *key,
-                })
-                .collect::<Vec<_>>();
-
-            let row = items.iter().position(|v| v.item == sort_key).unwrap_or(0);
-            SelectState::new(NamedDropdown::new(items), Some(IndexPath::new(row)), window, cx)
-        });
-
         let content_list =
-            cx.new(move |cx| ListState::new(content_list_delegate, window, cx).selectable(false).searchable(true));
+            cx.new(|cx| ListState::new(content_list_delegate, window, cx).selectable(false).searchable(false));
 
         cx.observe(&content, |page, content, cx| {
             if let Some(new_content) = content.read(cx) {
@@ -235,6 +213,7 @@ impl InstanceContentSubpage {
             page.content_list.update(cx, |list, cx| {
                 if let Some(new_content) = content.read(cx) {
                     list.delegate_mut().set_content(new_content);
+                    log::info!("instance-content-ready pid={}", std::process::id());
                 }
                 cx.notify();
             });
@@ -243,35 +222,40 @@ impl InstanceContentSubpage {
         })
         .detach();
 
-        cx.subscribe(
-            &sort_dropdown,
-            |this, _, event: &SelectEvent<NamedDropdown<InstanceContentSortKey>>, cx| {
-                let SelectEvent::Confirm(Some(sort_key)) = event else {
-                    return;
-                };
-
-                let sort_key = *sort_key;
-                let config = InterfaceConfig::get_mut(cx);
-
-                if this.content_type.sort_key(config) == sort_key {
-                    return;
+        let search = cx.new(|c| {
+            InputState::new(window, c).placeholder(match content_type {
+                ContentType::Mods => "Buscar mods...",
+                ContentType::ResourcePacks => "Buscar paquetes de recursos...",
+                ContentType::Shaders => "Buscar shaders...",
+            })
+        });
+        cx.subscribe_in(&search, window, {
+            let list = content_list.clone();
+            move |_, field, event: &InputEvent, w, c| {
+                if matches!(event, InputEvent::Change) {
+                    let query = field.read(c).value();
+                    list.update(c, |list, c| list.set_query(&query, w, c));
                 }
-
-                let enabled_first = this.content_type.sort_enabled_first(config);
-                this.content_type.set_sort_key(config, sort_key);
-
-                let content = this.content.read(cx).clone();
-                let content_list = this.content_list.clone();
-                cx.update_entity(&content_list, |list, cx| {
-                    list.delegate_mut().set_sort_options(sort_key, enabled_first);
-                    if let Some(content) = &content {
-                        list.delegate_mut().set_content(content);
-                    }
-                    cx.notify();
+            }
+        })
+        .detach();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        backend_handle.send(bridge::message::MessageToBackend::GetInstanceProfileInfo {
+            id: instance_id,
+            channel: send,
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(info)) = receive.await {
+                let _ = this.update(cx, |this, c| {
+                    this.content_list.update(c, |list, c| {
+                        list.delegate_mut().set_profile_info(info);
+                        log::info!("instance-content-origin-ready pid={}", std::process::id());
+                        c.notify();
+                    });
+                    c.notify();
                 });
-                cx.notify();
-            },
-        )
+            }
+        })
         .detach();
 
         Self {
@@ -285,7 +269,7 @@ impl InstanceContentSubpage {
             content_list,
             updating,
             content,
-            sort_dropdown,
+            search,
             needs_update_check,
             update_count,
             _add_from_file_task: None,
@@ -337,179 +321,224 @@ fn calculate_update_count(loader: Loader, version: Ustr, content: &Arc<[Instance
     (false, update_count)
 }
 
+impl InstanceContentSubpage {
+    fn set_sort(&mut self, key: InstanceContentSortKey, enabled_first: bool, cx: &mut Context<Self>) {
+        let config = InterfaceConfig::get_mut(cx);
+        self.content_type.set_sort_key(config, key);
+        self.content_type.set_sort_enabled_first(config, enabled_first);
+        let content = self.content.read(cx).clone();
+        self.content_list.update(cx, |list, c| {
+            list.delegate_mut().set_sort_options(key, enabled_first);
+            if let Some(content) = &content {
+                list.delegate_mut().set_content(content);
+            }
+            c.notify();
+        });
+        cx.notify();
+    }
+    fn update_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(content) = self.content.read(cx).clone() {
+            for summary in content.iter() {
+                if summary.update.can_update(self.instance_loader, self.instance_version.as_str()) {
+                    root::update_single_mod(
+                        self.instance,
+                        summary.id,
+                        summary.filename_hash,
+                        &self.updating,
+                        &self.backend_handle,
+                        window,
+                        cx,
+                    );
+                }
+            }
+            self.content_list.update(cx, |_, c| c.notify());
+        }
+    }
+}
 impl Render for InstanceContentSubpage {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
-        let (source, sort_enabled_first) = {
-            let config = InterfaceConfig::get(cx);
-            (config.preferred_add_content_source, self.content_type.sort_enabled_first(config))
-        };
-
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.content_states.observe(self.content_type.content_folder());
-
-        let self_entity = cx.entity();
-        let header = h_flex()
-            .gap_3()
-            .mb_1()
-            .ml_1()
-            .child(div().text_lg().child(self.content_type.title()))
-            .child(
-                Button::new("update_check")
-                    .label(t::instance::content::update::check::label(false))
-                    .success()
-                    .compact()
-                    .small()
-                    .on_click({
-                        let backend_handle = self.backend_handle.clone();
-                        let instance_id = self.instance;
-                        move |_, window, cx| {
-                            crate::root::start_update_check(instance_id, &backend_handle, window, cx);
-                        }
-                    }),
-            )
-            .child(
-                DropdownButton::new("addcontent")
-                    .success()
-                    .small()
-                    .button(match source {
-                        PreferredAddContentSource::Modrinth => Button::new("addmr")
-                            .compact()
-                            .label(t::instance::content::install::from_modrinth())
-                            .on_click(cx.listener(InstanceContentSubpage::add_from_modrinth)),
-                        PreferredAddContentSource::CurseForge => Button::new("addcf")
-                            .compact()
-                            .label(t::instance::content::install::from_curseforge())
-                            .on_click(cx.listener(InstanceContentSubpage::add_from_curseforge)),
-                        PreferredAddContentSource::File => Button::new("addfile")
-                            .compact()
-                            .label(t::instance::content::install::from_file())
-                            .on_click(cx.listener(InstanceContentSubpage::add_from_file)),
-                    })
-                    .dropdown_menu(move |this, window, _| {
-                        let mr = PopupMenuItem::new(t::instance::content::install::from_modrinth())
-                            .on_click(window.listener_for(&self_entity, InstanceContentSubpage::add_from_modrinth));
-                        let cf = PopupMenuItem::new(t::instance::content::install::from_curseforge())
-                            .on_click(window.listener_for(&self_entity, InstanceContentSubpage::add_from_curseforge));
-                        let file = PopupMenuItem::new(t::instance::content::install::from_file())
-                            .on_click(window.listener_for(&self_entity, InstanceContentSubpage::add_from_file));
-
-                        this.item(mr).item(cf).item(file)
-                    }),
-            )
-            .when(!self.needs_update_check && self.update_count > 0, |this| {
-                this.child(
-                    Button::new("update_all")
-                        .label(match self.content_type {
-                            ContentType::Mods => t::instance::content::update_all_mods(self.update_count),
-                            ContentType::ResourcePacks => {
-                                t::instance::content::update_all_resourcepacks(self.update_count)
+        let config = InterfaceConfig::get(cx);
+        let key = self.content_type.sort_key(config);
+        let enabled = self.content_type.sort_enabled_first(config);
+        let mut tabs = h_flex();
+        for (ix, label, value) in [
+            (0, "Mods", super::instance_page::InstanceSubpageType::Mods),
+            (1, "Paquetes de recursos", super::instance_page::InstanceSubpageType::ResourcePacks),
+            (2, "Shaders", super::instance_page::InstanceSubpageType::Shaders),
+        ] {
+            let active = matches!(
+                (self.content_type, value),
+                (ContentType::Mods, super::instance_page::InstanceSubpageType::Mods)
+                    | (ContentType::ResourcePacks, super::instance_page::InstanceSubpageType::ResourcePacks)
+                    | (ContentType::Shaders, super::instance_page::InstanceSubpageType::Shaders)
+            );
+            tabs = tabs.child(design::chip(("content-kind", ix as usize), label, active).on_click(move |_, w, c| {
+                InterfaceConfig::get_mut(c).instance_subpage = value;
+                w.refresh();
+            }));
+        }
+        let weak = cx.entity().downgrade();
+        let valid = self.content_type.valid_sort_modes();
+        let sort = Button::new("content-sort")
+            .ghost()
+            .w(px(180.))
+            .h(px(36.))
+            .border_1()
+            .border_color(rgba(0xffffff33))
+            .icon(crate::icon::PandoraIcon::SortAscending)
+            .label(format!(
+                "{} ▾",
+                if enabled {
+                    "Activados primero".to_owned()
+                } else {
+                    key.name().as_str().to_owned()
+                }
+            ))
+            .dropdown_menu(move |mut menu, _, _| {
+                let page = weak.clone();
+                menu = menu
+                    .item(PopupMenuItem::new("Activados primero").checked(enabled).on_click(move |_, _, c| {
+                        let _ = page.update(c, |this, c| this.set_sort(key, !enabled, c));
+                    }))
+                    .separator();
+                for &value in valid {
+                    let page = weak.clone();
+                    menu =
+                        menu.item(PopupMenuItem::new(value.name().as_str().to_owned()).checked(key == value).on_click(
+                            move |_, _, c| {
+                                let _ = page.update(c, |this, c| this.set_sort(value, enabled, c));
                             },
-                            ContentType::Shaders => t::instance::content::update_all_shaders(self.update_count),
-                        })
-                        .success()
-                        .compact()
-                        .small()
-                        .on_click({
-                            cx.listener(move |page, _, window, cx| {
-                                if let Some(content) = page.content.read(cx).clone() {
-                                    for summary in content.iter() {
-                                        if summary
-                                            .update
-                                            .can_update(page.instance_loader, page.instance_version.as_str())
-                                        {
-                                            crate::root::update_single_mod(
-                                                page.instance,
-                                                summary.id,
-                                                summary.filename_hash,
-                                                &page.updating,
-                                                &page.backend_handle,
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                    }
-                                    page.content_list.update(cx, |_, cx| cx.notify());
-                                }
-                            })
-                        }),
-                )
+                        ));
+                }
+                menu.min_w(px(200.))
             });
-
-        let filter_bar_controls = h_flex()
-            .cursor_default()
-            .block_mouse_except_scroll()
-            .gap_3()
-            .items_center()
+        let bar = h_flex()
+            .w_full()
+            .gap(px(12.))
+            .child(tabs)
+            .child(div().flex_1())
+            .child(sort)
+            .child(design::text_field(&self.search).w(px(260.)).h(px(36.)));
+        let mut actions = h_flex().w_full().gap(px(8.));
+        if let Some(content) = self.content.read(cx) {
+            let noun = match self.content_type {
+                ContentType::Mods => "mods",
+                ContentType::ResourcePacks => "paquetes de recursos",
+                ContentType::Shaders => "shaders",
+            };
+            let mut counts =
+                format!("{} {noun} · {} activados", content.len(), content.iter().filter(|s| s.enabled).count());
+            if !self.needs_update_check && self.update_count > 0 {
+                counts.push_str(&format!(" · {} con actualización", self.update_count));
+            }
+            actions = actions.child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(counts));
+        }
+        actions = actions
+            .child(div().flex_1())
             .child(
-                div().child(Select::new(&self.sort_dropdown).small().title_prefix(t::instance::content::sort_prefix())),
+                DesignButton::new("add-modrinth")
+                    .label("Añadir de Modrinth")
+                    .on_click(cx.listener(Self::add_from_modrinth)),
             )
             .child(
-                h_flex()
-                    .gap_1()
-                    .child(div().text_sm().child(t::instance::content::enabled_first()))
-                    .child(Switch::new("enabled_first").checked(sort_enabled_first).on_click(cx.listener(
-                        |this, checked, _, cx| {
-                            let config = InterfaceConfig::get_mut(cx);
-                            let enabled_first = *checked;
-
-                            if this.content_type.sort_enabled_first(config) == enabled_first {
-                                return;
-                            }
-
-                            let sort_key = this.content_type.sort_key(config);
-                            this.content_type.set_sort_enabled_first(config, enabled_first);
-
-                            let content = this.content.read(cx).clone();
-                            let content_list = this.content_list.clone();
-                            cx.update_entity(&content_list, |list, cx| {
-                                list.delegate_mut().set_sort_options(sort_key, enabled_first);
-                                if let Some(content) = &content {
-                                    list.delegate_mut().set_content(content);
-                                }
-                                cx.notify();
-                            });
-                            cx.notify();
-                        },
-                    ))),
+                DesignButton::new("add-curseforge")
+                    .label("Añadir de CurseForge")
+                    .on_click(cx.listener(Self::add_from_curseforge)),
             )
-            .absolute()
-            .top(px(4.0))
-            .right(px(12.0));
-
-        let theme = cx.theme();
-        v_flex().p_4().size_full().child(header).child(
-            div()
-                .id("content-list-area")
-                .relative()
-                .drag_over(|style, _: &ExternalPaths, _, cx| style.bg(cx.theme().accent))
-                .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
-                    this.install_paths(paths.paths(), window, cx);
-                }))
-                .size_full()
-                .border_1()
-                .rounded(theme.radius)
-                .border_color(theme.border)
-                .child(List::new(&self.content_list).search_placeholder(t::common::search()))
-                .child(filter_bar_controls)
-                .on_click({
-                    let content_list = self.content_list.clone();
-                    move |_, _, cx| {
-                        cx.update_entity(&content_list, |list, cx| {
-                            list.delegate_mut().clear_selection();
-                            cx.notify();
-                        })
-                    }
-                })
-                .key_context("Input")
-                .on_action({
-                    let content_list = self.content_list.clone();
-                    move |_: &SelectAll, _, cx| {
-                        cx.update_entity(&content_list, |list, cx| {
-                            list.delegate_mut().select_all();
-                            cx.notify();
-                        })
-                    }
-                }),
-        )
+            .child(
+                DesignButton::new("add-file")
+                    .label("Añadir archivo")
+                    .on_click(cx.listener(Self::add_from_file)),
+            );
+        if !self.needs_update_check && self.update_count > 0 {
+            actions = actions.child(
+                design::action_button(
+                    "update-all",
+                    format!("Actualizar todo ({})", self.update_count),
+                    design::ButtonAction::Primary,
+                )
+                .on_click(cx.listener(|this, _, w, c| this.update_all(w, c))),
+            );
+        }
+        let headings = h_flex()
+            .h(px(36.))
+            .px(px(14.))
+            .gap(px(12.))
+            .bg(rgb(theme::PANEL_RAISED))
+            .font_family(theme::DISPLAY)
+            .text_size(px(11.))
+            .text_color(rgb(theme::INK_MUTED))
+            .child(div().flex_1().pl(px(44.)).child("NOMBRE"))
+            .child(div().w(px(140.)).text_center().child("VERSIÓN"))
+            .child(div().w(px(140.)).text_center().child("ORIGEN"))
+            .child(div().w(px(84.)).text_center().child("ACTIVO"))
+            .child(div().w(px(30.)));
+        let list = div()
+            .id("content-list-area")
+            .flex_1()
+            .min_h_0()
+            .border_1()
+            .border_color(rgba(0xffffff0b))
+            .bg(rgb(theme::PANEL))
+            .drag_over(|style, _: &ExternalPaths, _, c| style.bg(c.theme().accent))
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, w, c| this.install_paths(paths.paths(), w, c)))
+            .child(
+                v_flex()
+                    .size_full()
+                    .child(headings)
+                    .child(div().flex_1().min_h_0().child(List::new(&self.content_list))),
+            )
+            .on_click({
+                let list = self.content_list.clone();
+                move |_, _, c| {
+                    list.update(c, |list, c| {
+                        list.delegate_mut().clear_selection();
+                        c.notify();
+                    });
+                }
+            })
+            .key_context("Input")
+            .on_action({
+                let list = self.content_list.clone();
+                move |_: &SelectAll, _, c| {
+                    list.update(c, |list, c| {
+                        list.delegate_mut().select_all();
+                        c.notify();
+                    });
+                }
+            });
+        let backend = self.backend_handle.clone();
+        let id = self.instance;
+        let footer = h_flex()
+            .h(px(34.))
+            .w_full()
+            .justify_between()
+            .child(
+                DesignButton::new("check-updates")
+                    .label("Comprobar actualizaciones")
+                    .on_click(move |_, w, c| root::start_update_check(id, &backend, w, c)),
+            )
+            .child(
+                design::action_button(
+                    "explore-content",
+                    format!("Explorar contenido para {}", self.instance_name),
+                    design::ButtonAction::Primary,
+                )
+                .on_click(cx.listener(Self::add_from_modrinth)),
+            );
+        v_flex()
+            .size_full()
+            .px(px(24.))
+            .pt(px(20.))
+            .pb(px(24.))
+            .gap(px(16.))
+            .text_size(px(13.))
+            .text_color(rgb(theme::INK))
+            .child(bar)
+            .child(actions)
+            .child(list)
+            .child(footer)
     }
 }
 

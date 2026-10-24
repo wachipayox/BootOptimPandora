@@ -58,7 +58,8 @@ pub(crate) fn plan_launch_arguments(
         return Vec::new();
     }
     let personal = personal_jvm_args(configuration);
-    let memory_enabled = configuration.memory.as_ref().is_some_and(|memory| memory.enabled);
+    // Both Recommended and Manual now supply an explicit heap setting.
+    let memory_enabled = true;
     let (java_major, java_vm) = match java_source {
         JavaRuntimeSource::Mojang { major_version } => (Some(major_version), Some("hotspot".to_owned())),
         JavaRuntimeSource::External => match probe_java_runtime(java_binary, launch_wrapper) {
@@ -103,7 +104,8 @@ pub(crate) fn settings_view(
     game_dir: &Path,
 ) -> profile_jvm::ProfileJvmOptionsView {
     let personal = personal_jvm_args(configuration);
-    let memory_enabled = configuration.memory.as_ref().is_some_and(|memory| memory.enabled);
+    // Both Recommended and Manual now supply an explicit heap setting.
+    let memory_enabled = true;
     let (java_major, java_vm) = LAST_JAVA_BY_GAME_DIR
         .lock()
         .ok()
@@ -203,7 +205,7 @@ fn probe_java_runtime(binary: &Path, launch_wrapper: &Path) -> Option<(u32, Stri
 }
 
 #[cfg(windows)]
-fn total_memory_mib() -> Option<i64> {
+pub(crate) fn total_memory_mib() -> Option<i64> {
     use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     let mut status = MEMORYSTATUSEX {
         dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
@@ -214,14 +216,34 @@ fn total_memory_mib() -> Option<i64> {
 }
 
 #[cfg(target_os = "linux")]
-fn total_memory_mib() -> Option<i64> {
+pub(crate) fn total_memory_mib() -> Option<i64> {
     let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
     let line = meminfo.lines().find(|line| line.starts_with("MemTotal:"))?;
     let kib = line.split_whitespace().nth(1)?.parse::<i64>().ok()?;
     Some(kib / 1024)
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
-fn total_memory_mib() -> Option<i64> {
+#[cfg(target_os = "macos")]
+pub(crate) fn total_memory_mib() -> Option<i64> {
+    let mut bytes = 0u64;
+    let mut size = std::mem::size_of::<u64>();
+    // hw.memsize is a read-only uint64_t; use libc's native signature.
+    let result = unsafe {
+        libc::sysctlbyname(
+            c"hw.memsize".as_ptr(),
+            std::ptr::addr_of_mut!(bytes).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result != 0 || size != std::mem::size_of::<u64>() {
+        return None;
+    }
+    i64::try_from(bytes / (1024 * 1024)).ok()
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+pub(crate) fn total_memory_mib() -> Option<i64> {
     None
 }

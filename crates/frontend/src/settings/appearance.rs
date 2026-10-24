@@ -16,9 +16,20 @@ use crate::{
 };
 
 pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App) -> SettingPage {
+    let background = cx.new(|cx| crate::background::BackgroundSelector::new(window, cx));
     SettingPage {
         title: t::settings::appearance,
         groups: vec![
+            SettingGroup {
+                title: Some(|| "Fondo de la app"),
+                items: vec![SettingItem {
+                    description: || "La imagen difuminada que se ve detrás de todas las pantallas.",
+                    widget: SettingItemWidget::AnyWide(Rc::new(move |_, _| background.clone().into_any_element())),
+                    ..Default::default()
+                }]
+                .into(),
+                searched_items: None,
+            },
             SettingGroup {
                 title: Some(t::settings::appearance::theme),
                 items: vec![
