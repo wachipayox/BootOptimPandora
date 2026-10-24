@@ -66,6 +66,10 @@ impl DesignButton {
         self.label_left = true;
         self
     }
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.inner = self.inner.tooltip(tooltip);
+        self
+    }
     pub fn toggled(mut self, value: bool) -> Self {
         self.inner = self.inner.toggled(value);
         self

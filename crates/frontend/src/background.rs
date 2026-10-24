@@ -31,7 +31,7 @@ impl Global for BackdropCache {}
 /// The regular background uses precisely the same object-fit-cover transform as glass.
 pub fn surface(cx: &App) -> AnyElement {
     let source = InterfaceConfig::get(cx).app_background.clone();
-    let base = div().absolute().size_full();
+    let base = div().absolute().top_0().left_0().size_full();
     match source {
         AppBackground::Cafe => base
             .child(
@@ -152,6 +152,8 @@ pub fn glass(window: &mut Window, cx: &mut App) -> AnyElement {
         },
     )
     .absolute()
+    .top_0()
+    .left_0()
     .size_full()
     .into_any_element()
 }
@@ -262,6 +264,12 @@ impl Render for BackgroundSelector {
         v_flex()
             .gap(px(12.))
             .w_full()
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(theme::INK_MUTED))
+                    .child("La imagen difuminada que se ve detrás de todas las pantallas."),
+            )
             .child(choices)
             .when(matches!(active, AppBackground::Color(_)), |d| {
                 d.child(colors.child(design::text_field(&self.color).w(px(120.)).font_family("Consolas")))

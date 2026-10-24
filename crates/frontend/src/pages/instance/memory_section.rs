@@ -17,6 +17,7 @@ pub struct InstanceMemorySection {
     recommendation: MemoryRecommendation,
     field: Entity<InputState>,
     displayed: String,
+    invalid: bool,
 }
 fn gib(mib: u32) -> String {
     let v = mib as f64 / 1024.;
@@ -51,11 +52,13 @@ impl InstanceMemorySection {
                 return;
             }
             this.displayed = value.clone();
+            this.invalid = true;
             if !this.stored.enabled {
                 return;
             }
             if let Ok(gb) = value.replace(',', ".").parse::<f64>() {
                 if gb.is_finite() && gb >= 0.125 && gb <= u32::MAX as f64 / 1024. {
+                    this.invalid = false;
                     this.stored.max = (gb * 1024.).round() as u32;
                     this.stored.min = this.stored.min.min(this.stored.max);
                     this.had_manual = true;
@@ -63,6 +66,7 @@ impl InstanceMemorySection {
                     c.notify();
                 }
             }
+            c.notify();
         })
         .detach();
         let (send, receive) = tokio::sync::oneshot::channel();
@@ -88,6 +92,7 @@ impl InstanceMemorySection {
             recommendation,
             field,
             displayed,
+            invalid: false,
         }
     }
     fn persist(&self) {
@@ -97,6 +102,7 @@ impl InstanceMemorySection {
         });
     }
     fn sync_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.invalid = false;
         self.displayed = gib(if self.stored.enabled {
             self.stored.max
         } else {
@@ -175,6 +181,14 @@ impl Render for InstanceMemorySection {
             .gap(px(12.))
             .child(h_flex().justify_between().child("Memoria").child(modes))
             .child(row)
+            .when(manual && self.invalid, |d| {
+                d.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(theme::DANGER))
+                        .child("Introduce una cantidad de memoria válida."),
+                )
+            })
             .child(
                 div()
                     .text_size(px(12.))

@@ -107,7 +107,6 @@ impl Render for InstanceArtworkSection {
         };
         v_flex()
             .gap(px(12.))
-            .child(design::eyebrow("Artwork"))
             .child(img(image).w(px(240.)).h(px(135.)).object_fit(ObjectFit::Cover))
             .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(origin))
             .when_some(

@@ -24,7 +24,7 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                 title: Some(|| "Fondo de la app"),
                 items: vec![SettingItem {
                     description: || "La imagen difuminada que se ve detrás de todas las pantallas.",
-                    widget: SettingItemWidget::Any(Rc::new(move |_, _| background.clone().into_any_element())),
+                    widget: SettingItemWidget::AnyWide(Rc::new(move |_, _| background.clone().into_any_element())),
                     ..Default::default()
                 }]
                 .into(),

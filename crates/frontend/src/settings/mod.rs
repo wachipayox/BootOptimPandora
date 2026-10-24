@@ -361,7 +361,8 @@ impl SettingsRoot {
 
                 for item_ix in items {
                     let item = &group.items[item_ix];
-                    let wide = matches!(&item.widget, SettingItemWidget::BackendWide(_));
+                    let wide =
+                        matches!(&item.widget, SettingItemWidget::BackendWide(_) | SettingItemWidget::AnyWide(_));
 
                     let widget = match &item.widget {
                         SettingItemWidget::None => {
@@ -446,7 +447,7 @@ impl SettingsRoot {
                             };
                             (func)(backend_config, root, window, cx)
                         },
-                        SettingItemWidget::Any(func) => (func)(window, cx),
+                        SettingItemWidget::Any(func) | SettingItemWidget::AnyWide(func) => (func)(window, cx),
                     };
 
                     if wide {
@@ -456,7 +457,8 @@ impl SettingsRoot {
                     let item_element = h_flex()
                         .justify_between()
                         .items_center()
-                        .py(px(8.)).gap(px(20.))
+                        .py(px(8.))
+                        .gap(px(20.))
                         .w_full()
                         .child(
                             v_flex()
@@ -473,7 +475,8 @@ impl SettingsRoot {
 
                 let items = v_flex()
                     .w_full()
-                    .px(px(18.)).py(px(16.))
+                    .px(px(18.))
+                    .py(px(16.))
                     .gap(px(10.))
                     .bg(gpui::rgb(crate::theme::PANEL))
                     .rounded(cx.theme().radius_lg)
@@ -526,6 +529,7 @@ enum SettingItemWidget {
     Backend(Rc<dyn Fn(&BackendConfig, &mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
     BackendWide(Rc<dyn Fn(&BackendConfig, &SettingsRoot, &mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
     Any(Rc<dyn Fn(&mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
+    AnyWide(Rc<dyn Fn(&mut Window, &mut Context<SettingsRoot>) -> AnyElement>),
 }
 
 struct SettingItem {
@@ -851,7 +855,11 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
 
     Settings {
         pages: pages.into_boxed_slice(),
-        selected_page: Some(if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("appearance") { 1 } else { 0 }),
+        selected_page: Some(if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("appearance") {
+            1
+        } else {
+            0
+        }),
         selected_group: None,
         deferred_scroll_to_group: false,
         searched_pages: None,
