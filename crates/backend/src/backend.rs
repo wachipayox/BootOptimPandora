@@ -228,6 +228,9 @@ pub fn start(
     let _ = std::fs::create_dir_all(&directories.instances_dir);
     state_file_watching.watch_filesystem(directories.root_launcher_dir.clone(), WatchTarget::RootDir);
 
+    // Bring in skins saved in the official Minecraft Launcher (new ones only, its file is only read).
+    crate::official_skins::import_official_skins(&directories.root_launcher_dir, &directories.skin_library_dir);
+
     // Load accounts, importing them (and the skin library) once from the pre-rebrand PandoraLauncher folder.
     crate::legacy_accounts::import_legacy_accounts(&directories.root_launcher_dir);
     crate::legacy_accounts::import_legacy_skins(&directories.root_launcher_dir);
