@@ -17,7 +17,7 @@ use rand::Rng;
 use uuid::Uuid;
 
 use crate::{
-    component::shrinking_text::ShrinkingText,
+    component::{design, shrinking_text::ShrinkingText},
     entity::{
         DataEntities,
         account::{AccountEntries, AccountExt},
@@ -354,49 +354,67 @@ impl Render for Accounts {
 
 pub fn open_offline_account(backend_handle: BackendHandle, window: &mut Window, cx: &mut App) {
     let name_input = cx.new(|cx| InputState::new(window, cx));
-    let uuid_input = cx.new(|cx| InputState::new(window, cx).placeholder(t::account::uuid_random()));
-    let backend_handle = backend_handle.clone();
+    let uuid_input = cx.new(|cx| InputState::new(window, cx));
+    let custom_uuid = cx.new(|_| false);
     window.open_dialog(cx, move |dialog, _, cx| {
         let username = name_input.read(cx).value();
         let valid_name =
-            username.len() >= 1 && username.len() <= 16 && username.as_bytes().iter().all(|c| *c > 32 && *c < 127);
+            !username.is_empty() && username.len() <= 16 && username.as_bytes().iter().all(|c| *c > 32 && *c < 127);
+        let custom = *custom_uuid.read(cx);
         let uuid = uuid_input.read(cx).value();
-        let valid_uuid = uuid.is_empty() || Uuid::try_parse(&uuid).is_ok();
-
-        let valid = valid_name && valid_uuid;
-
-        let backend_handle = backend_handle.clone();
-        let mut add_button =
-            Button::new("add")
-                .label(t::account::add::submit())
-                .disabled(!valid)
-                .on_click(move |_, window, cx| {
-                    window.close_all_dialogs(cx);
-
-                    let uuid = if let Ok(uuid) = Uuid::try_parse(&uuid) {
-                        uuid
-                    } else {
-                        let uuid: u128 = rand::thread_rng().r#gen();
-                        let uuid = (uuid & !0xF0000000000000000000) | 0x30000000000000000000; // set version to 3
-                        Uuid::from_u128(uuid)
+        let valid_uuid = !custom || Uuid::try_parse(&uuid).is_ok();
+        let backend = backend_handle.clone();
+        let add = design::action_button("add-offline", "Añadir", design::ButtonAction::Primary)
+            .disabled(!valid_name || !valid_uuid)
+            .on_click(move |_, window, cx| {
+                let uuid = if custom {
+                    let Ok(uuid) = Uuid::try_parse(&uuid) else {
+                        return;
                     };
-
-                    backend_handle.send(MessageToBackend::AddOfflineAccount {
-                        name: username.clone().into(),
-                        uuid,
-                    });
+                    uuid
+                } else {
+                    let value: u128 = rand::thread_rng().r#gen();
+                    Uuid::from_u128((value & !0xF0000000000000000000) | 0x30000000000000000000)
+                };
+                backend.send(MessageToBackend::AddOfflineAccount {
+                    name: username.clone().into(),
+                    uuid,
                 });
-
-        if valid {
-            add_button = add_button.success();
+                window.close_all_dialogs(cx);
+            });
+        let mut uuid_choices = h_flex().gap(px(8.));
+        for (index, label) in ["Aleatorio", "Propio"].into_iter().enumerate() {
+            let mode = custom_uuid.clone();
+            uuid_choices = uuid_choices.child(
+                design::chip(("offline-uuid-mode", index), label, custom == (index == 1)).on_click(move |_, _, cx| {
+                    mode.update(cx, |mode, cx| {
+                        *mode = index == 1;
+                        cx.notify();
+                    })
+                }),
+            );
         }
-
-        dialog.title(t::account::add::offline()).child(
-            v_flex()
-                .gap_2()
-                .child(crate::labelled(t::account::name(), Input::new(&name_input)))
-                .child(crate::labelled(t::account::uuid(), Input::new(&uuid_input)))
-                .child(add_button),
-        )
+        design::dialog(dialog)
+            .title(design::dialog_title("Añadir cuenta sin conexión"))
+            .child(
+                v_flex()
+                    .gap(px(12.))
+                    .child(crate::labelled("Nombre", design::text_field(&name_input)))
+                    .child(crate::labelled("UUID", uuid_choices))
+                    .when(custom, |body| body.child(design::text_field(&uuid_input)))
+                    .child(div().text_size(px(12.)).text_color(rgb(crate::theme::INK_MUTED)).child(
+                        "Sin conexión no se pueden cambiar aspectos ni entrar en servidores con autenticación.",
+                    )),
+            )
+            .footer(
+                h_flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        design::action_button("cancel-offline", "Cancelar", design::ButtonAction::Secondary)
+                            .on_click(|_, w, c| w.close_dialog(c)),
+                    )
+                    .child(add),
+            )
     });
 }

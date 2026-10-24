@@ -209,7 +209,12 @@ impl SettingsRoot {
 
         let page = self.settings.pages[page_ix].clone();
 
-        let group_count = page.searched_groups.as_ref().map(|g| g.len()).unwrap_or(page.groups.len());
+        let two_columns = page_ix == 0 && self.settings.last_query.is_none();
+        let group_count = if two_columns {
+            2
+        } else {
+            page.searched_groups.as_ref().map(|g| g.len()).unwrap_or(page.groups.len())
+        };
         if self.group_list_state.item_count() != group_count {
             self.group_list_state.reset(group_count);
         }
@@ -224,7 +229,7 @@ impl SettingsRoot {
         let selected_group = self.settings.selected_group;
 
         let entity = cx.entity();
-        list(self.group_list_state.clone(), move |mut group_ix, window, cx| {
+        let render_group = move |mut group_ix: usize, window: &mut Window, cx: &mut App| {
             cx.update_entity(&entity, |root, cx| {
                 if let Some(searched) = &page.searched_groups {
                     group_ix = searched[group_ix];
@@ -366,7 +371,7 @@ impl SettingsRoot {
 
                 if let Some(title) = group.title {
                     v_flex()
-                        .size_full()
+                        .w_full()
                         .px_3()
                         .py_1p5()
                         .child(
@@ -381,9 +386,24 @@ impl SettingsRoot {
                         .child(items)
                         .into_any_element()
                 } else {
-                    v_flex().size_full().p_3().pb_1p5().child(items).into_any_element()
+                    v_flex().w_full().p_3().pb_1p5().child(items).into_any_element()
                 }
             })
+        };
+        list(self.group_list_state.clone(), move |row, window, cx| {
+            if two_columns {
+                let left = render_group(row, window, cx);
+                let right = render_group(row + 2, window, cx);
+                h_flex()
+                    .w_full()
+                    .items_start()
+                    .gap(px(12.))
+                    .child(div().flex_1().min_w_0().child(left))
+                    .child(div().flex_1().min_w_0().child(right))
+                    .into_any_element()
+            } else {
+                render_group(row, window, cx)
+            }
         })
         .size_full()
         .into_any_element()
@@ -693,9 +713,27 @@ pub(crate) fn create(data: &DataEntities, window: &mut Window, cx: &mut App) -> 
 }
 
 fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Settings {
+    let mut general = general::create_page(window, cx);
+    let mut appearance = appearance::create_page(data, window, cx);
+    let language = general.groups[0].items[0].clone();
+    let mut general_groups = general.groups.to_vec();
+    let mut theme_group = appearance.groups[2].clone();
+    let mut theme_items = vec![appearance.groups[0].items[0].clone()];
+    theme_items.extend(theme_group.items.iter().cloned());
+    theme_group.items = theme_items.into();
+    general_groups.push(theme_group);
+    general_groups.push(appearance.groups[3].clone());
+    general.groups = general_groups.into();
+    let mut appearance_groups = appearance.groups[..2].to_vec();
+    appearance_groups.push(SettingGroup {
+        title: Some(|| "Idioma"),
+        items: vec![language].into(),
+        searched_items: None,
+    });
+    appearance.groups = appearance_groups.into();
     let mut pages = vec![
-        general::create_page(window, cx),
-        appearance::create_page(data, window, cx),
+        general,
+        appearance,
         network::create_page(),
         distribution::create_page(),
         ignored_paths::create_page(),

@@ -29,15 +29,16 @@ pub fn family_roots(profiles: &[GlobalProfileSummary]) -> Vec<GlobalProfileSumma
 }
 
 /// Marks a test profile (`profile_test-…`), which only the `developer` launcher channel lists.
-fn test_label(cx: &App) -> impl IntoElement {
+fn test_label(_cx: &App) -> impl IntoElement {
     div()
         .flex_shrink_0()
-        .px_1p5()
-        .rounded_sm()
-        .text_xs()
+        .px(px(6.))
+        .py(px(2.))
+        .rounded(px(0.))
+        .text_size(px(10.))
         .font_semibold()
-        .bg(cx.theme().warning)
-        .text_color(cx.theme().warning_foreground)
+        .bg(rgba(0x5bcef51f))
+        .text_color(rgb(crate::theme::ACCENT_TEXT))
         .child("PRUEBA")
 }
 
