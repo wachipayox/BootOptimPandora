@@ -29,7 +29,7 @@ fn check_rule(settings: &[ManifestConfigSetting], path: &str, key: &str, policy:
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let config = DistributionConfig {
-        base_url: "https://welite.ddns.net:8444".into(),
+        base_url: std::env::var("WBOMBO_DIST_URL")?,
         release_key_id: "wachiland-release-2026-09".into(),
         release_public_key_base64url: PUBLIC_KEY.into(),
         ..DistributionConfig::default()

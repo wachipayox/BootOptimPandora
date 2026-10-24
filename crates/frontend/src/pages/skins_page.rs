@@ -423,7 +423,6 @@ impl SkinsPage {
                         });
 
                         library = library
-                            .child(heading)
                             .child(
                                 h_flex()
                                     .id("toggle-capes")
@@ -532,6 +531,7 @@ impl SkinsPage {
             .child(sort_control)
             .child(texture_control);
         library = library
+            .child(heading)
             .child(
                 h_flex()
                     .flex_wrap()

@@ -137,7 +137,7 @@ impl Default for DistributionConfig {
 }
 
 fn default_distribution_base_url() -> String {
-    "https://welite.ddns.net:8444".into()
+    option_env!("WBOMBO_DISTRIBUTION_DEFAULT_URL").unwrap_or_default().trim().to_owned()
 }
 
 fn default_distribution_release_key_id() -> String {
@@ -192,15 +192,28 @@ mod distribution_defaults_tests {
     use super::*;
 
     #[test]
-    fn empty_or_missing_private_distribution_settings_use_the_wachiland_defaults() {
+    fn missing_and_blank_settings_use_build_defaults() {
         let defaults = DistributionConfig::default();
-        let missing: DistributionConfig = serde_json::from_str("{}").unwrap();
-        let explicitly_empty: DistributionConfig =
-            serde_json::from_str(r#"{"base_url":"","release_key_id":"","release_public_key_base64url":""}"#).unwrap();
+        for json in [
+            r#"{}"#,
+            r#"{"base_url":"","release_key_id":"","release_public_key_base64url":""}"#,
+            r#"{"base_url":"  ","release_key_id":"  ","release_public_key_base64url":"  "}"#,
+        ] {
+            let config: DistributionConfig = serde_json::from_str(json).unwrap();
+            assert_eq!(config, defaults);
+        }
+    }
 
-        assert_eq!(missing, defaults);
-        assert_eq!(explicitly_empty, defaults);
-        assert_eq!(defaults.base_url, "https://welite.ddns.net:8444");
+    #[test]
+    fn saved_endpoint_and_trust_settings_survive_loading_and_round_trip() {
+        let config: DistributionConfig = serde_json::from_str(
+            r#"{"base_url":"https://example.invalid/custom","release_key_id":"custom-key","release_public_key_base64url":"custom-public-key"}"#,
+        ).unwrap();
+        assert_eq!(config.base_url, "https://example.invalid/custom");
+        assert_eq!(config.release_key_id, "custom-key");
+        assert_eq!(config.release_public_key_base64url, "custom-public-key");
+        let reloaded: DistributionConfig = serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(reloaded, config);
     }
 }
 
