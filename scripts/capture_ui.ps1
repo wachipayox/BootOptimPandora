@@ -107,6 +107,23 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
 
+function Close-CapturedProcess([System.Diagnostics.Process]$CapturedProcess) {
+    if ($CapturedProcess.HasExited) { return }
+    try {
+        $CapturedProcess.CloseMainWindow() | Out-Null
+        if (-not $CapturedProcess.WaitForExit(5000)) {
+            $CapturedProcess.Refresh()
+            if (-not $CapturedProcess.HasExited) { $CapturedProcess.Kill() }
+            $CapturedProcess.WaitForExit()
+        }
+    } catch {
+        # Windows can deny Kill when the process exits between WaitForExit and
+        # Kill. Suppress only a confirmed exit; a still-running child is an error.
+        $CapturedProcess.Refresh()
+        if (-not $CapturedProcess.HasExited) { throw }
+    }
+}
+
 function Invoke-CaptureCli([string[]]$Arguments) {
     $cli = Start-Process -FilePath $portableExe -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Join-Path $tempRoot 'capture-cli.out') -RedirectStandardError (Join-Path $tempRoot 'capture-cli.err')
     if ($cli.ExitCode -ne 0) { throw "Capture CLI failed ($($cli.ExitCode)); inspect isolated capture-cli files." }
@@ -218,8 +235,7 @@ try {
         }
         $newsLogPath = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
         $errorsBeforeClose = @(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count
-        $proc.CloseMainWindow() | Out-Null
-        if (-not $proc.WaitForExit(5000)) { $proc.Kill(); $proc.WaitForExit() }
+        Close-CapturedProcess $proc
         $captureDiagnostics += @{page=$screen.page;errorsBeforeClose=$errorsBeforeClose;errorsAfterClose=@(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count}
         Write-Output "CAPTURE_OK page=$($screen.page) file=$($screen.file)"
     }
@@ -235,8 +251,7 @@ try {
 } finally {
     if ($null -ne $oldNewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS=$oldNewsFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_NEWS -ErrorAction SilentlyContinue }
     if ($null -ne $proc -and -not $proc.HasExited) {
-        $proc.CloseMainWindow() | Out-Null
-        if (-not $proc.WaitForExit(5000)) { $proc.Kill(); $proc.WaitForExit() }
+        Close-CapturedProcess $proc
     }
     if ($null -ne $oldPage) { $env:WBOMBO_UI_CAPTURE_PAGE = $oldPage } else { Remove-Item Env:WBOMBO_UI_CAPTURE_PAGE -ErrorAction SilentlyContinue }
     if ($createdInstance) { Invoke-CaptureCli @('--delete-instance', $InstanceName, '--confirm', $InstanceName) }
