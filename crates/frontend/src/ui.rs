@@ -49,6 +49,7 @@ pub enum PageType {
     Instances,
     Skins,
     LauncherSettings,
+    AddInstance,
     Modrinth {
         installing_for: Option<SharedString>,
     },
@@ -73,6 +74,7 @@ impl PageType {
             PageType::Instances => t::instance::title().into(),
             PageType::Skins => "Aspecto".into(),
             PageType::LauncherSettings => "Ajustes del launcher".into(),
+            PageType::AddInstance => "Añadir instancia".into(),
             PageType::Modrinth { installing_for } => {
                 if installing_for.is_some() {
                     t::instance::content::install::from_modrinth().into()
@@ -103,6 +105,7 @@ pub enum LauncherPage {
     Instances(Entity<InstancesPage>),
     Skins(Entity<SkinsPage>),
     LauncherSettings(Entity<crate::settings::SettingsRoot>),
+    AddInstance(Entity<crate::pages::add_instance::AddInstancePage>),
     Modrinth(Entity<ModrinthSearchPage>),
     Curseforge(Entity<CurseforgeSearchPage>),
     Import(Entity<ImportPage>),
@@ -125,6 +128,9 @@ impl LauncherPage {
         if let LauncherPage::Skins(page) = &self {
             return div().size_full().child(page.clone()).into_any_element();
         }
+        if let LauncherPage::AddInstance(page) = &self {
+            return div().size_full().child(page.clone()).into_any_element();
+        }
         fn process(entity: Entity<impl Page>, window: &mut Window, cx: &mut App) -> (bool, AnyElement, AnyElement) {
             entity.update(cx, |page, cx| {
                 (
@@ -136,7 +142,7 @@ impl LauncherPage {
         }
 
         let (scrollable, controls, page) = match self {
-            LauncherPage::Home(_) | LauncherPage::LauncherSettings(_) => unreachable!(),
+            LauncherPage::Home(_) | LauncherPage::LauncherSettings(_) | LauncherPage::AddInstance(_) => unreachable!(),
             LauncherPage::Instances(entity) => process(entity, window, cx),
             LauncherPage::Skins(entity) => process(entity, window, cx),
             LauncherPage::Modrinth(entity) => process(entity, window, cx),
@@ -341,6 +347,9 @@ impl LauncherUI {
             PageType::Instances => {
                 Ok(LauncherPage::Home(cx.new(|cx| crate::pages::home::HomePage::new(data, window, cx))))
             },
+            PageType::AddInstance => Ok(LauncherPage::AddInstance(
+                cx.new(|cx| crate::pages::add_instance::AddInstancePage::new(data, window, cx)),
+            )),
             PageType::LauncherSettings => Ok(LauncherPage::LauncherSettings(crate::settings::create(data, window, cx))),
             PageType::Skins => Ok(LauncherPage::Skins(cx.new(|cx| SkinsPage::new(data, window, cx)))),
             PageType::Modrinth { installing_for } => {

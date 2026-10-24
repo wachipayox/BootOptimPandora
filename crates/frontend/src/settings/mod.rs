@@ -716,6 +716,28 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
     let mut general = general::create_page(window, cx);
     let mut appearance = appearance::create_page(data, window, cx);
     let language = general.groups[0].items[0].clone();
+    let mut first_group = general.groups[0].clone();
+    let mut items = first_group.items.to_vec();
+    items.push(SettingItem {
+        widget: SettingItemWidget::AnyWide(Rc::new(|_, _| {
+            design::DesignButton::new("open-synchronization")
+                .label("Sincronización")
+                .on_click(|_, w, c| {
+                    crate::root::switch_page(
+                        crate::ui::PageType::Syncing,
+                        &[crate::ui::PageType::LauncherSettings],
+                        w,
+                        c,
+                    )
+                })
+                .into_any_element()
+        })),
+        ..Default::default()
+    });
+    first_group.items = items.into();
+    let groups = Rc::make_mut(&mut general.groups);
+    groups[0] = first_group;
+
     let mut general_groups = general.groups.to_vec();
     let mut theme_group = appearance.groups[2].clone();
     let mut theme_items = vec![appearance.groups[0].items[0].clone()];

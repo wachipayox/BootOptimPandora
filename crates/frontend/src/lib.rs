@@ -364,7 +364,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                             installing_for: Some(page.split_once(':').unwrap().1.into()),
                         };
                     },
-                    Some("import") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Import,
+                    Some("import") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::AddInstance,
                     Some("syncing") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Syncing,
                     Some(name) if name.starts_with("instance:") || name.starts_with("update:") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::InstancePage {
@@ -446,18 +446,9 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     window.on_next_frame(move |window, cx| {
                         match page.as_str() {
                             "add-instance" => crate::pages::home::add_instance(&capture_data, window, cx),
-                            "add-server" => crate::modals::global_profiles::open_global_profiles(
-                                capture_data.backend_handle.clone(),
-                                window,
-                                cx,
-                            ),
-                            "add-local" => crate::modals::create_instance::open_create_instance(
-                                capture_data.metadata.clone(),
-                                capture_data.instances.clone(),
-                                capture_data.backend_handle.clone(),
-                                window,
-                                cx,
-                            ),
+                            "add-server" | "add-local" => {
+                                crate::root::switch_page(ui::PageType::AddInstance, &[], window, cx)
+                            },
                             "account-offline" => crate::modals::accounts::open_offline_account(
                                 capture_data.backend_handle.clone(),
                                 window,
