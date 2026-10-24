@@ -17,3 +17,5 @@ pub mod update_prompt;
 
 #[cfg(windows)]
 pub mod windows_security;
+
+pub mod skin_import;

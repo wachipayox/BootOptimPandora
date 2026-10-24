@@ -49,6 +49,7 @@ pub use profile_layout_service::{ProfileBranchSnapshot, ProfileLayoutServiceErro
 mod save_groups;
 mod server_list_pinger;
 mod shortcut;
+mod skin_import;
 mod skin_manager;
 mod syncing;
 mod update;

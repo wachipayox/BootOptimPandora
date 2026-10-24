@@ -682,6 +682,18 @@ impl SkinsPage {
                             ),
                     )
                     .child(
+                        Button::new("import-launcher-skins")
+                            .ghost()
+                            .rounded(px(0.))
+                            .text_size(px(13.))
+                            .label("Importar de launcher")
+                            .small()
+                            .compact()
+                            .on_click(cx.listener(|page, _, window, cx| {
+                                crate::modals::skin_import::open(page.data.backend_handle.clone(), window, cx);
+                            })),
+                    )
+                    .child(
                         Button::new("open-folder")
                             .ghost()
                             .rounded(px(0.))
