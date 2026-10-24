@@ -110,7 +110,9 @@ impl UpdateChangelog {
             entries: Vec::new(),
             old: None,
             new: None,
-            expanded: false,
+            expanded: std::env::var("WBOMBO_UI_CAPTURE_PAGE")
+                .is_ok_and(|route| route.starts_with("update:agente-274-"))
+                && std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("expanded"),
             failed: false,
         }
     }

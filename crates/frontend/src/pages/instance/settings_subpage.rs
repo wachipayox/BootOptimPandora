@@ -277,8 +277,12 @@ impl InstanceSettingsSubpage {
             profile_name: None,
             profile_sequence: None,
             save_group: None,
-            show_advanced: false,
-            editing_version: false,
+            show_advanced: std::env::var("WBOMBO_UI_CAPTURE_PAGE")
+                .is_ok_and(|route| route.starts_with("instance-settings:agente-274-"))
+                && std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("advanced"),
+            editing_version: std::env::var("WBOMBO_UI_CAPTURE_PAGE")
+                .is_ok_and(|route| route.starts_with("instance-settings:agente-274-"))
+                && std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("version"),
             wrapper_command_enabled: wrapper_command.enabled,
             wrapper_command_input_state,
             jvm_flags_enabled: jvm_flags.enabled,

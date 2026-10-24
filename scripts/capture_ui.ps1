@@ -10,6 +10,7 @@ param(
     [switch]$NewsScreens,
     [switch]$InstanceScreens,
     [string]$NewsFixture,
+    [ValidateSet('advanced','version','expanded')][string]$CaptureState,
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
@@ -133,6 +134,8 @@ $oldNewsFixture = $env:WBOMBO_UI_CAPTURE_NEWS
 if ($NewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS = (Resolve-Path -LiteralPath $NewsFixture).Path }
 $createdInstance = $false
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
+$oldCaptureState = $env:WBOMBO_UI_CAPTURE_STATE
+if ($CaptureState) { $env:WBOMBO_UI_CAPTURE_STATE = $CaptureState }
 $screens = @(
     @{ page = 'instances'; file = 'instances.png'; label = 'Inicio con la instancia seleccionada o el fallback Vanilla' },
     @{ page = 'appearance'; file = 'settings-appearance.png'; label = 'Ajustes y apariencia' },
@@ -255,7 +258,22 @@ try {
                 Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
             }
         }
-        if ($screen.page -in @('components','home-news')) {
+        if ($screen.page -match '^instance-(settings|changelog):') {
+            $instanceClient = New-Object CaptureWindow+RECT
+            $instanceOrigin = New-Object CaptureWindow+POINT
+            [void][CaptureWindow]::GetClientRect($proc.MainWindowHandle,[ref]$instanceClient)
+            [void][CaptureWindow]::ClientToScreen($proc.MainWindowHandle,[ref]$instanceOrigin)
+            $instanceX = $instanceOrigin.X + [int]($instanceClient.Right * 0.5)
+            $instanceY = $instanceOrigin.Y + [int]($instanceClient.Bottom * 0.7)
+            $instancePoint = [IntPtr](([int64]$instanceY -shl 16) -bor ([int64]$instanceX -band 0xffff))
+            foreach ($part in @('middle','bottom')) {
+                for ($wheel = 0; $wheel -lt 8; $wheel++) {
+                    if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle,0x20a,[IntPtr](-7864320),$instancePoint)) { throw 'Cannot scroll the instance capture window' }
+                }
+                Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
+            }
+        }
+        if ($screen.page -in @('components','home-news') -or $screen.page -match '^(instance-|derived:|duplicate:|update:)') {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
             if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
@@ -282,6 +300,7 @@ try {
     if ($null -ne $proc -and -not $proc.HasExited) {
         Close-CapturedProcess $proc
     }
+    if ($null -ne $oldCaptureState) { $env:WBOMBO_UI_CAPTURE_STATE=$oldCaptureState } else { Remove-Item Env:WBOMBO_UI_CAPTURE_STATE -ErrorAction SilentlyContinue }
     if ($null -ne $oldPage) { $env:WBOMBO_UI_CAPTURE_PAGE = $oldPage } else { Remove-Item Env:WBOMBO_UI_CAPTURE_PAGE -ErrorAction SilentlyContinue }
     if ($createdInstance) { Invoke-CaptureCli @('--delete-instance', $InstanceName, '--confirm', $InstanceName) }
     if ($ownsDirectory) {

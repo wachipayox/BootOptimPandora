@@ -523,7 +523,7 @@ impl Render for InstanceContentSubpage {
                 design::action_button(
                     "explore-content",
                     format!("Explorar contenido para {}", self.instance_name),
-                    design::ButtonAction::Secondary,
+                    design::ButtonAction::Primary,
                 )
                 .on_click(cx.listener(Self::add_from_modrinth)),
             );

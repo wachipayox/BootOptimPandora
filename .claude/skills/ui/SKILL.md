@@ -42,3 +42,5 @@ Distribution's shared vectors before native TextView rendering. Its explicit ima
 map contains only backend-verified cache paths; an absent image renders alt text.
 
 Instance captures use `-InstanceScreens` with an owned CLI fixture: Content filters, overrides, logs/crashes, Changelog, instance Settings, Create child and Duplicate. The live-output capture feeds synthetic messages through the native viewer; it never starts Minecraft. Explicit routes are `instance-mods:agente-274-…`, `instance-resources:…`, `instance-shaders:…`, `instance-overwrites:…`, `instance-logs:…`, `instance-crashes:…`, `instance-live:…`, `instance-changelog:…`, `instance-settings:…`, `derived:…`, and `duplicate:…`. The script waits for the real data dependencies before saving. Update captures also wait for the exact skipped-revision changelog. Keep every screenshot private in wbombo.
+
+For the owned instance routes, `-CaptureState advanced|version|expanded` opens the existing advanced settings, version editor or expanded update changelog. This changes presentation only. Settings and timeline captures include middle/bottom scrolling; native Tab focus is captured for instance pages/dialogs.

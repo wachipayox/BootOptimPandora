@@ -170,8 +170,8 @@ impl DuplicateInstanceModalState {
                             .whitespace_nowrap()
                             .child(format!("{}°", hue_value.round() as i32)),
                     )
-                    .child(DesignButton::new("randomize-parent-icon-hue").label("↻").h(px(28.)).w(px(28.)).on_click(
-                        cx.listener(|this, _, window, cx| {
+                    .child(DesignButton::new("randomize-parent-icon-hue").label("Aleatorio").on_click(cx.listener(
+                        |this, _, window, cx| {
                             let nanos = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
@@ -179,8 +179,8 @@ impl DuplicateInstanceModalState {
                             let value = (nanos % 361) as f32;
                             this.hue.update(cx, |slider, cx| slider.set_value(value, window, cx));
                             cx.notify();
-                        }),
-                    ));
+                        },
+                    )));
                 content = content
                     .child(crate::labelled("Tono del icono", hue_row))
                     .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child("Neutro a 180°"));
@@ -222,50 +222,53 @@ impl DuplicateInstanceModalState {
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(
-                        DesignButton::new("create")
-                            .label(if self.as_branch { "Crear hija" } else { "Duplicar" })
-                            .disabled(!valid || !ready)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                let modal_action = ModalAction::default();
-                                window.close_dialog(cx);
-                                generic::show_modal(
-                                    window,
-                                    cx,
-                                    if this.as_branch {
-                                        "Creando instancia hija…".into()
-                                    } else {
-                                        "Duplicando instancia…".into()
-                                    },
-                                    if this.as_branch {
-                                        "No se ha podido crear la instancia hija.".into()
-                                    } else {
-                                        "No se ha podido duplicar la instancia.".into()
-                                    },
-                                    modal_action.clone(),
-                                );
+                        design::action_button(
+                            "create",
+                            if self.as_branch { "Crear hija" } else { "Duplicar" },
+                            design::ButtonAction::Primary,
+                        )
+                        .disabled(!valid || !ready)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let modal_action = ModalAction::default();
+                            window.close_dialog(cx);
+                            generic::show_modal(
+                                window,
+                                cx,
                                 if this.as_branch {
-                                    this.backend.send(MessageToBackend::CreateLocalBranch {
-                                        id: this.instance_id,
-                                        name: name.as_str().into(),
-                                        create_save_group: this.create_group,
-                                        reuse_parent_icon: this.reuse_icon,
-                                        icon_hue_degrees: {
-                                            let value = match this.hue.read(cx).value() {
-                                                gpui_component::slider::SliderValue::Single(v) => v,
-                                                gpui_component::slider::SliderValue::Range(v, _) => v,
-                                            };
-                                            value.round() as i32 - 180
-                                        },
-                                        modal_action,
-                                    });
+                                    "Creando instancia hija…".into()
                                 } else {
-                                    this.backend.send(MessageToBackend::DuplicateInstance {
-                                        id: this.instance_id,
-                                        name: name.as_str().into(),
-                                        modal_action,
-                                    });
-                                }
-                            })),
+                                    "Duplicando instancia…".into()
+                                },
+                                if this.as_branch {
+                                    "No se ha podido crear la instancia hija.".into()
+                                } else {
+                                    "No se ha podido duplicar la instancia.".into()
+                                },
+                                modal_action.clone(),
+                            );
+                            if this.as_branch {
+                                this.backend.send(MessageToBackend::CreateLocalBranch {
+                                    id: this.instance_id,
+                                    name: name.as_str().into(),
+                                    create_save_group: this.create_group,
+                                    reuse_parent_icon: this.reuse_icon,
+                                    icon_hue_degrees: {
+                                        let value = match this.hue.read(cx).value() {
+                                            gpui_component::slider::SliderValue::Single(v) => v,
+                                            gpui_component::slider::SliderValue::Range(v, _) => v,
+                                        };
+                                        value.round() as i32 - 180
+                                    },
+                                    modal_action,
+                                });
+                            } else {
+                                this.backend.send(MessageToBackend::DuplicateInstance {
+                                    id: this.instance_id,
+                                    name: name.as_str().into(),
+                                    modal_action,
+                                });
+                            }
+                        })),
                     ),
             )
     }
