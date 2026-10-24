@@ -13,7 +13,12 @@ struct CachedDocument {
     fetched_at: u64,
 }
 impl DistributionClient {
-    async fn cosmetic_document(&self, route: &str, root: &Path, interval: u64) -> Result<Value, DistributionError> {
+    pub(super) async fn cosmetic_document(
+        &self,
+        route: &str,
+        root: &Path,
+        interval: u64,
+    ) -> Result<Value, DistributionError> {
         fs::create_dir_all(root)?;
         let key = hex::encode(Sha256::digest(format!("{}{}", self.base_url, route).as_bytes()));
         let path = root.join(format!("{key}.json"));
@@ -37,19 +42,7 @@ impl DistributionClient {
                 let cached = cached
                     .as_ref()
                     .ok_or_else(|| DistributionError::InvalidResponse("304 without cache".into()))?;
-                let mut value = cached.value.clone();
-                // The cursor does not change when a pin expires. The verified origin's HTTP Date
-                // advances server time on a 304, without trusting the workstation clock.
-                if route == "/v1/news" {
-                    if let Some(date) = response
-                        .headers()
-                        .get(reqwest::header::DATE)
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(|v| chrono::DateTime::parse_from_rfc2822(v).ok())
-                    {
-                        value["server_time"] = Value::String(date.with_timezone(&chrono::Utc).to_rfc3339());
-                    }
-                }
+                let value = cached.value.clone();
                 return Ok(CachedDocument {
                     etag: cached.etag.clone(),
                     value,
@@ -282,13 +275,16 @@ impl crate::BackendState {
                 }
             }
         }
-        let news = match client.cosmetic_document("/v1/news", &cache, 300).await {
+        let feed = match client.news_snapshot(&self.directories.root_launcher_dir.join("news-state")).await {
             Ok(v) => v,
             Err(_) => {
                 out.news_failed = true;
                 return Ok(out);
             },
         };
+        out.news_origin_key = feed.origin_key.clone();
+        out.news_failed = feed.load_failed;
+        let news = serde_json::to_value(feed).map_err(|e| e.to_string())?;
         let lineage = home_lineage(&profiles, profile_id);
         let server_time = news["server_time"].as_str().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
         if let Some(items) = news["items"].as_array() {

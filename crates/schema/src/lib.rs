@@ -21,6 +21,8 @@ pub mod minecraft_profile;
 pub mod modification;
 pub mod modrinth;
 pub mod mrpack;
+pub mod news;
+pub mod news_markdown;
 pub mod pandora_update;
 pub mod profile_jvm;
 pub mod resourcepack;
@@ -72,3 +74,5 @@ where
         Ok(Vec::new())
     }
 }
+
+pub mod changelog;

@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$Output = (Join-Path $PSScriptRoot '..\..\..\coordination\272-estetica-launchers\pandora'),
     [switch]$SkipBuild,
     [string]$Executable,
@@ -7,6 +7,9 @@
     [string]$InstanceName = 'agente-274-ui',
     [switch]$Components,
     [switch]$HomeScreens,
+    [switch]$NewsScreens,
+    [string]$NewsFixture,
+    [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
     [string]$PortableDirectory
@@ -56,6 +59,7 @@ public static class CaptureWindow {
 Add-Type -AssemblyName System.Drawing
 $oldDpiContext = [CaptureWindow]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $captureMetadata = @()
+$captureDiagnostics = @()
 
 function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     [uint32]$owner = 0
@@ -103,10 +107,29 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
 
+function Close-CapturedProcess([System.Diagnostics.Process]$CapturedProcess) {
+    if ($CapturedProcess.HasExited) { return }
+    try {
+        $CapturedProcess.CloseMainWindow() | Out-Null
+        if (-not $CapturedProcess.WaitForExit(5000)) {
+            $CapturedProcess.Refresh()
+            if (-not $CapturedProcess.HasExited) { $CapturedProcess.Kill() }
+            $CapturedProcess.WaitForExit()
+        }
+    } catch {
+        # Windows can deny Kill when the process exits between WaitForExit and
+        # Kill. Suppress only a confirmed exit; a still-running child is an error.
+        $CapturedProcess.Refresh()
+        if (-not $CapturedProcess.HasExited) { throw }
+    }
+}
+
 function Invoke-CaptureCli([string[]]$Arguments) {
     $cli = Start-Process -FilePath $portableExe -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Join-Path $tempRoot 'capture-cli.out') -RedirectStandardError (Join-Path $tempRoot 'capture-cli.err')
     if ($cli.ExitCode -ne 0) { throw "Capture CLI failed ($($cli.ExitCode)); inspect isolated capture-cli files." }
 }
+$oldNewsFixture = $env:WBOMBO_UI_CAPTURE_NEWS
+if ($NewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS = (Resolve-Path -LiteralPath $NewsFixture).Path }
 $createdInstance = $false
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
 $screens = @(
@@ -129,6 +152,12 @@ try {
         $screens += @{ page='home-menu'; file='home-menu.png'; label='Menú de la instancia seleccionada' }
         $screens += @{ page='home-news'; file='home-news.png'; label='Destino de Ver todas (pantalla completa en paso 3)' }
     }
+    if ($NewsScreens) {
+        foreach ($newsPage in @('home-news','news-history','news-saved','news-search','news-profiles','news-article','news-changelog')) {
+            $screens += @{ page=$newsPage; file="$newsPage.png"; label='Native News screen/state' }
+        }
+    }
+    if ($Pages) { $screens = @($Pages | ForEach-Object { @{ page=$_; file=(($_ -replace ':','-') + '.png'); label='Explicit native capture route' } }) }
     if ($Components) {
         $screens += @{ page = 'components'; file = 'components.png'; label = 'Wachiland base controls' }
         $screens += @{ page = 'components-dialog'; file = 'components-dialog.png'; label = 'Wachiland base dialog' }
@@ -154,6 +183,17 @@ try {
             while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Home presentation did not settle before capture.' }
         }
+        if ($screen.page -eq 'home-news' -or $screen.page.StartsWith('news-')) {
+            $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $ready = "news-ready pid=$($proc.Id)"
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'News did not settle before capture.' }
+            $ready = "news-media-ready pid=$($proc.Id)"
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'News media did not settle before capture.' }
+        }
         if ($screen.page.StartsWith('update:')) {
             $ready = "update-dialog-ready pid=$($proc.Id)"
             $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
@@ -161,30 +201,57 @@ try {
             while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'No real update prompt was opened; repin the owned test profile before capturing.' }
         }
+        if ($screen.page -eq 'news-changelog') {
+            $ready = "news-changelog-ready pid=$($proc.Id)"
+            $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'News changelog did not settle before capture.' }
+        }
         Save-Window (Join-Path $outputPath $screen.file) $proc.MainWindowHandle $proc.Id
-        if ($screen.page -eq 'components') {
+        if ($screen.page.StartsWith('news-article')) {
+            # Wheel packets target only the verified capture window. They never
+            # move the pointer or send input to another foreground application.
+            $newsClient = New-Object CaptureWindow+RECT
+            $newsOrigin = New-Object CaptureWindow+POINT
+            [void][CaptureWindow]::GetClientRect($proc.MainWindowHandle,[ref]$newsClient)
+            [void][CaptureWindow]::ClientToScreen($proc.MainWindowHandle,[ref]$newsOrigin)
+            $newsX = $newsOrigin.X + [int]($newsClient.Right * 0.7)
+            $newsY = $newsOrigin.Y + [int]($newsClient.Bottom * 0.7)
+            $newsPoint = [IntPtr](([int64]$newsY -shl 16) -bor ([int64]$newsX -band 0xffff))
+            foreach ($part in @('body','media')) {
+                for ($wheel = 0; $wheel -lt 8; $wheel++) {
+                    if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle,0x20a,[IntPtr](-7864320),$newsPoint)) { throw 'Cannot scroll the article capture window' }
+                }
+                Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
+            }
+        }
+        if ($screen.page -in @('components','home-news')) {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
             if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
             if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x101, [IntPtr]9, [IntPtr]0xc00f0001L)) { throw 'Cannot send capture Tab keyup' }
-            Save-Window (Join-Path $outputPath 'components-focus.png') $proc.MainWindowHandle $proc.Id
+            Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-focus.png')) $proc.MainWindowHandle $proc.Id
         }
-        $proc.CloseMainWindow() | Out-Null
-        if (-not $proc.WaitForExit(5000)) { $proc.Kill(); $proc.WaitForExit() }
+        $newsLogPath = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+        $errorsBeforeClose = @(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count
+        Close-CapturedProcess $proc
+        $captureDiagnostics += @{page=$screen.page;errorsBeforeClose=$errorsBeforeClose;errorsAfterClose=@(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count}
         Write-Output "CAPTURE_OK page=$($screen.page) file=$($screen.file)"
     }
     @{
         launcher = 'BootOptimPandora'
         viewport = if ($DesignViewport) { '1280 x 860 logical pixels' } else { 'maximized' }
         captures = $captureMetadata
+        diagnostics = $captureDiagnostics
         dataDirectory = if ($ownsDirectory) { 'temporary portable directory; removed after capture' } else { 'caller-owned isolated portable directory' }
         screens = @($screens | ForEach-Object { @{ page=$_.page; file=$_.file; note=$_.label } })
         unavailable = if ($TestProfile -or $PortableDirectory) { @() } else { @('instance-detail and update-dialog require an owned test profile fixture') }
     } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $outputPath 'capture-manifest.json')
 } finally {
+    if ($null -ne $oldNewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS=$oldNewsFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_NEWS -ErrorAction SilentlyContinue }
     if ($null -ne $proc -and -not $proc.HasExited) {
-        $proc.CloseMainWindow() | Out-Null
-        if (-not $proc.WaitForExit(5000)) { $proc.Kill(); $proc.WaitForExit() }
+        Close-CapturedProcess $proc
     }
     if ($null -ne $oldPage) { $env:WBOMBO_UI_CAPTURE_PAGE = $oldPage } else { Remove-Item Env:WBOMBO_UI_CAPTURE_PAGE -ErrorAction SilentlyContinue }
     if ($createdInstance) { Invoke-CaptureCli @('--delete-instance', $InstanceName, '--confirm', $InstanceName) }

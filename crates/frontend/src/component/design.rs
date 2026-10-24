@@ -6,7 +6,7 @@ use super::{
 use crate::theme;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Disableable,
+    Disableable, Selectable,
     button::{Button, ButtonCustomVariant, ButtonVariants},
     h_flex, v_flex,
 };
@@ -98,6 +98,16 @@ impl Disableable for DesignButton {
         self
     }
 }
+impl Selectable for DesignButton {
+    fn selected(mut self, selected: bool) -> Self {
+        self.inner = self.inner.selected(selected);
+        self
+    }
+    fn is_selected(&self) -> bool {
+        self.inner.is_selected()
+    }
+}
+impl gpui_component::menu::DropdownMenu for DesignButton {}
 impl ButtonVariants for DesignButton {
     fn with_variant(mut self, variant: gpui_component::button::ButtonVariant) -> Self {
         self.inner = self.inner.with_variant(variant);

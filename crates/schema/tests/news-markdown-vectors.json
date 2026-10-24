@@ -1,0 +1,777 @@
+{
+ "schema_version": 1,
+ "description": "Shared test vectors for the restricted Markdown of Distribution news (docs/PROFILE_PROTOCOL.md, Cuerpo de la noticia). Every client must accept exactly the accepted cases and reject the rejected ones; for accepted cases the normalized blocks, image and video counts must match (see the notes field). Cases avoid backslash escapes, entities and hard breaks.",
+ "notes": {
+  "cas_existing": "cas:\u003csha256\u003e images are valid only if the digest is listed here (the server asks its CAS; clients treat every cas: image of an accepted news as present).",
+  "blocks": "Normalized description. paragraph/heading text is plain: emphasis and link markup removed, images contribute their alt text, soft and hard line breaks are \"\n\". list items hold blocks (tight list text counts as a paragraph). image is a paragraph whose only content is one image. an absent blocks field means no blocks. youtube is a paragraph whose only content is a YouTube link (bare URL, link or autolink); id is the 11-character video id.",
+  "images": "Number of images (image blocks plus images inside text). YouTube videos are not images.",
+  "videos": "Number of youtube blocks.",
+  "error_line": "1-based line of the first problem for rejected cases. The server reports it in the message of 422 invalid_news_body; clients only need to reject (the line is informative).",
+  "tables": "A table (a text line followed by a |---| separator line) is rejected even though plain CommonMark would render it as text. A line with pipes and no separator is plain text.",
+  "limits": {
+   "max_body_bytes": 65536,
+   "max_images": 50,
+   "max_videos": 10,
+   "max_url_bytes": 2048,
+   "max_list_levels": 2
+  }
+ },
+ "cas_existing": [
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ ],
+ "cases": [
+  {
+   "name": "empty",
+   "markdown": "",
+   "accepted": true,
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "paragraph with bold and italic",
+   "markdown": "Primer parrafo con **negrita** y *cursiva*.",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Primer parrafo con negrita y cursiva."
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "two paragraphs",
+   "markdown": "Uno.\n\nDos.",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Uno."
+    },
+    {
+     "type": "paragraph",
+     "text": "Dos."
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "soft line break is a line break",
+   "markdown": "Linea uno\nlinea dos",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Linea uno\nlinea dos"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "headings 2 and 3",
+   "markdown": "## Novedades\n\n### Detalle\n\nTexto",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "heading",
+     "text": "Novedades",
+     "level": 2
+    },
+    {
+     "type": "heading",
+     "text": "Detalle",
+     "level": 3
+    },
+    {
+     "type": "paragraph",
+     "text": "Texto"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "unordered list with dash",
+   "markdown": "- Uno\n- Dos",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "list",
+     "items": [
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "text": "Uno"
+        }
+       ]
+      },
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "text": "Dos"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "unordered list with star",
+   "markdown": "* Uno\n* Dos",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "list",
+     "items": [
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "text": "Uno"
+        }
+       ]
+      },
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "text": "Dos"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "ordered list",
+   "markdown": "1. Uno\n2. Dos",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "list",
+     "ordered": true,
+     "items": [
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "text": "Uno"
+        }
+       ]
+      },
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "text": "Dos"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "nested list two levels",
+   "markdown": "- Uno\n  - Sub uno\n  - Sub dos\n- Dos",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "list",
+     "items": [
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "text": "Uno"
+        },
+        {
+         "type": "list",
+         "items": [
+          {
+           "blocks": [
+            {
+             "type": "paragraph",
+             "text": "Sub uno"
+            }
+           ]
+          },
+          {
+           "blocks": [
+            {
+             "type": "paragraph",
+             "text": "Sub dos"
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "text": "Dos"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "quote",
+   "markdown": "\u003e Una cita\n\u003e en dos lineas",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "quote",
+     "blocks": [
+      {
+       "type": "paragraph",
+       "text": "Una cita\nen dos lineas"
+      }
+     ]
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "thematic break",
+   "markdown": "Antes\n\n---\n\nDespues",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Antes"
+    },
+    {
+     "type": "rule"
+    },
+    {
+     "type": "paragraph",
+     "text": "Despues"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "link",
+   "markdown": "Visita [la web](https://example.com/a?b=1) ahora.",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Visita la web ahora."
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "bare https url is plain text",
+   "markdown": "Mas info en https://example.com/info",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Mas info en https://example.com/info"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "bare http url is plain text",
+   "markdown": "Mas info en http://example.com/info",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Mas info en http://example.com/info"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "external image alone",
+   "markdown": "![Captura](https://example.com/captura.png)",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Captura",
+     "src": "https://example.com/captura.png"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image inside text",
+   "markdown": "Texto ![icono](https://example.com/i.png) fin",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Texto icono fin"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "cas image",
+   "markdown": "![Portada](cas:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Portada",
+     "src": "cas:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "youtube watch bare",
+   "markdown": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "youtube",
+     "id": "dQw4w9WgXcQ"
+    }
+   ],
+   "images": 0,
+   "videos": 1
+  },
+  {
+   "name": "youtube watch with extra params",
+   "markdown": "https://www.youtube.com/watch?feature=share\u0026v=dQw4w9WgXcQ\u0026t=42s",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "youtube",
+     "id": "dQw4w9WgXcQ"
+    }
+   ],
+   "images": 0,
+   "videos": 1
+  },
+  {
+   "name": "youtube short domain bare",
+   "markdown": "https://youtu.be/dQw4w9WgXcQ",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "youtube",
+     "id": "dQw4w9WgXcQ"
+    }
+   ],
+   "images": 0,
+   "videos": 1
+  },
+  {
+   "name": "youtube shorts bare",
+   "markdown": "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "youtube",
+     "id": "dQw4w9WgXcQ"
+    }
+   ],
+   "images": 0,
+   "videos": 1
+  },
+  {
+   "name": "youtube as link",
+   "markdown": "[Mira esto](https://youtu.be/dQw4w9WgXcQ)",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "youtube",
+     "id": "dQw4w9WgXcQ"
+    }
+   ],
+   "images": 0,
+   "videos": 1
+  },
+  {
+   "name": "youtube as autolink",
+   "markdown": "\u003chttps://youtu.be/dQw4w9WgXcQ\u003e",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "youtube",
+     "id": "dQw4w9WgXcQ"
+    }
+   ],
+   "images": 0,
+   "videos": 1
+  },
+  {
+   "name": "youtube inside a sentence is plain text",
+   "markdown": "Mira https://youtu.be/dQw4w9WgXcQ ya",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Mira https://youtu.be/dQw4w9WgXcQ ya"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "youtube id of wrong length is plain text",
+   "markdown": "https://youtu.be/dQw4w9WgXc",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "https://youtu.be/dQw4w9WgXc"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "youtube video after text",
+   "markdown": "Intro\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nFin",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Intro"
+    },
+    {
+     "type": "youtube",
+     "id": "dQw4w9WgXcQ"
+    },
+    {
+     "type": "paragraph",
+     "text": "Fin"
+    }
+   ],
+   "images": 0,
+   "videos": 1
+  },
+  {
+   "name": "pipe without separator line is plain text",
+   "markdown": "a | b | c",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "a | b | c"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "reference-looking text without definition",
+   "markdown": "Ver [texto][1] aqui",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Ver [texto][1] aqui"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "less than sign as text",
+   "markdown": "si a \u003c b entonces c",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "si a \u003c b entonces c"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "hash without space is text",
+   "markdown": "#sinespacio",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "#sinespacio"
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "list with paragraph and quote inside item",
+   "markdown": "- Uno\n\n  \u003e cita\n- Dos",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "list",
+     "items": [
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "text": "Uno"
+        },
+        {
+         "type": "quote",
+         "blocks": [
+          {
+           "type": "paragraph",
+           "text": "cita"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "text": "Dos"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "images": 0,
+   "videos": 0
+  },
+  {
+   "name": "html block",
+   "markdown": "Antes\n\n\u003cdiv\u003ehola\u003c/div\u003e",
+   "accepted": false,
+   "error_line": 3
+  },
+  {
+   "name": "inline html",
+   "markdown": "Texto \u003cb\u003enegrita\u003c/b\u003e aqui",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "inline html on later line",
+   "markdown": "Uno\n\nTexto \u003cspan\u003ex\u003c/span\u003e",
+   "accepted": false,
+   "error_line": 3
+  },
+  {
+   "name": "html comment",
+   "markdown": "\u003c!-- nota --\u003e",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "email autolink",
+   "markdown": "Escribe a \u003ca@example.com\u003e",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "fenced code",
+   "markdown": "Antes\n\n```\ncodigo\n```",
+   "accepted": false,
+   "error_line": 3
+  },
+  {
+   "name": "tilde fenced code",
+   "markdown": "~~~\ncodigo\n~~~",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "indented code",
+   "markdown": "Antes\n\n    codigo",
+   "accepted": false,
+   "error_line": 3
+  },
+  {
+   "name": "code span",
+   "markdown": "Usa `comando` aqui",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "heading level 1",
+   "markdown": "# Titulo",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "setext heading level 1",
+   "markdown": "Titulo\n======",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "heading level 4",
+   "markdown": "Texto\n\n#### Cuatro",
+   "accepted": false,
+   "error_line": 3
+  },
+  {
+   "name": "heading level 6",
+   "markdown": "###### Seis",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "list three levels",
+   "markdown": "- Uno\n  - Dos\n    - Tres",
+   "accepted": false,
+   "error_line": 3
+  },
+  {
+   "name": "javascript link",
+   "markdown": "[x](javascript:alert(1))",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "http link",
+   "markdown": "Texto\n\n[x](http://example.com)",
+   "accepted": false,
+   "error_line": 3
+  },
+  {
+   "name": "relative link",
+   "markdown": "[x](/ruta)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "fragment link",
+   "markdown": "[x](#ancla)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "mailto link",
+   "markdown": "[x](mailto:a@example.com)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "link with credentials",
+   "markdown": "[x](https://user:pass@example.com/)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "http autolink",
+   "markdown": "\u003chttp://example.com\u003e",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "http image",
+   "markdown": "![x](http://example.com/a.png)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "relative image",
+   "markdown": "![x](a.png)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "data image",
+   "markdown": "![x](data:image/png;base64,AAAA)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "cas image missing",
+   "markdown": "![x](cas:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "cas image with short digest",
+   "markdown": "![x](cas:abc)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "cas image with uppercase digest",
+   "markdown": "![x](cas:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "cas link is not allowed",
+   "markdown": "[x](cas:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "link reference definition",
+   "markdown": "Ver [x][1]\n\n[1]: https://example.com",
+   "accepted": false,
+   "error_line": 3
+  },
+  {
+   "name": "footnote definition",
+   "markdown": "Texto[^1]\n\n[^1]: Nota",
+   "accepted": false,
+   "error_line": 3
+  },
+  {
+   "name": "table",
+   "markdown": "Antes\n\n| a | b |\n|---|---|\n| 1 | 2 |",
+   "accepted": false,
+   "error_line": 3
+  },
+  {
+   "name": "table without outer pipes",
+   "markdown": "a | b\n--|--\n1 | 2",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "control character",
+   "markdown": "Hola\u0000mundo",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "control character on second line",
+   "markdown": "Hola\n\u0001",
+   "accepted": false,
+   "error_line": 2
+  }
+ ]
+}

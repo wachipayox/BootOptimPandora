@@ -27,8 +27,7 @@ pub type MarkdownBlockParserFn =
     dyn for<'a> Fn(&mdast::Node, &MarkdownParseContext<'a>) -> Option<MarkdownNode> + Send + Sync;
 
 /// Type for a custom Markdown block renderer.
-pub type MarkdownBlockRenderFn =
-    dyn Fn(&MarkdownNode, &mut Window, &mut App) -> AnyElement + Send + Sync;
+pub type MarkdownBlockRenderFn = dyn Fn(&MarkdownNode, &mut Window, &mut App) -> AnyElement + Send + Sync;
 
 /// A reusable Markdown extension that parses and renders one custom node.
 pub trait MarkdownPlugin: Send + Sync + 'static {
@@ -165,10 +164,7 @@ impl fmt::Debug for MarkdownNode {
 
 impl PartialEq for MarkdownNode {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.text == other.text
-            && self.markdown == other.markdown
-            && self.span == other.span
+        self.name == other.name && self.text == other.text && self.markdown == other.markdown && self.span == other.span
     }
 }
 
@@ -176,12 +172,20 @@ impl PartialEq for MarkdownNode {
 #[derive(Clone, Default)]
 pub struct MarkdownExtensions {
     enable_mdx: bool,
+    commonmark: bool,
     block_parsers: Vec<Arc<MarkdownBlockParserFn>>,
     block_renderers: HashMap<SharedString, Arc<MarkdownBlockRenderFn>>,
     revision: u64,
 }
 
 impl MarkdownExtensions {
+    /// Parse CommonMark without GFM autolinks, tables or task lists.
+    pub fn commonmark(mut self) -> Self {
+        self.commonmark = true;
+        self.bump_revision();
+        self
+    }
+
     /// Enable MDX JSX/expression constructs.
     ///
     /// This disables raw HTML constructs because `markdown-rs` gives HTML
@@ -195,10 +199,7 @@ impl MarkdownExtensions {
     /// Register a parser for block-level Markdown AST nodes.
     pub fn block_parser<F>(mut self, parser: F) -> Self
     where
-        F: for<'a> Fn(&mdast::Node, &MarkdownParseContext<'a>) -> Option<MarkdownNode>
-            + Send
-            + Sync
-            + 'static,
+        F: for<'a> Fn(&mdast::Node, &MarkdownParseContext<'a>) -> Option<MarkdownNode> + Send + Sync + 'static,
     {
         self.push_block_parser(parser);
         self
@@ -241,10 +242,7 @@ impl MarkdownExtensions {
 
     pub(crate) fn push_block_parser<F>(&mut self, parser: F)
     where
-        F: for<'a> Fn(&mdast::Node, &MarkdownParseContext<'a>) -> Option<MarkdownNode>
-            + Send
-            + Sync
-            + 'static,
+        F: for<'a> Fn(&mdast::Node, &MarkdownParseContext<'a>) -> Option<MarkdownNode> + Send + Sync + 'static,
     {
         self.block_parsers.push(Arc::new(parser));
         self.bump_revision();
@@ -263,7 +261,11 @@ impl MarkdownExtensions {
     }
 
     pub(crate) fn parse_options(&self) -> ParseOptions {
-        let mut options = ParseOptions::gfm();
+        let mut options = if self.commonmark {
+            ParseOptions::default()
+        } else {
+            ParseOptions::gfm()
+        };
         if self.enable_mdx {
             options.constructs.html_flow = false;
             options.constructs.html_text = false;
@@ -275,11 +277,7 @@ impl MarkdownExtensions {
         options
     }
 
-    pub(crate) fn parse_block(
-        &self,
-        node: &mdast::Node,
-        cx: &MarkdownParseContext<'_>,
-    ) -> Option<MarkdownNode> {
+    pub(crate) fn parse_block(&self, node: &mdast::Node, cx: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
         for parser in &self.block_parsers {
             if let Some(node) = parser(node, cx) {
                 return Some(node);
@@ -288,18 +286,25 @@ impl MarkdownExtensions {
         None
     }
 
-    pub(crate) fn render_block(
-        &self,
-        node: &MarkdownNode,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        self.block_renderers
-            .get(node.name())
-            .map(|render| render(node, window, cx))
+    pub(crate) fn render_block(&self, node: &MarkdownNode, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        self.block_renderers.get(node.name()).map(|render| render(node, window, cx))
     }
 
     fn bump_revision(&mut self) {
         self.revision = MARKDOWN_EXTENSIONS_REVISION.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commonmark_keeps_bare_http_as_text_without_changing_default_gfm() {
+        let commonmark = MarkdownExtensions::default().commonmark();
+        assert!(!commonmark.parse_options().constructs.gfm_autolink_literal);
+        assert!(MarkdownExtensions::default().parse_options().constructs.gfm_autolink_literal);
+        let tree = markdown::to_mdast("http://example.com", &commonmark.parse_options()).unwrap();
+        assert!(matches!(&tree.children().unwrap()[0].children().unwrap()[0], mdast::Node::Text(_)));
     }
 }

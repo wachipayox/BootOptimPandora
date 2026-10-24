@@ -11,6 +11,7 @@ pub struct HomePresentation {
     pub logo: Option<PathBuf>,
     pub glass: Option<PathBuf>,
     pub news: Vec<HomeNews>,
+    pub news_origin_key: String,
     pub news_failed: bool,
 }
 #[derive(Clone, Debug)]
