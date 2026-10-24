@@ -37,8 +37,7 @@ pub fn surface(cx: &App) -> AnyElement {
             .child(
                 img(ImageSource::Resource(Resource::Embedded("images/cafe-ambient.png".into())))
                     .size_full()
-                    .object_fit(ObjectFit::Cover)
-                    .opacity(0.15),
+                    .object_fit(ObjectFit::Cover),
             )
             .into_any_element(),
         AppBackground::Color(color) => base.bg(rgb(color & 0xffffff)).into_any_element(),
@@ -85,7 +84,12 @@ fn prepare(key: &Key) -> Option<Arc<RenderImage>> {
                 .resize_to_fill(key.width, key.height, image::imageops::FilterType::Triangle)
                 .to_rgba8();
             for pixel in scene.pixels_mut() {
-                let alpha = pixel[3] as f32 / 255. * 0.15;
+                let opacity = if matches!(key.source, AppBackground::Cafe) {
+                    1.0
+                } else {
+                    0.15
+                };
+                let alpha = pixel[3] as f32 / 255. * opacity;
                 for (channel, base) in pixel.0[..3].iter_mut().zip([6., 6., 7.]) {
                     *channel = (*channel as f32 * alpha + base * (1. - alpha)).round() as u8;
                 }
