@@ -668,8 +668,16 @@ pub struct GlobalProfileSaveGroupTarget {
 
 #[derive(Debug, Default)]
 pub struct LogFiles {
-    pub paths: Vec<Arc<Path>>,
+    pub files: Vec<LogFileInfo>,
     pub total_gzipped_size: usize,
+}
+#[derive(Debug, Clone)]
+pub struct LogFileInfo {
+    pub path: Arc<Path>,
+    pub modified_unix_ms: u64,
+    pub size: u64,
+    pub crash: bool,
+    pub launcher: bool,
 }
 
 #[derive(Debug)]
