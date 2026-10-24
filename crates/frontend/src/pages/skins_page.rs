@@ -284,9 +284,10 @@ impl SkinsPage {
                                 .disabled(!can_apply_changes)
                                 .on_click({
                                     let skin = skin.clone();
+                                    let variant = *variant;
                                     cx.listener(move |page, _, _, cx| {
                                         if let Some(skin) = &skin
-                                            && skin != &page.selected_skin
+                                            && (skin != &page.selected_skin || variant != selected_variant)
                                         {
                                             page.data.backend_handle.send(MessageToBackend::SetAccountSkin {
                                                 account: uuid,
@@ -749,7 +750,7 @@ impl SkinsPage {
                 } else {
                     crate::png_render_cache::render_with_transform(
                         skin.clone(),
-                        ImageTransformation::ResizeToWidth { width: 128 },
+                        ImageTransformation::ResizeToWidth { width: 93 },
                         cx,
                     )
                     .into_any_element()

@@ -200,5 +200,6 @@ Private builds can set `WBOMBO_DISTRIBUTION_DEFAULT_URL` in the build process
 before running Cargo. The compiler embeds this optional default; public builds
 without it start with no Distribution endpoint. Existing saved endpoints take
 precedence. Keep the value in private build configuration, never in source,
-workflow files, logs or public artifacts. This variable is an endpoint, not an
+workflow files or logs. The normal build and release workflows read the repository
+secret of the same name; builds without secret access leave the default empty. This variable is an endpoint, not an
 API token. The configuration E2E example reads `WBOMBO_DIST_URL` at runtime.

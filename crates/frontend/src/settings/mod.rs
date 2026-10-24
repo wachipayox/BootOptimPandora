@@ -31,6 +31,7 @@ pub(crate) struct SettingsRoot {
     settings: Settings,
     search_state: Entity<InputState>,
     ignored_path_input: Entity<InputState>,
+    ignored_filter: Entity<InputState>,
     ignored_path_error: Option<String>,
     group_list_state: ListState,
     backend_handle: BackendHandle,
@@ -107,7 +108,8 @@ impl SettingsRoot {
         let paths = match IgnoredProfilePaths::normalized(paths) {
             Ok(paths) => paths,
             Err(error) => {
-                self.ignored_path_error = Some(error);
+                log::warn!("Ignored path validation failed: {error}");
+                self.ignored_path_error = Some("No se ha podido ignorar la ruta.".into());
                 cx.notify();
                 return false;
             },
@@ -676,7 +678,10 @@ pub fn open_settings_window(window: &Window, _data: &DataEntities, cx: &mut App)
 pub(crate) fn create(data: &DataEntities, window: &mut Window, cx: &mut App) -> Entity<SettingsRoot> {
     cx.new(|cx| {
         let search_state = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar en ajustes..."));
-        let ignored_path_input = cx.new(|cx| InputState::new(window, cx).placeholder("/mods/example-cache"));
+        let ignored_path_input = cx.new(|cx| InputState::new(window, cx).placeholder("/mods/.connector"));
+        let ignored_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filtrar"));
+        cx.subscribe(&ignored_filter, |_: &mut SettingsRoot, _, _: &InputEvent, cx| cx.notify())
+            .detach();
 
         cx.subscribe(&search_state, SettingsRoot::on_search).detach();
         cx.subscribe_in(
@@ -694,6 +699,7 @@ pub(crate) fn create(data: &DataEntities, window: &mut Window, cx: &mut App) -> 
             settings: create_settings(data, window, cx),
             search_state,
             ignored_path_input,
+            ignored_filter,
             ignored_path_error: None,
             group_list_state: ListState::new(0, ListAlignment::Top, px(100.)),
             backend_handle: data.backend_handle.clone(),
