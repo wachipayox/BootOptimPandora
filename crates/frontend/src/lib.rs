@@ -27,6 +27,7 @@ use crate::{
     root::{LauncherRoot, LauncherRootGlobal},
 };
 
+pub mod background;
 pub mod component;
 pub mod data_asset_loader;
 pub mod entity;

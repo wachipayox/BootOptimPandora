@@ -910,6 +910,7 @@ impl ModMetadataManager {
 
             Some(ModpackFile {
                 source: ModpackFileSource::DownloadCurseforge {
+                    project_id: curseforge_file.project_id,
                     file_id: curseforge_file.file_id,
                 },
                 path: ModpackFilePath::Filename(filename),

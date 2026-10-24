@@ -64,6 +64,7 @@ pub(crate) mod java_default;
 pub(crate) mod jvm_flags;
 #[cfg(target_os = "linux")]
 mod linux_gpu;
+pub(crate) mod memory;
 pub(crate) mod profile_jvm;
 pub(crate) mod zipfs_agent;
 
@@ -148,6 +149,8 @@ impl Launcher {
         java25: bool,
         aot: Option<aot_cache::LaunchRequest>,
     ) -> Result<(PandoraChild, u32, Option<aot_cache::ActiveRun>), LaunchError> {
+        let mut instance_info = instance_info;
+        instance_info.memory = Some(memory::recommendation().effective_memory(instance_info.memory));
         log::info!("Launching {:?}", dot_minecraft_path);
 
         launch_tracker.set_total(6);

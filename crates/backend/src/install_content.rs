@@ -1153,7 +1153,7 @@ impl BackendState {
                             meta,
                         ));
                     },
-                    ModpackFileSource::DownloadCurseforge { file_id } => {
+                    ModpackFileSource::DownloadCurseforge { file_id, .. } => {
                         curseforge_file_ids.push(*file_id);
                     },
                     ModpackFileSource::Builtin { .. } => {},

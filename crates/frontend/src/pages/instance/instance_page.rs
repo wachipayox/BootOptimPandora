@@ -1,35 +1,25 @@
-use bridge::{
-    handle::BackendHandle,
-    instance::{InstanceID, InstanceStatus},
-    message::MessageToBackend,
-};
-use gpui::{prelude::*, *};
-use gpui_component::{
-    WindowExt,
-    button::{Button, ButtonGroup, ButtonVariants},
-    h_flex,
-    tab::{Tab, TabBar},
-    v_flex,
-};
-use serde::{Deserialize, Serialize};
-
+use super::content_subpage::ContentType;
 use crate::{
+    component::{
+        design,
+        generic_title_bar::{TitleBarState, WindowControl},
+        tracked_text::TrackedText,
+    },
     entity::{DataEntities, instance::InstanceEntry},
     game_output::GameOutputRoot,
-    icon::PandoraIcon,
     interface_config::InterfaceConfig,
-    pages::{
-        instance::{
-            content_subpage::InstanceContentSubpage, logs_subpage::InstanceLogsSubpage,
-            overwrites_subpage::InstanceOverwritesSubpage, quickplay_subpage::InstanceQuickplaySubpage,
-            settings_subpage::InstanceSettingsSubpage,
-        },
-        page::Page,
+    pages::instance::{
+        content_subpage::InstanceContentSubpage, logs_subpage::InstanceLogsSubpage,
+        overwrites_subpage::InstanceOverwritesSubpage, quickplay_subpage::InstanceQuickplaySubpage,
+        settings_subpage::InstanceSettingsSubpage,
     },
-    root,
+    root, theme,
+    ui::PageType,
 };
-
-use super::content_subpage::ContentType;
+use bridge::{handle::BackendHandle, instance::InstanceID};
+use gpui::{prelude::*, *};
+use gpui_component::{Disableable, h_flex, v_flex};
+use serde::{Deserialize, Serialize};
 
 pub struct InstancePage {
     data: DataEntities,
@@ -37,23 +27,20 @@ pub struct InstancePage {
     subpage: InstanceSubpage,
     overwrites_subpage: Option<Entity<InstanceOverwritesSubpage>>,
 }
-
 impl InstancePage {
     pub fn new(instance_id: InstanceID, data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let instance = data.instances.read(cx).entries.get(&instance_id).unwrap().clone();
-
-        let instance_subpage = InterfaceConfig::get(cx).instance_subpage;
-        let subpage = instance_subpage.create(&instance, data, data.backend_handle.clone(), window, cx);
-
-        let subpage = subpage.unwrap_or_else(|| {
-            InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Quickplay;
-            InstanceSubpageType::Quickplay
-                .create(&instance, data, data.backend_handle.clone(), window, cx)
-                .unwrap()
-        });
-
+        let desired = InterfaceConfig::get(cx).instance_subpage;
+        let subpage = desired
+            .create(&instance, data, data.backend_handle.clone(), window, cx)
+            .unwrap_or_else(|| {
+                InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Mods;
+                InstanceSubpageType::Mods
+                    .create(&instance, data, data.backend_handle.clone(), window, cx)
+                    .unwrap()
+            });
         let overwrites_subpage = match &subpage {
-            InstanceSubpage::Overwrites(page) => Some(page.clone()),
+            InstanceSubpage::Overwrites(p) => Some(p.clone()),
             _ => None,
         };
         Self {
@@ -63,263 +50,165 @@ impl InstancePage {
             overwrites_subpage,
         }
     }
-}
-
-impl Page for InstancePage {
-    fn controls(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let instance = self.instance.read(cx);
-        let id = instance.id;
-        let name = instance.name.clone();
-        let data = self.data.clone();
-
-        let button =
-            match instance.status {
-                InstanceStatus::NotRunning if root::inherited_operation_active(id) => Button::new("updating_inherited")
-                    .warning()
-                    .icon(PandoraIcon::Loader)
-                    .label("Updating inherited files")
-                    .into_any_element(),
-                InstanceStatus::NotRunning => Button::new("start_instance")
-                    .success()
-                    .icon(PandoraIcon::Play)
-                    .label(t::instance::start::label())
-                    .on_click(move |_, window, cx| {
-                        root::start_instance(id, name.clone(), None, &data, window, cx);
-                    })
-                    .into_any_element(),
-                InstanceStatus::Optimizing => {
-                    crate::modals::aot_optimization::status_button("optimizing", id, &data).into_any_element()
-                },
-                InstanceStatus::Launching => Button::new("launching")
-                    .warning()
-                    .icon(PandoraIcon::Loader)
-                    .label(t::instance::start::starting())
-                    .into_any_element(),
-                InstanceStatus::Stopping => Button::new("stopping")
-                    .danger()
-                    .icon(PandoraIcon::Loader)
-                    .label(t::instance::start::stopping())
-                    .on_click({
-                        let backend_handle = data.backend_handle.clone();
-                        move |_, _, _| {
-                            backend_handle.send(MessageToBackend::KillInstance { id });
-                        }
-                    })
-                    .into_any_element(),
-                InstanceStatus::Running => ButtonGroup::new("running")
-                    .child(
-                        Button::new("kill_instance")
-                            .danger()
-                            .icon(PandoraIcon::Close)
-                            .label(t::instance::kill_instance())
-                            .on_click({
-                                let backend_handle = data.backend_handle.clone();
-                                move |_, _, _| {
-                                    backend_handle.send(MessageToBackend::KillInstance { id });
-                                }
-                            }),
-                    )
-                    .child(Button::new("start_again").success().icon(PandoraIcon::Play).on_click(
-                        move |_, window, cx| {
-                            let name = name.clone();
-                            let data = data.clone();
-                            window.open_dialog(cx, move |dialog, _, _| {
-                                dialog
-                                    .title(t::instance::already_running::title())
-                                    .overlay_closable(false)
-                                    .flex()
-                                    .line_height(rems(1.2))
-                                    .child(t::instance::already_running::body())
-                                    .child(div().h_2())
-                                    .child(t::instance::already_running::body2())
-                                    .footer(
-                                        h_flex()
-                                            .gap_2()
-                                            .w_full()
-                                            .child(
-                                                Button::new("cancel")
-                                                    .label(t::common::cancel())
-                                                    .on_click(|_, window, cx| {
-                                                        window.close_dialog(cx);
-                                                    })
-                                                    .flex_grow(1.0),
-                                            )
-                                            .child(
-                                                Button::new("ok")
-                                                    .success()
-                                                    .label(t::instance::already_running::start_anyway())
-                                                    .on_click({
-                                                        let name = name.clone();
-                                                        let data = data.clone();
-                                                        move |_, window, cx| {
-                                                            window.close_dialog(cx);
-                                                            root::start_instance(
-                                                                id,
-                                                                name.clone(),
-                                                                None,
-                                                                &data,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        }
-                                                    }),
-                                            ),
-                                    )
-                            })
-                        },
-                    ))
-                    .into_any_element(),
-            };
-
-        let open_dot_minecraft_button = Button::new("open_dot_minecraft")
-            .info()
-            .icon(PandoraIcon::FolderOpen)
-            .label(t::instance::open_folder())
-            .on_click({
-                let dot_minecraft = instance.dot_minecraft_folder.clone();
-                move |_, window, cx| {
-                    crate::open_folder(&dot_minecraft, window, cx);
+    fn header(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let name = self.instance.read(cx).name.clone();
+        let selected = self.subpage.page_type();
+        let state = window.use_keyed_state("instance-titlebar-state", cx, |_, _| TitleBarState::default());
+        let mut header = h_flex()
+            .id("instance-header")
+            .w_full()
+            .h(px(48.))
+            .flex_shrink_0()
+            .px(px(24.))
+            .gap(px(20.))
+            .bg(rgba(0x0b0b0ce6))
+            .border_b_1()
+            .border_color(rgba(0xffffff0b))
+            .window_control_area(WindowControlArea::Drag)
+            .on_mouse_down_out(window.listener_for(&state, |s, _, _, _| s.should_move = false))
+            .on_mouse_down(
+                MouseButton::Left,
+                window.listener_for(&state, |s, _, w, _| s.should_move = !w.default_prevented()),
+            )
+            .on_mouse_up(MouseButton::Left, window.listener_for(&state, |s, _, _, _| s.should_move = false))
+            .on_mouse_move(window.listener_for(&state, |s, _, w, _| {
+                if s.should_move {
+                    s.should_move = false;
+                    w.start_window_move();
                 }
-            });
-
-        h_flex().gap_3().child(button).child(open_dot_minecraft_button)
-    }
-
-    fn scrollable(&self, _cx: &App) -> bool {
-        false
+            }))
+            .child(
+                div()
+                    .font_family(theme::DISPLAY)
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(theme::INK))
+                    .child(TrackedText::new(name.to_uppercase(), 0.16)),
+            );
+        let content = matches!(
+            selected,
+            InstanceSubpageType::Mods | InstanceSubpageType::ResourcePacks | InstanceSubpageType::Shaders
+        );
+        let logs = matches!(selected, InstanceSubpageType::Logs | InstanceSubpageType::LiveGameOutput);
+        for (ix, label, target, active) in [
+            (0, "Jugar", InstanceSubpageType::Quickplay, false),
+            (1, "Contenido", InstanceSubpageType::Mods, content),
+            (
+                2,
+                "Sobrescrituras",
+                InstanceSubpageType::Overwrites,
+                selected == InstanceSubpageType::Overwrites,
+            ),
+            (3, "Registros", InstanceSubpageType::Logs, logs),
+            (
+                4,
+                "Ajustes de la instancia",
+                InstanceSubpageType::Settings,
+                selected == InstanceSubpageType::Settings,
+            ),
+        ] {
+            let name = name.clone();
+            header = header.child(design::tab(("instance-tab", ix as usize), label, active).on_click(cx.listener(
+                move |_, _, w, c| {
+                    if target == InstanceSubpageType::Quickplay {
+                        InterfaceConfig::get_mut(c).home_instance = Some(name.clone());
+                        root::switch_page(PageType::Instances, &[], w, c);
+                    } else {
+                        InterfaceConfig::get_mut(c).instance_subpage = target;
+                        c.notify();
+                    }
+                },
+            )));
+        }
+        if root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
+            header = header.child(div().flex_1()).child(
+                h_flex()
+                    .child(WindowControl::Minimize)
+                    .child(if window.is_maximized() {
+                        WindowControl::Restore
+                    } else {
+                        WindowControl::Maximize
+                    })
+                    .child(WindowControl::Close),
+            );
+        }
+        header.into_any_element()
     }
 }
-
 impl Render for InstancePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let updating = root::inherited_operation_active(self.instance.read(cx).id);
-        if updating && InterfaceConfig::get(cx).instance_subpage != InstanceSubpageType::Quickplay {
-            InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Quickplay;
-        }
-        let instance_subpage = InterfaceConfig::get(cx).instance_subpage;
-        if instance_subpage != self.subpage.page_type() {
-            let subpage = if instance_subpage == InstanceSubpageType::Overwrites {
-                self.overwrites_subpage.clone().map(|page| {
-                    page.update(cx, |page, cx| page.on_reenter(window, cx));
-                    InstanceSubpage::Overwrites(page)
-                }).or_else(|| {
-                    instance_subpage.create(&self.instance, &self.data, self.data.backend_handle.clone(), window, cx)
-                })
-            } else {
-                instance_subpage.create(&self.instance, &self.data, self.data.backend_handle.clone(), window, cx)
-            };
-
-            self.subpage = subpage.unwrap_or_else(|| {
-                InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Quickplay;
-                InstanceSubpageType::Quickplay
-                    .create(&self.instance, &self.data, self.data.backend_handle.clone(), window, cx)
-                    .unwrap()
+        let desired = InterfaceConfig::get(cx).instance_subpage;
+        // Play and update progress belong to Home. Defer the navigation until
+        // this entity's render borrow has ended.
+        if updating || desired == InstanceSubpageType::Quickplay {
+            let name = self.instance.read(cx).name.clone();
+            let handle = window.window_handle();
+            cx.defer(move |c| {
+                let _ = handle.update(c, |_, w, c| {
+                    InterfaceConfig::get_mut(c).home_instance = Some(name);
+                    root::switch_page(PageType::Instances, &[], w, c);
+                });
             });
-            if let InstanceSubpage::Overwrites(page) = &self.subpage {
-                self.overwrites_subpage = Some(page.clone());
+            return div().size_full().into_any_element();
+        }
+        if desired != self.subpage.page_type() {
+            let page = if desired == InstanceSubpageType::Overwrites {
+                self.overwrites_subpage
+                    .clone()
+                    .map(|p| {
+                        p.update(cx, |p, c| p.on_reenter(window, c));
+                        InstanceSubpage::Overwrites(p)
+                    })
+                    .or_else(|| {
+                        desired.create(&self.instance, &self.data, self.data.backend_handle.clone(), window, cx)
+                    })
+            } else {
+                desired.create(&self.instance, &self.data, self.data.backend_handle.clone(), window, cx)
+            };
+            if let Some(page) = page {
+                self.subpage = page;
+                if let InstanceSubpage::Overwrites(p) = &self.subpage {
+                    self.overwrites_subpage = Some(p.clone());
+                }
+            } else {
+                InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Logs;
             }
         }
-
-        let entry = self.instance.read(cx);
-        let show_shader_tab =
-            entry.configuration.show_shader_tab || matches!(self.subpage, InstanceSubpage::Shaders(_));
-        let show_live_game_output = entry.live_game_output.is_some();
-
-        // Update live game output
-        if let InstanceSubpage::LiveGameOutput(current_output) = &self.subpage
-            && let Some(desired_output) = &entry.live_game_output
-            && current_output != desired_output
-        {
-            self.subpage = InstanceSubpage::LiveGameOutput(desired_output.clone());
+        if let InstanceSubpage::LiveGameOutput(current) = &self.subpage {
+            if let Some(output) = &self.instance.read(cx).live_game_output {
+                if current != output {
+                    self.subpage = InstanceSubpage::LiveGameOutput(output.clone());
+                }
+            }
         }
-
-        let selected_index = match &self.subpage {
-            InstanceSubpage::Quickplay(_) => 0,
-            InstanceSubpage::Logs(_) => 1,
-            InstanceSubpage::Mods(_) => 2,
-            InstanceSubpage::ResourcePacks(_) => 3,
-            InstanceSubpage::Shaders(_) => 4,
-            InstanceSubpage::Overwrites(_) => {
-                if show_shader_tab {
-                    5
-                } else {
-                    4
-                }
-            },
-            InstanceSubpage::Settings(_) => {
-                if show_shader_tab {
-                    6
-                } else {
-                    5
-                }
-            },
-            InstanceSubpage::LiveGameOutput(_) => {
-                if show_shader_tab {
-                    7
-                } else {
-                    6
-                }
-            },
-        };
-
-        v_flex()
+        let mut body = v_flex()
             .size_full()
-            .child(
-                TabBar::new("bar")
-                    .prefix(div().w_4())
-                    .selected_index(selected_index)
-                    .underline()
-                    .child(Tab::new().label(t::instance::quickplay()))
-                    .child(Tab::new().label(t::instance::logs::title()).disabled(updating))
-                    .child(Tab::new().label(t::instance::content::mods()).disabled(updating))
-                    .child(Tab::new().label(t::instance::content::resourcepacks()).disabled(updating))
-                    .when(show_shader_tab, |this| {
-                        this.child(Tab::new().label(t::instance::content::shaders()).disabled(updating))
-                    })
-                    .child(Tab::new().label("Overwrites").disabled(updating))
-                    .child(Tab::new().label(t::settings::title()).disabled(updating))
-                    .when(show_live_game_output, |this| {
-                        this.child(Tab::new().label(t::instance::live_game_output()).disabled(updating))
-                    })
-                    .on_click(cx.listener(move |_, index, _, cx| {
-                        if updating {
-                            return;
-                        }
-                        let page_type = match *index {
-                            0 => InstanceSubpageType::Quickplay,
-                            1 => InstanceSubpageType::Logs,
-                            2 => InstanceSubpageType::Mods,
-                            3 => InstanceSubpageType::ResourcePacks,
-                            4 => {
-                                if show_shader_tab {
-                                    InstanceSubpageType::Shaders
-                                } else {
-                                    InstanceSubpageType::Overwrites
-                                }
-                            },
-                            5 => {
-                                if show_shader_tab {
-                                    InstanceSubpageType::Overwrites
-                                } else {
-                                    InstanceSubpageType::Settings
-                                }
-                            },
-                            6 => {
-                                if show_shader_tab {
-                                    InstanceSubpageType::Settings
-                                } else {
-                                    InstanceSubpageType::LiveGameOutput
-                                }
-                            },
-                            7 => InstanceSubpageType::LiveGameOutput,
-                            _ => {
-                                return;
-                            },
-                        };
-                        InterfaceConfig::get_mut(cx).instance_subpage = page_type;
-                    })),
-            )
-            .child(self.subpage.clone().into_any_element())
+            .text_size(px(13.))
+            .text_color(rgb(theme::INK))
+            .font_family(theme::SANS)
+            .child(self.header(window, cx));
+        if matches!(self.subpage, InstanceSubpage::Logs(_) | InstanceSubpage::LiveGameOutput(_)) {
+            let live = self.instance.read(cx).live_game_output.is_some();
+            let selected = self.subpage.page_type();
+            let mut tabs = h_flex().px(px(24.)).py(px(16.));
+            for (ix, label, target) in [
+                (0, "Registros", InstanceSubpageType::Logs),
+                (1, "Salida en vivo", InstanceSubpageType::LiveGameOutput),
+            ] {
+                tabs = tabs.child(
+                    design::chip(("instance-log-mode", ix as usize), label, selected == target)
+                        .disabled(target == InstanceSubpageType::LiveGameOutput && !live)
+                        .on_click(cx.listener(move |_, _, _, c| {
+                            InterfaceConfig::get_mut(c).instance_subpage = target;
+                            c.notify();
+                        })),
+                );
+            }
+            body = body.child(tabs);
+        }
+        body.child(div().flex_1().min_h_0().child(self.subpage.clone().into_any_element()))
+            .into_any_element()
     }
 }
 

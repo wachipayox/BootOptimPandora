@@ -484,52 +484,44 @@ impl Render for HomePage {
                 },
             );
         let data = self.data.clone();
-        let mut play = PlayButton::new(
-            "home-play",
-            if instance.is_some() { "Al día" } else { "" },
-            Some(picture(&self.presentation.glass, "images/vanilla-glass.png")),
-        );
+        let mut play = PlayButton::new("home-play", if instance.is_some() { "Al día" } else { "" }, None);
         if let Some(i) = &instance {
+            if i.status == InstanceStatus::Running
+                && InterfaceConfig::get(cx).last_played_artwork != self.presentation.artwork
+            {
+                let config = InterfaceConfig::get_mut(cx);
+                config.last_played_artwork = self.presentation.artwork.clone();
+                if matches!(config.app_background, crate::background::AppBackground::Artwork(_)) {
+                    config.app_background =
+                        crate::background::AppBackground::Artwork(config.last_played_artwork.clone());
+                }
+            }
             let id = i.id;
             let name = i.name.clone();
             let state = i.status;
             match state {
                 InstanceStatus::Launching => {
-                    play = PlayButton::new(
-                        "home-play",
-                        "Abriendo Minecraft",
-                        Some(picture(&self.presentation.glass, "images/vanilla-glass.png")),
-                    )
-                    .title("Iniciando")
-                    .disabled(true)
+                    play = PlayButton::new("home-play", "Abriendo Minecraft", None).title("Iniciando").disabled(true)
                 },
                 InstanceStatus::Stopping => {
-                    play = PlayButton::new(
-                        "home-play",
-                        "Cerrando Minecraft",
-                        Some(picture(&self.presentation.glass, "images/vanilla-glass.png")),
-                    )
-                    .title("Deteniendo")
-                    .disabled(true)
+                    play = PlayButton::new("home-play", "Cerrando Minecraft", None)
+                        .title("Deteniendo")
+                        .disabled(true)
                 },
                 InstanceStatus::Optimizing => {
                     let progress = i.optimization.map(|p| p.0).unwrap_or(0.).clamp(0., 1.);
                     play = PlayButton::new(
                         "home-play",
                         format!("Creando la caché de arranque · {:.0} %", progress * 100.),
-                        Some(picture(&self.presentation.glass, "images/vanilla-glass.png")),
+                        None,
                     )
                     .title("Iniciando")
                     .progress(progress);
                 },
                 InstanceStatus::Running => {
-                    play = PlayButton::new(
-                        "home-play",
-                        "En marcha",
-                        Some(picture(&self.presentation.glass, "images/vanilla-glass.png")),
-                    )
-                    .title("Detener")
-                    .on_click(move |_, _, _| data.backend_handle.send(MessageToBackend::KillInstance { id }))
+                    play = PlayButton::new("home-play", "En marcha", None)
+                        .title("Detener")
+                        .on_click(move |_, _, _| data.backend_handle.send(MessageToBackend::KillInstance { id }))
                 },
                 InstanceStatus::NotRunning => {
                     play = play.disabled(root::inherited_operation_active(id)).on_click(move |_, w, c| {
@@ -550,12 +542,7 @@ impl Render for HomePage {
             } else {
                 String::new()
             };
-            play = PlayButton::new(
-                "home-play",
-                detail,
-                Some(picture(&self.presentation.glass, "images/vanilla-glass.png")),
-            )
-            .updating(progress);
+            play = PlayButton::new("home-play", detail, None).updating(progress);
             window.request_animation_frame();
         }
         let left = if let Some(i) = &instance {

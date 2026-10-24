@@ -9,11 +9,11 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable, Icon, IndexPath, Sizable, WindowExt,
+    ActiveTheme as _, Disableable, Icon, IndexPath, WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
-    input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, Textarea, TextareaState},
+    input::{Input, InputEvent, InputState, Textarea, TextareaState},
     notification::{Notification, NotificationType},
     scroll::ScrollableElement,
     select::{SearchableVec, Select, SelectEvent, SelectState},
@@ -25,8 +25,8 @@ use schema::{
     forge::{ForgeMavenManifest, NeoforgeMavenManifest},
     instance::{
         AUTO_LIBRARY_PATH_GLFW, AUTO_LIBRARY_PATH_OPENAL, InstanceJvmBinaryConfiguration,
-        InstanceJvmFlagsConfiguration, InstanceLinuxWrapperConfiguration, InstanceMemoryConfiguration,
-        InstanceSystemLibrariesConfiguration, InstanceWrapperCommandConfiguration, LwjglLibraryPath, UpdateChannel,
+        InstanceJvmFlagsConfiguration, InstanceLinuxWrapperConfiguration, InstanceSystemLibrariesConfiguration,
+        InstanceWrapperCommandConfiguration, LwjglLibraryPath, UpdateChannel,
     },
     loader::Loader,
     version_manifest::MinecraftVersionManifest,
@@ -36,6 +36,7 @@ use uuid::Uuid;
 
 use crate::{
     component::{
+        design::{DesignButton, YesNo},
         horizontal_sections::HorizontalSections,
         named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem},
         path_label::PathLabel,
@@ -52,7 +53,7 @@ use crate::{
     icon::PandoraIcon,
     interface_config::InterfaceConfig,
     pages::instances_page::VersionList,
-    png_render_cache,
+    png_render_cache, theme,
 };
 
 #[derive(PartialEq, Eq)]
@@ -76,9 +77,8 @@ pub struct InstanceSettingsSubpage {
     loader_version_select_state: Entity<SelectState<SearchableVec<&'static str>>>,
     loader_version_latest_string: &'static str,
     update_channel_select_state: Entity<SelectState<NamedDropdown<UpdateChannel>>>,
-    memory_override_enabled: bool,
-    memory_min_input_state: Entity<InputState>,
-    memory_max_input_state: Entity<InputState>,
+    memory_section: Entity<super::memory_section::InstanceMemorySection>,
+    artwork_section: Entity<super::artwork_section::InstanceArtworkSection>,
     wrapper_command_enabled: bool,
     wrapper_command_input_state: Entity<TextareaState>,
     jvm_flags_enabled: bool,
@@ -136,7 +136,7 @@ impl InstanceSettingsSubpage {
             .unwrap_or(loader_version_latest_string);
         let update_channel = entry.configuration.update_channel;
         let account = entry.configuration.preferred_account;
-        let memory = entry.configuration.memory.unwrap_or_default();
+        let memory = entry.configuration.memory;
         let profile_jvm_choices = entry.configuration.profile_jvm_options.clone();
         let wrapper_command = entry.configuration.wrapper_command.clone().unwrap_or_default();
         let jvm_flags = entry.configuration.jvm_flags.clone().unwrap_or_default();
@@ -247,12 +247,9 @@ impl InstanceSettingsSubpage {
             NamedDropdown::create_and_select(update_channel_items, update_channel, window, cx);
         cx.subscribe(&update_channel_select_state, Self::on_update_channel_selected).detach();
 
-        let memory_min_input_state = cx.new(|cx| InputState::new(window, cx).default_value(memory.min.to_string()));
-        cx.subscribe_in(&memory_min_input_state, window, Self::on_memory_step).detach();
-        cx.subscribe(&memory_min_input_state, Self::on_memory_changed).detach();
-        let memory_max_input_state = cx.new(|cx| InputState::new(window, cx).default_value(memory.max.to_string()));
-        cx.subscribe_in(&memory_max_input_state, window, Self::on_memory_step).detach();
-        cx.subscribe(&memory_max_input_state, Self::on_memory_changed).detach();
+        let memory_section = cx.new(|c| {
+            super::memory_section::InstanceMemorySection::new(instance_id, memory, backend_handle.clone(), window, c)
+        });
 
         let wrapper_command_input_state =
             cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 8).default_value(wrapper_command.flags));
@@ -273,6 +270,9 @@ impl InstanceSettingsSubpage {
         // The AOT cache option can be turned off by the launcher while this page is open.
         cx.observe(instance, |_, _, cx| cx.notify()).detach();
 
+        let artwork_section = cx.new(|cx| {
+            super::artwork_section::InstanceArtworkSection::new(instance.clone(), backend_handle.clone(), window, cx)
+        });
         let mut page = Self {
             data: data.clone(),
             instance: instance.clone(),
@@ -286,9 +286,8 @@ impl InstanceSettingsSubpage {
             loader_version_select_state,
             loader_version_latest_string,
             update_channel_select_state,
-            memory_override_enabled: memory.enabled,
-            memory_min_input_state,
-            memory_max_input_state,
+            memory_section,
+            artwork_section,
             wrapper_command_enabled: wrapper_command.enabled,
             wrapper_command_input_state,
             jvm_flags_enabled: jvm_flags.enabled,
@@ -627,56 +626,6 @@ impl InstanceSettingsSubpage {
         });
     }
 
-    pub fn on_memory_step(
-        &mut self,
-        state: &Entity<InputState>,
-        event: &NumberInputEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            NumberInputEvent::Step(step_action) => match step_action {
-                gpui_component::input::StepAction::Decrement => {
-                    if let Ok(mut value) = state.read(cx).value().parse::<u32>() {
-                        value = value.saturating_div(256).saturating_sub(1).saturating_mul(256).max(128);
-                        state.update(cx, |input, cx| {
-                            input.set_value(value.to_string(), window, cx);
-                        })
-                    }
-                },
-                gpui_component::input::StepAction::Increment => {
-                    if let Ok(mut value) = state.read(cx).value().parse::<u32>() {
-                        value = value.saturating_div(256).saturating_add(1).saturating_mul(256).max(128);
-                        state.update(cx, |input, cx| {
-                            input.set_value(value.to_string(), window, cx);
-                        })
-                    }
-                },
-            },
-        }
-    }
-
-    pub fn on_memory_changed(&mut self, _: Entity<InputState>, event: &InputEvent, cx: &mut Context<Self>) {
-        if let InputEvent::Change = event {
-            self.backend_handle.send(MessageToBackend::SetInstanceMemory {
-                id: self.instance_id,
-                memory: self.get_memory_configuration(cx),
-            });
-            self.refresh_profile_jvm(cx);
-        }
-    }
-
-    fn get_memory_configuration(&self, cx: &App) -> InstanceMemoryConfiguration {
-        let min = self.memory_min_input_state.read(cx).value().parse::<u32>().unwrap_or(0);
-        let max = self.memory_max_input_state.read(cx).value().parse::<u32>().unwrap_or(0);
-
-        InstanceMemoryConfiguration {
-            enabled: self.memory_override_enabled,
-            min,
-            max,
-        }
-    }
-
     pub fn on_wrapper_command_changed(&mut self, _: Entity<TextareaState>, event: &InputEvent, cx: &mut Context<Self>) {
         if let InputEvent::Change = event {
             self.backend_handle.send(MessageToBackend::SetInstanceWrapperCommand {
@@ -807,7 +756,11 @@ impl Render for InstanceSettingsSubpage {
         let theme_border = cx.theme().border;
         let basic_content = self.render_basic_content(cx);
         let runtime_content = self.render_runtime_content(cx);
-        let actions_content = self.render_actions_content(cx);
+        let actions_content = v_flex()
+            .gap_6()
+            .child(self.artwork_section.clone())
+            .child(self.render_actions_content(cx))
+            .into_any_element();
 
         let sections = HorizontalSections::new()
             .size_full()
@@ -993,30 +946,16 @@ impl InstanceSettingsSubpage {
         let (status, summary) = (instance.status, instance.aot_cache);
         let enabled = setting.as_ref().is_none_or(|setting| setting.enabled);
         let auto_disabled = setting.and_then(|setting| setting.auto_disabled_reason).filter(|_| !enabled);
-        v_flex()
-            .gap_1()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        Checkbox::new("aot_cache")
-                            .label(t::instance::aot::setting())
-                            .checked(enabled)
-                            .on_click(cx.listener(|page, value: &bool, _, cx| {
-                                page.backend_handle.send(MessageToBackend::SetInstanceAotCache {
-                                    id: page.instance_id,
-                                    enabled: *value,
-                                });
-                                cx.notify();
-                            })),
-                    )
-                    .child(crate::modals::aot_optimization::help_mark("aot_cache_help", t::instance::aot::setting_help())),
-            )
-            .children(enabled.then(|| self.render_aot_cache_state(status, summary, cx)))
-            .children(
-                auto_disabled.map(|reason| div().text_sm().pl_6().child(t::instance::aot::auto_disabled(&reason))),
-            )
+        v_flex().gap(px(12.))
+            .child(h_flex().w_full().justify_between().gap(px(12.))
+                .child(v_flex().flex_1().gap(px(3.)).child("Optimizar arranque (caché AOT de Java 25)")
+                    .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child("4–9 s más rápido hasta el menú; usa unos 300 MB")))
+                .child(YesNo::new("aot-cache").checked(enabled).on_click(cx.listener(|this,value:&bool,_,c|{
+                    this.backend_handle.send(MessageToBackend::SetInstanceAotCache{id:this.instance_id,enabled:*value});c.notify();
+                }))))
+            .children(enabled.then(||self.render_aot_cache_state(status,summary,cx)))
+            .children(auto_disabled.map(|reason|div().text_size(px(12.)).line_height(px(18.)).text_color(rgb(theme::INK_MUTED))
+                .child(format!("Desactivada automáticamente porque Java ha rechazado la caché ({reason}). Puedes volver a activarla."))))
             .into_any_element()
     }
 
@@ -1029,34 +968,41 @@ impl InstanceSettingsSubpage {
     ) -> AnyElement {
         let theme = cx.theme();
         let (dot, text) = match (status, summary) {
-            (InstanceStatus::Optimizing, _) => (theme.info, t::instance::aot::state_optimizing().to_string()),
+            (InstanceStatus::Optimizing, _) => (theme.info, "Creando la caché de arranque".to_owned()),
             (_, AotCacheSummary::Ready { bytes }) => (
                 theme.success,
-                t::instance::aot::state_ready(&format!("{}", bytes.div_ceil(1_000_000))).to_string(),
+                format!("Lista: los arranques son más rápidos. Usa {} MB.", bytes.div_ceil(1_000_000)),
             ),
-            (_, AotCacheSummary::Training) => (theme.info, t::instance::aot::state_training().to_string()),
-            (_, AotCacheSummary::Waiting) => (theme.info, t::instance::aot::state_waiting().to_string()),
+            (_, AotCacheSummary::Training) => (
+                theme.info,
+                "Preparándose durante esta partida. Cierra el juego normalmente para terminar.".to_owned(),
+            ),
+            (_, AotCacheSummary::Waiting) => {
+                (theme.info, "Casi lista: el launcher la termina cuando quede libre.".to_owned())
+            },
             (_, AotCacheSummary::NotBuilt | AotCacheSummary::Off) => {
-                (theme.muted_foreground, t::instance::aot::state_not_built().to_string())
+                (theme.muted_foreground, "Todavía no está lista: la próxima partida la prepara.".to_owned())
             },
         };
         let can_delete = matches!(summary, AotCacheSummary::Ready { .. }) && status == InstanceStatus::NotRunning;
         let instance_id = self.instance_id;
         let data = self.data.clone();
         h_flex()
-            .pl_6()
-            .gap_2()
+            .w_full()
+            .p(px(12.))
+            .gap(px(10.))
+            .border_1()
+            .border_color(rgba(0xffffff0b))
             .items_center()
-            .text_sm()
+            .text_size(px(12.))
+            .line_height(px(18.))
             .text_color(theme.muted_foreground)
             .child(div().flex_none().size_2().rounded_full().bg(dot))
             .child(div().child(text))
             .when(can_delete, |row| {
                 row.child(
-                    Button::new("aot_cache_delete")
-                        .label(t::instance::aot::delete())
-                        .ghost()
-                        .xsmall()
+                    DesignButton::new("aot_cache_delete")
+                        .label("Borrar caché")
                         .on_click(move |_, window, cx| {
                             crate::modals::aot_optimization::confirm_delete(instance_id, &data, window, cx)
                         }),
@@ -1066,7 +1012,6 @@ impl InstanceSettingsSubpage {
     }
 
     fn render_runtime_content(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
-        let memory_override_enabled = self.memory_override_enabled;
         let wrapper_command_enabled = self.wrapper_command_enabled;
         let jvm_flags_enabled = self.jvm_flags_enabled;
         let jvm_binary_enabled = self.jvm_binary_enabled;
@@ -1074,50 +1019,7 @@ impl InstanceSettingsSubpage {
             .gap_4()
             .size_full()
             .overflow_y_scrollbar()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Checkbox::new("memory")
-                            .label(t::instance::memory())
-                            .checked(memory_override_enabled)
-                            .on_click(cx.listener(|page, value, _, cx| {
-                                if page.memory_override_enabled != *value {
-                                    page.memory_override_enabled = *value;
-                                    page.backend_handle.send(MessageToBackend::SetInstanceMemory {
-                                        id: page.instance_id,
-                                        memory: page.get_memory_configuration(cx),
-                                    });
-                                    page.refresh_profile_jvm(cx);
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                v_flex()
-                                    .w_full()
-                                    .gap_1()
-                                    .child(
-                                        NumberInput::new(&self.memory_min_input_state)
-                                            .small()
-                                            .suffix(t::common::size::mib())
-                                            .disabled(!memory_override_enabled),
-                                    )
-                                    .child(
-                                        NumberInput::new(&self.memory_max_input_state)
-                                            .small()
-                                            .suffix(t::common::size::mib())
-                                            .disabled(!memory_override_enabled),
-                                    ),
-                            )
-                            .child(
-                                v_flex().gap_1().line_height(px(24.0)).child(t::common::min()).child(t::common::max()),
-                            ),
-                    ),
-            )
+            .child(self.memory_section.clone())
             .child(self.profile_jvm_section.clone())
             .child(self.render_aot_cache_setting(cx))
             .child(

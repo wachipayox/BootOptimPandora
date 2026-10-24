@@ -212,6 +212,7 @@ pub enum ModpackFileSource {
         size: usize,
     },
     DownloadCurseforge {
+        project_id: u32,
         file_id: u32,
     },
     Builtin {
@@ -362,4 +363,15 @@ impl ContentUpdateContext {
     pub fn can_update(&self, loader: Loader, version: &'static str) -> bool {
         self.for_loader == loader && self.for_version == version && self.status.can_update()
     }
+}
+
+/// Local presentation metadata read from the committed branch, never launch authority.
+#[derive(Clone, Debug, Default)]
+pub struct InstanceProfileInfo {
+    pub memory: schema::instance::MemoryRecommendation,
+    pub global_profile_id: Option<String>,
+    pub global_revision_id: Option<String>,
+    pub local_parent_name: Option<String>,
+    pub inherited_paths: std::collections::BTreeSet<String>,
+    pub global_paths: std::collections::BTreeSet<String>,
 }

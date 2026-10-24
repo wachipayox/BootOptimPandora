@@ -11,7 +11,8 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         window.use_keyed_state("review-input", cx, |window, cx| InputState::new(window, cx).placeholder("Nombre"));
     v_flex()
         .size_full()
-        .bg(rgb(theme::BG))
+        .relative()
+        .child(crate::background::surface(cx))
         .p(px(32.))
         .gap(px(24.))
         .text_color(rgb(theme::INK))
@@ -66,16 +67,9 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         .child(
             h_flex()
                 .gap(px(16.))
-                .child(PlayButton::new("play", "Al día", Some("images/wachiland-glass-review.png".into())))
+                .child(PlayButton::new("play", "Al día", None))
                 .child(PlayButton::new("play-disabled", "Sin instancia", None).disabled(true))
-                .child(
-                    PlayButton::new(
-                        "play-updating",
-                        "42 % · 120 de 286 MB",
-                        Some("images/wachiland-glass-review.png".into()),
-                    )
-                    .updating(0.42),
-                ),
+                .child(PlayButton::new("play-updating", "42 % · 120 de 286 MB", None).updating(0.42)),
         )
         .child(
             action_button("review-dialog", "Revisión nueva", ButtonAction::Primary).on_click(|_, window, cx| {
