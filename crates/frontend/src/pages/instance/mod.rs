@@ -7,3 +7,5 @@ pub mod quickplay_subpage;
 pub mod settings_subpage;
 
 mod memory_section;
+
+mod artwork_section;

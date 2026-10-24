@@ -314,8 +314,9 @@ pub struct BackendStateFileWatching {
 /// player can turn it on again; the reason is shown next to the option.
 pub(crate) fn disable_aot_cache(instance: &mut Instance, reason: &str) {
     aot_cache::log_fallback(&java_default::JAVA_MAJOR.to_string(), &format!("option-turned-off ({reason})"));
-    let disabled_unix_secs =
-        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
+    let disabled_unix_secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
     instance.configuration.modify(|configuration| {
         configuration.aot_cache = Some(schema::instance::AotCacheSetting {
             enabled: false,
@@ -605,14 +606,12 @@ impl BackendState {
             let generation = instance_state.instances_generation;
             instance_state.instances_generation = instance_state.instances_generation.wrapping_add(1);
 
-            let save_group_id = crate::save_groups::group_id_for_saves_path(
-                &instance.saves_path,
-                &self.directories.save_groups_dir,
-            )
-            .unwrap_or_else(|error| {
-                log::warn!("Unable to determine save group for {:?}: {error}", instance.root_path);
-                None
-            });
+            let save_group_id =
+                crate::save_groups::group_id_for_saves_path(&instance.saves_path, &self.directories.save_groups_dir)
+                    .unwrap_or_else(|error| {
+                        log::warn!("Unable to determine save group for {:?}: {error}", instance.root_path);
+                        None
+                    });
 
             let instance = instance_state.instances.insert(move |index| {
                 let instance_id = InstanceID { index, generation };
@@ -716,7 +715,9 @@ impl BackendState {
             log::warn!("[aot-cache] starting the instance again without the AOT cache");
             let backend = self.clone();
             tokio::spawn(async move {
-                backend.start_instance(retry.id, retry.quick_play, None, ModalAction::normal_launch()).await;
+                backend
+                    .start_instance(retry.id, retry.quick_play, None, ModalAction::normal_launch())
+                    .await;
             });
         }
     }
@@ -786,7 +787,13 @@ impl BackendState {
             for (pid, exit_code) in exited {
                 // A JVM that refused to start counts as an early error however long its dialog stayed.
                 let error_dialog = instance.jvm_error_dialogs.contains(&pid);
-                let lived = |started: Instant| if error_dialog { Duration::ZERO } else { started.elapsed() };
+                let lived = |started: Instant| {
+                    if error_dialog {
+                        Duration::ZERO
+                    } else {
+                        started.elapsed()
+                    }
+                };
                 // The retry without the AOT cache: if it started fine, the cache was the problem.
                 if let Some((probe_pid, started, reason)) = instance.aot_retry_probe.take() {
                     if probe_pid != pid {
@@ -802,7 +809,8 @@ impl BackendState {
                 let mut retried_without_cache = false;
                 if let Some(index) = instance.aot_runs.iter().position(|(started_pid, _)| *started_pid == pid) {
                     let (_, run) = instance.aot_runs.swap_remove(index);
-                    match aot_cache::finish_run_after(&run, aot_cache::ExitKind::Exited(exit_code), lived(run.started)) {
+                    match aot_cache::finish_run_after(&run, aot_cache::ExitKind::Exited(exit_code), lived(run.started))
+                    {
                         aot_cache::ExitAction::RetryWithoutCache { reason } => {
                             instance.aot_skip_next_start = Some(reason);
                             self.aot_retries.lock().push(AotRetry {
@@ -884,12 +892,16 @@ impl BackendState {
                     if !run.assembly_grace_used {
                         run.assembly_grace_used = true;
                         *deadline = now + aot_cache::ASSEMBLY_GRACE;
-                        log::info!("[aot-cache] Stop: letting the JVM finish writing the training profile before killing it");
+                        log::info!(
+                            "[aot-cache] Stop: letting the JVM finish writing the training profile before killing it"
+                        );
                     }
                 } else if !run.shutdown_grace_used {
                     run.shutdown_grace_used = true;
                     *deadline = now + aot_cache::SHUTDOWN_GRACE;
-                    log::info!("[aot-cache] Stop: giving the game time to close normally so its training profile is kept");
+                    log::info!(
+                        "[aot-cache] Stop: giving the game time to close normally so its training profile is kept"
+                    );
                 }
             }
             let to_kill = instance.closing_processes.extract_if(.., |(_, deadline)| now > *deadline);
@@ -942,7 +954,9 @@ impl BackendState {
             watched.dedup();
             for pid in watched {
                 if aot_cache::shows_jvm_error_dialog(pid) {
-                    log::info!("[aot-cache] process {pid} shows the JVM launcher's error dialog: the JVM refused to start");
+                    log::info!(
+                        "[aot-cache] process {pid} shows the JVM launcher's error dialog: the JVM refused to start"
+                    );
                     instance.jvm_error_dialogs.push(pid);
                 }
             }
@@ -950,8 +964,7 @@ impl BackendState {
             // The retry without the cache is past the early window: the cache was the problem.
             if instance.aot_retry_probe.as_ref().is_some_and(|(pid, started, _)| {
                 started.elapsed() >= java_default::EARLY_EXIT_WINDOW && !instance.jvm_error_dialogs.contains(pid)
-            })
-                && let Some((_, _, reason)) = instance.aot_retry_probe.take()
+            }) && let Some((_, _, reason)) = instance.aot_retry_probe.take()
             {
                 disable_aot_cache(instance, &reason);
                 killed = true;
@@ -1015,15 +1028,19 @@ impl BackendState {
                         AotOptimizationPhase::Creating,
                     ))
                 } else {
-                    instance.aot_runs.iter().find(|(pid, _)| instance.aot_dumping.contains(pid)).map(|(_, run)| {
-                        (
-                            aot_cache::Progress::Recording {
-                                written: aot_cache::profile_bytes_written(run).unwrap_or(0),
-                                elapsed: run.dump_started.map_or(Duration::ZERO, |started| started.elapsed()),
-                            },
-                            AotOptimizationPhase::Recording,
-                        )
-                    })
+                    instance
+                        .aot_runs
+                        .iter()
+                        .find(|(pid, _)| instance.aot_dumping.contains(pid))
+                        .map(|(_, run)| {
+                            (
+                                aot_cache::Progress::Recording {
+                                    written: aot_cache::profile_bytes_written(run).unwrap_or(0),
+                                    elapsed: run.dump_started.map_or(Duration::ZERO, |started| started.elapsed()),
+                                },
+                                AotOptimizationPhase::Recording,
+                            )
+                        })
                 };
                 if let Some((progress, phase)) = estimate {
                     let timings = aot_cache::Dir::new(&instance.root_path).read_timings();
@@ -1717,7 +1734,7 @@ impl BackendState {
                         reason: ContentInstallReason::Modpack,
                     });
                 },
-                ModpackFileSource::DownloadCurseforge { file_id } => {
+                ModpackFileSource::DownloadCurseforge { file_id, .. } => {
                     curseforge_file_ids.push(*file_id);
                 },
                 ModpackFileSource::Builtin { .. } => {},

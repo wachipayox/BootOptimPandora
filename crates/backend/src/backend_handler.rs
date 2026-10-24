@@ -580,6 +580,12 @@ impl BackendState {
                     });
                 }
             },
+            MessageToBackend::SetInstanceHomeArtwork { id, path, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = channel.send(backend.set_instance_home_artwork(id, path.as_deref()));
+                });
+            },
             MessageToBackend::SetInstanceIcon { id, icon } => {
                 let root_path = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     let root_path = instance.root_path.clone();

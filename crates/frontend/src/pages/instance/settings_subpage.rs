@@ -36,6 +36,7 @@ use uuid::Uuid;
 
 use crate::{
     component::{
+        design::{DesignButton, YesNo},
         horizontal_sections::HorizontalSections,
         named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem},
         path_label::PathLabel,
@@ -52,7 +53,7 @@ use crate::{
     icon::PandoraIcon,
     interface_config::InterfaceConfig,
     pages::instances_page::VersionList,
-    png_render_cache,
+    png_render_cache, theme,
 };
 
 #[derive(PartialEq, Eq)]
@@ -77,6 +78,7 @@ pub struct InstanceSettingsSubpage {
     loader_version_latest_string: &'static str,
     update_channel_select_state: Entity<SelectState<NamedDropdown<UpdateChannel>>>,
     memory_section: Entity<super::memory_section::InstanceMemorySection>,
+    artwork_section: Entity<super::artwork_section::InstanceArtworkSection>,
     wrapper_command_enabled: bool,
     wrapper_command_input_state: Entity<TextareaState>,
     jvm_flags_enabled: bool,
@@ -268,6 +270,9 @@ impl InstanceSettingsSubpage {
         // The AOT cache option can be turned off by the launcher while this page is open.
         cx.observe(instance, |_, _, cx| cx.notify()).detach();
 
+        let artwork_section = cx.new(|cx| {
+            super::artwork_section::InstanceArtworkSection::new(instance.clone(), backend_handle.clone(), window, cx)
+        });
         let mut page = Self {
             data: data.clone(),
             instance: instance.clone(),
@@ -282,6 +287,7 @@ impl InstanceSettingsSubpage {
             loader_version_latest_string,
             update_channel_select_state,
             memory_section,
+            artwork_section,
             wrapper_command_enabled: wrapper_command.enabled,
             wrapper_command_input_state,
             jvm_flags_enabled: jvm_flags.enabled,
@@ -750,7 +756,11 @@ impl Render for InstanceSettingsSubpage {
         let theme_border = cx.theme().border;
         let basic_content = self.render_basic_content(cx);
         let runtime_content = self.render_runtime_content(cx);
-        let actions_content = self.render_actions_content(cx);
+        let actions_content = v_flex()
+            .gap_6()
+            .child(self.artwork_section.clone())
+            .child(self.render_actions_content(cx))
+            .into_any_element();
 
         let sections = HorizontalSections::new()
             .size_full()
@@ -936,30 +946,16 @@ impl InstanceSettingsSubpage {
         let (status, summary) = (instance.status, instance.aot_cache);
         let enabled = setting.as_ref().is_none_or(|setting| setting.enabled);
         let auto_disabled = setting.and_then(|setting| setting.auto_disabled_reason).filter(|_| !enabled);
-        v_flex()
-            .gap_1()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(Checkbox::new("aot_cache").label(t::instance::aot::setting()).checked(enabled).on_click(
-                        cx.listener(|page, value: &bool, _, cx| {
-                            page.backend_handle.send(MessageToBackend::SetInstanceAotCache {
-                                id: page.instance_id,
-                                enabled: *value,
-                            });
-                            cx.notify();
-                        }),
-                    ))
-                    .child(crate::modals::aot_optimization::help_mark(
-                        "aot_cache_help",
-                        t::instance::aot::setting_help(),
-                    )),
-            )
-            .children(enabled.then(|| self.render_aot_cache_state(status, summary, cx)))
-            .children(
-                auto_disabled.map(|reason| div().text_sm().pl_6().child(t::instance::aot::auto_disabled(&reason))),
-            )
+        v_flex().gap(px(12.))
+            .child(h_flex().w_full().justify_between().gap(px(12.))
+                .child(v_flex().flex_1().gap(px(3.)).child("Optimizar arranque (cachÃ© AOT de Java 25)")
+                    .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child("4â€“9 s mÃ¡s rÃ¡pido hasta el menÃº; usa unos 300 MB")))
+                .child(YesNo::new("aot-cache").checked(enabled).on_click(cx.listener(|this,value:&bool,_,c|{
+                    this.backend_handle.send(MessageToBackend::SetInstanceAotCache{id:this.instance_id,enabled:*value});c.notify();
+                }))))
+            .children(enabled.then(||self.render_aot_cache_state(status,summary,cx)))
+            .children(auto_disabled.map(|reason|div().text_size(px(12.)).line_height(px(18.)).text_color(rgb(theme::INK_MUTED))
+                .child(format!("Desactivada automÃ¡ticamente porque Java ha rechazado la cachÃ© ({reason}). Puedes volver a activarla."))))
             .into_any_element()
     }
 
@@ -972,38 +968,44 @@ impl InstanceSettingsSubpage {
     ) -> AnyElement {
         let theme = cx.theme();
         let (dot, text) = match (status, summary) {
-            (InstanceStatus::Optimizing, _) => (theme.info, t::instance::aot::state_optimizing().to_string()),
+            (InstanceStatus::Optimizing, _) => (theme.info, "Creando la cachÃ© de arranque".to_owned()),
             (_, AotCacheSummary::Ready { bytes }) => (
                 theme.success,
-                t::instance::aot::state_ready(&format!("{}", bytes.div_ceil(1_000_000))).to_string(),
+                format!("Lista: los arranques son mÃ¡s rÃ¡pidos. Usa {} MB.", bytes.div_ceil(1_000_000)),
             ),
-            (_, AotCacheSummary::Training) => (theme.info, t::instance::aot::state_training().to_string()),
-            (_, AotCacheSummary::Waiting) => (theme.info, t::instance::aot::state_waiting().to_string()),
-            (_, AotCacheSummary::NotBuilt | AotCacheSummary::Off) => {
-                (theme.muted_foreground, t::instance::aot::state_not_built().to_string())
+            (_, AotCacheSummary::Training) => (
+                theme.info,
+                "PreparÃ¡ndose durante esta partida. Cierra el juego normalmente para terminar.".to_owned(),
+            ),
+            (_, AotCacheSummary::Waiting) => {
+                (theme.info, "Casi lista: el launcher la termina cuando quede libre.".to_owned())
             },
+            (_, AotCacheSummary::NotBuilt | AotCacheSummary::Off) => (
+                theme.muted_foreground,
+                "TodavÃ­a no estÃ¡ lista: la prÃ³xima partida la prepara.".to_owned(),
+            ),
         };
         let can_delete = matches!(summary, AotCacheSummary::Ready { .. }) && status == InstanceStatus::NotRunning;
         let instance_id = self.instance_id;
         let data = self.data.clone();
         h_flex()
-            .pl_6()
-            .gap_2()
+            .w_full()
+            .p(px(12.))
+            .gap(px(10.))
+            .border_1()
+            .border_color(rgba(0xffffff0b))
             .items_center()
-            .text_sm()
+            .text_size(px(12.))
+            .line_height(px(18.))
             .text_color(theme.muted_foreground)
             .child(div().flex_none().size_2().rounded_full().bg(dot))
             .child(div().child(text))
             .when(can_delete, |row| {
-                row.child(
-                    Button::new("aot_cache_delete")
-                        .label(t::instance::aot::delete())
-                        .ghost()
-                        .xsmall()
-                        .on_click(move |_, window, cx| {
-                            crate::modals::aot_optimization::confirm_delete(instance_id, &data, window, cx)
-                        }),
-                )
+                row.child(DesignButton::new("aot_cache_delete").label("Borrar cachÃ©").on_click(
+                    move |_, window, cx| {
+                        crate::modals::aot_optimization::confirm_delete(instance_id, &data, window, cx)
+                    },
+                ))
             })
             .into_any_element()
     }

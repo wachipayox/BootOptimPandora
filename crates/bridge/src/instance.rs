@@ -212,6 +212,7 @@ pub enum ModpackFileSource {
         size: usize,
     },
     DownloadCurseforge {
+        project_id: u32,
         file_id: u32,
     },
     Builtin {

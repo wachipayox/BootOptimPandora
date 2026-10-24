@@ -17,13 +17,13 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, IndexPath, Sizable,
+    ActiveTheme, Disableable, IndexPath, InteractiveElementExt, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
     list::{ListDelegate, ListItem, ListState},
     menu::{DropdownMenu, PopupMenuItem},
     spinner::Spinner,
-    switch::Switch,
+    tooltip::Tooltip,
     v_flex,
 };
 use parking_lot::Mutex;
@@ -33,10 +33,7 @@ use strum::IntoEnumIterator;
 use ustr::Ustr;
 
 use crate::{
-    component::{
-        design::{DesignButton, YesNo},
-        error_alert::ErrorAlert,
-    },
+    component::design::{DesignButton, YesNo},
     entity::DataEntities,
     icon::PandoraIcon,
     interface_config::{InstanceContentSortKey, InterfaceConfig},
@@ -56,6 +53,8 @@ struct ContentEntryChild {
     parent_enabled: bool,
     disabled_third_party_downloads: bool,
     is_missing: bool,
+    page_url: Option<String>,
+    provider: &'static str,
 }
 
 impl ContentEntryChild {
@@ -538,94 +537,159 @@ impl ContentListDelegate {
         let enabled = child.enabled;
         let visually_enabled = enabled && child.parent_enabled && !child.disabled_third_party_downloads;
 
-        let (desc1, desc2) = create_descriptions(
-            summary.name.clone(),
-            summary.version_str.clone(),
-            summary.authors.clone(),
-            summary.rich_description.clone(),
-            !visually_enabled,
-            child.path.clone(),
-            cx.theme().muted_foreground,
-        );
-
-        let mut item_content = h_flex()
-            .gap_1()
-            .pl_4()
+        let name = summary.name.as_deref().unwrap_or(&child.path).to_owned();
+        let mut name_cell = h_flex()
+            .id(("child-name", element_id))
+            .flex_1()
+            .min_w_0()
+            .gap(px(12.))
+            .pl(px(18.))
+            .child(icon.size(px(28.)).flex_shrink_0().grayscale(!visually_enabled))
             .child(
-                Switch::new(("toggle", element_id))
-                    .checked(enabled && !child.disabled_third_party_downloads)
-                    .when_else(
-                        child.is_missing || child.disabled_third_party_downloads,
-                        |this| this.disabled(true),
-                        |this| {
-                            this.on_click({
-                                let id = self.id;
-                                let content_id = child.parent;
-                                let child_id = child.summary.id.clone();
-                                let child_name = child.summary.name.clone();
-                                let path = child.path.clone();
-                                let disabled_default = child.disabled_default;
-                                let backend_handle = self.backend_handle.clone();
-                                move |checked, window, cx| {
-                                    cx.stop_propagation();
-                                    window.prevent_default();
-
-                                    backend_handle.send(MessageToBackend::SetContentChildEnabled {
-                                        id,
-                                        content_id,
-                                        child_id: child_id.clone(),
-                                        child_name: child_name.clone(),
-                                        child_filename: path.clone(),
-                                        disabled_default,
-                                        enabled: *checked,
-                                    });
-                                }
-                            })
-                        },
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(1.))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .line_height(px(18.))
+                            .line_clamp(1)
+                            .text_color(rgb(theme::INK))
+                            .child(name),
                     )
-                    .px_2(),
-            )
-            .child(icon.size_16().min_w_16().min_h_16().grayscale(!visually_enabled))
-            .line_height(rems(1.2))
-            .child(desc1.pl_2().when(!visually_enabled, |this| this.line_through()))
-            .when_some(desc2, |div, desc2| div.child(desc2.when(!visually_enabled, |this| this.line_through())));
-
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .line_height(px(14.))
+                            .line_clamp(1)
+                            .text_color(rgb(theme::INK_MUTED))
+                            .child(summary.authors.to_string()),
+                    ),
+            );
+        // Keep the original file/description detail available without widening the table.
+        let detail = child.clone();
+        name_cell = name_cell.tooltip(move |w, c| {
+            let detail = detail.clone();
+            Tooltip::element(move |_, c| {
+                let (first, second) = create_descriptions(
+                    detail.summary.name.clone(),
+                    detail.summary.version_str.clone(),
+                    detail.summary.authors.clone(),
+                    detail.summary.rich_description.clone(),
+                    !detail.enabled,
+                    detail.path.clone(),
+                    c.theme().muted_foreground,
+                );
+                v_flex().max_w(px(400.)).text_size(px(13.)).gap(px(4.)).child(first).children(second)
+            })
+            .build(w, c)
+        });
+        let backend = self.backend_handle.clone();
+        let id = self.id;
+        let parent = child.parent;
+        let child_id = summary.id.clone();
+        let child_name = summary.name.clone();
+        let path = child.path.clone();
+        let disabled_default = child.disabled_default;
+        let toggle = YesNo::new(("toggle", element_id))
+            .checked(enabled && !child.disabled_third_party_downloads)
+            .disabled(child.is_missing || child.disabled_third_party_downloads)
+            .on_click(move |checked, w, c| {
+                c.stop_propagation();
+                w.prevent_default();
+                backend.send(MessageToBackend::SetContentChildEnabled {
+                    id,
+                    content_id: parent,
+                    child_id: child_id.clone(),
+                    child_name: child_name.clone(),
+                    child_filename: path.clone(),
+                    disabled_default,
+                    enabled: *checked,
+                });
+            });
+        let mut origin = h_flex().w(px(140.)).justify_center().text_size(px(12.)).text_color(rgb(theme::INK_MUTED));
         if child.disabled_third_party_downloads {
-            item_content = item_content.child(
-                ErrorAlert::new(
-                    t::instance::content::blocked().into(),
-                    t::instance::content::install::no_third_party_downloads().into(),
-                )
-                .w(Length::Auto),
+            let url = child.page_url.clone();
+            let explanation = if url.is_some() {
+                "El autor no permite descargarlo desde otros launchers. Descárgalo desde su página."
+            } else {
+                "El autor no permite descargarlo desde otros launchers."
+            };
+            origin = origin.child(
+                Button::new(("blocked", element_id))
+                    .ghost()
+                    .label("Bloqueado")
+                    .text_color(rgb(theme::DANGER))
+                    .tooltip(explanation)
+                    .dropdown_menu(move |mut menu, _, _| {
+                        menu =
+                            menu.item(PopupMenuItem::label("Bloqueado")).item(PopupMenuItem::element(move |_, _| {
+                                div()
+                                    .w(px(250.))
+                                    .whitespace_normal()
+                                    .text_size(px(13.))
+                                    .line_height(px(18.))
+                                    .text_color(rgb(theme::INK_MUTED))
+                                    .child(explanation)
+                            }));
+                        if let Some(url) = url.clone() {
+                            menu =
+                                menu.item(PopupMenuItem::new("Abrir página").on_click(move |_, _, c| c.open_url(&url)));
+                        }
+                        menu.min_w(px(270.))
+                    }),
             );
-        } else if child.is_missing {
-            item_content = item_content.child(
-                Button::new("download").label(t::instance::content::download()).success().on_click({
-                    let backend_handle = self.backend_handle.clone();
-                    let id = self.id;
-                    let content_id = child.parent;
-                    move |_, window, cx| {
-                        let modal_action = ModalAction::default();
-
-                        backend_handle.send(MessageToBackend::DownloadContentChildren {
-                            id,
-                            content_id,
-                            modal_action: modal_action.clone(),
-                        });
-
-                        crate::modals::generic::show_modal(
-                            window,
-                            cx,
-                            t::instance::content::downloading_children().into(),
-                            t::instance::content::error_downloading_children().into(),
-                            modal_action,
-                        );
-                    }
-                }),
-            );
+        } else {
+            origin = origin.child(child.provider);
         }
-
-        ListItem::new(("item", element_id)).p_1().child(item_content)
+        let action = if child.is_missing && !child.disabled_third_party_downloads {
+            let backend = self.backend_handle.clone();
+            DesignButton::new(("download", element_id))
+                .aria_label("Descargar")
+                .w(px(30.))
+                .h(px(26.))
+                .p_0()
+                .child(PandoraIcon::Download)
+                .on_click(move |_, w, c| {
+                    let modal = ModalAction::default();
+                    backend.send(MessageToBackend::DownloadContentChildren {
+                        id,
+                        content_id: parent,
+                        modal_action: modal.clone(),
+                    });
+                    crate::modals::generic::show_modal(
+                        w,
+                        c,
+                        t::instance::content::downloading_children().into(),
+                        t::instance::content::error_downloading_children().into(),
+                        modal,
+                    );
+                })
+                .into_any_element()
+        } else {
+            div().w(px(30.)).into_any_element()
+        };
+        let content = h_flex()
+            .w_full()
+            .h(px(53.))
+            .px(px(14.))
+            .gap(px(12.))
+            .border_b_1()
+            .border_color(rgba(0xffffff0b))
+            .child(name_cell)
+            .child(
+                h_flex()
+                    .w(px(140.))
+                    .justify_center()
+                    .text_size(px(13.))
+                    .text_color(rgb(theme::INK_MUTED))
+                    .child(summary.version_str.to_string()),
+            )
+            .child(origin)
+            .child(h_flex().w(px(84.)).justify_center().child(toggle))
+            .child(action);
+        ListItem::new(("item", element_id)).p_0().child(content)
     }
 
     pub fn set_content(&mut self, new_content: &[InstanceContentSummary]) {
@@ -649,7 +713,7 @@ impl ContentListDelegate {
             } = &extra
             {
                 for unknown_file in unknown_files.iter() {
-                    let filename: Arc<str> = t::instance::content::file_id(unknown_file.file_id).into();
+                    let filename: Arc<str> = unknown_file.file_id.to_string().into();
 
                     let lowercase_filename: Arc<str> = filename.to_ascii_lowercase().into();
                     let lowercase_search_keys = Arc::new([lowercase_filename]);
@@ -666,6 +730,8 @@ impl ContentListDelegate {
                         parent_enabled: modification.enabled,
                         disabled_third_party_downloads: false,
                         is_missing: true,
+                        page_url: Some(format!("https://www.curseforge.com/projects/{}", unknown_file.project_id)),
+                        provider: "CurseForge",
                     });
                 }
 
@@ -729,6 +795,21 @@ impl ContentListDelegate {
                         parent_enabled: modification.enabled,
                         disabled_third_party_downloads: file.disabled_third_party_downloads,
                         is_missing,
+                        page_url: match &file.source {
+                            bridge::instance::ModpackFileSource::DownloadCurseforge { project_id, .. } => {
+                                Some(format!("https://www.curseforge.com/projects/{project_id}"))
+                            },
+                            _ => None,
+                        },
+                        provider: match &file.source {
+                            bridge::instance::ModpackFileSource::DownloadCurseforge { .. } => "CurseForge",
+                            bridge::instance::ModpackFileSource::DownloadUrl { url, .. }
+                                if url.starts_with("https://cdn.modrinth.com/") =>
+                            {
+                                "Modrinth"
+                            },
+                            _ => "local",
+                        },
                     });
                 }
             }

@@ -190,6 +190,11 @@ pub enum MessageToBackend {
         id: InstanceID,
         icon: Option<EmbeddedOrRaw>,
     },
+    SetInstanceHomeArtwork {
+        id: InstanceID,
+        path: Option<std::path::PathBuf>,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     KillInstance {
         id: InstanceID,
     },
