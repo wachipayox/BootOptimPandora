@@ -350,7 +350,20 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     Some(name) if name.starts_with("news-") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
                     },
-                    Some("skins") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins,
+                    Some("skins" | "skins-url" | "skins-copy") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins
+                    },
+                    Some(page)
+                        if page.starts_with("launcher-")
+                            || matches!(page, "add-instance" | "add-server" | "add-local" | "account-offline") =>
+                    {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
+                    },
+                    Some(page) if page.starts_with("content-browser:agente-274-") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Modrinth {
+                            installing_for: Some(page.split_once(':').unwrap().1.into()),
+                        };
+                    },
                     Some("import") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Import,
                     Some("syncing") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Syncing,
                     Some(name) if name.starts_with("instance:") || name.starts_with("update:") => {
@@ -423,10 +436,44 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 cx.set_global(LauncherRootGlobal {
                     root: launcher_root.clone(),
                 });
-                if capture_page.as_deref() == Some("appearance") {
+                if capture_page
+                    .as_deref()
+                    .is_some_and(|page| page == "appearance" || page.starts_with("launcher-"))
+                {
                     crate::settings::open_settings_window(window, &data, cx);
                 }
                 let root = cx.new(|cx| Root::new(launcher_root, window, cx));
+                if let Some(page) = capture_page
+                    .as_deref()
+                    .filter(|page| matches!(*page, "add-instance" | "add-server" | "add-local" | "account-offline"))
+                    .map(str::to_owned)
+                {
+                    let capture_data = data.clone();
+                    window.on_next_frame(move |window, cx| {
+                        match page.as_str() {
+                            "add-instance" => crate::pages::home::add_instance(&capture_data, window, cx),
+                            "add-server" => crate::modals::global_profiles::open_global_profiles(
+                                capture_data.backend_handle.clone(),
+                                window,
+                                cx,
+                            ),
+                            "add-local" => crate::modals::create_instance::open_create_instance(
+                                capture_data.metadata.clone(),
+                                capture_data.instances.clone(),
+                                capture_data.backend_handle.clone(),
+                                window,
+                                cx,
+                            ),
+                            "account-offline" => crate::modals::accounts::open_offline_account(
+                                capture_data.backend_handle.clone(),
+                                window,
+                                cx,
+                            ),
+                            _ => {},
+                        }
+                        log::info!("launcher-dialog-ready pid={}", std::process::id());
+                    });
+                }
                 if let Some(name) = capture_page.as_deref().and_then(|page| page.strip_prefix("update:")) {
                     let name: SharedString = name.to_owned().into();
                     let capture_data = data.clone();

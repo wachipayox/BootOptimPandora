@@ -9,6 +9,7 @@ param(
     [switch]$HomeScreens,
     [switch]$NewsScreens,
     [switch]$InstanceScreens,
+    [switch]$LauncherScreens,
     [string]$NewsFixture,
     [ValidateSet('advanced','version','expanded','editing')][string]$CaptureState,
     [string[]]$Pages,
@@ -167,6 +168,12 @@ try {
             $screens += @{page="$($instanceRoute):$InstanceName";file="$instanceRoute.png";label='Owned instance screen; live output is synthetic and never starts Minecraft'}
         }
     }
+    if ($LauncherScreens) {
+        foreach ($launcherRoute in @('launcher-general','launcher-appearance','launcher-network','launcher-distribution','launcher-ignored','launcher-windows','skins','skins-url','skins-copy','accounts','account-offline','add-instance','add-server','add-local','import','syncing')) {
+            $screens += @{page=$launcherRoute;file="$launcherRoute.png";label='Native launcher screen or existing dialog; no action is confirmed'}
+        }
+        if ($TestProfile -or $PortableDirectory) { $screens += @{page="content-browser:$InstanceName";file='content-browser.png';label='Browse content for owned fixture; no install is started'} }
+    }
     if ($Pages) { $screens = @($Pages | ForEach-Object { @{ page=$_; file=(($_ -replace ':','-') + '.png'); label='Explicit native capture route' } }) }
     if ($Components) {
         $screens += @{ page = 'components'; file = 'components.png'; label = 'Wachiland base controls' }
@@ -273,7 +280,7 @@ try {
                 Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
             }
         }
-        if ($screen.page -in @('components','home-news') -or $screen.page -match '^(instance-|derived:|duplicate:|update:)') {
+        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page -in @('skins','skins-url','skins-copy','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news') -or $screen.page -match '^(instance-|derived:|duplicate:|update:)') {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
             if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }

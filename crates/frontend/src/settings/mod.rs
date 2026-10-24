@@ -853,13 +853,18 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
     #[cfg(windows)]
     pages.push(windows_security::create_page());
 
+    let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").unwrap_or_default();
+    let selected_page = match capture_page.as_str() {
+        "appearance" | "launcher-appearance" => 1,
+        "launcher-network" => 2,
+        "launcher-distribution" => 3,
+        "launcher-ignored" => 4,
+        "launcher-windows" => pages.len().saturating_sub(1),
+        _ => 0,
+    };
     Settings {
         pages: pages.into_boxed_slice(),
-        selected_page: Some(if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("appearance") {
-            1
-        } else {
-            0
-        }),
+        selected_page: Some(selected_page),
         selected_group: None,
         deferred_scroll_to_group: false,
         searched_pages: None,
