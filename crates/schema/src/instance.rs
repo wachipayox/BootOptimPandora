@@ -472,3 +472,84 @@ fn get_shared_library_path_for_name(name: &str) -> Option<Arc<Path>> {
 
     None
 }
+
+/// UI recommendation range. The instance's `memory.enabled` persists the mode:
+/// true is Manual, false (or no memory override) is Recommended. Disabled
+/// values are retained so returning to Manual restores the player's settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryRecommendation {
+    pub total_mib: Option<u64>,
+    pub minimum_mib: u32,
+    pub maximum_mib: u32,
+    pub recommended_mib: u32,
+}
+impl Default for MemoryRecommendation {
+    fn default() -> Self {
+        Self::for_total_mib(None)
+    }
+}
+impl MemoryRecommendation {
+    pub fn for_total_mib(total: Option<u64>) -> Self {
+        let Some(total) = total.filter(|n| *n >= 1024) else {
+            return Self {
+                total_mib: None,
+                minimum_mib: 2048,
+                maximum_mib: 8192,
+                recommended_mib: 4096,
+            };
+        };
+        let align = |n: u64| n.saturating_add(128) / 256 * 256;
+        let ceiling = total.saturating_sub(1024).max(512).min(8192);
+        let minimum = align(total / 4).clamp(512, 4096).min(ceiling);
+        let maximum = align(total / 2).clamp(512, 8192).min(ceiling).max(minimum);
+        let recommended = align(total.saturating_mul(3) / 8).clamp(minimum, maximum);
+        Self {
+            total_mib: Some(total),
+            minimum_mib: minimum as u32,
+            maximum_mib: maximum as u32,
+            recommended_mib: recommended as u32,
+        }
+    }
+    /// Resolve a launch copy without rewriting the persisted Manual values.
+    pub fn effective_memory(self, stored: Option<InstanceMemoryConfiguration>) -> InstanceMemoryConfiguration {
+        stored.filter(|m| m.enabled).unwrap_or(InstanceMemoryConfiguration {
+            enabled: true,
+            min: InstanceMemoryConfiguration::DEFAULT_MIN,
+            max: self.recommended_mib,
+        })
+    }
+}
+#[cfg(test)]
+mod memory_recommendation_tests {
+    use super::*;
+    #[test]
+    fn sixteen_gib_matches_the_design_and_small_machines_keep_os_headroom() {
+        let m = MemoryRecommendation::for_total_mib(Some(16 * 1024));
+        assert_eq!((m.minimum_mib, m.recommended_mib, m.maximum_mib), (4096, 6144, 8192));
+        for total in [1024, 2048, 4096, 8192, 16310, 32768, 262144] {
+            let m = MemoryRecommendation::for_total_mib(Some(total));
+            assert!(m.minimum_mib <= m.recommended_mib && m.recommended_mib <= m.maximum_mib);
+            assert!(m.recommended_mib <= 8192 && m.recommended_mib < total as u32);
+        }
+    }
+    #[test]
+    fn manual_values_survive_recommended_mode_and_unknown_ram_uses_four_gib() {
+        let m = MemoryRecommendation::for_total_mib(Some(16384));
+        let stored = InstanceMemoryConfiguration {
+            enabled: false,
+            min: 1024,
+            max: 7168,
+        };
+        assert_eq!(m.effective_memory(Some(stored)).max, 6144);
+        assert_eq!(stored.max, 7168);
+        assert_eq!(
+            m.effective_memory(Some(InstanceMemoryConfiguration {
+                enabled: true,
+                ..stored
+            }))
+            .max,
+            7168
+        );
+        assert_eq!(MemoryRecommendation::default().effective_memory(None).max, 4096);
+    }
+}

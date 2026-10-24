@@ -46,7 +46,9 @@ impl BackendState {
                 _ => None,
             })
             .and_then(|id| self.instance_state.read().instances.get(id).map(|i| i.name.to_string()));
-        Ok(snapshot(branch, local_parent_name))
+        let mut info = snapshot(branch, local_parent_name);
+        info.memory = crate::launch::memory::recommendation();
+        Ok(info)
     }
 }
 #[cfg(test)]
