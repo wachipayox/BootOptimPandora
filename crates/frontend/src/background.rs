@@ -141,6 +141,14 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
         })
         .detach();
     }
+    if !glass {
+        let base = div().absolute().top_0().left_0().size_full();
+        return if let Some(image) = image {
+            base.child(img(image).size_full().object_fit(ObjectFit::Cover)).into_any_element()
+        } else {
+            base.bg(rgb(theme::BG)).into_any_element()
+        };
+    }
     canvas(
         move |bounds, _, _| bounds,
         move |bounds, _, window, _| {
@@ -189,11 +197,13 @@ impl BackgroundSelector {
     }
 }
 impl Render for BackgroundSelector {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         use crate::component::design::{self, DesignButton};
         use gpui_component::{h_flex, v_flex};
         let active = InterfaceConfig::get(cx).app_background.clone();
         let mut choices = h_flex().gap(px(10.)).w_full();
+        let preview_width = ((window.viewport_size().width.as_f32() - 220. - 48. - 36. - 30.) / 4.).clamp(60., 400.);
+        let preview_height = preview_width * 9. / 16.;
         for (index, title, note) in [
             (0usize, "Fondo café 18:00", "El de siempre"),
             (1, "Último artwork", "De la última instancia que jugaste"),
@@ -207,17 +217,72 @@ impl Render for BackgroundSelector {
                     | (AppBackground::Color(_), 2)
                     | (AppBackground::Image(_), 3)
             );
+            let preview = div().w_full().h(px(preview_height)).overflow_hidden().bg(rgb(0x060607));
+            let preview = match index {
+                0 => preview.child(
+                    img(ImageSource::Resource(Resource::Embedded("images/cafe-ambient.png".into())))
+                        .size_full()
+                        .object_fit(ObjectFit::Cover),
+                ),
+                1 => {
+                    let source = InterfaceConfig::get(cx)
+                        .last_played_artwork
+                        .as_ref()
+                        .map(|path| ImageSource::Resource(Resource::Path(Arc::from(path.as_path()))))
+                        .unwrap_or_else(|| {
+                            ImageSource::Resource(Resource::Embedded("images/artwork-vanilla.png".into()))
+                        });
+                    preview.child(img(source).size_full().object_fit(ObjectFit::Cover))
+                },
+                2 => preview.bg(rgb(match active {
+                    AppBackground::Color(color) => color,
+                    _ => 0x0b1a20,
+                })),
+                _ => {
+                    if let AppBackground::Image(path) = &active {
+                        preview.child(
+                            img(ImageSource::Resource(Resource::Path(Arc::from(path.as_path()))))
+                                .size_full()
+                                .object_fit(ObjectFit::Cover),
+                        )
+                    } else {
+                        preview
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(px(24.))
+                            .text_color(rgb(theme::ACCENT_TEXT))
+                            .child("+")
+                    }
+                },
+            };
             choices = choices.child(
                 DesignButton::new(("app-background", index))
                     .toggled(selected)
+                    .paint(
+                        180.,
+                        if selected {
+                            [[0x5bcef51c, 0x5bcef505]; 3]
+                        } else {
+                            [[0xffffff05; 2]; 3]
+                        },
+                        rgb(theme::INK).into(),
+                        rgb(theme::INK).into(),
+                    )
+                    .when(selected, |button| button.border_t_2().border_color(rgb(theme::ACCENT_TEXT)))
                     .flex_1()
                     .min_w_0()
-                    .h(px(92.))
+                    .h(px(preview_height + 72.))
                     .px(px(8.))
+                    .pt(px(8.))
+                    .pb(px(12.))
                     .child(
                         v_flex()
+                            .w_full()
+                            .items_start()
                             .gap(px(8.))
-                            .child(title)
+                            .child(preview)
+                            .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(title))
                             .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(note)),
                     )
                     .on_click(cx.listener(move |_, _, _, cx| {
@@ -251,8 +316,11 @@ impl Render for BackgroundSelector {
                     })),
             );
         }
-        let mut colors = h_flex().gap(px(10.));
-        for color in [0x060607u32, 0x0b1a20, 0x17100e, 0x10101a] {
+        let mut colors = h_flex()
+            .gap(px(10.))
+            .items_center()
+            .child(div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child("Color específico"));
+        for color in [0x060607u32, 0x0b1a20, 0x14100c, 0x120b16, 0x0b140c] {
             colors = colors.child(
                 DesignButton::new(("background-color", color as usize))
                     .size(px(26.))
@@ -274,8 +342,14 @@ impl Render for BackgroundSelector {
                     .child("La imagen difuminada que se ve detrás de todas las pantallas."),
             )
             .child(choices)
-            .when(matches!(active, AppBackground::Color(_)), |d| {
-                d.child(colors.child(design::text_field(&self.color).w(px(120.)).font_family("Consolas")))
-            })
+            .child(
+                colors.child(
+                    design::text_field(&self.color)
+                        .w(px(90.))
+                        .h(px(30.))
+                        .text_size(px(13.))
+                        .font_family("Consolas"),
+                ),
+            )
     }
 }

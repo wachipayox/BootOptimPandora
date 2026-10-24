@@ -7,13 +7,8 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, StyledExt, WindowExt,
-    button::{Button, ButtonVariants},
-    dialog::Dialog,
-    h_flex,
-    input::{Input, InputState},
-    tooltip::Tooltip,
-    v_flex,
+    ActiveTheme, Disableable, Selectable, StyledExt, WindowExt, button::Button, dialog::Dialog, h_flex,
+    input::InputState, tooltip::Tooltip, v_flex,
 };
 use std::collections::BTreeSet;
 
@@ -332,7 +327,7 @@ impl ProfileDetailsModal {
             save_group_target,
         });
     }
-    fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = &self.profile;
         let mut body = v_flex()
             .id("profile-details-body")
@@ -388,7 +383,7 @@ impl ProfileDetailsModal {
                 )
                 .into_any_element(),
         });
-        body
+        body.into_any_element()
     }
     fn render(&mut self, dialog: Dialog, window: &mut Window, cx: &mut Context<Self>) -> Dialog {
         let body = self.body(window, cx);

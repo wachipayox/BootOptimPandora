@@ -188,7 +188,7 @@ impl SkinsPage {
     #[inline(never)]
     fn render_account_panel(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (AnyElement, Option<UniqueBytes>, Option<SkinVariant>, AnyElement) {
         let theme = cx.theme();
@@ -484,7 +484,6 @@ impl SkinsPage {
         let secondary: Hsla = rgba(0xffffff04).into();
         let secondary_hover: Hsla = rgba(0xffffff08).into();
         let radius = theme.radius;
-        let list_active: Hsla = rgba(0x5bcef51f).into();
         let list_active_border: Hsla = rgb(crate::theme::ACCENT_TEXT).into();
         let secondary_skeleton = theme.secondary_foreground.opacity(0.5);
         let mut library = v_flex().flex_1().min_w_0().w_full().text_size(px(13.)).content_start().items_start();

@@ -20,7 +20,7 @@ use rustc_hash::FxHashSet;
 use strum::IntoEnumIterator;
 
 use crate::{
-    component::{design, path_label::PathLabel, responsive_grid::ResponsiveGrid},
+    component::{path_label::PathLabel, responsive_grid::ResponsiveGrid},
     entity::{DataEntities, instance::InstanceEntries},
     icon::PandoraIcon,
     pages::page::Page,

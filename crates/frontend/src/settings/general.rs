@@ -14,11 +14,11 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
         title: || "General",
         groups: vec![
             SettingGroup {
-                title: None,
+                title: Some(|| "General"),
                 items: vec![
                     SettingItem {
                         title: || "Idioma",
-                        description: || "Idioma",
+                        description: || "",
                         widget: create_language_dropdown(window, cx),
                         ..Default::default()
                     },
@@ -90,7 +90,7 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
 
 fn create_language_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget {
     let languages = std::iter::once(NamedDropdownItem {
-        name: DropdownName::Translated(t::settings::general::general::language::system),
+        name: DropdownName::new("Según el sistema"),
         item: SharedString::new_static("system"),
     })
     .chain(t::languages().into_iter().map(|(id, name)| NamedDropdownItem {

@@ -14,7 +14,7 @@ use bridge::{
     serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{Disableable, WindowExt, h_flex, scroll::ScrollableElement, v_flex};
+use gpui_component::{Disableable, h_flex, scroll::ScrollableElement, v_flex};
 use std::{
     sync::Arc,
     time::{Duration, Instant},

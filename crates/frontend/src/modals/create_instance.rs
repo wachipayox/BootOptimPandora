@@ -7,7 +7,7 @@ use bridge::{
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Selectable, WindowExt,
-    button::{Button, ButtonGroup, ButtonVariants},
+    button::{Button, ButtonGroup},
     checkbox::Checkbox,
     h_flex,
     input::{InputEvent, InputState},

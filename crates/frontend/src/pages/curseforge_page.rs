@@ -19,7 +19,7 @@ use gpui_component::{
     button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{InputEvent, InputState},
     notification::NotificationType,
     scroll::{ScrollableElement, Scrollbar},
     skeleton::Skeleton,

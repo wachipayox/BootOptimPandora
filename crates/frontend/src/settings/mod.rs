@@ -4,7 +4,7 @@ use std::rc::Rc;
 use bridge::{handle::BackendHandle, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, StyledExt, h_flex,
+    ActiveTheme, h_flex,
     input::{InputEvent, InputState},
     spinner::Spinner,
     v_flex,
@@ -363,31 +363,28 @@ impl SettingsRoot {
                     .px(px(18.))
                     .py(px(16.))
                     .gap(px(10.))
-                    .bg(gpui::rgba(0xffffff04))
+                    .bg(rgb(crate::theme::PANEL))
                     .rounded(px(0.))
                     .line_height(rems(1.0))
                     .when(has_backend_missing, |this| this.child(h_flex().gap_1().child(Spinner::new())))
                     .children(item_elements);
 
+                let mut panel =
+                    v_flex().w_full().bg(rgb(crate::theme::PANEL)).border_1().border_color(rgba(0xffffff0b));
                 if let Some(title) = group.title {
-                    v_flex()
-                        .w_full()
-                        .px_3()
-                        .py_1p5()
-                        .child(
-                            div()
-                                .font_family(crate::theme::DISPLAY)
-                                .text_size(px(15.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgb(crate::theme::INK))
-                                .when(selected_group == Some(group_ix), Styled::underline)
-                                .child((title)()),
-                        )
-                        .child(items)
-                        .into_any_element()
-                } else {
-                    v_flex().w_full().p_3().pb_1p5().child(items).into_any_element()
+                    panel = panel.child(
+                        div()
+                            .px(px(18.))
+                            .pt(px(16.))
+                            .font_family(crate::theme::DISPLAY)
+                            .text_size(px(15.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(crate::theme::INK))
+                            .when(selected_group == Some(group_ix), Styled::underline)
+                            .child((title)()),
+                    );
                 }
+                v_flex().w_full().px_3().py_1p5().child(panel.child(items)).into_any_element()
             })
         };
         list(self.group_list_state.clone(), move |row, window, cx| {
@@ -715,7 +712,12 @@ pub(crate) fn create(data: &DataEntities, window: &mut Window, cx: &mut App) -> 
 fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Settings {
     let mut general = general::create_page(window, cx);
     let mut appearance = appearance::create_page(data, window, cx);
-    let language = general.groups[0].items[0].clone();
+    let mut language = general.groups[0].items[0].clone();
+    language.title = || "";
+    language.description = || "";
+    if let SettingItemWidget::Any(widget) = language.widget {
+        language.widget = SettingItemWidget::AnyWide(widget);
+    }
     let mut first_group = general.groups[0].clone();
     let mut items = first_group.items.to_vec();
     items.push(SettingItem {

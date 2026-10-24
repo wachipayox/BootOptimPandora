@@ -7,7 +7,7 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable, Sizable,
+    ActiveTheme as _, Disableable,
     button::{Button, ButtonVariants},
     h_flex,
     input::InputState,

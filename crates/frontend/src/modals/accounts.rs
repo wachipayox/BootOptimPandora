@@ -9,7 +9,7 @@ use gpui_component::{
     ActiveTheme, Disableable, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
-    input::{Input, InputState},
+    input::InputState,
     sheet::Sheet,
     v_flex,
 };
