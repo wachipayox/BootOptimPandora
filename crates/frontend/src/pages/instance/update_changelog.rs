@@ -221,7 +221,21 @@ impl Render for UpdateChangelog {
             let count = self.entries.len();
             panel = panel.child(
                 DesignButton::new("expand-skipped-revisions")
-                    .label(format!("Ver todo · {count} {} ↓", if count == 1 { "revisión" } else { "revisiones" }))
+                    .aria_label(format!("Ver todo · {count} {} ↓", if count == 1 { "revisión" } else { "revisiones" }))
+                    .h(px(24.))
+                    .px_0()
+                    .self_start()
+                    .child(
+                        div()
+                            .font_family(theme::DISPLAY)
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(rgb(theme::ACCENT_TEXT))
+                            .child(format!(
+                                "Ver todo · {count} {} ↓",
+                                if count == 1 { "revisión" } else { "revisiones" }
+                            )),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.expanded = true;
                         cx.notify();

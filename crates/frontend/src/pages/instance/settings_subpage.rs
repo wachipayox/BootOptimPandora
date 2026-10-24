@@ -924,16 +924,28 @@ impl InstanceSettingsSubpage {
                 version_content = version_content.child(Skeleton::new().w_full().min_h_8().max_h_8().rounded_md());
             },
             TypelessFrontendMetadataResult::Loaded => {
-                version_content = version_content
-                    .child(Select::new(&self.version_select_state).search_placeholder("Buscar...").w_full());
+                version_content = version_content.child(
+                    Select::new(&self.version_select_state)
+                        .bg(rgb(theme::PANEL_SUNKEN))
+                        .h(px(36.))
+                        .text_size(px(13.))
+                        .search_placeholder("Buscar...")
+                        .w_full(),
+                );
             },
             TypelessFrontendMetadataResult::Error(_, ..) => {
                 version_content = version_content.child("No se han podido cargar las versiones.")
             },
         }
 
-        version_content =
-            version_content.child(Select::new(&self.loader_select_state).search_placeholder("Buscar...").w_full());
+        version_content = version_content.child(
+            Select::new(&self.loader_select_state)
+                .bg(rgb(theme::PANEL_SUNKEN))
+                .h(px(36.))
+                .text_size(px(13.))
+                .search_placeholder("Buscar...")
+                .w_full(),
+        );
 
         if self.loader != Loader::Vanilla {
             match self.loader_versions_state {
@@ -941,8 +953,14 @@ impl InstanceSettingsSubpage {
                     version_content = version_content.child(Skeleton::new().w_full().min_h_8().max_h_8().rounded_md())
                 },
                 TypelessFrontendMetadataResult::Loaded => {
-                    version_content = version_content
-                        .child(Select::new(&self.loader_version_select_state).search_placeholder("Buscar...").w_full())
+                    version_content = version_content.child(
+                        Select::new(&self.loader_version_select_state)
+                            .bg(rgb(theme::PANEL_SUNKEN))
+                            .h(px(36.))
+                            .text_size(px(13.))
+                            .search_placeholder("Buscar...")
+                            .w_full(),
+                    )
                 },
                 TypelessFrontendMetadataResult::Error(_, ..) => {
                     version_content = version_content.child("No se han podido cargar las versiones.")
@@ -984,6 +1002,9 @@ impl InstanceSettingsSubpage {
                     h_flex().gap_2().child(
                         Select::new(&self.account_items)
                             .placeholder("La activa")
+                            .bg(rgb(theme::PANEL_SUNKEN))
+                            .h(px(36.))
+                            .text_size(px(13.))
                             .search_placeholder("Buscar...")
                             .cleanable(true),
                     ),
@@ -1474,6 +1495,9 @@ impl InstanceSettingsSubpage {
             "Cuenta para esta instancia",
             Select::new(&self.account_items)
                 .placeholder("La activa")
+                .bg(rgb(theme::PANEL_SUNKEN))
+                .h(px(36.))
+                .text_size(px(13.))
                 .search_placeholder("Buscar...")
                 .cleanable(true),
         ));

@@ -10,7 +10,7 @@ param(
     [switch]$NewsScreens,
     [switch]$InstanceScreens,
     [string]$NewsFixture,
-    [ValidateSet('advanced','version','expanded')][string]$CaptureState,
+    [ValidateSet('advanced','version','expanded','editing')][string]$CaptureState,
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,

@@ -221,8 +221,8 @@ fn tree_rows(
                     return 100;
                 }
                 match path {
-                    "mods" => 0,
-                    "config" => 1,
+                    "config" => 0,
+                    "mods" => 1,
                     "resourcepacks" => 2,
                     "shaderpacks" => 3,
                     "defaultconfigs" => 4,
@@ -304,7 +304,7 @@ impl InstanceOverwritesSubpage {
             _ancestor_read: Task::ready(()),
             editor: cx.new(|cx| TextareaState::new(window, cx).auto_grow(10, 24)),
             search,
-            change_filter: 0,
+            change_filter: 1,
             notice: None,
             busy: false,
             _load: Task::ready(()),
@@ -514,6 +514,13 @@ impl InstanceOverwritesSubpage {
                 page.display_rows = display_rows;
                 page.diff_hunks = hunks;
                 page.diff_width = width;
+                if std::env::var("WBOMBO_UI_CAPTURE_PAGE")
+                    .is_ok_and(|route| route.starts_with("instance-overwrites:agente-274-"))
+                    && std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("editing")
+                    && matches!(page.text, Some(Ok(_)))
+                {
+                    page.editing = true;
+                }
                 log::info!("[WBOMBO-UI] instance-overwrites-ready pid={}", std::process::id());
                 cx.notify();
             });
@@ -836,12 +843,14 @@ impl InstanceOverwritesSubpage {
                                 .label("Cancelar")
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
-                        .child(DesignButton::new("confirm-restore").label("Restaurar").on_click(
-                            move |_, window, cx| {
-                                window.close_dialog(cx);
-                                _ = entity.update(cx, |page, cx| page.restore_file(path.clone(), source, window, cx));
-                            },
-                        )),
+                        .child(
+                            design::action_button("confirm-restore", "Restaurar", design::ButtonAction::Primary)
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = entity
+                                        .update(cx, |page, cx| page.restore_file(path.clone(), source, window, cx));
+                                }),
+                        ),
                 )
         });
     }
@@ -920,12 +929,13 @@ impl Render for InstanceOverwritesSubpage {
                         }
                     },
                 )))
-            })
-            .child(
-                DesignButton::new("refresh-overwrites")
-                    .label("Volver a comparar")
-                    .on_click(cx.listener(|page, _, window, cx| page.reload(window, cx))),
-            );
+            });
+        let header = v_flex().gap(px(10.)).child(header).child(
+            DesignButton::new("refresh-overwrites")
+                .label("Volver a comparar")
+                .self_start()
+                .on_click(cx.listener(|page, _, window, cx| page.reload(window, cx))),
+        );
 
         let content = match &self.report {
             None => v_flex()
@@ -1095,11 +1105,13 @@ impl Render for InstanceOverwritesSubpage {
                     );
                 }
                 if empty {
-                    tree = tree.child(div().p_4().text_sm().text_color(muted).child(if self.change_filter != 0 {
-                        "No hay diferencias con este filtro."
-                    } else {
-                        "No hay archivos con este filtro."
-                    }));
+                    tree = tree.child(div().w_full().p_4().text_center().text_sm().text_color(muted).child(
+                        if self.change_filter != 0 {
+                            "No hay diferencias con este filtro."
+                        } else {
+                            "No hay archivos con este filtro."
+                        },
+                    ));
                 }
                 let explorer = v_flex()
                     .w(px(340.))
@@ -1149,6 +1161,33 @@ impl Render for InstanceOverwritesSubpage {
                         path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str(),
                         "toml" | "properties" | "txt" | "cfg" | "ini" | "json" | "mcmeta" | "yaml" | "yml"
                     );
+                    let restore_source = if report
+                        .local_changes
+                        .iter()
+                        .any(|change| change.path == comparison && can_restore(change.change))
+                    {
+                        Some(RestoreSource::LocalParent)
+                    } else if report
+                        .global_changes
+                        .iter()
+                        .any(|change| change.path == comparison && can_restore(change.change))
+                    {
+                        Some(RestoreSource::PinnedGlobal)
+                    } else {
+                        None
+                    };
+                    let mut file_actions = h_flex().w_full().items_center().gap(px(8.));
+                    if let Some(source) = restore_source {
+                        let restore_path = path.clone();
+                        file_actions = file_actions.child(
+                            DesignButton::new("restore-selected-parent")
+                                .label("Restaurar desde la madre")
+                                .disabled(self.busy)
+                                .on_click(cx.listener(move |page, _, window, cx| {
+                                    page.confirm_restore(restore_path.clone(), source, window, cx)
+                                })),
+                        );
+                    }
                     if is_text && !self.editing {
                         details = details.child(self.comparison_view(cx));
                     } else {
@@ -1156,55 +1195,52 @@ impl Render for InstanceOverwritesSubpage {
                             Some(Ok(file)) => {
                                 let dirty = self.editor.read(cx).value().as_str() != file.contents;
                                 details = details
+                                    .child(v_flex().child(div().font_semibold().child("Contenido")).child(
+                                        div().text_xs().text_color(muted).child(if dirty {
+                                            "Cambios sin guardar"
+                                        } else {
+                                            "Sin cambios"
+                                        }),
+                                    ))
                                     .child(
-                                        h_flex()
-                                            .justify_between()
-                                            .items_center()
-                                            .child(v_flex().child(div().font_semibold().child("Contenido")).child(
-                                                div().text_xs().text_color(muted).child(if dirty {
-                                                    "Cambios sin guardar"
-                                                } else {
-                                                    "Edición local de esta rama"
-                                                }),
-                                            ))
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(
-                                                        DesignButton::new("back-to-comparison")
-                                                            .label("Comparar")
-                                                            .disabled(dirty || self.busy)
-                                                            .on_click(cx.listener(|page, _, window, cx| {
-                                                                page.editing = false;
-                                                                page.load_ancestor(window, cx);
-                                                            })),
-                                                    )
-                                                    .child(
-                                                        DesignButton::new("discard-overwrite-text")
-                                                            .label("Descartar")
-                                                            .disabled(!dirty || self.busy)
-                                                            .on_click(cx.listener(|page, _, window, cx| {
-                                                                if let Some(Ok(file)) = &page.text {
-                                                                    let original = file.contents.clone();
-                                                                    page.editor.update(cx, |editor, cx| {
-                                                                        editor.set_value(original, window, cx)
-                                                                    });
-                                                                }
-                                                            })),
-                                                    )
-                                                    .child(
-                                                        DesignButton::new("save-overwrite-text")
-                                                            .label("Guardar cambios")
-                                                            .disabled(!dirty || self.busy)
-                                                            .on_click(
-                                                                cx.listener(|page, _, window, cx| {
-                                                                    page.save(window, cx)
-                                                                }),
-                                                            ),
-                                                    ),
-                                            ),
+                                        v_flex()
+                                            .flex_1()
+                                            .overflow_y_scrollbar()
+                                            .child(Textarea::new(&self.editor).bg(rgb(theme::PANEL_SUNKEN))),
+                                    );
+                                file_actions = file_actions
+                                    .child(div().flex_1())
+                                    .child(
+                                        DesignButton::new("back-to-comparison")
+                                            .label("Comparar")
+                                            .disabled(dirty || self.busy)
+                                            .on_click(cx.listener(|page, _, window, cx| {
+                                                page.editing = false;
+                                                page.load_ancestor(window, cx);
+                                            })),
                                     )
-                                    .child(v_flex().flex_1().overflow_y_scrollbar().child(Textarea::new(&self.editor)));
+                                    .child(
+                                        DesignButton::new("discard-overwrite-text")
+                                            .label("Descartar")
+                                            .disabled(!dirty || self.busy)
+                                            .on_click(cx.listener(|page, _, window, cx| {
+                                                if let Some(Ok(file)) = &page.text {
+                                                    let original = file.contents.clone();
+                                                    page.editor.update(cx, |editor, cx| {
+                                                        editor.set_value(original, window, cx)
+                                                    });
+                                                }
+                                            })),
+                                    )
+                                    .child(
+                                        design::action_button(
+                                            "save-overwrite-text",
+                                            "Guardar cambios",
+                                            design::ButtonAction::Primary,
+                                        )
+                                        .disabled(!dirty || self.busy)
+                                        .on_click(cx.listener(|page, _, window, cx| page.save(window, cx))),
+                                    );
                             },
                             Some(Err(error)) => {
                                 details = details.child(
@@ -1227,34 +1263,8 @@ impl Render for InstanceOverwritesSubpage {
                             },
                         }
                     }
-                    let restore_source = if report
-                        .local_changes
-                        .iter()
-                        .any(|change| change.path == comparison && can_restore(change.change))
-                    {
-                        Some(RestoreSource::LocalParent)
-                    } else if report
-                        .global_changes
-                        .iter()
-                        .any(|change| change.path == comparison && can_restore(change.change))
-                    {
-                        Some(RestoreSource::PinnedGlobal)
-                    } else {
-                        None
-                    };
-                    if let Some(source) = restore_source {
-                        let restore_path = path.clone();
-                        details = details.child(
-                            DesignButton::new("restore-selected-parent")
-                                .label("Restaurar desde la madre")
-                                .disabled(self.busy)
-                                .on_click(cx.listener(move |page, _, window, cx| {
-                                    page.confirm_restore(restore_path.clone(), source, window, cx)
-                                })),
-                        );
-                    }
                     if is_text && !self.editing {
-                        details = details.child(
+                        file_actions = file_actions.child(
                             DesignButton::new("edit-comparison-file")
                                 .label("Editar archivo")
                                 .disabled(!matches!(self.text, Some(Ok(_))) || self.busy)
@@ -1274,13 +1284,14 @@ impl Render for InstanceOverwritesSubpage {
                         } else {
                             "Desactivar mod"
                         };
-                        details = details.child(
+                        file_actions = file_actions.child(
                             DesignButton::new("toggle-profile-mod")
                                 .label(label)
                                 .disabled(self.busy)
                                 .on_click(cx.listener(|page, _, window, cx| page.toggle_mod(window, cx))),
                         );
                     }
+                    details = details.child(file_actions);
                 }
                 if let Some(notice) = &self.notice {
                     details = details.child(div().text_sm().child(notice.clone()));

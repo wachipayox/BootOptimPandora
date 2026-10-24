@@ -216,6 +216,7 @@ impl DuplicateInstanceModalState {
                 h_flex()
                     .gap_2()
                     .w_full()
+                    .justify_end()
                     .child(
                         DesignButton::new("cancel")
                             .label("Cancelar")

@@ -947,7 +947,9 @@ impl Render for ReadonlyTextFieldWithControls {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let search = Input::new(&self.search_state)
             .prefix(Icon::new(PandoraIcon::Search).small())
-            .when(self.designed, |s| s.w(px(220.)).h(px(36.)).text_size(px(13.)));
+            .when(self.designed, |s| {
+                s.w(px(220.)).h(px(36.)).bg(rgb(crate::theme::PANEL_SUNKEN)).text_size(px(13.))
+            });
 
         let top = if self.designed {
             crate::component::design::DesignButton::new("top")

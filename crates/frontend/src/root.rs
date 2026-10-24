@@ -626,6 +626,8 @@ fn show_inherited_update(
             )
             .footer(
                 h_flex()
+                    .w_full()
+                    .justify_end()
                     .gap_2()
                     .child(
                         crate::component::design::DesignButton::new("skip-update")
@@ -644,19 +646,15 @@ fn show_inherited_update(
                             }),
                     )
                     .child(
-                        crate::component::design::DesignButton::new("update-start")
-                            .label("Actualizar y jugar")
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                                update_then_start(
-                                    id,
-                                    update_name.clone(),
-                                    update_quick.clone(),
-                                    &update_data,
-                                    window,
-                                    cx,
-                                );
-                            }),
+                        crate::component::design::action_button(
+                            "update-start",
+                            "Actualizar y jugar",
+                            crate::component::design::ButtonAction::Primary,
+                        )
+                        .on_click(move |_, window, cx| {
+                            window.close_dialog(cx);
+                            update_then_start(id, update_name.clone(), update_quick.clone(), &update_data, window, cx);
+                        }),
                     ),
             )
     });
