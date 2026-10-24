@@ -22,45 +22,24 @@ struct Key {
 #[derive(Default)]
 struct BackdropCache {
     key: Option<Key>,
-    image: Option<Arc<RenderImage>>,
+    image: Option<PreparedBackdrop>,
     pending: bool,
     attempted: bool,
 }
 impl Global for BackdropCache {}
 
-/// The regular background uses precisely the same object-fit-cover transform as glass.
-pub fn surface(cx: &App) -> AnyElement {
-    let source = InterfaceConfig::get(cx).app_background.clone();
-    let base = div().absolute().top_0().left_0().size_full();
-    match source {
-        AppBackground::Cafe => base
-            .child(
-                img(ImageSource::Resource(Resource::Embedded("images/cafe-ambient.png".into())))
-                    .size_full()
-                    .object_fit(ObjectFit::Cover),
-            )
-            .into_any_element(),
-        AppBackground::Color(color) => base.bg(rgb(color & 0xffffff)).into_any_element(),
-        AppBackground::Artwork(None) => base
-            .child(
-                img(ImageSource::Resource(Resource::Embedded("images/artwork-vanilla.png".into())))
-                    .size_full()
-                    .object_fit(ObjectFit::Cover)
-                    .opacity(0.15),
-            )
-            .into_any_element(),
-        AppBackground::Artwork(Some(path)) | AppBackground::Image(path) => base
-            .child(
-                img(ImageSource::Resource(Resource::Path(Arc::from(path.as_path()))))
-                    .size_full()
-                    .object_fit(ObjectFit::Cover)
-                    .opacity(0.15),
-            )
-            .into_any_element(),
-    }
+#[derive(Clone)]
+struct PreparedBackdrop {
+    surface: Arc<RenderImage>,
+    glass: Arc<RenderImage>,
 }
-fn prepare(key: &Key) -> Option<Arc<RenderImage>> {
-    let mut scene = match &key.source {
+
+/// Both passes share the same prepared surface and cover transform.
+pub fn surface(window: &mut Window, cx: &mut App) -> AnyElement {
+    scene(window, cx, false)
+}
+fn prepare(key: &Key) -> Option<PreparedBackdrop> {
+    let scene = match &key.source {
         AppBackground::Color(color) => image::RgbaImage::from_pixel(
             key.width,
             key.height,
@@ -83,6 +62,16 @@ fn prepare(key: &Key) -> Option<Arc<RenderImage>> {
             let mut scene = source
                 .resize_to_fill(key.width, key.height, image::imageops::FilterType::Triangle)
                 .to_rgba8();
+            if !matches!(key.source, AppBackground::Cafe) {
+                scene = image::DynamicImage::ImageRgba8(scene).blur(90.).to_rgba8();
+                for pixel in scene.pixels_mut() {
+                    let [r, g, b, _] = pixel.0;
+                    let luminance = 0.213 * r as f32 + 0.715 * g as f32 + 0.072 * b as f32;
+                    for channel in &mut pixel.0[..3] {
+                        *channel = (luminance + (*channel as f32 - luminance) * 1.3).round().clamp(0., 255.) as u8;
+                    }
+                }
+            }
             for pixel in scene.pixels_mut() {
                 let opacity = if matches!(key.source, AppBackground::Cafe) {
                     1.0
@@ -98,15 +87,23 @@ fn prepare(key: &Key) -> Option<Arc<RenderImage>> {
             scene
         },
     };
-    scene = crate::component::design::prepare_play_artwork(&image::DynamicImage::ImageRgba8(scene));
-    for pixel in scene.pixels_mut() {
-        pixel.0.swap(0, 2);
+    let glass = crate::component::design::prepare_play_artwork(&image::DynamicImage::ImageRgba8(scene.clone()));
+    fn render_image(mut image: image::RgbaImage) -> Arc<RenderImage> {
+        for pixel in image.pixels_mut() {
+            pixel.0.swap(0, 2);
+        }
+        Arc::new(RenderImage::new([image::Frame::new(image)]))
     }
-    Some(Arc::new(RenderImage::new([image::Frame::new(scene)])))
+    Some(PreparedBackdrop {
+        surface: render_image(scene),
+        glass: render_image(glass),
+    })
 }
-/// Draw the full prepared scene in window coordinates, clipped to the actual control bounds.
-/// This avoids stretching an unrelated crop into every glass button.
+/// Draw in window coordinates, clipped to the actual glass control bounds.
 pub fn glass(window: &mut Window, cx: &mut App) -> AnyElement {
+    scene(window, cx, true)
+}
+fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
     let size = window.viewport_size();
     let key = Key {
         source: InterfaceConfig::get(cx).app_background.clone(),
@@ -119,7 +116,13 @@ pub fn glass(window: &mut Window, cx: &mut App) -> AnyElement {
         state.image = None;
         state.attempted = false;
     }
-    let image = state.image.clone();
+    let image = state.image.as_ref().map(|prepared| {
+        if glass {
+            prepared.glass.clone()
+        } else {
+            prepared.surface.clone()
+        }
+    });
     if image.is_none() && !state.pending && !state.attempted {
         state.pending = true;
         state.attempted = true;

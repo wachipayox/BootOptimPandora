@@ -750,7 +750,7 @@ impl LauncherUI {
             .relative()
             .bg(rgb(theme::BG))
             .text_color(rgb(theme::INK))
-            .child(crate::background::surface(cx))
+            .child(crate::background::surface(window, cx))
             .child(sidebar)
             .child(div().flex_1().min_w_0().h_full().child(self.page.clone().render(self, window, cx)))
             .when(self.home_account_menu, |d| {

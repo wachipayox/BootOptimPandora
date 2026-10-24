@@ -5,7 +5,7 @@ use bridge::{handle::BackendHandle, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, StyledExt, h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{InputEvent, InputState},
     spinner::Spinner,
     v_flex,
 };
@@ -216,7 +216,7 @@ impl Render for SettingsRoot {
                     .px(px(24.))
                     .pt(px(18.))
                     .child(div().flex_1())
-                    .child(design::field(&self.search_state).prefix(PandoraIcon::Search).w(px(260.))),
+                    .child(design::text_field(&self.search_state).prefix(PandoraIcon::Search).w(px(260.))),
             )
             .child(div().flex_1().min_h_0().px(px(12.)).py(px(12.)).child(self.render_page(cx)))
     }
