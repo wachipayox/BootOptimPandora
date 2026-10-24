@@ -327,6 +327,10 @@ pub enum MessageToBackend {
         uuids: Vec<String>,
         channel: tokio::sync::oneshot::Sender<Vec<(String, std::path::PathBuf)>>,
     },
+    GetInstanceProfileInfo {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<crate::instance::InstanceProfileInfo, String>>,
+    },
     GetHomePresentation {
         id: Option<InstanceID>,
         channel: tokio::sync::oneshot::Sender<Result<crate::home::HomePresentation, String>>,

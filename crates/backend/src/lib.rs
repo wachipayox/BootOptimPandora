@@ -23,6 +23,7 @@ mod fs;
 mod id_slab;
 mod install_content;
 mod instance;
+mod instance_presentation;
 mod java_manifest;
 mod launch;
 mod launch_wrapper;

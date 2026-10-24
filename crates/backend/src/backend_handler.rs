@@ -1776,6 +1776,12 @@ impl BackendState {
                     let _ = channel.send(backend.home_player_heads(uuids).await);
                 });
             },
+            MessageToBackend::GetInstanceProfileInfo { id, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = channel.send(backend.instance_profile_info(id));
+                });
+            },
             MessageToBackend::GetHomePresentation { id, channel } => {
                 let backend = self.clone();
                 tokio::spawn(async move {
