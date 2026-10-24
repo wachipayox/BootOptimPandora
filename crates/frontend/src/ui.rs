@@ -155,6 +155,53 @@ impl LauncherPage {
             update: ui.update.clone(),
             send: ui.data.backend_handle.clone(),
         };
+        let title_bar = if config.main_page == PageType::Syncing {
+            v_flex()
+                .w_full()
+                .flex_shrink_0()
+                .child(crate::component::design::page_header("ARCHIVOS", window))
+                .child(
+                    h_flex()
+                        .px(px(20.))
+                        .border_b_1()
+                        .border_color(rgba(0xffffff0b))
+                        .child(crate::component::design::tab("sync-settings-tab", "Sincronización", true)),
+                )
+                .into_any_element()
+        } else if config.main_page == PageType::Import {
+            v_flex()
+                .w_full()
+                .flex_shrink_0()
+                .child(crate::component::design::page_header("AÑADIR INSTANCIA", window))
+                .child(
+                    h_flex()
+                        .px(px(20.))
+                        .border_b_1()
+                        .border_color(rgba(0xffffff0b))
+                        .child(crate::component::design::tab("add-global-tab", "Perfil global", false).on_click({
+                            let data = ui.data.clone();
+                            move |_, w, c| {
+                                crate::modals::global_profiles::open_global_profiles(data.backend_handle.clone(), w, c)
+                            }
+                        }))
+                        .child(crate::component::design::tab("add-new-tab", "Nuevo", false).on_click({
+                            let data = ui.data.clone();
+                            move |_, w, c| {
+                                crate::modals::create_instance::open_create_instance(
+                                    data.metadata.clone(),
+                                    data.instances.clone(),
+                                    data.backend_handle.clone(),
+                                    w,
+                                    c,
+                                )
+                            }
+                        }))
+                        .child(crate::component::design::tab("add-import-tab", "Importar", true)),
+                )
+                .into_any_element()
+        } else {
+            title_bar.into_any_element()
+        };
 
         if scrollable {
             v_flex()
