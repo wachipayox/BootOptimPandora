@@ -290,13 +290,9 @@ impl Default for InstanceMemoryConfiguration {
 }
 
 fn is_default_memory_configuration(config: &Option<InstanceMemoryConfiguration>) -> bool {
-    if let Some(config) = config {
-        !config.enabled
-            && config.min == InstanceMemoryConfiguration::DEFAULT_MIN
-            && config.max == InstanceMemoryConfiguration::DEFAULT_MAX
-    } else {
-        true
-    }
+    // An explicit disabled override retains the last Manual values, including
+    // 512/4096 MiB. Omitting it would lose those values after restarting.
+    config.is_none()
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -551,5 +547,13 @@ mod memory_recommendation_tests {
             7168
         );
         assert_eq!(MemoryRecommendation::default().effective_memory(None).max, 4096);
+        let mut configuration = InstanceConfiguration::new("1.21.1".into(), Loader::Vanilla);
+        configuration.memory = Some(InstanceMemoryConfiguration::default());
+        let saved = serde_json::to_value(&configuration).unwrap();
+        assert!(saved.get("memory").is_some());
+        let restored: InstanceConfiguration = serde_json::from_value(saved).unwrap();
+        let stored = restored.memory.unwrap();
+        assert!(!stored.enabled);
+        assert_eq!(stored.max, 4096);
     }
 }

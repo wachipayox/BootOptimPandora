@@ -216,15 +216,13 @@ pub enum InstanceContentSortKey {
 
 impl InstanceContentSortKey {
     pub fn name(self) -> DropdownName {
-        match self {
-            InstanceContentSortKey::Name => DropdownName::translated(t::instance::content::sort_key::name),
-            InstanceContentSortKey::ModId => DropdownName::translated(t::instance::content::sort_key::mod_id),
-            InstanceContentSortKey::Filename => DropdownName::translated(t::instance::content::sort_key::filename),
-            InstanceContentSortKey::ModifiedTime => {
-                DropdownName::translated(t::instance::content::sort_key::modified_time)
-            },
-            InstanceContentSortKey::FileSize => DropdownName::translated(t::instance::content::sort_key::filesize),
-        }
+        DropdownName::new(match self {
+            Self::Name => "Nombre",
+            Self::ModId => "ID del mod",
+            Self::Filename => "Nombre del archivo",
+            Self::ModifiedTime => "Fecha de modificación",
+            Self::FileSize => "Tamaño",
+        })
     }
 
     pub fn compare(self, a: &InstanceContentSummary, b: &InstanceContentSummary) -> Ordering {

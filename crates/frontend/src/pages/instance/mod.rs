@@ -5,3 +5,5 @@ pub mod overwrites_subpage;
 pub mod profile_jvm_section;
 pub mod quickplay_subpage;
 pub mod settings_subpage;
+
+mod memory_section;

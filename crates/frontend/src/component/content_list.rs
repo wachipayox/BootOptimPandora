@@ -9,7 +9,8 @@ use std::{
 use bridge::{
     handle::BackendHandle,
     instance::{
-        ContentSummary, ContentType, InstanceContentID, InstanceContentSummary, InstanceID, UNKNOWN_CONTENT_SUMMARY,
+        ContentFolder, ContentSummary, ContentType, InstanceContentID, InstanceContentSummary, InstanceID,
+        InstanceProfileInfo, UNKNOWN_CONTENT_SUMMARY,
     },
     message::MessageToBackend,
     modal_action::ModalAction,
@@ -20,6 +21,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     h_flex,
     list::{ListDelegate, ListItem, ListState},
+    menu::{DropdownMenu, PopupMenuItem},
     spinner::Spinner,
     switch::Switch,
     v_flex,
@@ -31,11 +33,14 @@ use strum::IntoEnumIterator;
 use ustr::Ustr;
 
 use crate::{
-    component::error_alert::ErrorAlert,
+    component::{
+        design::{DesignButton, YesNo},
+        error_alert::ErrorAlert,
+    },
     entity::DataEntities,
     icon::PandoraIcon,
     interface_config::{InstanceContentSortKey, InterfaceConfig},
-    png_render_cache,
+    png_render_cache, theme,
 };
 
 #[derive(Clone)]
@@ -84,6 +89,8 @@ enum SummaryOrChild {
 
 pub struct ContentListDelegate {
     id: InstanceID,
+    folder: ContentFolder,
+    profile_info: InstanceProfileInfo,
     for_loader: Loader,
     for_version: Ustr,
     backend_handle: BackendHandle,
@@ -107,6 +114,7 @@ impl ContentListDelegate {
     pub fn new(
         id: InstanceID,
         data: &DataEntities,
+        folder: ContentFolder,
         for_loader: Loader,
         for_version: Ustr,
         sort_key: InstanceContentSortKey,
@@ -115,6 +123,8 @@ impl ContentListDelegate {
     ) -> Self {
         Self {
             id,
+            folder,
+            profile_info: InstanceProfileInfo::default(),
             for_loader,
             for_version,
             backend_handle: data.backend_handle.clone(),
@@ -135,6 +145,9 @@ impl ContentListDelegate {
         }
     }
 
+    pub fn set_profile_info(&mut self, info: InstanceProfileInfo) {
+        self.profile_info = info;
+    }
     pub fn set_sort_options(&mut self, sort_key: InstanceContentSortKey, enabled_first: bool) {
         self.sort_key = sort_key;
         self.enabled_first = enabled_first;
@@ -153,317 +166,277 @@ impl ContentListDelegate {
             gpui::img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))
         };
 
-        let (desc1, desc2) = create_descriptions(
-            summary.content_summary.name.clone(),
-            summary.content_summary.version_str.clone(),
-            summary.content_summary.authors.clone(),
-            summary.content_summary.rich_description.clone(),
-            !summary.enabled,
-            summary.filename.clone(),
-            cx.theme().muted_foreground,
-        );
-
         let id = self.id;
         let content_id = summary.id;
         let element_id = summary.filename_hash;
-
-        let delete_button = if self.confirming_delete.lock().contains(&element_id) {
-            Button::new(("delete", element_id)).danger().icon(PandoraIcon::Check).on_click({
-                let backend_handle = self.backend_handle.clone();
-                cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    let delegate = this.delegate();
-                    if delegate.is_selected(element_id) {
-                        let content_ids = delegate
-                            .content
-                            .iter()
-                            .filter_map(|summary| delegate.is_selected(summary.filename_hash).then(|| summary.id))
-                            .collect();
-
-                        backend_handle.send(MessageToBackend::DeleteContent { id, content_ids });
-                    } else {
-                        backend_handle.send(MessageToBackend::DeleteContent {
-                            id,
-                            content_ids: vec![content_id],
-                        });
-                    }
-                })
-            })
+        let name = summary.content_summary.name.as_deref().unwrap_or(&summary.filename).to_owned();
+        let relative = self
+            .data
+            .instances
+            .read(cx)
+            .entries
+            .get(&id)
+            .and_then(|instance| summary.path.strip_prefix(&instance.read(cx).dot_minecraft_folder).ok())
+            .map(|p| p.to_string_lossy().replace('\\', "/"));
+        let relative = relative.as_deref().map(|p| p.strip_suffix(".disabled").unwrap_or(p)).unwrap_or("");
+        let inherited = self.profile_info.inherited_paths.contains(relative);
+        let source = if self.profile_info.global_paths.contains(relative) {
+            "Perfil global"
         } else {
-            let confirming_delete = self.confirming_delete.clone();
-            let backend_handle = self.backend_handle.clone();
-            Button::new(("delete", element_id))
-                .danger()
-                .icon(PandoraIcon::Trash2)
-                .on_click(cx.listener(move |this, click: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    let delegate = this.delegate();
-
-                    // If quick_delete_mods is enabled and shift clicking, delete instantly
-                    if InterfaceConfig::get(cx).quick_delete_mods && click.modifiers().shift {
-                        if delegate.is_selected(element_id) {
-                            let content_ids = delegate
-                                .content
-                                .iter()
-                                .filter_map(|summary| delegate.is_selected(summary.filename_hash).then(|| summary.id))
-                                .collect();
-
-                            backend_handle.send(MessageToBackend::DeleteContent { id, content_ids });
-                        } else {
-                            backend_handle.send(MessageToBackend::DeleteContent {
-                                id,
-                                content_ids: vec![content_id],
-                            });
-                        }
-                        return;
-                    }
-
-                    let mut confirming_delete = confirming_delete.lock();
-                    confirming_delete.clear();
-                    if delegate.is_selected(element_id) {
-                        confirming_delete.extend(&delegate.selected);
-                        confirming_delete.extend(&delegate.selected_range);
-                    } else {
-                        confirming_delete.insert(element_id);
-                    }
-                }))
+            match summary.content_source {
+                ContentSource::ModrinthProject { .. } | ContentSource::ModrinthUnknown => "Modrinth",
+                ContentSource::CurseforgeProject { .. } => "CurseForge",
+                _ => "local",
+            }
         };
-
-        let status = summary.update.status_if_matches(self.for_loader, self.for_version.as_str());
+        let location = if inherited { "heredado de la instancia" } else { "local" };
+        let author = if summary.content_summary.authors.is_empty() {
+            location.to_owned()
+        } else {
+            format!("{} · {location}", summary.content_summary.authors)
+        };
+        let can_update = summary.update.can_update(self.for_loader, self.for_version.as_str());
         let is_loading = self.updating.lock().contains(&element_id);
-        let open_change_version = {
+        let open_version = {
             let summary = summary.clone();
             let data = self.data.clone();
             let updating = self.updating.clone();
             let list = cx.entity();
-            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                cx.stop_propagation();
-                crate::modals::change_version::open(id, &summary, &data, updating.clone(), list.clone(), window, cx);
+            move |_: &ClickEvent, w: &mut Window, c: &mut App| {
+                c.stop_propagation();
+                crate::modals::change_version::open(id, &summary, &data, updating.clone(), list.clone(), w, c);
             }
         };
-        let source_name = match summary.content_source {
-            ContentSource::ModrinthProject { .. } | ContentSource::ModrinthUnknown => t::modrinth::name(),
-            ContentSource::CurseforgeProject { .. } => t::curseforge::name(),
-            _ => t::common::unknown(),
-        };
-        let update_button = match status {
-            bridge::instance::ContentUpdateStatus::Unknown | bridge::instance::ContentUpdateStatus::ManualInstall => {
-                if summary.content_source == ContentSource::Manual {
-                    Some(
-                        Button::new(("update", element_id))
-                            .warning()
-                            .icon(PandoraIcon::FileQuestionMark)
-                            .tooltip(t::instance::content::change_version::installed_manually()),
-                    )
-                } else {
-                    Some(
-                        Button::new(("update", element_id))
-                            .icon(PandoraIcon::ArrowLeftRight)
-                            .loading(is_loading)
-                            .tooltip(t::instance::content::change_version::button(source_name))
-                            .on_click(open_change_version.clone()),
-                    )
+        let update = {
+            let backend = self.backend_handle.clone();
+            let updating = self.updating.clone();
+            let open = open_version.clone();
+            cx.listener(move |list, click: &ClickEvent, w, c| {
+                c.stop_propagation();
+                if !click.modifiers().shift {
+                    open(click, w, c);
+                    return;
                 }
-            },
-            bridge::instance::ContentUpdateStatus::ErrorNotFound => Some(
-                Button::new(("update", element_id))
-                    .danger()
-                    .icon(PandoraIcon::TriangleAlert)
-                    .loading(is_loading)
-                    .tooltip(t::instance::content::change_version::no_compatible_versions())
-                    .on_click(open_change_version.clone()),
-            ),
-            bridge::instance::ContentUpdateStatus::ErrorInvalidHash => Some(
-                Button::new(("update", element_id))
-                    .danger()
-                    .icon(PandoraIcon::TriangleAlert)
-                    .loading(is_loading)
-                    .tooltip(t::instance::content::update::check::invalid_hash_error())
-                    .on_click(open_change_version.clone()),
-            ),
-            bridge::instance::ContentUpdateStatus::AlreadyUpToDate => Some(
-                Button::new(("update", element_id))
-                    .icon(PandoraIcon::ArrowLeftRight)
-                    .loading(is_loading)
-                    .tooltip(t::instance::content::change_version::up_to_date())
-                    .on_click(open_change_version.clone()),
-            ),
-            bridge::instance::ContentUpdateStatus::Modrinth | bridge::instance::ContentUpdateStatus::Curseforge => {
-                let updating = self.updating.clone();
-                let backend_handle = self.backend_handle.clone();
-                Some(
-                    Button::new(("update", element_id))
-                        .success()
-                        .icon(PandoraIcon::Download)
-                        .loading(is_loading)
-                        .tooltip(t::instance::content::change_version::update_available(source_name))
-                        .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
-                            cx.stop_propagation();
-
-                            if !click.modifiers().shift {
-                                open_change_version(click, window, cx);
-                                return;
-                            }
-
-                            let delegate = this.delegate_mut();
-                            if delegate.is_selected(element_id) {
-                                for summary in &delegate.content {
-                                    if delegate.is_selected(summary.filename_hash)
-                                        && summary.update.can_update(delegate.for_loader, delegate.for_version.as_str())
-                                    {
-                                        crate::root::update_single_mod(
-                                            id,
-                                            summary.id,
-                                            summary.filename_hash,
-                                            &updating,
-                                            &backend_handle,
-                                            window,
-                                            cx,
-                                        );
-                                    }
-                                }
-                                delegate.selected.clear();
-                                delegate.selected_range.clear();
-                                delegate.last_clicked_non_range = None;
-                            } else {
-                                crate::root::update_single_mod(
-                                    id,
-                                    content_id,
-                                    element_id,
-                                    &updating,
-                                    &backend_handle,
-                                    window,
-                                    cx,
-                                );
-                            }
-                            cx.notify();
-                        })),
-                )
-            },
-        };
-
-        let unzip_button = if summary.content_summary.extra.modpack_files().is_some() {
-            Some(
-                Button::new(("unzip", element_id))
-                    .outline()
-                    .icon(PandoraIcon::PackageOpen)
-                    .tooltip(t::instance::content::unzip::tooltip())
-                    .on_click({
-                        let instance_id = self.id;
-                        let content_id = summary.id;
-                        let content_title = summary.filename.clone();
-                        let backend_handle = self.backend_handle.clone();
-                        move |_: &ClickEvent, window, cx| {
-                            cx.stop_propagation();
-                            crate::modals::unzip_modpack::open_unzip_modpack(
-                                instance_id,
-                                content_id,
-                                &content_title,
-                                backend_handle.clone(),
-                                window,
-                                cx,
-                            );
+                let delegate = list.delegate_mut();
+                if delegate.is_selected(element_id) {
+                    for item in &delegate.content {
+                        if delegate.is_selected(item.filename_hash)
+                            && item.update.can_update(delegate.for_loader, delegate.for_version.as_str())
+                        {
+                            crate::root::update_single_mod(id, item.id, item.filename_hash, &updating, &backend, w, c);
                         }
-                    }),
-            )
-        } else {
-            None
+                    }
+                    delegate.selected.clear();
+                    delegate.selected_range.clear();
+                    delegate.last_clicked_non_range = None;
+                } else {
+                    crate::root::update_single_mod(id, content_id, element_id, &updating, &backend, w, c);
+                }
+                c.notify();
+            })
         };
-
-        let backend_handle = self.backend_handle.clone();
-
-        let toggle_control = Switch::new(("toggle", element_id))
-            .checked(summary.enabled)
-            .disabled(!summary.can_toggle)
-            .when(summary.can_toggle, |this| {
-                this.on_click(cx.listener(move |this, checked, window, cx| {
-                    cx.stop_propagation();
-                    window.prevent_default();
-
-                    let delegate = this.delegate();
-                    if delegate.is_selected(element_id) {
-                        let content_ids = delegate
+        let mut version = h_flex()
+            .w(px(140.))
+            .justify_center()
+            .gap(px(6.))
+            .text_size(px(13.))
+            .text_color(rgb(theme::INK_MUTED))
+            .child(div().line_clamp(1).child(summary.content_summary.version_str.to_string()));
+        if can_update {
+            version = version.child(
+                DesignButton::new(("update", element_id))
+                    .aria_label("Actualizar")
+                    .w(px(18.))
+                    .h(px(20.))
+                    .p_0()
+                    .child(
+                        gpui_component::Icon::new(if is_loading {
+                            PandoraIcon::Loader
+                        } else {
+                            PandoraIcon::ArrowUp
+                        })
+                        .size(px(12.))
+                        .text_color(rgb(theme::ACCENT_TEXT)),
+                    )
+                    .on_click(update),
+            );
+        }
+        let toggle = {
+            let backend = self.backend_handle.clone();
+            YesNo::new(("toggle", element_id))
+                .checked(summary.enabled)
+                .disabled(!summary.can_toggle)
+                .on_click(cx.listener(move |list, checked: &bool, w, c| {
+                    c.stop_propagation();
+                    w.prevent_default();
+                    let delegate = list.delegate();
+                    let ids = if delegate.is_selected(element_id) {
+                        delegate
                             .content
                             .iter()
-                            .filter_map(|summary| {
-                                if delegate.is_selected(summary.filename_hash) {
-                                    Some(summary.id)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-
-                        backend_handle.send(MessageToBackend::SetContentEnabled {
-                            id,
-                            content_ids,
-                            enabled: *checked,
-                        });
+                            .filter(|item| delegate.is_selected(item.filename_hash))
+                            .map(|item| item.id)
+                            .collect()
                     } else {
-                        backend_handle.send(MessageToBackend::SetContentEnabled {
-                            id,
-                            content_ids: vec![content_id],
-                            enabled: *checked,
-                        });
-                    }
+                        vec![content_id]
+                    };
+                    backend.send(MessageToBackend::SetContentEnabled {
+                        id,
+                        content_ids: ids,
+                        enabled: *checked,
+                    });
                 }))
-            })
-            .px_2();
-
-        let controls = if let Some(expand_index) = expand_index {
-            let expand_icon = if self.expanded.load(Ordering::Relaxed) == expand_index {
-                PandoraIcon::ArrowDown
-            } else {
-                PandoraIcon::ArrowRight
-            };
-
-            let expand_control =
-                Button::new(("expand", element_id)).icon(expand_icon).compact().small().info().on_click({
-                    let expanded = self.expanded.clone();
-                    move |_, _, _| {
-                        let value = expanded.load(Ordering::Relaxed);
-                        if value == expand_index {
-                            expanded.store(0, Ordering::Relaxed);
-                        } else {
-                            expanded.store(expand_index, Ordering::Relaxed);
-                        }
-                    }
-                });
-
-            v_flex()
-                .items_center()
-                .gap_1()
-                .child(toggle_control)
-                .child(expand_control)
-                .into_any_element()
-        } else {
-            toggle_control.into_any_element()
         };
-
-        let mut item_content = h_flex()
-            .gap_1()
-            .child(controls)
-            .child(icon.size_16().min_w_16().min_h_16().grayscale(!summary.enabled))
-            .when(!summary.enabled, |this| this.line_through())
-            .line_height(rems(1.2))
-            .child(desc1.pl_2())
-            .when_some(desc2, |div, desc2| div.child(desc2))
+        let page_url = match &summary.content_source {
+            ContentSource::ModrinthProject { project_id } => Some(format!("https://modrinth.com/project/{project_id}")),
+            ContentSource::CurseforgeProject { project_id } => {
+                Some(format!("https://www.curseforge.com/projects/{project_id}"))
+            },
+            _ => None,
+        };
+        let manual = matches!(summary.content_source, ContentSource::Manual);
+        let can_unpack = summary.content_summary.extra.modpack_files().is_some();
+        let backend = self.backend_handle.clone();
+        let title = summary.filename.clone();
+        let confirmed = self.confirming_delete.lock().contains(&element_id);
+        let delete = std::rc::Rc::new(cx.listener(move |list, click: &ClickEvent, _, c| {
+            c.stop_propagation();
+            let delegate = list.delegate_mut();
+            if confirmed || (InterfaceConfig::get(c).quick_delete_mods && click.modifiers().shift) {
+                let ids = if delegate.is_selected(element_id) {
+                    delegate
+                        .content
+                        .iter()
+                        .filter(|item| delegate.is_selected(item.filename_hash))
+                        .map(|item| item.id)
+                        .collect()
+                } else {
+                    vec![content_id]
+                };
+                delegate.backend_handle.send(MessageToBackend::DeleteContent { id, content_ids: ids });
+            } else {
+                let mut confirmation = delegate.confirming_delete.lock();
+                confirmation.clear();
+                if delegate.is_selected(element_id) {
+                    confirmation.extend(&delegate.selected);
+                    confirmation.extend(&delegate.selected_range);
+                } else {
+                    confirmation.insert(element_id);
+                }
+            }
+            c.notify();
+        }));
+        let more = Button::new(("content-more", element_id))
+            .ghost()
+            .icon(PandoraIcon::Ellipsis)
+            .w(px(30.))
+            .h(px(26.))
             .border_1()
-            .when(selected, |content| {
-                content.border_color(cx.theme().selection).bg(cx.theme().selection.alpha(0.2))
+            .border_color(rgba(0xffffff0b))
+            .on_click(|_, _, c| c.stop_propagation())
+            .dropdown_menu(move |mut menu, _, _| {
+                let open = open_version.clone();
+                menu = menu.item(PopupMenuItem::new("Cambiar versión").disabled(manual).on_click(open));
+                let url = page_url.clone();
+                menu =
+                    menu.item(PopupMenuItem::new("Abrir página").disabled(url.is_none()).on_click(move |_, _, c| {
+                        if let Some(url) = &url {
+                            c.open_url(url);
+                        }
+                    }));
+                if can_unpack {
+                    let backend = backend.clone();
+                    let title = title.clone();
+                    menu = menu.item(PopupMenuItem::new("Descomprimir").on_click(move |_, w, c| {
+                        crate::modals::unzip_modpack::open_unzip_modpack(id, content_id, &title, backend.clone(), w, c)
+                    }));
+                }
+                let delete = delete.clone();
+                menu.separator()
+                    .item(
+                        PopupMenuItem::new("Eliminar")
+                            .icon(if confirmed {
+                                PandoraIcon::Check
+                            } else {
+                                PandoraIcon::Trash2
+                            })
+                            .on_click(move |e, w, c| delete(e, w, c)),
+                    )
+                    .min_w(px(190.))
             });
-
-        let mut right_buttons = Vec::new();
-        if let Some(unzip_button) = unzip_button {
-            right_buttons.push(unzip_button.into_any_element());
+        let mut name_cell = h_flex().flex_1().min_w_0().gap(px(12.));
+        if let Some(index) = expand_index {
+            let expanded = self.expanded.clone();
+            let open = expanded.load(Ordering::Relaxed) == index;
+            name_cell = name_cell.child(
+                DesignButton::new(("expand", element_id))
+                    .aria_label(name.clone())
+                    .w(px(18.))
+                    .h(px(26.))
+                    .p_0()
+                    .child(if open {
+                        PandoraIcon::ArrowDown
+                    } else {
+                        PandoraIcon::ArrowRight
+                    })
+                    .on_click(cx.listener(move |_, _, _, c| {
+                        expanded.store(
+                            if expanded.load(Ordering::Relaxed) == index {
+                                0
+                            } else {
+                                index
+                            },
+                            Ordering::Relaxed,
+                        );
+                        c.stop_propagation();
+                        c.notify();
+                    })),
+            );
         }
-        if let Some(update_button) = update_button {
-            right_buttons.push(update_button.into_any_element());
-        }
-        right_buttons.push(delete_button.into_any_element());
-        item_content = item_content.child(h_flex().absolute().right_4().gap_2().children(right_buttons));
+        name_cell = name_cell.child(icon.size(px(32.)).flex_shrink_0().grayscale(!summary.enabled)).child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(px(1.))
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .line_height(px(18.))
+                        .line_clamp(1)
+                        .text_color(rgb(theme::INK))
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .line_height(px(14.))
+                        .line_clamp(1)
+                        .text_color(rgb(theme::INK_MUTED))
+                        .child(author),
+                ),
+        );
+        let item_content = h_flex()
+            .w_full()
+            .h(px(53.))
+            .px(px(14.))
+            .gap(px(12.))
+            .border_b_1()
+            .border_color(rgba(0xffffff0b))
+            .when(selected, |d| d.bg(rgb(theme::ACCENT_SOFT)))
+            .child(name_cell)
+            .child(version)
+            .child(
+                h_flex()
+                    .w(px(140.))
+                    .justify_center()
+                    .text_size(px(12.))
+                    .text_color(rgb(theme::INK_MUTED))
+                    .child(source),
+            )
+            .child(h_flex().w(px(84.)).justify_center().child(toggle))
+            .child(more);
 
-        ListItem::new(("item", element_id)).p_1().child(item_content).on_click(cx.listener(
+        ListItem::new(("item", element_id)).p_0().child(item_content).on_click(cx.listener(
             move |this, click: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 if click.standard_click() {
@@ -915,6 +888,26 @@ impl ContentListDelegate {
 
 impl ListDelegate for ContentListDelegate {
     type Item = ListItem;
+    fn render_empty(&mut self, _: &mut Window, _: &mut Context<ListState<Self>>) -> impl IntoElement {
+        let text = if !self.content.is_empty() {
+            "No hay resultados.".to_owned()
+        } else {
+            format!(
+                "No hay {} en esta instancia.",
+                match self.folder {
+                    ContentFolder::Mods => "mods",
+                    ContentFolder::ResourcePacks => "paquetes de recursos",
+                    ContentFolder::Shaders => "shaders",
+                }
+            )
+        };
+        div()
+            .w_full()
+            .py(px(32.))
+            .text_center()
+            .text_color(rgb(crate::theme::INK_MUTED))
+            .child(text)
+    }
 
     fn items_count(&self, _section: usize, _cx: &App) -> usize {
         if let Some(searched) = &self.searched {

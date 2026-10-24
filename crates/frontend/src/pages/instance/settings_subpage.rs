@@ -13,7 +13,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
-    input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, Textarea, TextareaState},
+    input::{Input, InputEvent, InputState, Textarea, TextareaState},
     notification::{Notification, NotificationType},
     scroll::ScrollableElement,
     select::{SearchableVec, Select, SelectEvent, SelectState},
@@ -25,8 +25,8 @@ use schema::{
     forge::{ForgeMavenManifest, NeoforgeMavenManifest},
     instance::{
         AUTO_LIBRARY_PATH_GLFW, AUTO_LIBRARY_PATH_OPENAL, InstanceJvmBinaryConfiguration,
-        InstanceJvmFlagsConfiguration, InstanceLinuxWrapperConfiguration, InstanceMemoryConfiguration,
-        InstanceSystemLibrariesConfiguration, InstanceWrapperCommandConfiguration, LwjglLibraryPath, UpdateChannel,
+        InstanceJvmFlagsConfiguration, InstanceLinuxWrapperConfiguration, InstanceSystemLibrariesConfiguration,
+        InstanceWrapperCommandConfiguration, LwjglLibraryPath, UpdateChannel,
     },
     loader::Loader,
     version_manifest::MinecraftVersionManifest,
@@ -76,9 +76,7 @@ pub struct InstanceSettingsSubpage {
     loader_version_select_state: Entity<SelectState<SearchableVec<&'static str>>>,
     loader_version_latest_string: &'static str,
     update_channel_select_state: Entity<SelectState<NamedDropdown<UpdateChannel>>>,
-    memory_override_enabled: bool,
-    memory_min_input_state: Entity<InputState>,
-    memory_max_input_state: Entity<InputState>,
+    memory_section: Entity<super::memory_section::InstanceMemorySection>,
     wrapper_command_enabled: bool,
     wrapper_command_input_state: Entity<TextareaState>,
     jvm_flags_enabled: bool,
@@ -136,7 +134,7 @@ impl InstanceSettingsSubpage {
             .unwrap_or(loader_version_latest_string);
         let update_channel = entry.configuration.update_channel;
         let account = entry.configuration.preferred_account;
-        let memory = entry.configuration.memory.unwrap_or_default();
+        let memory = entry.configuration.memory;
         let profile_jvm_choices = entry.configuration.profile_jvm_options.clone();
         let wrapper_command = entry.configuration.wrapper_command.clone().unwrap_or_default();
         let jvm_flags = entry.configuration.jvm_flags.clone().unwrap_or_default();
@@ -247,12 +245,9 @@ impl InstanceSettingsSubpage {
             NamedDropdown::create_and_select(update_channel_items, update_channel, window, cx);
         cx.subscribe(&update_channel_select_state, Self::on_update_channel_selected).detach();
 
-        let memory_min_input_state = cx.new(|cx| InputState::new(window, cx).default_value(memory.min.to_string()));
-        cx.subscribe_in(&memory_min_input_state, window, Self::on_memory_step).detach();
-        cx.subscribe(&memory_min_input_state, Self::on_memory_changed).detach();
-        let memory_max_input_state = cx.new(|cx| InputState::new(window, cx).default_value(memory.max.to_string()));
-        cx.subscribe_in(&memory_max_input_state, window, Self::on_memory_step).detach();
-        cx.subscribe(&memory_max_input_state, Self::on_memory_changed).detach();
+        let memory_section = cx.new(|c| {
+            super::memory_section::InstanceMemorySection::new(instance_id, memory, backend_handle.clone(), window, c)
+        });
 
         let wrapper_command_input_state =
             cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 8).default_value(wrapper_command.flags));
@@ -286,9 +281,7 @@ impl InstanceSettingsSubpage {
             loader_version_select_state,
             loader_version_latest_string,
             update_channel_select_state,
-            memory_override_enabled: memory.enabled,
-            memory_min_input_state,
-            memory_max_input_state,
+            memory_section,
             wrapper_command_enabled: wrapper_command.enabled,
             wrapper_command_input_state,
             jvm_flags_enabled: jvm_flags.enabled,
@@ -627,56 +620,6 @@ impl InstanceSettingsSubpage {
         });
     }
 
-    pub fn on_memory_step(
-        &mut self,
-        state: &Entity<InputState>,
-        event: &NumberInputEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            NumberInputEvent::Step(step_action) => match step_action {
-                gpui_component::input::StepAction::Decrement => {
-                    if let Ok(mut value) = state.read(cx).value().parse::<u32>() {
-                        value = value.saturating_div(256).saturating_sub(1).saturating_mul(256).max(128);
-                        state.update(cx, |input, cx| {
-                            input.set_value(value.to_string(), window, cx);
-                        })
-                    }
-                },
-                gpui_component::input::StepAction::Increment => {
-                    if let Ok(mut value) = state.read(cx).value().parse::<u32>() {
-                        value = value.saturating_div(256).saturating_add(1).saturating_mul(256).max(128);
-                        state.update(cx, |input, cx| {
-                            input.set_value(value.to_string(), window, cx);
-                        })
-                    }
-                },
-            },
-        }
-    }
-
-    pub fn on_memory_changed(&mut self, _: Entity<InputState>, event: &InputEvent, cx: &mut Context<Self>) {
-        if let InputEvent::Change = event {
-            self.backend_handle.send(MessageToBackend::SetInstanceMemory {
-                id: self.instance_id,
-                memory: self.get_memory_configuration(cx),
-            });
-            self.refresh_profile_jvm(cx);
-        }
-    }
-
-    fn get_memory_configuration(&self, cx: &App) -> InstanceMemoryConfiguration {
-        let min = self.memory_min_input_state.read(cx).value().parse::<u32>().unwrap_or(0);
-        let max = self.memory_max_input_state.read(cx).value().parse::<u32>().unwrap_or(0);
-
-        InstanceMemoryConfiguration {
-            enabled: self.memory_override_enabled,
-            min,
-            max,
-        }
-    }
-
     pub fn on_wrapper_command_changed(&mut self, _: Entity<TextareaState>, event: &InputEvent, cx: &mut Context<Self>) {
         if let InputEvent::Change = event {
             self.backend_handle.send(MessageToBackend::SetInstanceWrapperCommand {
@@ -999,19 +942,19 @@ impl InstanceSettingsSubpage {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(
-                        Checkbox::new("aot_cache")
-                            .label(t::instance::aot::setting())
-                            .checked(enabled)
-                            .on_click(cx.listener(|page, value: &bool, _, cx| {
-                                page.backend_handle.send(MessageToBackend::SetInstanceAotCache {
-                                    id: page.instance_id,
-                                    enabled: *value,
-                                });
-                                cx.notify();
-                            })),
-                    )
-                    .child(crate::modals::aot_optimization::help_mark("aot_cache_help", t::instance::aot::setting_help())),
+                    .child(Checkbox::new("aot_cache").label(t::instance::aot::setting()).checked(enabled).on_click(
+                        cx.listener(|page, value: &bool, _, cx| {
+                            page.backend_handle.send(MessageToBackend::SetInstanceAotCache {
+                                id: page.instance_id,
+                                enabled: *value,
+                            });
+                            cx.notify();
+                        }),
+                    ))
+                    .child(crate::modals::aot_optimization::help_mark(
+                        "aot_cache_help",
+                        t::instance::aot::setting_help(),
+                    )),
             )
             .children(enabled.then(|| self.render_aot_cache_state(status, summary, cx)))
             .children(
@@ -1066,7 +1009,6 @@ impl InstanceSettingsSubpage {
     }
 
     fn render_runtime_content(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
-        let memory_override_enabled = self.memory_override_enabled;
         let wrapper_command_enabled = self.wrapper_command_enabled;
         let jvm_flags_enabled = self.jvm_flags_enabled;
         let jvm_binary_enabled = self.jvm_binary_enabled;
@@ -1074,50 +1016,7 @@ impl InstanceSettingsSubpage {
             .gap_4()
             .size_full()
             .overflow_y_scrollbar()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Checkbox::new("memory")
-                            .label(t::instance::memory())
-                            .checked(memory_override_enabled)
-                            .on_click(cx.listener(|page, value, _, cx| {
-                                if page.memory_override_enabled != *value {
-                                    page.memory_override_enabled = *value;
-                                    page.backend_handle.send(MessageToBackend::SetInstanceMemory {
-                                        id: page.instance_id,
-                                        memory: page.get_memory_configuration(cx),
-                                    });
-                                    page.refresh_profile_jvm(cx);
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                v_flex()
-                                    .w_full()
-                                    .gap_1()
-                                    .child(
-                                        NumberInput::new(&self.memory_min_input_state)
-                                            .small()
-                                            .suffix(t::common::size::mib())
-                                            .disabled(!memory_override_enabled),
-                                    )
-                                    .child(
-                                        NumberInput::new(&self.memory_max_input_state)
-                                            .small()
-                                            .suffix(t::common::size::mib())
-                                            .disabled(!memory_override_enabled),
-                                    ),
-                            )
-                            .child(
-                                v_flex().gap_1().line_height(px(24.0)).child(t::common::min()).child(t::common::max()),
-                            ),
-                    ),
-            )
+            .child(self.memory_section.clone())
             .child(self.profile_jvm_section.clone())
             .child(self.render_aot_cache_setting(cx))
             .child(
