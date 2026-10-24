@@ -113,6 +113,9 @@ impl LauncherPage {
         if let LauncherPage::Home(page) = &self {
             return div().size_full().child(page.clone()).into_any_element();
         }
+        if let LauncherPage::InstancePage(page) = &self {
+            return div().size_full().child(page.clone()).into_any_element();
+        }
         fn process(entity: Entity<impl Page>, window: &mut Window, cx: &mut App) -> (bool, AnyElement, AnyElement) {
             entity.update(cx, |page, cx| {
                 (
@@ -132,7 +135,7 @@ impl LauncherPage {
             LauncherPage::Import(entity) => process(entity, window, cx),
             LauncherPage::Syncing(entity) => process(entity, window, cx),
             LauncherPage::ModrinthProject(entity) => process(entity, window, cx),
-            LauncherPage::InstancePage(entity) => process(entity, window, cx),
+            LauncherPage::InstancePage(_) => unreachable!(),
         };
 
         let config = InterfaceConfig::get(cx);
