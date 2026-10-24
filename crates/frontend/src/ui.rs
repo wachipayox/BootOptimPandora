@@ -30,6 +30,7 @@ pub struct LauncherUI {
     data: DataEntities,
     page: LauncherPage,
     pub(crate) home_account_menu: bool,
+    pub(crate) browser_manual_view: bool,
     pub update: Option<UpdatePrompt>,
     recent_instances: heapless::Vec<(InstanceID, SharedString), 3>,
     page_history_backwards: VecDeque<(PageType, Arc<[PageType]>)>,
@@ -161,7 +162,45 @@ impl LauncherPage {
             update: ui.update.clone(),
             send: ui.data.backend_handle.clone(),
         };
-        let title_bar = if config.main_page == PageType::Syncing {
+        let browser = matches!(config.main_page, PageType::Modrinth { .. } | PageType::Curseforge { .. });
+        let page = if browser && ui.browser_manual_view {
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(13.))
+                .text_color(rgb(crate::theme::INK_MUTED))
+                .child("No hay descargas manuales pendientes.")
+                .into_any_element()
+        } else {
+            page
+        };
+        let title_bar = if browser {
+            v_flex()
+                .w_full()
+                .flex_shrink_0()
+                .child(crate::component::design::page_header("EXPLORAR CONTENIDO", window))
+                .child(
+                    h_flex()
+                        .px(px(20.))
+                        .border_b_1()
+                        .border_color(rgba(0xffffff0b))
+                        .child(
+                            crate::component::design::tab("browser-explore", "Explorar", !ui.browser_manual_view)
+                                .on_click(|_, _, c| crate::root::set_browser_manual_view(false, c)),
+                        )
+                        .child(
+                            crate::component::design::tab(
+                                "browser-manual",
+                                "Descargas manuales",
+                                ui.browser_manual_view,
+                            )
+                            .on_click(|_, _, c| crate::root::set_browser_manual_view(true, c)),
+                        ),
+                )
+                .into_any_element()
+        } else if config.main_page == PageType::Syncing {
             v_flex()
                 .w_full()
                 .flex_shrink_0()
@@ -324,6 +363,7 @@ impl LauncherUI {
             data: data.clone(),
             page,
             home_account_menu: false,
+            browser_manual_view: false,
             update: None,
             recent_instances,
             page_history_backwards: VecDeque::with_capacity(32),
@@ -418,6 +458,7 @@ impl LauncherUI {
 
     pub fn switch_page(&mut self, page: PageType, page_path: &[PageType], window: &mut Window, cx: &mut Context<Self>) {
         let page_path: Arc<[PageType]> = page_path.into();
+        self.browser_manual_view = false;
 
         let config = InterfaceConfig::get(cx);
         if config.main_page == page {
@@ -820,4 +861,68 @@ impl LauncherUI {
             })
             .into_any_element()
     }
+}
+
+pub(crate) fn browser_sources(data: &DataEntities, install_for: Option<InstanceID>, modrinth: bool, cx: &App) -> Div {
+    use crate::component::design;
+    let selected = install_for.and_then(|id| InstanceEntries::find_name_by_id(&data.instances, id, cx));
+    let mut controls = h_flex().gap(px(8.)).items_center();
+    for (index, label) in ["Modrinth", "CurseForge"].into_iter().enumerate() {
+        let target = selected.clone();
+        controls = controls.child(design::chip(("browser-provider", index), label, modrinth == (index == 0)).on_click(
+            move |_, w, c| {
+                crate::root::switch_page(
+                    if index == 0 {
+                        PageType::Modrinth {
+                            installing_for: target.clone(),
+                        }
+                    } else {
+                        PageType::Curseforge {
+                            installing_for: target.clone(),
+                        }
+                    },
+                    &[],
+                    w,
+                    c,
+                )
+            },
+        ));
+    }
+    if let Some(name) = selected {
+        let mut choices = v_flex().gap(px(4.));
+        for (_, entry) in &data.instances.read(cx).entries {
+            let target = entry.read(cx).name.clone();
+            choices = choices.child(
+                design::DesignButton::new(SharedString::from(format!("browser-target-{target}")))
+                    .label(target.clone())
+                    .w_full()
+                    .on_click(move |_, w, c| {
+                        crate::root::switch_page(
+                            if modrinth {
+                                PageType::Modrinth {
+                                    installing_for: Some(target.clone()),
+                                }
+                            } else {
+                                PageType::Curseforge {
+                                    installing_for: Some(target.clone()),
+                                }
+                            },
+                            &[],
+                            w,
+                            c,
+                        )
+                    }),
+            );
+        }
+        controls = controls.child(
+            gpui_component::popover::Popover::new("browser-targets")
+                .trigger(
+                    design::DesignButton::new("browser-target-trigger")
+                        .label(format!("Para: {name}"))
+                        .child(PandoraIcon::ChevronDown),
+                )
+                .child(choices),
+        );
+    }
+    controls
 }

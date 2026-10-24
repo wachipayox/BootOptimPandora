@@ -684,3 +684,14 @@ pub fn capture_inherited_update(
     })
     .detach();
 }
+
+pub(crate) fn set_browser_manual_view(value: bool, cx: &mut App) {
+    cx.update_global::<LauncherRootGlobal, ()>(|global, cx| {
+        global.root.update(cx, |root, cx| {
+            root.ui.update(cx, |ui, cx| {
+                ui.browser_manual_view = value;
+                cx.notify();
+            })
+        })
+    });
+}

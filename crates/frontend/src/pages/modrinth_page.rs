@@ -38,7 +38,7 @@ use strum::IntoEnumIterator;
 use ustr::Ustr;
 
 use crate::{
-    component::error_alert::ErrorAlert,
+    component::{design, error_alert::ErrorAlert},
     entity::{
         DataEntities,
         instance::ContentStates,
@@ -54,6 +54,7 @@ use crate::{
 pub struct ModrinthSearchPage {
     data: DataEntities,
     hits: Vec<ModrinthHit>,
+    selected_project: Option<Entity<crate::pages::modrinth_project_page::ModrinthProjectPage>>,
     install_for: Option<InstanceID>,
     filter_version: Option<Ustr>,
     loading: Option<Subscription>,
@@ -138,24 +139,24 @@ pub fn env_display(
 ) -> (PandoraIcon, SharedString) {
     match (client_side, server_side) {
         (ModrinthSideRequirement::Required, ModrinthSideRequirement::Required) => {
-            (PandoraIcon::Globe, t::modrinth::environment::client_and_server().into())
+            (PandoraIcon::Globe, "Cliente y servidor".into())
         },
         (ModrinthSideRequirement::Required, ModrinthSideRequirement::Unsupported) => {
-            (PandoraIcon::Computer, t::modrinth::environment::client_only().into())
+            (PandoraIcon::Computer, "Solo cliente".into())
         },
         (ModrinthSideRequirement::Required, ModrinthSideRequirement::Optional) => {
-            (PandoraIcon::Computer, t::modrinth::environment::client_only_server_optional().into())
+            (PandoraIcon::Computer, "Cliente, servidor opcional".into())
         },
         (ModrinthSideRequirement::Unsupported, ModrinthSideRequirement::Required) => {
-            (PandoraIcon::Router, t::modrinth::environment::server_only().into())
+            (PandoraIcon::Router, "Solo servidor".into())
         },
         (ModrinthSideRequirement::Optional, ModrinthSideRequirement::Required) => {
-            (PandoraIcon::Router, t::modrinth::environment::server_only_client_optional().into())
+            (PandoraIcon::Router, "Servidor, cliente opcional".into())
         },
         (ModrinthSideRequirement::Optional, ModrinthSideRequirement::Optional) => {
-            (PandoraIcon::Globe, t::modrinth::environment::client_or_server().into())
+            (PandoraIcon::Globe, "Cliente o servidor".into())
         },
-        _ => (PandoraIcon::Cpu, t::modrinth::environment::unknown_environment().into()),
+        _ => (PandoraIcon::Cpu, "Entorno desconocido".into()),
     }
 }
 
@@ -166,11 +167,7 @@ impl ModrinthSearchPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let search_state = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(t::instance::content::search::mod_())
-                .clean_on_escape()
-        });
+        let search_state = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar mods...").clean_on_escape());
 
         let mut can_install_latest = false;
         let mut specific_installed_content_by_project: enum_map::EnumMap<
@@ -254,6 +251,7 @@ impl ModrinthSearchPage {
         let mut page = Self {
             data: data.clone(),
             hits: Vec::new(),
+            selected_project: None,
             install_for,
             filter_version,
             loading: None,
@@ -313,10 +311,10 @@ impl ModrinthSearchPage {
         self.filter_categories.clear();
         self.search_state.update(cx, |state, cx| {
             let placeholder = match project_type {
-                ModrinthProjectType::Mod => t::instance::content::search::mod_(),
-                ModrinthProjectType::Modpack => t::instance::content::search::modpack(),
-                ModrinthProjectType::Resourcepack => t::instance::content::search::resourcepack(),
-                ModrinthProjectType::Shader => t::instance::content::search::shader(),
+                ModrinthProjectType::Mod => "Buscar mods...",
+                ModrinthProjectType::Modpack => "",
+                ModrinthProjectType::Resourcepack => "Buscar paquetes de recursos...",
+                ModrinthProjectType::Shader => "Buscar shaders...",
                 ModrinthProjectType::Other => t::common::search(),
             };
             state.set_placeholder(placeholder, window, cx)
@@ -550,7 +548,7 @@ impl ModrinthSearchPage {
                         ));
                     } else {
                         should_load_more = true;
-                        return div().pl_3().pt_3().child(Skeleton::new().w_full().h(px(28.0 * 4.0)).rounded_lg());
+                        return div().pl_3().pt_3().child(Skeleton::new().w_full().h(px(28.0 * 4.0)).rounded(px(0.)));
                     }
                 };
 
@@ -558,7 +556,7 @@ impl ModrinthSearchPage {
                     && !icon_url.is_empty()
                 {
                     gpui::img(SharedUri::from(icon_url))
-                        .with_fallback(|| Skeleton::new().rounded_lg().size_16().into_any_element())
+                        .with_fallback(|| Skeleton::new().rounded(px(0.)).size_16().into_any_element())
                 } else {
                     gpui::img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))
                 };
@@ -568,13 +566,9 @@ impl ModrinthSearchPage {
                     .as_ref()
                     .map(Arc::clone)
                     .map(SharedString::new)
-                    .unwrap_or(t::instance::content::unnamed().into());
-                let author = t::instance::content::by(&hit.author);
-                let description = hit
-                    .description
-                    .clone()
-                    .map(SharedString::new)
-                    .unwrap_or(t::instance::content::no_description().into());
+                    .unwrap_or_else(|| hit.project_id.to_string().into());
+                let author = format!("por {}", hit.author);
+                let description = hit.description.clone().map(SharedString::new).unwrap_or_default();
 
                 let author_line = div().text_color(theme.muted_foreground).text_sm().pb_px().child(author);
 
@@ -603,26 +597,20 @@ impl ModrinthSearchPage {
 
                 let open_project_page = {
                     let project_id = hit.project_id.clone();
-                    let project_title = name.clone();
-                    let data = self.data.clone();
-                    let install_for = self.install_for;
+                    let entity = cx.entity();
                     move |window: &mut Window, cx: &mut App| {
-                        let install_for_name = install_for.and_then(|id| {
-                            crate::entity::instance::InstanceEntries::find_name_by_id(&data.instances, id, cx)
+                        entity.update(cx, |page, cx| {
+                            page.selected_project = Some(cx.new(|cx| {
+                                crate::pages::modrinth_project_page::ModrinthProjectPage::new(
+                                    SharedString::new(project_id.clone()),
+                                    page.install_for,
+                                    &page.data,
+                                    window,
+                                    cx,
+                                )
+                            }));
+                            cx.notify();
                         });
-                        let config = InterfaceConfig::get(cx);
-                        let mut new_path: Vec<ui::PageType> = config.page_path.to_vec();
-                        new_path.push(config.main_page.clone());
-                        crate::root::switch_page(
-                            ui::PageType::ModrinthProject {
-                                project_id: SharedString::new(project_id.clone()),
-                                project_title: project_title.clone(),
-                                install_for: install_for_name,
-                            },
-                            &new_path,
-                            window,
-                            cx,
-                        );
                     }
                 };
 
@@ -631,7 +619,9 @@ impl ModrinthSearchPage {
                 let install_button = Button::new(("install", index))
                     .label(primary_action.text())
                     .icon(primary_action.icon())
-                    .with_variant(primary_action.button_variant())
+                    .ghost()
+                    .rounded(px(0.))
+                    .text_size(px(13.))
                     .on_click({
                         let data = self.data.clone();
                         let name = name.clone();
@@ -662,16 +652,16 @@ impl ModrinthSearchPage {
                     });
 
                 let item = h_flex()
-                    .rounded_lg()
+                    .rounded(px(0.))
                     .px_4()
                     .py_2()
                     .gap_4()
                     .h_32()
-                    .bg(theme.background)
+                    .bg(rgb(crate::theme::PANEL))
                     .border_color(theme.border)
                     .border_1()
                     .size_full()
-                    .child(image.rounded_lg().size_16().min_w_16().min_h_16())
+                    .child(image.rounded(px(0.)).size_16().min_w_16().min_h_16())
                     .child(
                         v_flex()
                             .id(("open-project", index))
@@ -738,13 +728,13 @@ pub enum PrimaryAction {
 impl PrimaryAction {
     pub fn text(&self) -> SharedString {
         match self {
-            PrimaryAction::Install => t::instance::content::install::label(),
-            PrimaryAction::Reinstall => t::instance::content::install::reinstall(),
-            PrimaryAction::InstallLatest => t::instance::content::install::latest(),
-            PrimaryAction::CheckForUpdates => t::instance::content::update::check::label(true),
+            PrimaryAction::Install => "Instalar",
+            PrimaryAction::Reinstall => "Reinstalar",
+            PrimaryAction::InstallLatest => "Instalar",
+            PrimaryAction::CheckForUpdates => "Comprobar actualizaciones",
             PrimaryAction::ErrorCheckingForUpdates => t::common::error(),
-            PrimaryAction::UpToDate => t::instance::content::update::check::up_to_date(),
-            PrimaryAction::Update(..) => t::instance::content::update::label(),
+            PrimaryAction::UpToDate => "Al día",
+            PrimaryAction::Update(..) => "Actualizar",
         }
         .into()
     }
@@ -904,14 +894,17 @@ impl Render for ModrinthSearchPage {
             )
             .child(div().w_3().h_full().py_3().child(Scrollbar::vertical(&scroll_handle)));
 
-        let mut top_bar = h_flex().w_full().gap_3().child(Input::new(&self.search_state));
+        let mut top_bar = h_flex()
+            .w_full()
+            .gap(px(10.))
+            .child(crate::ui::browser_sources(&self.data, self.install_for, true, cx))
+            .child(design::text_field(&self.search_state).w(px(260.)));
 
         if self.can_install_latest {
             let install_latest = InterfaceConfig::get(cx).content_install_latest;
             top_bar = top_bar.child(
                 Checkbox::new("install-latest")
-                    .label(t::instance::content::install::latest())
-                    .tooltip(t::instance::content::install::always_latest())
+                    .label("Instalar siempre la última")
                     .checked(install_latest)
                     .on_click({
                         move |value, _, cx| {
@@ -927,8 +920,7 @@ impl Render for ModrinthSearchPage {
             .gap_3()
             .p_3()
             .pl_0()
-            .child(top_bar)
-            .child(div().size_full().rounded_lg().border_1().border_color(theme.border).child(list));
+            .child(div().size_full().rounded(px(0.)).border_1().border_color(theme.border).child(list));
 
         let config = InterfaceConfig::get(cx);
         let filter_project_type = config.modrinth_page_project_type;
@@ -938,22 +930,22 @@ impl Render for ModrinthSearchPage {
             .outline()
             .child(
                 Button::new("mods")
-                    .label(t::instance::content::mods())
+                    .label("Mods")
                     .selected(filter_project_type == ModrinthProjectType::Mod),
             )
             .child(
                 Button::new("modpacks")
-                    .label(t::instance::content::modpacks())
+                    .label("Modpacks")
                     .selected(filter_project_type == ModrinthProjectType::Modpack),
             )
             .child(
                 Button::new("resourcepacks")
-                    .label(t::instance::content::resourcepacks())
+                    .label("Recursos")
                     .selected(filter_project_type == ModrinthProjectType::Resourcepack),
             )
             .child(
                 Button::new("shaders")
-                    .label(t::instance::content::shaders())
+                    .label("Shaders")
                     .selected(filter_project_type == ModrinthProjectType::Shader),
             )
             .on_click(cx.listener(|page, clicked: &Vec<usize>, window, cx| match clicked[0] {
@@ -1021,7 +1013,7 @@ impl Render for ModrinthSearchPage {
             .gap_1()
             .child(
                 Button::new("toggle-categories")
-                    .label(t::instance::content::categories())
+                    .label("Categorías")
                     .icon(if is_category_shown {
                         PandoraIcon::ChevronDown
                     } else {
@@ -1064,11 +1056,11 @@ impl Render for ModrinthSearchPage {
         let is_sort_shown = self.show_sort_options.load(std::sync::atomic::Ordering::Relaxed);
         let show_sort_options = self.show_sort_options.clone();
 
-        let sort = v_flex()
+        let _sort = v_flex()
             .gap_1()
             .child(
                 Button::new("toggle-sort")
-                    .label(t::instance::content::sort())
+                    .label("Ordenar")
                     .icon(if is_sort_shown {
                         PandoraIcon::ChevronDown
                     } else {
@@ -1128,10 +1120,47 @@ impl Render for ModrinthSearchPage {
             .child(type_button_group)
             .when_some(loader_button_group, |this, group| this.child(group))
             .when_some(filter_version_toggle, |this, button| this.child(button))
-            .child(category)
-            .child(sort);
+            .child(category);
 
-        h_flex().flex_1().min_h_0().size_full().child(parameters).child(content)
+        let mut sort_choices = v_flex().gap(px(4.));
+        for option in ModrinthSearchIndex::iter() {
+            sort_choices = sort_choices.child(
+                design::DesignButton::new(SharedString::from(format!("sort-{}", option.as_str())))
+                    .label(sort_name(option))
+                    .toggled(option == self.sort_option)
+                    .w_full()
+                    .on_click(cx.listener(move |page, _, w, c| page.set_sort_option(option, w, c))),
+            );
+        }
+        top_bar = top_bar.child(
+            gpui_component::popover::Popover::new("browser-sort")
+                .trigger(
+                    design::DesignButton::new("browser-sort-trigger")
+                        .label(sort_name(self.sort_option))
+                        .child(PandoraIcon::ChevronDown),
+                )
+                .child(sort_choices),
+        );
+        let mut body = h_flex()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .child(parameters)
+            .child(div().flex_1().min_w_0().h_full().child(content));
+        if let Some(project) = &self.selected_project {
+            body = body.child(
+                div()
+                    .id("browser-project-detail")
+                    .w(px(400.))
+                    .h_full()
+                    .overflow_y_scrollbar()
+                    .border_l_1()
+                    .border_color(rgba(0xffffff0b))
+                    .bg(rgb(crate::theme::PANEL))
+                    .child(project.clone()),
+            );
+        }
+        v_flex().size_full().gap(px(12.)).child(top_bar.px(px(20.)).py(px(12.))).child(body)
     }
 }
 
@@ -1246,3 +1275,13 @@ const FILTER_SHADERPACK_CATEGORIES: &[&'static str] = &[
     "semi-realistic",
     "vanilla-like",
 ];
+
+fn sort_name(sort: ModrinthSearchIndex) -> &'static str {
+    match sort.as_str() {
+        "downloads" => "Descargas",
+        "follows" => "Seguidores",
+        "newest" => "Más recientes",
+        "updated" => "Actualizados",
+        _ => "Relevancia",
+    }
+}
