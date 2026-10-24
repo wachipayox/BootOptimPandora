@@ -902,6 +902,7 @@ pub enum AccountCapesResult {
 pub struct SkinLibrary {
     pub state: BridgeDataLoadState,
     pub skins: Arc<[UniqueBytes]>,
+    pub names: Arc<std::collections::HashMap<UniqueBytes, Arc<str>>>,
     pub folder: Arc<Path>,
 }
 

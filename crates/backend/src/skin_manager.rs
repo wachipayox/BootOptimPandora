@@ -47,6 +47,17 @@ enum SkinEntry {
 }
 
 impl SkinManager {
+    fn library_names(&self) -> Arc<std::collections::HashMap<UniqueBytes, Arc<str>>> {
+        self.skin_path_map
+            .iter()
+            .map(|(skin, path)| {
+                let name = path.file_stem().unwrap_or(path.as_os_str()).to_string_lossy().into_owned();
+                (skin.clone(), Arc::from(name))
+            })
+            .collect::<std::collections::HashMap<_, _>>()
+            .into()
+    }
+
     fn create_skin(&mut self, image: RgbaImage, bytes: &[u8]) -> UniqueBytes {
         if let Some(cached) = self.skin_cache.get(&image) {
             cached.clone()
@@ -311,6 +322,7 @@ impl SkinManager {
                         skin_library: SkinLibrary {
                             state: skin_manager.skin_library_state.clone(),
                             skins: skin_manager.skin_library.clone(),
+                            names: skin_manager.library_names(),
                             folder: backend.directories.skin_library_dir.clone(),
                         },
                     });
@@ -369,6 +381,7 @@ impl SkinManager {
                     skin_library: SkinLibrary {
                         state: skin_manager.skin_library_state.clone(),
                         skins: skin_manager.skin_library.clone(),
+                        names: skin_manager.library_names(),
                         folder: backend.directories.skin_library_dir.clone(),
                     },
                 });
@@ -427,6 +440,7 @@ impl SkinManager {
                     skin_library: SkinLibrary {
                         state: skin_manager.skin_library_state.clone(),
                         skins: skin_manager.skin_library.clone(),
+                        names: skin_manager.library_names(),
                         folder: backend.directories.skin_library_dir.clone(),
                     },
                 });

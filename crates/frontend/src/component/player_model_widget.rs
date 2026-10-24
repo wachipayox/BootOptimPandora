@@ -2,17 +2,15 @@ use std::time::{Duration, Instant};
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Selectable, Sizable,
-    button::Button,
     h_flex,
-    slider::{Slider, SliderEvent, SliderState},
+    slider::{SliderEvent, SliderState},
     v_flex,
 };
 use schema::{minecraft_profile::SkinVariant, unique_bytes::UniqueBytes};
 
 use crate::{
+    component::design::{self, YesNo},
     component::player_model::{self, PlayerModel, PlayerModelState},
-    icon::PandoraIcon,
     interface_config::InterfaceConfig,
 };
 
@@ -60,7 +58,9 @@ mod cadence_tests {
         for frame in 0..=120 {
             let jitter = [0i64, 800_000, -800_000][frame % 3];
             let elapsed = (frame as i64 * 16_666_667 + jitter) as u64;
-            if cadence.due(start + Duration::from_nanos(elapsed)) { due_frames.push(frame); }
+            if cadence.due(start + Duration::from_nanos(elapsed)) {
+                due_frames.push(frame);
+            }
         }
         assert_eq!(due_frames.len(), 61);
         assert!(due_frames.windows(2).all(|pair| pair[1] - pair[0] == 2));
@@ -126,7 +126,7 @@ impl PlayerModelWidget {
             animating_yaw: false,
             animating_pitch_positive: true,
             animating_pitch: false,
-            animating_animation: false,
+            animating_animation: InterfaceConfig::get(cx).skin_preview_animation,
             variant,
             last_drag: None,
             last_render: Instant::now(),
@@ -289,10 +289,7 @@ impl Render for RotatingModel {
 
 impl Render for PlayerModelWidget {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (yaw, pitch) = {
-            let model_state = self.player_model_state.read(cx);
-            (model_state.yaw, model_state.pitch)
-        };
+        self.animating_animation = InterfaceConfig::get(cx).skin_preview_animation;
 
         self.update_animations(window, cx);
 
@@ -361,107 +358,41 @@ impl Render for PlayerModelWidget {
             )
             .child(
                 v_flex()
-                    .p_4()
                     .w_full()
+                    .gap(px(12.))
+                    .py(px(12.))
                     .child(
                         h_flex()
-                            .w_full()
-                            .gap_2()
-                            .pb_2()
+                            .justify_center()
+                            .gap(px(2.))
                             .child(
-                                Button::new("classic")
-                                    .label(t::skins::player_model::classic())
+                                design::chip("classic", "Clásico", self.variant == SkinVariant::Classic)
                                     .flex_1()
-                                    .selected(self.variant == SkinVariant::Classic)
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        this.variant = SkinVariant::Classic;
-                                        this.player_model_state.update(cx, |state, _| {
-                                            state.variant = SkinVariant::Classic;
-                                        });
+                                        this.set_variant(cx, SkinVariant::Classic);
+                                        cx.notify();
                                     })),
                             )
                             .child(
-                                Button::new("slim")
-                                    .label(t::skins::player_model::slim())
-                                    .flex_1()
-                                    .selected(self.variant == SkinVariant::Slim)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.variant = SkinVariant::Slim;
-                                        this.player_model_state.update(cx, |state, _| {
-                                            state.variant = SkinVariant::Slim;
-                                        });
-                                    })),
+                                design::chip("slim", "Delgado", self.variant == SkinVariant::Slim).flex_1().on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.set_variant(cx, SkinVariant::Slim);
+                                        cx.notify();
+                                    }),
+                                ),
                             ),
                     )
-                    .child(
-                        v_flex()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .justify_between()
-                                    .text_sm()
-                                    .child(t::skins::player_model::yaw(yaw as i32))
-                                    .child(
-                                        Button::new("play-yaw")
-                                            .compact()
-                                            .small()
-                                            .icon(PandoraIcon::pause_play(self.animating_yaw))
-                                            .on_click(cx.listener(|widget, _, _, cx| {
-                                                widget.animating_yaw = !widget.animating_yaw;
-                                                widget.last_render = Instant::now();
-                                                widget.animation_cadence.reset();
-                                                cx.notify();
-                                            })),
-                                    ),
-                            )
-                            .child(Slider::new(&self.yaw_slider_state)),
-                    )
-                    .child(
-                        v_flex()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .justify_between()
-                                    .text_sm()
-                                    .child(t::skins::player_model::pitch(pitch as i32))
-                                    .child(
-                                        Button::new("play-pitch")
-                                            .compact()
-                                            .small()
-                                            .icon(PandoraIcon::pause_play(self.animating_pitch))
-                                            .on_click(cx.listener(|widget, _, _, cx| {
-                                                widget.animating_pitch = !widget.animating_pitch;
-                                                widget.last_render = Instant::now();
-                                                widget.animation_cadence.reset();
-                                                cx.notify();
-                                            })),
-                                    ),
-                            )
-                            .child(Slider::new(&self.pitch_slider_state)),
-                    )
-                    .child(
-                        v_flex()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .justify_between()
-                                    .text_sm()
-                                    .child(t::skins::player_model::animation())
-                                    .child(
-                                        Button::new("play-anim")
-                                            .compact()
-                                            .small()
-                                            .icon(PandoraIcon::pause_play(self.animating_animation))
-                                            .on_click(cx.listener(|widget, _, _, cx| {
-                                                widget.animating_animation = !widget.animating_animation;
-                                                widget.last_render = Instant::now();
-                                                widget.animation_cadence.reset();
-                                                cx.notify();
-                                            })),
-                                    ),
-                            )
-                            .child(Slider::new(&self.animation_slider_state)),
-                    ),
+                    .child(h_flex().w_full().items_center().justify_between().child("Animación").child(
+                        YesNo::new("skin-animation").checked(self.animating_animation).on_click(cx.listener(
+                            |this, enabled, _, cx| {
+                                InterfaceConfig::get_mut(cx).skin_preview_animation = *enabled;
+                                this.animating_animation = *enabled;
+                                this.animation_cadence.reset();
+                                this.last_render = Instant::now();
+                                cx.notify();
+                            },
+                        )),
+                    )),
             )
     }
 }
