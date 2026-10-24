@@ -189,10 +189,16 @@ impl ContentListDelegate {
             }
         };
         let location = if inherited { "heredado de la instancia" } else { "local" };
-        let author = if summary.content_summary.authors.is_empty() {
+        let author_name = summary
+            .content_summary
+            .authors
+            .strip_prefix("By ")
+            .unwrap_or(&summary.content_summary.authors)
+            .trim();
+        let author = if author_name.is_empty() {
             location.to_owned()
         } else {
-            format!("{} · {location}", summary.content_summary.authors)
+            format!("{author_name} · {location}")
         };
         let can_update = summary.update.can_update(self.for_loader, self.for_version.as_str());
         let is_loading = self.updating.lock().contains(&element_id);
@@ -564,7 +570,7 @@ impl ContentListDelegate {
                             .line_height(px(14.))
                             .line_clamp(1)
                             .text_color(rgb(theme::INK_MUTED))
-                            .child(summary.authors.to_string()),
+                            .child(summary.authors.strip_prefix("By ").unwrap_or(&summary.authors).to_owned()),
                     ),
             );
         // Keep the original file/description detail available without widening the table.
@@ -1106,7 +1112,9 @@ fn create_descriptions(
         .child(SharedString::from(name.clone().unwrap_or(filename.clone())))
         .child(div().text_color(secondary).child(SharedString::from(version)));
 
-    let mut description2 = v_flex().text_color(secondary).child(SharedString::from(authors));
+    let mut description2 = v_flex()
+        .text_color(secondary)
+        .child(SharedString::from(authors.strip_prefix("By ").unwrap_or(&authors).to_owned()));
 
     if name.is_some() {
         description2 = description2.child(SharedString::from(filename));

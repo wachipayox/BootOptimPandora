@@ -1,5 +1,8 @@
 //! The update prompt shows every skipped cosmetic changelog in the signed check's exact range.
-use crate::{component::design::DesignButton, theme};
+use crate::{
+    component::design::{self, DesignButton},
+    theme,
+};
 use bridge::{
     handle::BackendHandle,
     message::{InheritedGlobalUpdate, MessageToBackend},
@@ -10,6 +13,7 @@ use schema::changelog::{ChangelogEntry, ChangelogQuery};
 use std::collections::BTreeSet;
 
 pub struct UpdateChangelog {
+    name: SharedString,
     entries: Vec<ChangelogEntry>,
     old: Option<u64>,
     new: Option<u64>,
@@ -20,6 +24,7 @@ impl UpdateChangelog {
     pub fn new(
         backend: BackendHandle,
         update: Option<InheritedGlobalUpdate>,
+        name: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -101,6 +106,7 @@ impl UpdateChangelog {
             log::info!("instance-update-changelog-ready pid={}", std::process::id());
         }
         Self {
+            name,
             entries: Vec::new(),
             old: None,
             new: None,
@@ -112,17 +118,24 @@ impl UpdateChangelog {
 impl Render for UpdateChangelog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut panel = v_flex().w_full().gap(px(14.)).text_size(px(13.)).line_height(px(20.));
+        let mut heading = h_flex().gap(px(12.)).items_baseline().child(design::dialog_title("Revisión nueva"));
         if let (Some(old), Some(new)) = (self.old, self.new) {
-            panel = panel.child(
+            heading = heading.child(
                 h_flex()
-                    .gap(px(14.))
+                    .gap(px(8.))
                     .font_family(theme::DISPLAY)
-                    .text_size(px(18.))
+                    .text_size(px(13.))
                     .child(format!("v{old}"))
                     .child("→")
-                    .child(div().text_color(rgb(theme::ACCENT_TEXT)).child(format!("v{new}"))),
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(theme::ACCENT_TEXT))
+                            .child(format!("v{new}")),
+                    ),
             );
         }
+        panel = panel.child(v_flex().gap(px(6.)).child(design::eyebrow(self.name.clone())).child(heading));
         if self.failed {
             return panel
                 .child(
@@ -136,7 +149,15 @@ impl Render for UpdateChangelog {
         if self.entries.is_empty() {
             return panel.into_any_element();
         }
-        let mut entries = v_flex().w_full().gap(px(14.));
+        let mut entries = v_flex()
+            .w_full()
+            .gap(px(14.))
+            .px(px(14.))
+            .py(px(12.))
+            .bg(rgba(0xffffff05))
+            .text_size(px(12.5))
+            .line_height(px(19.))
+            .text_color(rgb(theme::INK_MUTED));
         for entry in &self.entries {
             let version = entry.revision.as_ref().map(|revision| revision.sequence).unwrap_or(entry.origin.sequence);
             let date = chrono::DateTime::parse_from_rfc3339(&entry.created_at)

@@ -225,6 +225,7 @@ try {
         if ($screen.page -match '^instance-(mods|resources|shaders):') { $instanceReadyMarkers=@('instance-content-ready','instance-content-origin-ready') }
         if ($screen.page -match '^(instance-settings|derived|duplicate):') { $instanceReadyMarkers=@('instance-settings-profile-ready','instance-settings-group-ready','instance-artwork-ready','instance-memory-ready') }
         if ($screen.page -match '^(derived|duplicate):') { $instanceReadyMarkers += 'instance-derived-ready' }
+        if ($screen.page -match '^instance-overwrites:') { $instanceReadyMarkers=@('instance-overwrites-ready') }
         if ($screen.page -match '^instance-(logs|crashes):') { $instanceReadyMarkers=@('instance-log-ready') }
         if ($screen.page -match '^instance-changelog:') { $instanceReadyMarkers=@('instance-changelog-ready','instance-stone-ready') }
         if ($screen.page -match '^instance-live:') { $instanceReadyMarkers=@('instance-live-fixture-ready') }

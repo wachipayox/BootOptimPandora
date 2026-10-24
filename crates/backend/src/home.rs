@@ -229,6 +229,7 @@ impl crate::BackendState {
             last_destination,
             profile_id: profile_id.clone(),
             mod_count,
+            recommended_memory_mib: id.map(|_| crate::launch::memory::recommendation().recommended_mib),
             ..Default::default()
         };
         if let Some(profile) = profile {

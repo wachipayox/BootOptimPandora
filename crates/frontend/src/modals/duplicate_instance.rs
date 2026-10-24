@@ -200,12 +200,16 @@ impl DuplicateInstanceModalState {
             .when(!self.as_branch, |d| d.child("Copia la instancia entera, mundos incluidos."));
         design::dialog(dialog)
             .w(px(560.))
-            .title(design::dialog_title(if self.as_branch {
-                "Crear hija"
-            } else {
-                "Duplicar instancia"
-            }))
-            .child(design::eyebrow(parent_name))
+            .title(
+                v_flex()
+                    .gap(px(6.))
+                    .when(self.as_branch, |d| d.child(design::eyebrow(parent_name)))
+                    .child(design::dialog_title(if self.as_branch {
+                        "Crear hija"
+                    } else {
+                        "Duplicar instancia"
+                    })),
+            )
             .overlay_closable(false)
             .child(content)
             .footer(

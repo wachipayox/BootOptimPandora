@@ -13,7 +13,7 @@ use bridge::{
     modal_action::ModalAction,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{Root, Theme, WindowExt, button::Button, h_flex, scroll::ScrollableElement, v_flex};
+use gpui_component::{Root, Theme, WindowExt, h_flex, scroll::ScrollableElement, v_flex};
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -593,11 +593,11 @@ fn show_inherited_update(
         crate::pages::instance::update_changelog::UpdateChangelog::new(
             data.backend_handle.clone(),
             updates.global.clone(),
+            name.clone(),
             window,
             cx,
         )
     });
-    let caption = name.clone();
     window.open_dialog(cx, move |dialog, _, _| {
         let skip_data = data.clone();
         let skip_name = name.clone();
@@ -610,7 +610,6 @@ fn show_inherited_update(
         let enter_quick = quick_play.clone();
         crate::component::design::dialog(dialog)
             .w(px(560.))
-            .title(crate::component::design::dialog_title("Revisión nueva"))
             .overlay_closable(false)
             .keyboard(false)
             .close_button(false)
@@ -618,7 +617,6 @@ fn show_inherited_update(
                 update_then_start(id, enter_name.clone(), enter_quick.clone(), &enter_data, window, cx);
                 true
             })
-            .child(crate::component::design::eyebrow(caption.clone()))
             .child(changelog.clone())
             .child(
                 div()

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub struct HomePresentation {
     pub profile_id: Option<String>,
     pub mod_count: Option<usize>,
+    pub recommended_memory_mib: Option<u32>,
     pub last_destination: Option<String>,
     pub artwork: Option<PathBuf>,
     pub artwork_author: Option<String>,

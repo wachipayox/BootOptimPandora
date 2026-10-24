@@ -595,9 +595,15 @@ impl Render for HomePage {
                                     i.configuration.minecraft_version
                                 )))
                                 .when_some(self.presentation.mod_count, |d, n| d.child(badge(format!("{n} mods"))))
-                                .when_some(i.configuration.memory.as_ref().filter(|m| m.enabled), |d, m| {
-                                    d.child(badge(format!("{} GB", m.max as f32 / 1024.)))
-                                }),
+                                .when_some(
+                                    i.configuration
+                                        .memory
+                                        .as_ref()
+                                        .filter(|m| m.enabled)
+                                        .map(|m| m.max)
+                                        .or(self.presentation.recommended_memory_mib),
+                                    |d, memory| d.child(badge(format!("{} GB", memory as f32 / 1024.))),
+                                ),
                         ),
                 )
         } else {

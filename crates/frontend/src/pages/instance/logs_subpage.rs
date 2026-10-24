@@ -127,11 +127,20 @@ impl InstanceLogsSubpage {
         let (send, mut receive) = tokio::sync::mpsc::channel::<Arc<str>>(256);
         let text = cx.new(|_| ReadonlyTextField::default().with_font_family("Consolas".into()));
         let reader = text.clone();
+        let empty = self.files.iter().find(|file| file.path == path).is_some_and(|file| file.size == 0);
+        if empty {
+            log::info!("instance-log-ready pid={}", std::process::id());
+        }
         self._read_log_task = Some(cx.spawn(async move |_, cx| {
+            let mut initial = true;
             while let Some(line) = receive.recv().await {
                 let _ = cx.update_entity(&reader, |text, c| {
                     text.add(line);
                     c.notify();
+                    if initial {
+                        initial = false;
+                        log::info!("instance-log-ready pid={}", std::process::id());
+                    }
                 });
             }
             let _ = cx.update_entity(&reader, |text, c| {

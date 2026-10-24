@@ -14,7 +14,7 @@ use gpui_component::{
     ActiveTheme as _, Disableable, Icon, IndexPath, WindowExt,
     button::ButtonVariants,
     h_flex,
-    input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    input::{InputEvent, InputState, Textarea, TextareaState},
     notification::{Notification, NotificationType},
     scroll::ScrollableElement,
     select::{SearchableVec, Select, SelectEvent, SelectState},
@@ -859,9 +859,10 @@ impl InstanceSettingsSubpage {
             .w_full()
             .child(crate::labelled(
                 "Nombre",
-                h_flex().gap_2().child(Input::new(&self.new_name_input_state)).when(
-                    self.new_name_change_state != NewNameChangeState::NoChange,
-                    |this| {
+                h_flex()
+                    .gap_2()
+                    .child(crate::component::design::text_field(&self.new_name_input_state))
+                    .when(self.new_name_change_state != NewNameChangeState::NoChange, |this| {
                         if self.new_name_change_state == NewNameChangeState::InvalidName {
                             this.child("El nombre no es válido o ya existe.")
                         } else {
@@ -879,10 +880,9 @@ impl InstanceSettingsSubpage {
                                 }
                             }))
                         }
-                    },
-                ),
+                    }),
             ))
-            .child(crate::labelled("Cambiar icono", {
+            .child({
                 let mut row = h_flex().gap_2().child(
                     DesignButton::new("icon")
                         .child(Icon::new(crate::icon::PandoraIcon::Plus).size(px(14.)))
@@ -911,7 +911,7 @@ impl InstanceSettingsSubpage {
                     row = row.child(el);
                 }
                 row
-            }));
+            });
 
         let mut version_content = v_flex().gap_2();
 
@@ -1121,7 +1121,11 @@ impl InstanceSettingsSubpage {
                             },
                         )),
                     ))
-                    .child(Textarea::new(&self.jvm_flags_input_state).disabled(!jvm_flags_enabled)),
+                    .child(
+                        Textarea::new(&self.jvm_flags_input_state)
+                            .bg(rgb(theme::PANEL_SUNKEN))
+                            .disabled(!jvm_flags_enabled),
+                    ),
             )
             .child(
                 v_flex()
@@ -1140,7 +1144,11 @@ impl InstanceSettingsSubpage {
                             },
                         )),
                     ))
-                    .child(Textarea::new(&self.wrapper_command_input_state).disabled(!wrapper_command_enabled)),
+                    .child(
+                        Textarea::new(&self.wrapper_command_input_state)
+                            .bg(rgb(theme::PANEL_SUNKEN))
+                            .disabled(!wrapper_command_enabled),
+                    ),
             )
             .child(
                 v_flex()
@@ -1427,24 +1435,8 @@ impl InstanceSettingsSubpage {
             .when_some(self.save_group.as_ref(), |d, group| {
                 d.child(format!("Grupo: {} ({} instancias)", group.name, group.member_count))
             });
-        let mut inherited = settings_panel("Perfil heredado").child(
-            v_flex()
-                .gap_2()
-                .child(div().child("Lo que edites o borres en local se conserva al actualizar."))
-                .child(
-                    DesignButton::new("update_global_profile")
-                        .label("Buscar actualización")
-                        .child(Icon::new(PandoraIcon::RefreshCcw).size(px(14.)))
-                        .overflow_x_hidden()
-                        .on_click({
-                            let id = self.instance_id;
-                            let data = self.data.clone();
-                            move |_: &ClickEvent, window, cx| {
-                                crate::root::update_inherited_files(id, &data, window, cx);
-                            }
-                        }),
-                ),
-        );
+        let mut inherited = settings_panel("Perfil heredado")
+            .child(div().child("Lo que edites o borres en local se conserva al actualizar."));
         let parent = self
             .profile_info
             .as_ref()
@@ -1461,6 +1453,19 @@ impl InstanceSettingsSubpage {
             };
             inherited = inherited.child(caption);
         }
+        inherited = inherited.child(
+            DesignButton::new("update_global_profile")
+                .label("Buscar actualización")
+                .child(Icon::new(PandoraIcon::RefreshCcw).size(px(14.)))
+                .overflow_x_hidden()
+                .on_click({
+                    let id = self.instance_id;
+                    let data = self.data.clone();
+                    move |_: &ClickEvent, window, cx| {
+                        crate::root::update_inherited_files(id, &data, window, cx);
+                    }
+                }),
+        );
         inherited = inherited.child(crate::labelled(
             "Cuenta para esta instancia",
             Select::new(&self.account_items)

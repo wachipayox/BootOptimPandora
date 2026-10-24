@@ -13,3 +13,5 @@ mod artwork_section;
 mod changelog_subpage;
 
 pub(crate) mod update_changelog;
+
+mod overwrites_diff;
