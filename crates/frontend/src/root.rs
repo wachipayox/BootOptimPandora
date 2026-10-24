@@ -585,11 +585,19 @@ fn show_inherited_update(
     name: SharedString,
     quick_play: Option<QuickPlayLaunch>,
     data: DataEntities,
-    updates: Vec<String>,
+    updates: bridge::message::InheritedUpdateCheck,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let caption = format!("Updates are available for: {}", updates.join(", "));
+    let changelog = cx.new(|cx| {
+        crate::pages::instance::update_changelog::UpdateChangelog::new(
+            data.backend_handle.clone(),
+            updates.global.clone(),
+            window,
+            cx,
+        )
+    });
+    let caption = name.clone();
     window.open_dialog(cx, move |dialog, _, _| {
         let skip_data = data.clone();
         let skip_name = name.clone();
@@ -600,8 +608,9 @@ fn show_inherited_update(
         let enter_data = data.clone();
         let enter_name = name.clone();
         let enter_quick = quick_play.clone();
-        dialog
-            .title("Inherited profile update")
+        crate::component::design::dialog(dialog)
+            .w(px(560.))
+            .title(crate::component::design::dialog_title("Revisión nueva"))
             .overlay_closable(false)
             .keyboard(false)
             .close_button(false)
@@ -609,19 +618,48 @@ fn show_inherited_update(
                 update_then_start(id, enter_name.clone(), enter_quick.clone(), &enter_data, window, cx);
                 true
             })
-            .child(caption.clone())
+            .child(crate::component::design::eyebrow(caption.clone()))
+            .child(changelog.clone())
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(crate::theme::INK_MUTED))
+                    .child("Tus cambios locales se conservan"),
+            )
             .footer(
                 h_flex()
                     .gap_2()
-                    .child(Button::new("skip-update").label("Start without updating").on_click(move |_, window, cx| {
-                        window.close_dialog(cx);
-                        finish_inherited_operation(id, window);
-                        start_instance_unchecked(id, skip_name.clone(), skip_quick.clone(), &skip_data, window, cx);
-                    }))
-                    .child(Button::new("update-start").label("Update and start").on_click(move |_, window, cx| {
-                        window.close_dialog(cx);
-                        update_then_start(id, update_name.clone(), update_quick.clone(), &update_data, window, cx);
-                    })),
+                    .child(
+                        crate::component::design::DesignButton::new("skip-update")
+                            .label("Jugar sin actualizar")
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                finish_inherited_operation(id, window);
+                                start_instance_unchecked(
+                                    id,
+                                    skip_name.clone(),
+                                    skip_quick.clone(),
+                                    &skip_data,
+                                    window,
+                                    cx,
+                                );
+                            }),
+                    )
+                    .child(
+                        crate::component::design::DesignButton::new("update-start")
+                            .label("Actualizar y jugar")
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                update_then_start(
+                                    id,
+                                    update_name.clone(),
+                                    update_quick.clone(),
+                                    &update_data,
+                                    window,
+                                    cx,
+                                );
+                            }),
+                    ),
             )
     });
 }

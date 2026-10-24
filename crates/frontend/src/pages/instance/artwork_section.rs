@@ -61,6 +61,7 @@ impl InstanceArtworkSection {
                         });
                     }
                 }
+                log::info!("instance-artwork-ready pid={}", std::process::id());
             }
         })
         .detach();

@@ -213,6 +213,7 @@ impl InstanceContentSubpage {
             page.content_list.update(cx, |list, cx| {
                 if let Some(new_content) = content.read(cx) {
                     list.delegate_mut().set_content(new_content);
+                    log::info!("instance-content-ready pid={}", std::process::id());
                 }
                 cx.notify();
             });
@@ -248,6 +249,7 @@ impl InstanceContentSubpage {
                 let _ = this.update(cx, |this, c| {
                     this.content_list.update(c, |list, c| {
                         list.delegate_mut().set_profile_info(info);
+                        log::info!("instance-content-origin-ready pid={}", std::process::id());
                         c.notify();
                     });
                     c.notify();

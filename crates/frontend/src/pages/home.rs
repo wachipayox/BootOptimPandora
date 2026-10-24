@@ -415,8 +415,12 @@ impl Render for HomePage {
                 (1, "Contenido", Some(InstanceSubpageType::Mods)),
                 (2, "Sobrescrituras", Some(InstanceSubpageType::Overwrites)),
                 (3, "Registros", Some(InstanceSubpageType::Logs)),
+                (5, "Changelog", Some(InstanceSubpageType::Changelog)),
                 (4, "Ajustes de la instancia", Some(InstanceSubpageType::Settings)),
             ] {
+                if tab == Some(InstanceSubpageType::Changelog) && self.presentation.profile_id.is_none() {
+                    continue;
+                }
                 header = header.child(design::tab(("home-tab", index as usize), label, index == 0).on_click(
                     cx.listener(move |this, _, w, c| {
                         if let Some(t) = tab {

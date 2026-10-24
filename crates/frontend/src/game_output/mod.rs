@@ -3,10 +3,8 @@ use std::{cell::RefCell, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
 use ftree::FenwickTree;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Icon, Sizable,
-    button::Button,
-    h_flex,
-    input::{Input, InputEvent, InputState},
+    ActiveTheme as _, Icon, Sizable, h_flex,
+    input::{InputEvent, InputState},
     scroll::{Scrollbar, ScrollbarHandle},
     v_flex,
 };
@@ -15,7 +13,12 @@ use rustc_hash::FxBuildHasher;
 
 use bridge::{game_output::GameOutputLogLevel, message::GameOutputMsg};
 
-use crate::{CloseWindow, icon::PandoraIcon};
+use crate::{
+    CloseWindow,
+    component::design::{self, DesignButton},
+    icon::PandoraIcon,
+    theme,
+};
 
 struct CachedShapedLogLevels {
     fatal: Arc<ShapedLine>,
@@ -75,7 +78,7 @@ impl GameOutput {
 
         Self {
             font: Font {
-                family: SharedString::new_static("Roboto Mono"),
+                family: SharedString::new_static("Consolas"),
                 features: FontFeatures::default(),
                 fallbacks: None,
                 weight: FontWeight::NORMAL,
@@ -978,7 +981,8 @@ impl GameOutputRoot {
     pub fn new(game_output: Entity<GameOutput>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let scroll_state = Rc::clone(&game_output.read(cx).scroll_state);
 
-        let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(t::common::search()).clean_on_escape());
+        let search_state =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Buscar en el registro...").clean_on_escape());
 
         let _search_input_subscription = cx.subscribe_in(&search_state, window, Self::on_search_input_event);
 
@@ -1092,40 +1096,56 @@ impl GameOutputRoot {
 
 impl Render for GameOutputRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let search = Input::new(&self.search_state).prefix(Icon::new(PandoraIcon::Search).small());
+        let search = design::text_field(&self.search_state)
+            .prefix(Icon::new(PandoraIcon::Search).small())
+            .flex_1()
+            .min_w_0();
 
-        let bar =
-            h_flex()
-                .w_full()
-                .rounded(cx.theme().radius)
-                .id("controls")
-                .flex_1()
-                .gap_4()
-                .child(search)
-                .child(Button::new("top").label(t::common::nav::top()).on_click(cx.listener(|root, _, _, cx| {
-                    let mut state = root.scroll_handler.state.borrow_mut();
-                    state.scrolling = GameOutputScrolling::Top { offset: Pixels::ZERO };
-                    cx.notify();
-                })))
-                .child(Button::new("bottom").label(t::common::nav::bottom()).on_click(cx.listener(
-                    |root, _, _, cx| {
+        let bar = h_flex()
+            .w_full()
+            .rounded(cx.theme().radius)
+            .id("controls")
+            .h(px(36.))
+            .gap(px(8.))
+            .child(search)
+            .child(
+                DesignButton::new("top")
+                    .label("↑")
+                    .tooltip("Ir al principio")
+                    .w(px(32.))
+                    .on_click(cx.listener(|root, _, _, cx| {
+                        let mut state = root.scroll_handler.state.borrow_mut();
+                        state.scrolling = GameOutputScrolling::Top { offset: Pixels::ZERO };
+                        cx.notify();
+                    })),
+            )
+            .child(
+                DesignButton::new("bottom")
+                    .label("↓")
+                    .tooltip("Ir al final")
+                    .w(px(32.))
+                    .on_click(cx.listener(|root, _, _, cx| {
                         let mut state = root.scroll_handler.state.borrow_mut();
                         state.scrolling = GameOutputScrolling::Bottom;
                         cx.notify();
-                    },
-                )));
+                    })),
+            );
 
         v_flex()
             .size_full()
-            .border_12()
-            .gap_4()
+            .px(px(24.))
+            .pb(px(24.))
+            .gap(px(12.))
             .child(bar)
             .child(
                 h_flex()
                     .size_full()
                     .rounded(cx.theme().radius)
                     .border_1()
-                    .border_color(cx.theme().border)
+                    .border_color(rgba(0xffffff0b))
+                    .bg(rgb(theme::PANEL_SUNKEN))
+                    .font_family("Consolas")
+                    .text_size(px(12.))
                     .child(GameOutputList {
                         interactivity: Interactivity::new(),
                         game_output: self.game_output.clone(),

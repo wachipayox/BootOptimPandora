@@ -13,7 +13,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, Disableable, Icon, IndexPath, WindowExt,
     button::ButtonVariants,
-    checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     notification::{Notification, NotificationType},
@@ -83,6 +82,8 @@ pub struct InstanceSettingsSubpage {
     profile_name: Option<String>,
     profile_sequence: Option<u64>,
     save_group: Option<bridge::message::SaveGroupSummary>,
+    show_advanced: bool,
+    editing_version: bool,
     wrapper_command_enabled: bool,
     wrapper_command_input_state: Entity<TextareaState>,
     jvm_flags_enabled: bool,
@@ -132,7 +133,7 @@ impl InstanceSettingsSubpage {
         let instance_id = entry.id;
         let instance_name = entry.name.clone();
         let loader = entry.configuration.loader;
-        let loader_version_latest_string = t::common::latest();
+        let loader_version_latest_string = "Última";
         let preferred_loader_version = entry
             .configuration
             .preferred_loader_version
@@ -276,6 +277,8 @@ impl InstanceSettingsSubpage {
             profile_name: None,
             profile_sequence: None,
             save_group: None,
+            show_advanced: false,
+            editing_version: false,
             wrapper_command_enabled: wrapper_command.enabled,
             wrapper_command_input_state,
             jvm_flags_enabled: jvm_flags.enabled,
@@ -368,6 +371,7 @@ impl InstanceSettingsSubpage {
                     });
                 }
             }
+            log::info!("instance-settings-profile-ready pid={}", std::process::id());
         })
         .detach();
         let (send, receive) = tokio::sync::oneshot::channel();
@@ -380,6 +384,7 @@ impl InstanceSettingsSubpage {
                 let _ = this.update(cx, |this, cx| {
                     this.save_group = groups.into_iter().find(|g| g.selected);
                     cx.notify();
+                    log::info!("instance-settings-group-ready pid={}", std::process::id());
                 });
             }
         })
@@ -923,12 +928,8 @@ impl InstanceSettingsSubpage {
             },
         }
 
-        version_content = version_content.child(
-            Select::new(&self.loader_select_state)
-                .title_prefix(format!("{}: ", t::instance::modloader()))
-                .search_placeholder("Buscar...")
-                .w_full(),
-        );
+        version_content =
+            version_content.child(Select::new(&self.loader_select_state).search_placeholder("Buscar...").w_full());
 
         if self.loader != Loader::Vanilla {
             match self.loader_versions_state {
@@ -936,23 +937,8 @@ impl InstanceSettingsSubpage {
                     version_content = version_content.child(Skeleton::new().w_full().min_h_8().max_h_8().rounded_md())
                 },
                 TypelessFrontendMetadataResult::Loaded => {
-                    version_content = version_content.child(
-                        Select::new(&self.loader_version_select_state)
-                            .search_placeholder("Buscar...")
-                            .title_prefix(match self.loader {
-                                Loader::Fabric => {
-                                    format!("{}: ", t::instance::loader_version(t::modrinth::category::fabric()))
-                                },
-                                Loader::Forge => {
-                                    format!("{}: ", t::instance::loader_version(t::modrinth::category::forge()))
-                                },
-                                Loader::NeoForge => {
-                                    format!("{}: ", t::instance::loader_version(t::modrinth::category::neoforge()))
-                                },
-                                Loader::Vanilla => format!("{}: ", t::instance::loader_version(t::instance::loader())),
-                            })
-                            .w_full(),
-                    )
+                    version_content = version_content
+                        .child(Select::new(&self.loader_version_select_state).search_placeholder("Buscar...").w_full())
                 },
                 TypelessFrontendMetadataResult::Error(_, ..) => {
                     version_content = version_content.child("No se han podido cargar las versiones.")
@@ -960,15 +946,46 @@ impl InstanceSettingsSubpage {
             }
         }
 
-        basic_content = basic_content.child(crate::labelled("Versión", version_content)).child(crate::labelled(
-            "Cuenta para esta instancia",
-            h_flex().gap_2().child(
-                Select::new(&self.account_items)
-                    .placeholder("La activa")
-                    .search_placeholder("Buscar...")
-                    .cleanable(true),
-            ),
-        ));
+        let configuration = &self.instance.read(cx).configuration;
+        let version = format!(
+            "{:?} {} · Minecraft {}",
+            configuration.loader,
+            configuration.preferred_loader_version.map(|v| v.as_str()).unwrap_or(""),
+            configuration.minecraft_version
+        );
+        let version_row = v_flex()
+            .gap(px(10.))
+            .child(
+                h_flex().w_full().gap(px(10.)).child(div().flex_1().child(version)).child(
+                    DesignButton::new("edit-instance-version")
+                        .tooltip("Versión")
+                        .w(px(28.))
+                        .h(px(28.))
+                        .child(Icon::new(PandoraIcon::Pencil).size(px(14.)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.editing_version = !this.editing_version;
+                            cx.notify();
+                        })),
+                ),
+            )
+            .when(self.editing_version, |d| d.child(version_content));
+        basic_content = basic_content.child(crate::labelled("Versión", version_row)).when(
+            !self
+                .profile_info
+                .as_ref()
+                .is_some_and(|i| i.global_profile_id.is_some() || i.local_parent_name.is_some()),
+            |d| {
+                d.child(crate::labelled(
+                    "Cuenta para esta instancia",
+                    h_flex().gap_2().child(
+                        Select::new(&self.account_items)
+                            .placeholder("La activa")
+                            .search_placeholder("Buscar...")
+                            .cleanable(true),
+                    ),
+                ))
+            },
+        );
 
         basic_content = basic_content.child(crate::labelled(
             "Carpeta de la instancia",
@@ -1078,78 +1095,119 @@ impl InstanceSettingsSubpage {
             .into_any_element()
     }
 
-    fn render_runtime_content(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
+    fn render_runtime_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let wrapper_command_enabled = self.wrapper_command_enabled;
         let jvm_flags_enabled = self.jvm_flags_enabled;
         let jvm_binary_enabled = self.jvm_binary_enabled;
-        let runtime_content =
-            v_flex()
-                .gap_4()
-                .w_full()
-                .child(self.memory_section.clone())
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            Checkbox::new("jvm_flags")
-                                .label("Opciones de la JVM")
-                                .checked(jvm_flags_enabled)
-                                .on_click(cx.listener(|page, value, _, cx| {
-                                    if page.jvm_flags_enabled != *value {
-                                        page.jvm_flags_enabled = *value;
-                                        page.backend_handle.send(MessageToBackend::SetInstanceJvmFlags {
-                                            id: page.instance_id,
-                                            jvm_flags: page.get_jvm_flags_configuration(cx),
-                                        });
-                                        page.refresh_profile_jvm(cx);
-                                        cx.notify();
-                                    }
-                                })),
-                        )
-                        .child(Textarea::new(&self.jvm_flags_input_state).disabled(!jvm_flags_enabled)),
-                )
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(Checkbox::new("jvm_binary").label("Java").checked(jvm_binary_enabled).on_click(
-                            cx.listener(|page, value, _, cx| {
-                                if page.jvm_binary_enabled != *value {
-                                    page.jvm_binary_enabled = *value;
-                                    page.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
+        let content = v_flex()
+            .w_full()
+            .gap(px(16.))
+            .child(self.memory_section.clone())
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(h_flex().w_full().gap(px(12.)).child(div().flex_1().child("Opciones de la JVM")).child(
+                        YesNo::new("jvm_flags").checked(jvm_flags_enabled).on_click(cx.listener(
+                            |page, value, _, cx| {
+                                if page.jvm_flags_enabled != *value {
+                                    page.jvm_flags_enabled = *value;
+                                    page.backend_handle.send(MessageToBackend::SetInstanceJvmFlags {
                                         id: page.instance_id,
-                                        jvm_binary: page.get_jvm_binary_configuration(),
+                                        jvm_flags: page.get_jvm_flags_configuration(cx),
+                                    });
+                                    page.refresh_profile_jvm(cx);
+                                    cx.notify();
+                                }
+                            },
+                        )),
+                    ))
+                    .child(Textarea::new(&self.jvm_flags_input_state).disabled(!jvm_flags_enabled)),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(h_flex().w_full().gap(px(12.)).child(div().flex_1().child("Comando envoltorio")).child(
+                        YesNo::new("wrapper_command").checked(wrapper_command_enabled).on_click(cx.listener(
+                            |page, value, _, cx| {
+                                if page.wrapper_command_enabled != *value {
+                                    page.wrapper_command_enabled = *value;
+                                    page.backend_handle.send(MessageToBackend::SetInstanceWrapperCommand {
+                                        id: page.instance_id,
+                                        wrapper_command: page.get_wrapper_command_configuration(cx),
                                     });
                                     cx.notify();
                                 }
+                            },
+                        )),
+                    ))
+                    .child(Textarea::new(&self.wrapper_command_input_state).disabled(!wrapper_command_enabled)),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(h_flex().w_full().justify_between().child("Java").child(
+                        crate::component::design::chip("java-automatic", "Automático", !jvm_binary_enabled).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.jvm_binary_enabled = false;
+                                this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
+                                    id: this.instance_id,
+                                    jvm_binary: this.get_jvm_binary_configuration(),
+                                });
+                                cx.notify();
                             }),
-                        ))
-                        .child(
-                            PathLabel::button_opt(&self.jvm_binary_path, "select_jvm_binary")
-                                .disabled(!jvm_binary_enabled)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.select_file(
-                                        "Elegir java.exe…",
-                                        |this, path| {
-                                            this.jvm_binary_path = path.map(|path| PathLabel::new(path, false));
-                                            this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
-                                                id: this.instance_id,
-                                                jvm_binary: this.get_jvm_binary_configuration(),
-                                            });
-                                        },
-                                        window,
-                                        cx,
-                                    );
-                                })),
                         ),
-                )
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            Checkbox::new("system_glfw")
-                                .label("Biblioteca GLFW del sistema")
-                                .checked(self.override_glfw_enabled)
-                                .on_click(cx.listener(|page, value, _, cx| {
+                    ))
+                    .child(DesignButton::new("select_jvm_binary").label("Elegir java.exe…").on_click(cx.listener(
+                        |this, _, window, cx| {
+                            this.select_file(
+                                "Elegir java.exe…",
+                                |this, path| {
+                                    if path.is_none() {
+                                        return;
+                                    }
+                                    this.jvm_binary_enabled = true;
+                                    this.jvm_binary_path = path.map(|path| PathLabel::new(path, false));
+                                    this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
+                                        id: this.instance_id,
+                                        jvm_binary: this.get_jvm_binary_configuration(),
+                                    });
+                                },
+                                window,
+                                cx,
+                            );
+                        },
+                    ))),
+            )
+            .when_some(self.jvm_binary_path.clone().filter(|_| jvm_binary_enabled), |d, path| d.child(path))
+            .when_some(self.profile_jvm_section.read(cx).last_java_text(), |d, java| {
+                d.child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(java))
+            })
+            .child(
+                DesignButton::new("advanced-settings")
+                    .label("Ajustes avanzados")
+                    .toggled(self.show_advanced)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.show_advanced = !this.show_advanced;
+                        cx.notify();
+                    })),
+            )
+            .when(self.show_advanced, |d| d.child(self.render_advanced_content(cx)));
+        content.into_any_element()
+    }
+    fn render_advanced_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let advanced = v_flex()
+            .w_full()
+            .gap(px(12.))
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap(px(12.))
+                            .child(div().flex_1().child("Biblioteca GLFW del sistema"))
+                            .child(YesNo::new("system_glfw").checked(self.override_glfw_enabled).on_click(
+                                cx.listener(|page, value, _, cx| {
                                     if page.override_glfw_enabled != *value {
                                         page.override_glfw_enabled = *value;
                                         page.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
@@ -1158,35 +1216,39 @@ impl InstanceSettingsSubpage {
                                         });
                                         cx.notify();
                                     }
-                                })),
-                        )
-                        .child(
-                            PathLabel::button_opt(&self.override_glfw_path, "select_glfw")
-                                .disabled(!self.override_glfw_enabled)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.select_file(
-                                        "Seleccionar biblioteca…",
-                                        |this, path| {
-                                            this.override_glfw_path = path.map(|path| PathLabel::new(path, false));
-                                            this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
-                                                id: this.instance_id,
-                                                system_libraries: this.get_system_libraries_configuration(),
-                                            });
-                                        },
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        ),
-                )
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            Checkbox::new("system_openal")
-                                .label("Biblioteca OpenAL del sistema")
-                                .checked(self.override_openal_enabled)
-                                .on_click(cx.listener(|page, value, _, cx| {
+                                }),
+                            )),
+                    )
+                    .child(
+                        DesignButton::new("select_glfw")
+                            .label("Seleccionar biblioteca…")
+                            .disabled(!self.override_glfw_enabled)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.select_file(
+                                    "Seleccionar biblioteca…",
+                                    |this, path| {
+                                        this.override_glfw_path = path.map(|path| PathLabel::new(path, false));
+                                        this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
+                                            id: this.instance_id,
+                                            system_libraries: this.get_system_libraries_configuration(),
+                                        });
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap(px(12.))
+                            .child(div().flex_1().child("Biblioteca OpenAL del sistema"))
+                            .child(YesNo::new("system_openal").checked(self.override_openal_enabled).on_click(
+                                cx.listener(|page, value, _, cx| {
                                     if page.override_openal_enabled != *value {
                                         page.override_openal_enabled = *value;
                                         page.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
@@ -1195,90 +1257,70 @@ impl InstanceSettingsSubpage {
                                         });
                                         cx.notify();
                                     }
-                                })),
-                        )
-                        .child(
-                            PathLabel::button_opt(&self.override_openal_path, "select_openal")
-                                .disabled(!self.override_openal_enabled)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.select_file(
-                                        "Seleccionar biblioteca…",
-                                        |this, path| {
-                                            this.override_openal_path = path.map(|path| PathLabel::new(path, false));
-                                            this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
-                                                id: this.instance_id,
-                                                system_libraries: this.get_system_libraries_configuration(),
-                                            });
-                                        },
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        ),
-                )
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            Checkbox::new("wrapper_command")
-                                .label("Comando envoltorio")
-                                .checked(wrapper_command_enabled)
-                                .on_click(cx.listener(|page, value, _, cx| {
-                                    if page.wrapper_command_enabled != *value {
-                                        page.wrapper_command_enabled = *value;
-                                        page.backend_handle.send(MessageToBackend::SetInstanceWrapperCommand {
-                                            id: page.instance_id,
-                                            wrapper_command: page.get_wrapper_command_configuration(cx),
+                                }),
+                            )),
+                    )
+                    .child(
+                        DesignButton::new("select_openal")
+                            .label("Seleccionar biblioteca…")
+                            .disabled(!self.override_openal_enabled)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.select_file(
+                                    "Seleccionar biblioteca…",
+                                    |this, path| {
+                                        this.override_openal_path = path.map(|path| PathLabel::new(path, false));
+                                        this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
+                                            id: this.instance_id,
+                                            system_libraries: this.get_system_libraries_configuration(),
                                         });
-                                        cx.notify();
-                                    }
-                                })),
-                        )
-                        .child(Textarea::new(&self.wrapper_command_input_state).disabled(!wrapper_command_enabled)),
-                );
-
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    ),
+            );
         #[cfg(target_os = "linux")]
-        let runtime_content = runtime_content.child(
+        let advanced = advanced.child(
             v_flex()
                 .gap_1()
-                .child(t::instance::linux::label())
                 .child(
-                    Checkbox::new("use_mangohud")
-                        .label("MangoHud")
-                        .checked(self.use_mangohud && self.mangohud_available)
-                        .disabled(!self.mangohud_available)
-                        .on_click(cx.listener(|page, value, _, cx| {
-                            if page.use_mangohud != *value {
-                                page.use_mangohud = *value;
-                                page.backend_handle.send(MessageToBackend::SetInstanceLinuxWrapper {
-                                    id: page.instance_id,
-                                    linux_wrapper: page.get_linux_wrapper_configuration(),
-                                });
-                                cx.notify();
-                            }
-                        })),
+                    h_flex().w_full().gap(px(12.)).child(div().flex_1().child("MangoHud")).child(
+                        YesNo::new("use_mangohud")
+                            .checked(self.use_mangohud && self.mangohud_available)
+                            .disabled(!self.mangohud_available)
+                            .on_click(cx.listener(|page, value, _, cx| {
+                                if page.use_mangohud != *value {
+                                    page.use_mangohud = *value;
+                                    page.backend_handle.send(MessageToBackend::SetInstanceLinuxWrapper {
+                                        id: page.instance_id,
+                                        linux_wrapper: page.get_linux_wrapper_configuration(),
+                                    });
+                                    cx.notify();
+                                }
+                            })),
+                    ),
                 )
                 .child(
-                    Checkbox::new("use_gamemode")
-                        .label("GameMode")
-                        .checked(self.use_gamemode && self.gamemode_available)
-                        .disabled(!self.gamemode_available)
-                        .on_click(cx.listener(|page, value, _, cx| {
-                            if page.use_gamemode != *value {
-                                page.use_gamemode = *value;
-                                page.backend_handle.send(MessageToBackend::SetInstanceLinuxWrapper {
-                                    id: page.instance_id,
-                                    linux_wrapper: page.get_linux_wrapper_configuration(),
-                                });
-                                cx.notify();
-                            }
-                        })),
+                    h_flex().w_full().gap(px(12.)).child(div().flex_1().child("GameMode")).child(
+                        YesNo::new("use_gamemode")
+                            .checked(self.use_gamemode && self.gamemode_available)
+                            .disabled(!self.gamemode_available)
+                            .on_click(cx.listener(|page, value, _, cx| {
+                                if page.use_gamemode != *value {
+                                    page.use_gamemode = *value;
+                                    page.backend_handle.send(MessageToBackend::SetInstanceLinuxWrapper {
+                                        id: page.instance_id,
+                                        linux_wrapper: page.get_linux_wrapper_configuration(),
+                                    });
+                                    cx.notify();
+                                }
+                            })),
+                    ),
                 )
-                .child(
-                    Checkbox::new("use_discrete_gpu")
-                        .label("Usar la GPU dedicada")
-                        .checked(self.use_discrete_gpu)
-                        .on_click(cx.listener(|page, value, _, cx| {
+                .child(h_flex().w_full().gap(px(12.)).child(div().flex_1().child("Usar la GPU dedicada")).child(
+                    YesNo::new("use_discrete_gpu").checked(self.use_discrete_gpu).on_click(cx.listener(
+                        |page, value, _, cx| {
                             if page.use_discrete_gpu != *value {
                                 page.use_discrete_gpu = *value;
                                 page.backend_handle.send(MessageToBackend::SetInstanceLinuxWrapper {
@@ -1287,32 +1329,39 @@ impl InstanceSettingsSubpage {
                                 });
                                 cx.notify();
                             }
-                        })),
-                )
+                        },
+                    )),
+                ))
                 .child(
-                    Checkbox::new("disable_gl_threaded_optimizations")
-                        .label("Desactivar las optimizaciones multihilo de OpenGL")
-                        .checked(self.disable_gl_threaded_optimizations)
-                        .on_click(cx.listener(|page, value, _, cx| {
-                            if page.disable_gl_threaded_optimizations != *value {
-                                page.disable_gl_threaded_optimizations = *value;
-                                page.backend_handle.send(MessageToBackend::SetInstanceLinuxWrapper {
-                                    id: page.instance_id,
-                                    linux_wrapper: page.get_linux_wrapper_configuration(),
-                                });
-                                cx.notify();
-                            }
-                        })),
+                    h_flex()
+                        .w_full()
+                        .gap(px(12.))
+                        .child(div().flex_1().child("Desactivar las optimizaciones multihilo de OpenGL"))
+                        .child(
+                            YesNo::new("disable_gl_threaded_optimizations")
+                                .checked(self.disable_gl_threaded_optimizations)
+                                .on_click(cx.listener(|page, value, _, cx| {
+                                    if page.disable_gl_threaded_optimizations != *value {
+                                        page.disable_gl_threaded_optimizations = *value;
+                                        page.backend_handle.send(MessageToBackend::SetInstanceLinuxWrapper {
+                                            id: page.instance_id,
+                                            linux_wrapper: page.get_linux_wrapper_configuration(),
+                                        });
+                                        cx.notify();
+                                    }
+                                })),
+                        ),
                 ),
         );
-
-        let runtime_content = match self.profile_jvm_section.read(cx).last_java_text() {
-            Some(java) => runtime_content.child(div().text_sm().text_color(cx.theme().muted_foreground).child(java)),
-            None => runtime_content,
-        };
-        runtime_content.into_any_element()
+        advanced
+            .when_some(self.override_glfw_path.clone().filter(|_| self.override_glfw_enabled), |d, path| {
+                d.child(path)
+            })
+            .when_some(self.override_openal_path.clone().filter(|_| self.override_openal_enabled), |d, path| {
+                d.child(path)
+            })
+            .into_any_element()
     }
-
     fn render_actions_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let launch = settings_panel("Arranque")
             .child(self.render_aot_cache_setting(cx))
@@ -1402,13 +1451,23 @@ impl InstanceSettingsSubpage {
             .and_then(|i| i.local_parent_name.clone())
             .or_else(|| self.profile_name.clone());
         if let Some(parent) = parent {
-            let caption = if let Some(sequence) = self.profile_sequence {
+            let caption = if let Some(sequence) = self
+                .profile_sequence
+                .filter(|_| self.profile_info.as_ref().is_some_and(|i| i.local_parent_name.is_none()))
+            {
                 format!("Deriva de {parent} (perfil global, revisión {sequence}).")
             } else {
                 format!("Deriva de {parent}.")
             };
             inherited = inherited.child(caption);
         }
+        inherited = inherited.child(crate::labelled(
+            "Cuenta para esta instancia",
+            Select::new(&self.account_items)
+                .placeholder("La activa")
+                .search_placeholder("Buscar...")
+                .cleanable(true),
+        ));
         let has_parent = self
             .profile_info
             .as_ref()

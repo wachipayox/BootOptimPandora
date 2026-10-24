@@ -467,7 +467,7 @@ fn cache_local_image(path: &Path, root: &Path, artwork: bool) -> Option<Value> {
     let sha = hex::encode(Sha256::digest(&encoded));
     let dir = root.join("sha256").join(&sha[..2]);
     fs::create_dir_all(&dir).ok()?;
-    fs::write(dir.join(&sha), &encoded).ok()?;
+    crate::fs::write_safe(&dir.join(&sha), &encoded).ok()?;
     Some(serde_json::json!({"sha256":sha,"size":encoded.len(),"media_type":"image/png"}))
 }
 

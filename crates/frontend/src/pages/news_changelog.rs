@@ -4,8 +4,18 @@ use gpui_component::{WindowExt, scroll::ScrollableElement, v_flex};
 use schema::changelog::{ChangelogQuery, ProfileChangelog};
 
 pub fn open(data: &DataEntities, profile_id: String, revision_id: String, window: &mut Window, cx: &mut App) {
+    open_revision(data.backend_handle.clone(), profile_id, revision_id, window, cx);
+}
+
+pub fn open_revision(
+    backend: bridge::handle::BackendHandle,
+    profile_id: String,
+    revision_id: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let (send, receive) = tokio::sync::oneshot::channel();
-    data.backend_handle.send(bridge::message::MessageToBackend::GetProfileChangelog {
+    backend.send(bridge::message::MessageToBackend::GetProfileChangelog {
         profile_id,
         query: ChangelogQuery {
             revision: Some(revision_id),

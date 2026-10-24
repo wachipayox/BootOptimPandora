@@ -307,6 +307,42 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
             },
             |window, cx| {
                 let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").ok();
+                if let Some((name, subpage)) = capture_page.as_deref().and_then(capture_instance_target) {
+                    InterfaceConfig::get_mut(cx).instance_subpage = subpage;
+                    InterfaceConfig::get_mut(cx).main_page = ui::PageType::InstancePage { name: name.into() };
+                    if capture_page.as_deref().is_some_and(|p| p.starts_with("instance-live:")) {
+                        if let Some(id) = crate::entity::instance::InstanceEntries::find_id_by_name(
+                            &data.instances,
+                            &SharedString::from(name.to_owned()),
+                            cx,
+                        ) {
+                            let (send, receive) = tokio::sync::mpsc::unbounded_channel();
+                            let output = cx.new(|cx| crate::game_output::GameOutput::new(receive, cx));
+                            let view = cx.new(|cx| crate::game_output::GameOutputRoot::new(output, window, cx));
+                            if let Some(instance) = data.instances.read(cx).entries.get(&id).cloned() {
+                                instance.update(cx, |instance, cx| {
+                                    instance.live_game_output = Some(view);
+                                    cx.notify();
+                                });
+                            }
+                            for index in 0..48 {
+                                let _ = send.send(bridge::message::GameOutputMsg {
+                                    time: 0,
+                                    level: if index % 9 == 0 {
+                                        bridge::game_output::GameOutputLogLevel::Warn
+                                    } else {
+                                        bridge::game_output::GameOutputLogLevel::Info
+                                    },
+                                    text: Arc::from([Arc::<str>::from(format!(
+                                        "Registro sintético del agente 274 · {index}"
+                                    ))]),
+                                });
+                            }
+                            drop(send);
+                            log::info!("instance-live-fixture-ready pid={}", std::process::id());
+                        }
+                    }
+                }
                 match capture_page.as_deref() {
                     Some("instances" | "home-menu" | "home-news") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances
@@ -401,6 +437,41 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                             cx,
                         ) {
                             crate::root::capture_inherited_update(id, name, &capture_data, window, cx);
+                        }
+                    });
+                }
+                if let Some(page) = capture_page
+                    .as_deref()
+                    .filter(|page| page.starts_with("derived:") || page.starts_with("duplicate:"))
+                {
+                    let branch = page.starts_with("derived:");
+                    let name: SharedString = page.split_once(':').unwrap().1.to_owned().into();
+                    let capture_data = data.clone();
+                    window.on_next_frame(move |window, cx| {
+                        if let Some(id) = crate::entity::instance::InstanceEntries::find_id_by_name(
+                            &capture_data.instances,
+                            &name,
+                            cx,
+                        ) {
+                            if branch {
+                                crate::modals::duplicate_instance::open_derived_instance(
+                                    id,
+                                    name,
+                                    capture_data.instances.clone(),
+                                    capture_data.backend_handle.clone(),
+                                    window,
+                                    cx,
+                                );
+                            } else {
+                                crate::modals::duplicate_instance::open_duplicate_instance(
+                                    id,
+                                    name,
+                                    capture_data.instances.clone(),
+                                    capture_data.backend_handle.clone(),
+                                    window,
+                                    cx,
+                                );
+                            }
                         }
                     });
                 }
@@ -517,4 +588,25 @@ pub fn format_downloads(downloads: u64) -> SharedString {
         t::instance::content::downloads::n(downloads)
     }
     .into()
+}
+
+/// Additional capture routes only select presentation on an explicitly owned CLI fixture.
+fn capture_instance_target(page: &str) -> Option<(&str, pages::instance::instance_page::InstanceSubpageType)> {
+    use pages::instance::instance_page::InstanceSubpageType as Tab;
+    let (route, name) = page.split_once(':')?;
+    if !name.starts_with("agente-274-") {
+        return None;
+    }
+    let tab = match route {
+        "instance-mods" => Tab::Mods,
+        "instance-resources" => Tab::ResourcePacks,
+        "instance-shaders" => Tab::Shaders,
+        "instance-logs" | "instance-crashes" => Tab::Logs,
+        "instance-overwrites" => Tab::Overwrites,
+        "instance-changelog" => Tab::Changelog,
+        "instance-settings" | "derived" | "duplicate" => Tab::Settings,
+        "instance-live" => Tab::LiveGameOutput,
+        _ => return None,
+    };
+    Some((name, tab))
 }

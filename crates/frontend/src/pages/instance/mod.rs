@@ -9,3 +9,7 @@ pub mod settings_subpage;
 mod memory_section;
 
 mod artwork_section;
+
+mod changelog_subpage;
+
+pub(crate) mod update_changelog;

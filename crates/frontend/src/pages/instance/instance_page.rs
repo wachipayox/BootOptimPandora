@@ -26,6 +26,7 @@ pub struct InstancePage {
     pub instance: Entity<InstanceEntry>,
     subpage: InstanceSubpage,
     overwrites_subpage: Option<Entity<InstanceOverwritesSubpage>>,
+    has_global_history: bool,
 }
 impl InstancePage {
     pub fn new(instance_id: InstanceID, data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -43,7 +44,24 @@ impl InstancePage {
             InstanceSubpage::Overwrites(p) => Some(p.clone()),
             _ => None,
         };
+        let (send, receive) = tokio::sync::oneshot::channel();
+        data.backend_handle.send(bridge::message::MessageToBackend::GetInstanceProfileInfo {
+            id: instance_id,
+            channel: send,
+        });
+        cx.spawn(async move |this, cx| {
+            let global = matches!(receive.await, Ok(Ok(info)) if info.global_profile_id.is_some());
+            let _ = this.update(cx, |this, cx| {
+                this.has_global_history = global;
+                if !global && InterfaceConfig::get(cx).instance_subpage == InstanceSubpageType::Changelog {
+                    InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Mods;
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         Self {
+            has_global_history: false,
             data: data.clone(),
             instance,
             subpage,
@@ -100,6 +118,7 @@ impl InstancePage {
                 selected == InstanceSubpageType::Overwrites,
             ),
             (3, "Registros", InstanceSubpageType::Logs, logs),
+            (5, "Changelog", InstanceSubpageType::Changelog, selected == InstanceSubpageType::Changelog),
             (
                 4,
                 "Ajustes de la instancia",
@@ -107,6 +126,9 @@ impl InstancePage {
                 selected == InstanceSubpageType::Settings,
             ),
         ] {
+            if target == InstanceSubpageType::Changelog && !self.has_global_history {
+                continue;
+            }
             let name = name.clone();
             header = header.child(design::tab(("instance-tab", ix as usize), label, active).on_click(cx.listener(
                 move |_, _, w, c| {
@@ -222,6 +244,7 @@ pub enum InstanceSubpageType {
     ResourcePacks,
     Shaders,
     Overwrites,
+    Changelog,
     Settings,
     LiveGameOutput,
 }
@@ -256,6 +279,14 @@ impl InstanceSubpageType {
             InstanceSubpageType::Overwrites => InstanceSubpage::Overwrites(
                 cx.new(|cx| InstanceOverwritesSubpage::new(instance, backend_handle, window, cx)),
             ),
+            InstanceSubpageType::Changelog => InstanceSubpage::Changelog(cx.new(|cx| {
+                super::changelog_subpage::InstanceChangelogSubpage::new(
+                    instance.read(cx).id,
+                    backend_handle,
+                    window,
+                    cx,
+                )
+            })),
             InstanceSubpageType::Settings => InstanceSubpage::Settings(
                 cx.new(|cx| InstanceSettingsSubpage::new(instance, data, backend_handle, window, cx)),
             ),
@@ -279,6 +310,7 @@ pub enum InstanceSubpage {
     Shaders(Entity<InstanceContentSubpage>),
     Overwrites(Entity<InstanceOverwritesSubpage>),
     Settings(Entity<InstanceSettingsSubpage>),
+    Changelog(Entity<super::changelog_subpage::InstanceChangelogSubpage>),
     LiveGameOutput(Entity<GameOutputRoot>),
 }
 
@@ -292,6 +324,7 @@ impl InstanceSubpage {
             InstanceSubpage::Shaders(_) => InstanceSubpageType::Shaders,
             InstanceSubpage::Overwrites(_) => InstanceSubpageType::Overwrites,
             InstanceSubpage::Settings(_) => InstanceSubpageType::Settings,
+            InstanceSubpage::Changelog(_) => InstanceSubpageType::Changelog,
             InstanceSubpage::LiveGameOutput(_) => InstanceSubpageType::LiveGameOutput,
         }
     }
@@ -305,6 +338,7 @@ impl InstanceSubpage {
             Self::Shaders(entity) => entity.into_any_element(),
             Self::Overwrites(entity) => entity.into_any_element(),
             Self::Settings(entity) => entity.into_any_element(),
+            Self::Changelog(entity) => entity.into_any_element(),
             Self::LiveGameOutput(entity) => entity.into_any_element(),
         }
     }

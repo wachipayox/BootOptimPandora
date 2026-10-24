@@ -310,6 +310,32 @@ impl BackendState {
             }
         }
     }
+    pub async fn check_inherited_ui_updates(
+        &self,
+        id: InstanceID,
+    ) -> Result<bridge::message::InheritedUpdateCheck, String> {
+        let report = self.check_inherited_update_report(id).await?;
+        let global = report.pending.iter().find_map(|update| {
+            if let crate::cli_update_gate::PendingUpdateKind::GlobalRevision {
+                profile,
+                current,
+                available,
+            } = &update.kind
+            {
+                Some(bridge::message::InheritedGlobalUpdate {
+                    profile_id: profile.clone(),
+                    current_revision: current.clone(),
+                    available_revision: available.clone(),
+                })
+            } else {
+                None
+            }
+        });
+        Ok(bridge::message::InheritedUpdateCheck {
+            pending_names: report.pending.into_iter().map(|update| update.label).collect(),
+            global,
+        })
+    }
     pub async fn check_inherited_updates(&self, id: InstanceID) -> Result<Vec<String>, String> {
         // The interactive dialog only needs names; global check failures stay silent (fail open).
         Ok(self
@@ -722,10 +748,9 @@ mod tests {
             )
         );
         assert!(
-            delta
-                .changes
-                .iter()
-                .any(|change| matches!(change, ProfileDeltaChange::Upsert(entry) if entry.path == "config/new-file.txt"))
+            delta.changes.iter().any(
+                |change| matches!(change, ProfileDeltaChange::Upsert(entry) if entry.path == "config/new-file.txt")
+            )
         );
         assert!(delta.changes.iter().any(|change| matches!(change, ProfileDeltaChange::Upsert(entry) if entry.path == "resourcepacks/pack/pack.mcmeta")));
     }

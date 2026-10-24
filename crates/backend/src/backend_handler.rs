@@ -1823,7 +1823,7 @@ impl BackendState {
             MessageToBackend::CheckInheritedUpdates { id, channel } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
-                    let result = backend.check_inherited_updates(id).await;
+                    let result = backend.check_inherited_ui_updates(id).await;
                     let _ = channel.send(result);
                 });
             },

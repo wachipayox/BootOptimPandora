@@ -6,7 +6,7 @@ fn entry(path: &Path, crash: bool, launcher: bool) -> Option<LogFileInfo> {
     if !metadata.is_file() {
         return None;
     }
-    let modified = metadata.modified().unwrap_or(UNIX_EPOCH).max(metadata.created().unwrap_or(UNIX_EPOCH));
+    let modified = metadata.modified().or_else(|_| metadata.created()).unwrap_or(UNIX_EPOCH);
     Some(LogFileInfo {
         path: Arc::from(path),
         modified_unix_ms: modified.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(u64::MAX as u128)

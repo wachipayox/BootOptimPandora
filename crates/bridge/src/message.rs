@@ -378,7 +378,7 @@ pub enum MessageToBackend {
     },
     CheckInheritedUpdates {
         id: InstanceID,
-        channel: tokio::sync::oneshot::Sender<Result<Vec<String>, String>>,
+        channel: tokio::sync::oneshot::Sender<Result<InheritedUpdateCheck, String>>,
     },
     UpdateInheritedChain {
         id: InstanceID,
@@ -970,4 +970,22 @@ pub enum CliInstanceCommand {
 pub struct CliStartOutcome {
     pub lines: Vec<String>,
     pub exit_code: u8,
+}
+
+/// Display metadata from the existing signed update check. Never installation authority.
+#[derive(Clone, Debug, Default)]
+pub struct InheritedUpdateCheck {
+    pub pending_names: Vec<String>,
+    pub global: Option<InheritedGlobalUpdate>,
+}
+impl InheritedUpdateCheck {
+    pub fn is_empty(&self) -> bool {
+        self.pending_names.is_empty()
+    }
+}
+#[derive(Clone, Debug)]
+pub struct InheritedGlobalUpdate {
+    pub profile_id: String,
+    pub current_revision: String,
+    pub available_revision: String,
 }

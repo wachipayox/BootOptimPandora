@@ -80,6 +80,7 @@ impl InstanceMemorySection {
                     }
                     this.sync_field(w, c);
                     c.notify();
+                    log::info!("instance-memory-ready pid={}", std::process::id());
                 });
             }
         })

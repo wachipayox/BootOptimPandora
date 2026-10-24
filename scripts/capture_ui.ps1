@@ -8,6 +8,7 @@ param(
     [switch]$Components,
     [switch]$HomeScreens,
     [switch]$NewsScreens,
+    [switch]$InstanceScreens,
     [string]$NewsFixture,
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
@@ -157,6 +158,12 @@ try {
             $screens += @{ page=$newsPage; file="$newsPage.png"; label='Native News screen/state' }
         }
     }
+    if ($InstanceScreens) {
+        if (-not ($TestProfile -or $PortableDirectory) -or -not $InstanceName.StartsWith('agente-274-')) { throw 'Instance screenshots require an owned agent-274 CLI fixture.' }
+        foreach ($instanceRoute in @('instance-mods','instance-resources','instance-shaders','instance-overwrites','instance-logs','instance-crashes','instance-live','instance-changelog','instance-settings','derived','duplicate')) {
+            $screens += @{page="$($instanceRoute):$InstanceName";file="$instanceRoute.png";label='Owned instance screen; live output is synthetic and never starts Minecraft'}
+        }
+    }
     if ($Pages) { $screens = @($Pages | ForEach-Object { @{ page=$_; file=(($_ -replace ':','-') + '.png'); label='Explicit native capture route' } }) }
     if ($Components) {
         $screens += @{ page = 'components'; file = 'components.png'; label = 'Wachiland base controls' }
@@ -213,6 +220,21 @@ try {
             $deadline = (Get-Date).AddSeconds(120)
             while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'News changelog did not settle before capture.' }
+        }
+        $instanceReadyMarkers = @()
+        if ($screen.page -match '^instance-(mods|resources|shaders):') { $instanceReadyMarkers=@('instance-content-ready','instance-content-origin-ready') }
+        if ($screen.page -match '^(instance-settings|derived|duplicate):') { $instanceReadyMarkers=@('instance-settings-profile-ready','instance-settings-group-ready','instance-artwork-ready','instance-memory-ready') }
+        if ($screen.page -match '^(derived|duplicate):') { $instanceReadyMarkers += 'instance-derived-ready' }
+        if ($screen.page -match '^instance-(logs|crashes):') { $instanceReadyMarkers=@('instance-log-ready') }
+        if ($screen.page -match '^instance-changelog:') { $instanceReadyMarkers=@('instance-changelog-ready','instance-stone-ready') }
+        if ($screen.page -match '^instance-live:') { $instanceReadyMarkers=@('instance-live-fixture-ready') }
+        if ($screen.page.StartsWith('update:')) { $instanceReadyMarkers=@('instance-update-changelog-ready') }
+        foreach ($instanceMarker in $instanceReadyMarkers) {
+            $ready="$instanceMarker pid=$($proc.Id)"
+            $log=Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $deadline=(Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { if ($proc.HasExited) { throw "Capture process exited before $instanceMarker" };Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw "Instance capture did not settle: $instanceMarker" }
         }
         Save-Window (Join-Path $outputPath $screen.file) $proc.MainWindowHandle $proc.Id
         if ($screen.page.StartsWith('news-article')) {

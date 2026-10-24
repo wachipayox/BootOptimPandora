@@ -52,7 +52,11 @@ impl InstanceLogsSubpage {
             log_content: None,
             loaded: false,
             files: Vec::new(),
-            filter: LogFilter::All,
+            filter: if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page.starts_with("instance-crashes:")) {
+                LogFilter::Crashes
+            } else {
+                LogFilter::All
+            },
             clean_old_logs_text: None,
             last_selected_path: None,
             _read_log_task: None,
@@ -100,13 +104,19 @@ impl InstanceLogsSubpage {
         });
     }
     fn select_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let selected = self.files.iter().find(|f| self.filter.matches(f)).map(|f| f.path.clone());
+        let selected = self
+            .files
+            .iter()
+            .filter(|f| self.filter.matches(f))
+            .min_by_key(|f| f.launcher)
+            .map(|f| f.path.clone());
         if let Some(path) = selected {
             self.select_file(path, window, cx);
         } else {
             self.last_selected_path = None;
             self.log_content = None;
             self._read_log_task = None;
+            log::info!("instance-log-ready pid={}", std::process::id());
         }
     }
     fn select_file(&mut self, path: Arc<Path>, window: &mut Window, cx: &mut Context<Self>) {
@@ -127,6 +137,7 @@ impl InstanceLogsSubpage {
             let _ = cx.update_entity(&reader, |text, c| {
                 text.shrink_to_fit();
                 c.notify();
+                log::info!("instance-log-ready pid={}", std::process::id());
             });
         }));
         self.backend_handle.send(MessageToBackend::ReadLog {
