@@ -17,7 +17,7 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, IndexPath, InteractiveElementExt, Sizable,
+    ActiveTheme, Disableable, IndexPath, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
     list::{ListDelegate, ListItem, ListState},

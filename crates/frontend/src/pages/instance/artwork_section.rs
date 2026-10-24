@@ -119,14 +119,14 @@ impl Render for InstanceArtworkSection {
                     .gap(px(8.))
                     .child(
                         design::DesignButton::new("choose-artwork")
-                            .label("Elegir imagenâ€¦")
+                            .label("Elegir imagen…")
                             .disabled(self.pending)
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(|_this, _, _, cx| {
                                 let selected = cx.prompt_for_paths(PathPromptOptions {
                                     files: true,
                                     directories: false,
                                     multiple: false,
-                                    prompt: Some("Elegir imagenâ€¦".into()),
+                                    prompt: Some("Elegir imagen…".into()),
                                 });
                                 cx.spawn(async move |this, cx| match selected.await {
                                     Ok(Ok(Some(paths))) => {

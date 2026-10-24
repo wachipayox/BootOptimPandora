@@ -464,7 +464,7 @@ pub fn dialog(dialog: gpui_component::dialog::Dialog) -> gpui_component::dialog:
         .decoration(div().absolute().top_0().left_0().w(px(44.)).h(px(2.)).bg(rgb(theme::ACCENT_TEXT)))
 }
 
-/// The caller supplies the cached, blurred crop of the artwork behind this control.
+/// A supplied texture represents an explicit surface behind this control; otherwise use the launcher backdrop.
 /// Keeping texture preparation outside RenderOnce avoids decoding on each frame.
 #[derive(IntoElement)]
 pub struct PlayButton {
@@ -521,7 +521,12 @@ impl Disableable for PlayButton {
     }
 }
 impl RenderOnce for PlayButton {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let backdrop = if !self.disabled && self.artwork.is_none() {
+            Some(crate::background::glass(window, cx))
+        } else {
+            None
+        };
         let disabled = self.disabled;
         let progress = self.progress;
         div()
@@ -530,9 +535,10 @@ impl RenderOnce for PlayButton {
             .h(px(theme::PLAY_H))
             .when(disabled, |d| d.bg(rgb(theme::DISABLED_FILL)))
             .when(!disabled, |d| {
-                d.when_some(self.artwork, |d, image| {
-                    d.child(img(image).absolute().size_full().object_fit(ObjectFit::Cover))
-                })
+                d.when_some(backdrop, |d, backdrop| d.child(backdrop))
+                    .when_some(self.artwork, |d, image| {
+                        d.child(img(image).absolute().size_full().object_fit(ObjectFit::Cover))
+                    })
             })
             .child(
                 DesignButton::new(self.id)

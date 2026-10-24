@@ -9,7 +9,7 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable, Icon, IndexPath, Sizable, WindowExt,
+    ActiveTheme as _, Disableable, Icon, IndexPath, WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
@@ -948,14 +948,14 @@ impl InstanceSettingsSubpage {
         let auto_disabled = setting.and_then(|setting| setting.auto_disabled_reason).filter(|_| !enabled);
         v_flex().gap(px(12.))
             .child(h_flex().w_full().justify_between().gap(px(12.))
-                .child(v_flex().flex_1().gap(px(3.)).child("Optimizar arranque (cachÃ© AOT de Java 25)")
-                    .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child("4â€“9 s mÃ¡s rÃ¡pido hasta el menÃº; usa unos 300 MB")))
+                .child(v_flex().flex_1().gap(px(3.)).child("Optimizar arranque (caché AOT de Java 25)")
+                    .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child("4–9 s más rápido hasta el menú; usa unos 300 MB")))
                 .child(YesNo::new("aot-cache").checked(enabled).on_click(cx.listener(|this,value:&bool,_,c|{
                     this.backend_handle.send(MessageToBackend::SetInstanceAotCache{id:this.instance_id,enabled:*value});c.notify();
                 }))))
             .children(enabled.then(||self.render_aot_cache_state(status,summary,cx)))
             .children(auto_disabled.map(|reason|div().text_size(px(12.)).line_height(px(18.)).text_color(rgb(theme::INK_MUTED))
-                .child(format!("Desactivada automÃ¡ticamente porque Java ha rechazado la cachÃ© ({reason}). Puedes volver a activarla."))))
+                .child(format!("Desactivada automáticamente porque Java ha rechazado la caché ({reason}). Puedes volver a activarla."))))
             .into_any_element()
     }
 
@@ -968,22 +968,21 @@ impl InstanceSettingsSubpage {
     ) -> AnyElement {
         let theme = cx.theme();
         let (dot, text) = match (status, summary) {
-            (InstanceStatus::Optimizing, _) => (theme.info, "Creando la cachÃ© de arranque".to_owned()),
+            (InstanceStatus::Optimizing, _) => (theme.info, "Creando la caché de arranque".to_owned()),
             (_, AotCacheSummary::Ready { bytes }) => (
                 theme.success,
-                format!("Lista: los arranques son mÃ¡s rÃ¡pidos. Usa {} MB.", bytes.div_ceil(1_000_000)),
+                format!("Lista: los arranques son más rápidos. Usa {} MB.", bytes.div_ceil(1_000_000)),
             ),
             (_, AotCacheSummary::Training) => (
                 theme.info,
-                "PreparÃ¡ndose durante esta partida. Cierra el juego normalmente para terminar.".to_owned(),
+                "Preparándose durante esta partida. Cierra el juego normalmente para terminar.".to_owned(),
             ),
             (_, AotCacheSummary::Waiting) => {
                 (theme.info, "Casi lista: el launcher la termina cuando quede libre.".to_owned())
             },
-            (_, AotCacheSummary::NotBuilt | AotCacheSummary::Off) => (
-                theme.muted_foreground,
-                "TodavÃ­a no estÃ¡ lista: la prÃ³xima partida la prepara.".to_owned(),
-            ),
+            (_, AotCacheSummary::NotBuilt | AotCacheSummary::Off) => {
+                (theme.muted_foreground, "Todavía no está lista: la próxima partida la prepara.".to_owned())
+            },
         };
         let can_delete = matches!(summary, AotCacheSummary::Ready { .. }) && status == InstanceStatus::NotRunning;
         let instance_id = self.instance_id;
@@ -1001,11 +1000,13 @@ impl InstanceSettingsSubpage {
             .child(div().flex_none().size_2().rounded_full().bg(dot))
             .child(div().child(text))
             .when(can_delete, |row| {
-                row.child(DesignButton::new("aot_cache_delete").label("Borrar cachÃ©").on_click(
-                    move |_, window, cx| {
-                        crate::modals::aot_optimization::confirm_delete(instance_id, &data, window, cx)
-                    },
-                ))
+                row.child(
+                    DesignButton::new("aot_cache_delete")
+                        .label("Borrar caché")
+                        .on_click(move |_, window, cx| {
+                            crate::modals::aot_optimization::confirm_delete(instance_id, &data, window, cx)
+                        }),
+                )
             })
             .into_any_element()
     }

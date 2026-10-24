@@ -23,6 +23,11 @@ pub struct InterfaceConfig {
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub language: t::Language,
 
+    #[serde(default)]
+    pub app_background: crate::background::AppBackground,
+    #[serde(default)]
+    pub last_played_artwork: Option<std::path::PathBuf>,
+
     // Theme
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub active_theme: Option<SharedString>,
@@ -298,6 +303,8 @@ impl Default for InterfaceConfig {
     fn default() -> Self {
         Self {
             language: Default::default(),
+            app_background: Default::default(),
+            last_played_artwork: None,
             active_theme: Default::default(),
             font_family: None,
             font_size: None,

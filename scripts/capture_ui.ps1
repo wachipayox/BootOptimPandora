@@ -182,6 +182,12 @@ try {
             $deadline = (Get-Date).AddSeconds(120)
             while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Home presentation did not settle before capture.' }
+            if ($screen.page -in @('instances','accounts','home-menu')) {
+                $ready = "glass-ready pid=$($proc.Id)"
+                $deadline = (Get-Date).AddSeconds(60)
+                while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+                if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Glass backdrop did not settle before capture.' }
+            }
         }
         if ($screen.page -eq 'home-news' -or $screen.page.StartsWith('news-')) {
             $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
