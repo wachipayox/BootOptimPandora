@@ -31,6 +31,8 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                             choices = choices.child(design::chip(("theme-choice", index), label, index == 0).on_click(
                                 move |_, window, cx| {
                                     if index == 0 {
+                                        InterfaceConfig::get_mut(cx).set_active_theme("Wachiland Dark".into());
+                                        InterfaceConfig::apply_theme(cx, true);
                                         return;
                                     }
                                     window.open_dialog(cx, |dialog, _, _| {

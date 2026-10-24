@@ -63,12 +63,10 @@ impl Render for SkinImportDialog {
                         .border_b_1()
                         .border_color(rgba(0xffffff0b))
                         .child(source.label.clone())
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(rgb(theme::INK_MUTED))
-                                .child(format!("{} aspectos · {} ya importados", source.found, source.repeated)),
-                        ),
+                        .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(format!(
+                            "{} aspectos · {} repetidos no se importan",
+                            source.found, source.repeated
+                        ))),
                 );
             }
             body = body.child(

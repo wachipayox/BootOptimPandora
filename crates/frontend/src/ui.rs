@@ -122,6 +122,9 @@ impl LauncherPage {
         if let LauncherPage::LauncherSettings(page) = &self {
             return div().size_full().child(page.clone()).into_any_element();
         }
+        if let LauncherPage::Skins(page) = &self {
+            return div().size_full().child(page.clone()).into_any_element();
+        }
         fn process(entity: Entity<impl Page>, window: &mut Window, cx: &mut App) -> (bool, AnyElement, AnyElement) {
             entity.update(cx, |page, cx| {
                 (

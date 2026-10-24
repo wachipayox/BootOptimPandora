@@ -12,12 +12,7 @@ use gpui_component::{
 use schema::backend_config::{BackendConfig, DistributionConfig, LauncherChannel, ProxyConfig};
 use schema::ignored_profile_paths::IgnoredProfilePaths;
 
-use crate::{
-    component::{design, generic_title_bar::WindowControl},
-    entity::DataEntities,
-    icon::PandoraIcon,
-    interface_config::InterfaceConfig,
-};
+use crate::{component::design, entity::DataEntities, icon::PandoraIcon, interface_config::InterfaceConfig};
 
 mod appearance;
 mod distribution;
@@ -170,25 +165,7 @@ impl SettingsRoot {
 
 impl Render for SettingsRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut header = h_flex()
-            .h(px(48.))
-            .flex_shrink_0()
-            .px(px(20.))
-            .border_b_1()
-            .border_color(rgba(0xffffff0b))
-            .window_control_area(WindowControlArea::Drag)
-            .child(design::eyebrow("LAUNCHER"))
-            .child(div().flex_1());
-        if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
-            header = header
-                .child(WindowControl::Minimize)
-                .child(if window.is_maximized() {
-                    WindowControl::Restore
-                } else {
-                    WindowControl::Maximize
-                })
-                .child(WindowControl::Close);
-        }
+        let header = design::page_header("LAUNCHER", window);
         let mut tabs = h_flex().w_full().flex_shrink_0().px(px(20.)).border_b_1().border_color(rgba(0xffffff0b));
         for index in 0..self.settings.pages.len() {
             if self.settings.searched_pages.as_ref().is_some_and(|pages| !pages.contains(&index)) {
@@ -726,13 +703,36 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
     #[cfg(windows)]
     pages.push(windows_security::create_page());
 
+    pages.push(SettingPage {
+        title: || "Acerca de",
+        groups: vec![SettingGroup {
+            title: Some(|| "Acerca de"),
+            items: vec![SettingItem {
+                title: || "Versión",
+                widget: SettingItemWidget::Any(Rc::new(|_, _| {
+                    let version = option_env!("PANDORA_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+                    let revision = option_env!("GIT_REVISION");
+                    div()
+                        .text_size(px(13.))
+                        .child(revision.map(|sha| format!("{version} ({sha})")).unwrap_or_else(|| version.into()))
+                        .into_any_element()
+                })),
+                ..Default::default()
+            }]
+            .into(),
+            searched_items: None,
+        }]
+        .into(),
+        searched_groups: None,
+    });
     let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").unwrap_or_default();
     let selected_page = match capture_page.as_str() {
         "appearance" | "launcher-appearance" => 1,
         "launcher-network" => 2,
         "launcher-distribution" => 3,
         "launcher-ignored" => 4,
-        "launcher-windows" => pages.len().saturating_sub(1),
+        "launcher-windows" => 5.min(pages.len() - 1),
+        "launcher-about" => pages.len() - 1,
         _ => 0,
     };
     Settings {

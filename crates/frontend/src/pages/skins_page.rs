@@ -434,7 +434,25 @@ impl SkinsPage {
                                         InterfaceConfig::get_mut(cx).collapse_capes_in_skins_page = true;
                                     }),
                             )
-                            .child(h_flex().w_full().mb_4().gap_2().flex_wrap().children(cape_buttons))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .mb_4()
+                                    .gap_2()
+                                    .flex_wrap()
+                                    .child(
+                                        design::DesignButton::new("no-cape")
+                                            .label("Sin capa")
+                                            .toggled(self.selected_cape.is_none())
+                                            .w(px(105.))
+                                            .h(px(112.))
+                                            .on_click(cx.listener(|page, _, _, cx| {
+                                                page.select_no_cape(cx);
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .children(cape_buttons),
+                            )
                     }
                 }
             }
@@ -773,7 +791,9 @@ impl SkinsPage {
                         .id(("select-skin", i))
                         .rounded(radius)
                         .text_base()
-                        .p(padding)
+                        .px(padding)
+                        .pt(px(10.))
+                        .pb(px(12.))
                         .w(px(105.))
                         .h(px(142.))
                         .flex_shrink_0()
@@ -784,11 +804,19 @@ impl SkinsPage {
                         .justify_center()
                         .when_else(
                             selected,
-                            |this| this.bg(list_active).border_1().border_color(list_active_border),
+                            |this| {
+                                this.bg(linear_gradient(
+                                    180.,
+                                    linear_color_stop(rgba(0x5bcef51f), 0.),
+                                    linear_color_stop(rgba(0x5bcef506), 1.),
+                                ))
+                                .border_t_2()
+                                .border_color(list_active_border)
+                            },
                             |this| this.bg(secondary).hover(|style| style.bg(secondary_hover)),
                         )
-                        .child(div().w_full().truncate().text_center().text_size(px(11.)).child(skin_name))
                         .child(div().w_full().flex_1().min_h_0().overflow_hidden().child(skin_child))
+                        .child(div().w_full().truncate().text_center().text_size(px(11.)).child(skin_name))
                         .when_else(
                             active,
                             |this| this.child(Icon::new(PandoraIcon::Flag).absolute().right(padding).bottom(padding)),
@@ -888,7 +916,15 @@ impl Render for SkinsPage {
 
         let (controls, active_skin, active_skin_variant, cape_library) = self.render_account_panel(window, cx);
 
-        v_flex()
+        let account = self
+            .data
+            .accounts
+            .read(cx)
+            .selected_account
+            .as_ref()
+            .map(|account| account.username(InterfaceConfig::get(cx).hide_usernames).to_uppercase());
+        let heading = account.map(|name| format!("ASPECTO · {name}")).unwrap_or_else(|| "ASPECTO".into());
+        let body = v_flex()
             .size_full()
             .min_h_0()
             .p(px(24.))
@@ -911,6 +947,10 @@ impl Render for SkinsPage {
                             .child(self.render_skin_library(active_skin.clone(), active_skin_variant, cx)),
                     ),
             )
-            .overflow_hidden()
+            .overflow_hidden();
+        v_flex()
+            .size_full()
+            .child(design::page_header(heading, window))
+            .child(div().flex_1().min_h_0().child(body))
     }
 }

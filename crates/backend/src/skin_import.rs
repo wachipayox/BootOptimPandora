@@ -132,8 +132,27 @@ pub(crate) fn discover(library: &Path) -> Result<SkinImportPlan, String> {
     sources.push(("Prism Launcher".into(), prism));
     Ok(plan(library, sources))
 }
+fn existing_pixels(library: &Path) -> HashSet<[u8; 32]> {
+    let mut seen = HashSet::new();
+    let Ok(entries) = std::fs::read_dir(library) else {
+        return seen;
+    };
+    for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_file())
+            || !entry.metadata().is_ok_and(|meta| meta.len() <= MAX_PNG)
+        {
+            continue;
+        }
+        if let Ok(bytes) = std::fs::read(entry.path())
+            && let Some(hash) = pixels(&bytes)
+        {
+            seen.insert(hash);
+        }
+    }
+    seen
+}
 fn plan(library: &Path, sources: Vec<(String, Vec<(String, Vec<u8>)>)>) -> SkinImportPlan {
-    let mut seen: HashSet<_> = pngs(library).iter().filter_map(|(_, bytes)| pixels(bytes)).collect();
+    let mut seen = existing_pixels(library);
     let mut plan = SkinImportPlan::default();
     for (label, candidates) in sources {
         if candidates.is_empty() {
@@ -158,7 +177,7 @@ fn plan(library: &Path, sources: Vec<(String, Vec<(String, Vec<u8>)>)>) -> SkinI
 }
 pub(crate) fn import(library: &Path, plan: SkinImportPlan) -> Result<usize, String> {
     std::fs::create_dir_all(library).map_err(|e| e.to_string())?;
-    let mut seen: HashSet<_> = pngs(library).iter().filter_map(|(_, bytes)| pixels(bytes)).collect();
+    let mut seen = existing_pixels(library);
     let mut added = 0;
     for candidate in plan.candidates {
         let Some(hash) = pixels(&candidate.bytes) else {

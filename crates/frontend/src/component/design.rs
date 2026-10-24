@@ -715,3 +715,29 @@ fn notched_fill(fill: Background) -> Div {
         .size_full(),
     )
 }
+
+/// Main-shell heading shared by launcher destinations.
+pub fn page_header(label: impl Into<SharedString>, window: &Window) -> Div {
+    use super::generic_title_bar::WindowControl;
+    let mut header = h_flex()
+        .h(px(48.))
+        .flex_shrink_0()
+        .px(px(20.))
+        .bg(rgba(0x0b0b0ce6))
+        .border_b_1()
+        .border_color(rgba(0xffffff0b))
+        .window_control_area(WindowControlArea::Drag)
+        .child(eyebrow(label))
+        .child(div().flex_1());
+    if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
+        header = header
+            .child(WindowControl::Minimize)
+            .child(if window.is_maximized() {
+                WindowControl::Restore
+            } else {
+                WindowControl::Maximize
+            })
+            .child(WindowControl::Close);
+    }
+    header
+}
