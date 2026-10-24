@@ -11,20 +11,20 @@ use crate::{
 
 pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
     SettingPage {
-        title: t::settings::general,
+        title: || "General",
         groups: vec![
             SettingGroup {
                 title: None,
                 items: vec![
                     SettingItem {
-                        title: t::settings::general::general::language,
-                        description: t::settings::general::general::language,
+                        title: || "Idioma",
+                        description: || "Idioma",
                         widget: create_language_dropdown(window, cx),
                         ..Default::default()
                     },
                     SettingItem {
-                        title: t::settings::general::general::quick_delete_mods,
-                        description: t::settings::general::general::quick_delete_mods_desc,
+                        title: || "Borrado rápido de mods",
+                        description: || "Mayús+clic en borrar no pide confirmación",
                         widget: SettingItemWidget::Switch(
                             |cfg| cfg.quick_delete_mods,
                             |cfg, val| cfg.quick_delete_mods = val,
@@ -32,8 +32,8 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                         ..Default::default()
                     },
                     SettingItem {
-                        title: t::settings::general::general::quick_delete_instance,
-                        description: t::settings::general::general::quick_delete_instance_desc,
+                        title: || "Borrado rápido de instancias",
+                        description: || "Igual, al eliminar una instancia",
                         widget: SettingItemWidget::Switch(
                             |cfg| cfg.quick_delete_instance,
                             |cfg, val| cfg.quick_delete_instance = val,
@@ -41,8 +41,8 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                         ..Default::default()
                     },
                     SettingItem {
-                        title: t::settings::general::general::live_game_output_display,
-                        description: t::settings::general::general::live_game_output_display_desc,
+                        title: || "Salida del juego en vivo",
+                        description: || "",
                         widget: create_live_game_output_dropdown(window, cx),
                         ..Default::default()
                     },
@@ -51,11 +51,11 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                 searched_items: None,
             },
             SettingGroup {
-                title: Some(t::settings::general::privacy),
+                title: Some(|| "Privacidad"),
                 items: vec![
                     SettingItem {
-                        title: t::settings::general::privacy::hide_usernames,
-                        description: t::settings::general::privacy::hide_usernames_desc,
+                        title: || "Ocultar nombres de usuario",
+                        description: || "",
                         widget: SettingItemWidget::Switch(
                             |cfg| cfg.hide_usernames,
                             |cfg, val| cfg.hide_usernames = val,
@@ -63,14 +63,14 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                         ..Default::default()
                     },
                     SettingItem {
-                        title: t::settings::general::privacy::hide_skins,
-                        description: t::settings::general::privacy::hide_skins_desc,
+                        title: || "Ocultar aspectos",
+                        description: || "",
                         widget: SettingItemWidget::Switch(|cfg| cfg.hide_skins, |cfg, val| cfg.hide_skins = val),
                         ..Default::default()
                     },
                     SettingItem {
-                        title: t::settings::general::privacy::hide_server_addresses,
-                        description: t::settings::general::privacy::hide_server_addresses_desc,
+                        title: || "Ocultar direcciones de servidor",
+                        description: || "Útil al hacer directos",
                         widget: SettingItemWidget::Switch(
                             |cfg| cfg.hide_server_addresses,
                             |cfg, val| cfg.hide_server_addresses = val,
@@ -130,17 +130,15 @@ fn create_language_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWid
 fn create_live_game_output_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget {
     let options = vec![
         NamedDropdownItem {
-            name: DropdownName::translated(
-                t::settings::general::general::live_game_output_display::tab_on_instance_page,
-            ),
+            name: DropdownName::new("Pestaña de la instancia"),
             item: LiveGameOutputDisplay::TabOnInstancePage,
         },
         NamedDropdownItem {
-            name: DropdownName::translated(t::settings::general::general::live_game_output_display::separate_window),
+            name: DropdownName::new("Ventana aparte"),
             item: LiveGameOutputDisplay::SeparateWindow,
         },
         NamedDropdownItem {
-            name: DropdownName::translated(t::settings::general::general::live_game_output_display::hidden),
+            name: DropdownName::new("Oculta"),
             item: LiveGameOutputDisplay::Hidden,
         },
     ];

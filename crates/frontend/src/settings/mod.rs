@@ -4,9 +4,8 @@ use std::rc::Rc;
 use bridge::{handle::BackendHandle, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Root, StyledExt, h_flex,
+    ActiveTheme, StyledExt, h_flex,
     input::{Input, InputEvent, InputState},
-    separator::Separator,
     spinner::Spinner,
     v_flex,
 };
@@ -14,10 +13,7 @@ use schema::backend_config::{BackendConfig, DistributionConfig, LauncherChannel,
 use schema::ignored_profile_paths::IgnoredProfilePaths;
 
 use crate::{
-    component::{
-        generic_title_bar::TitleBar,
-        resize_panel::{ResizePanel, ResizePanelState},
-    },
+    component::{design, generic_title_bar::WindowControl},
     entity::DataEntities,
     icon::PandoraIcon,
     interface_config::InterfaceConfig,
@@ -31,14 +27,12 @@ mod network;
 #[cfg(windows)]
 mod windows_security;
 
-struct SettingsRoot {
+pub(crate) struct SettingsRoot {
     settings: Settings,
     search_state: Entity<InputState>,
     ignored_path_input: Entity<InputState>,
     ignored_path_error: Option<String>,
     group_list_state: ListState,
-    use_custom_titlebar: bool,
-    sidebar_state: ResizePanelState,
     backend_handle: BackendHandle,
     get_configuration_task: Option<Task<()>>,
     actual_backend_config: Option<BackendConfig>,
@@ -173,158 +167,65 @@ impl SettingsRoot {
 }
 
 impl Render for SettingsRoot {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let version = option_env!("PANDORA_RELEASE_VERSION").unwrap_or("Dev");
-        let version_string = if let Some(git_rev) = option_env!("GIT_REVISION") {
-            SharedString::new(format!("{} ({})", version, git_rev))
-        } else {
-            version.into()
-        };
-        let version_icon = if version == "Dev" {
-            PandoraIcon::GitBranch
-        } else {
-            PandoraIcon::Rocket
-        };
-
-        let sidebar = v_flex()
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut header = h_flex()
+            .h(px(48.))
+            .flex_shrink_0()
+            .px(px(20.))
+            .border_b_1()
+            .border_color(rgba(0xffffff0b))
+            .window_control_area(WindowControlArea::Drag)
+            .child(design::eyebrow("LAUNCHER"))
+            .child(div().flex_1());
+        if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
+            header = header
+                .child(WindowControl::Minimize)
+                .child(if window.is_maximized() {
+                    WindowControl::Restore
+                } else {
+                    WindowControl::Maximize
+                })
+                .child(WindowControl::Close);
+        }
+        let mut tabs = h_flex().w_full().flex_shrink_0().px(px(20.)).border_b_1().border_color(rgba(0xffffff0b));
+        for index in 0..self.settings.pages.len() {
+            if self.settings.searched_pages.as_ref().is_some_and(|pages| !pages.contains(&index)) {
+                continue;
+            }
+            tabs = tabs.child(
+                design::tab(
+                    ("settings-tab", index),
+                    (self.settings.pages[index].title)(),
+                    self.settings.selected_page == Some(index),
+                )
+                .on_click(cx.listener(move |root, _, _, cx| {
+                    root.settings.selected_page = Some(index);
+                    root.settings.selected_group = None;
+                    root.group_list_state.scroll_to_reveal_item(0);
+                    cx.notify();
+                })),
+            );
+        }
+        v_flex()
             .size_full()
-            .p_3()
-            .when(cfg!(target_os = "macos"), |this| this.pt_8())
-            .gap_3()
-            .child(Input::new(&self.search_state).prefix(PandoraIcon::Search).w_full())
-            .children(self.render_sidebar_items(cx))
-            .child(div().flex_1())
-            .child(h_flex().text_sm().gap_2().child(version_icon.clone()).child(version_string.clone()));
-
-        let left_content = if let Some(selected_page) = self.settings.selected_page {
-            vec![(self.settings.pages[selected_page].title)().into_any_element()]
-        } else {
-            vec![]
-        };
-
-        let content = v_flex()
-            .size_full()
-            .child(TitleBar {
-                left_content,
-                right_content: vec![],
-                content_only: !self.use_custom_titlebar,
-            })
-            .child(self.render_page(cx));
-
-        ResizePanel::new(&self.sidebar_state, sidebar, content)
+            .child(header)
+            .child(tabs)
+            .child(
+                h_flex()
+                    .w_full()
+                    .px(px(24.))
+                    .pt(px(18.))
+                    .child(div().flex_1())
+                    .child(design::field(&self.search_state).prefix(PandoraIcon::Search).w(px(260.))),
+            )
+            .child(div().flex_1().min_h_0().px(px(12.)).py(px(12.)).child(self.render_page(cx)))
     }
 }
 
 impl SettingsRoot {
-    pub fn render_sidebar_items(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let (pages, mut page_elements) = if let Some(searched) = &self.settings.searched_pages {
-            (itertools::Either::Left(searched.iter().copied()), Vec::with_capacity(searched.len()))
-        } else {
-            (
-                itertools::Either::Right(0..self.settings.pages.len()),
-                Vec::with_capacity(self.settings.pages.len()),
-            )
-        };
-
-        for page_ix in pages {
-            let page = &self.settings.pages[page_ix];
-
-            let mut page_element = h_flex()
-                .id(("page_item", page_ix))
-                .px_2()
-                .py_px()
-                .w_full()
-                .justify_between()
-                .rounded(cx.theme().radius)
-                .text_sm()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .child((page.title)())
-                .on_click(cx.listener(move |root, _, _, cx| {
-                    root.settings.selected_page = Some(page_ix);
-                    root.settings.selected_group = None;
-                    root.settings.deferred_scroll_to_group = false;
-                    cx.notify();
-                }));
-
-            if self.settings.selected_page == Some(page_ix) {
-                page_element = page_element
-                    .font_medium()
-                    .bg(cx.theme().sidebar_accent)
-                    .text_color(cx.theme().sidebar_accent_foreground);
-            } else {
-                page_element = page_element.hover(|this| {
-                    this.bg(cx.theme().sidebar_accent.opacity(0.8))
-                        .text_color(cx.theme().sidebar_accent_foreground)
-                })
-            }
-
-            if page.groups.len() > 1 {
-                let (groups, mut group_elements) = if let Some(searched) = &page.searched_groups {
-                    (itertools::Either::Left(searched.iter().copied()), Vec::with_capacity(searched.len()))
-                } else {
-                    (itertools::Either::Right(0..page.groups.len()), Vec::with_capacity(page.groups.len()))
-                };
-
-                for group_ix in groups {
-                    let group = &page.groups[group_ix];
-
-                    let Some(title) = group.title else {
-                        continue;
-                    };
-
-                    let mut group_element = div()
-                        .id(("group_item", page_ix * 100 + group_ix))
-                        .px_2()
-                        .py_px()
-                        .w_full()
-                        .rounded(cx.theme().radius)
-                        .text_sm()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .hover(|this| {
-                            this.bg(cx.theme().sidebar_accent.opacity(0.8))
-                                .text_color(cx.theme().sidebar_accent_foreground)
-                        })
-                        .child((title)())
-                        .on_mouse_down_out(cx.listener(|root, _, _, cx| {
-                            root.settings.selected_group = None;
-                            root.settings.deferred_scroll_to_group = false;
-                            cx.notify();
-                        }))
-                        .on_click(cx.listener(move |root, _, _, cx| {
-                            root.settings.selected_page = Some(page_ix);
-                            root.settings.selected_group = Some(group_ix);
-                            root.settings.deferred_scroll_to_group = true;
-                            cx.notify();
-                        }));
-
-                    if self.settings.selected_page == Some(page_ix) && self.settings.selected_group == Some(group_ix) {
-                        group_element = group_element.underline();
-                    }
-
-                    group_elements.push(group_element.into_any());
-                }
-
-                let combined = v_flex().w_full().child(page_element).child(
-                    h_flex()
-                        .w_full()
-                        .child(Separator::vertical().mx_2())
-                        .child(v_flex().w_full().children(group_elements)),
-                );
-
-                page_elements.push(combined.into_any());
-            } else {
-                page_elements.push(page_element.into_any());
-            }
-        }
-
-        page_elements
-    }
-
     pub fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let Some(page_ix) = self.settings.selected_page else {
-            return div().size_full().p_3().text_lg().child(t::common::no_results()).into_any();
+            return div().size_full().p_3().text_lg().child("No hay resultados.").into_any();
         };
 
         let page = self.settings.pages[page_ix].clone();
@@ -478,12 +379,10 @@ impl SettingsRoot {
                     .px(px(18.))
                     .py(px(16.))
                     .gap(px(10.))
-                    .bg(gpui::rgb(crate::theme::PANEL))
-                    .rounded(cx.theme().radius_lg)
+                    .bg(gpui::rgba(0xffffff04))
+                    .rounded(px(0.))
                     .line_height(rems(1.0))
-                    .when(has_backend_missing, |this| {
-                        this.child(h_flex().gap_1().child(t::settings::loading()).child(Spinner::new()))
-                    })
+                    .when(has_backend_missing, |this| this.child(h_flex().gap_1().child(Spinner::new())))
                     .children(item_elements);
 
                 if let Some(title) = group.title {
@@ -493,7 +392,10 @@ impl SettingsRoot {
                         .py_1p5()
                         .child(
                             div()
-                                .text_color(cx.theme().muted_foreground)
+                                .font_family(crate::theme::DISPLAY)
+                                .text_size(px(15.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(crate::theme::INK))
                                 .when(selected_group == Some(group_ix), Styled::underline)
                                 .child((title)()),
                         )
@@ -761,85 +663,50 @@ impl Settings {
     }
 }
 
-pub fn open_settings_window(main_window: &Window, data: &DataEntities, cx: &mut App) {
-    let display_id = main_window.display(cx).map(|display| display.id());
-    let existing = cx.windows().into_iter().find_map(|w| {
-        let root = w.downcast::<Root>()?;
-        if !root.read(cx).ok()?.view().clone().downcast::<SettingsRoot>().is_ok() {
-            return None;
-        }
-        Some(root)
-    });
-    if let Some(existing) = existing {
-        let existing_display_id = existing
-            .update(cx, |_, window, cx| window.display(cx).map(|display| display.id()))
-            .ok()
-            .flatten();
-        if existing_display_id == display_id {
-            _ = existing.update(cx, |_, window, _| window.activate_window());
-            return;
-        }
-        _ = existing.update(cx, |_, window, _| window.remove_window());
-    }
-
-    let use_custom_titlebar = crate::root::should_render_custom_titlebar();
-    let options = WindowOptions {
-        titlebar: Some(TitlebarOptions {
-            title: Some(t::settings::title().into()),
-            appears_transparent: use_custom_titlebar,
-            ..Default::default()
-        }),
-        app_owns_titlebar_drag: use_custom_titlebar,
-        window_decorations: Some(if use_custom_titlebar {
-            WindowDecorations::Client
-        } else {
-            WindowDecorations::Server
-        }),
-        display_id,
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(display_id, size(px(960.0), px(540.0)), cx))),
-        window_min_size: Some(size(px(480.0), px(270.0))),
-        ..Default::default()
-    };
-    _ = cx.open_window(options, |window, cx| {
-        let settings_root = cx.new(|cx| {
-            let sidebar_state = ResizePanelState::new(px(175.0), px(150.0), px(225.0));
-
-            let search_state = cx.new(|cx| InputState::new(window, cx).placeholder(t::common::search()));
-            let ignored_path_input = cx.new(|cx| InputState::new(window, cx).placeholder("/mods/example-cache"));
-
-            cx.subscribe(&search_state, SettingsRoot::on_search).detach();
-            cx.subscribe_in(
-                &ignored_path_input,
-                window,
-                |root: &mut SettingsRoot, _, event: &InputEvent, window, cx| {
-                    if matches!(event, InputEvent::PressEnter { .. }) {
-                        root.add_ignored_path(window, cx);
-                    }
-                },
-            )
-            .detach();
-
-            let mut root = SettingsRoot {
-                settings: create_settings(data, window, cx),
-                search_state,
-                ignored_path_input,
-                ignored_path_error: None,
-                use_custom_titlebar,
-                sidebar_state,
-                group_list_state: ListState::new(0, ListAlignment::Top, px(100.)),
-                backend_handle: data.backend_handle.clone(),
-                get_configuration_task: None,
-                actual_backend_config: None,
-                temp_backend_config: None,
-                on_receive_backend_config: OnReceiveBackendConfig::DoNothing,
-            };
-
-            root.update_backend_configuration(cx);
-
-            root
+pub fn open_settings_window(window: &Window, _data: &DataEntities, cx: &mut App) {
+    // Native callbacks receive a shared window; switch on the next frame with its mutable context.
+    let handle = window.window_handle();
+    cx.defer(move |cx| {
+        _ = handle.update(cx, |_, window, cx| {
+            crate::root::switch_page(crate::ui::PageType::LauncherSettings, &[], window, cx)
         });
-        cx.new(|cx| Root::new(settings_root, window, cx))
     });
+}
+
+pub(crate) fn create(data: &DataEntities, window: &mut Window, cx: &mut App) -> Entity<SettingsRoot> {
+    cx.new(|cx| {
+        let search_state = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar en ajustes..."));
+        let ignored_path_input = cx.new(|cx| InputState::new(window, cx).placeholder("/mods/example-cache"));
+
+        cx.subscribe(&search_state, SettingsRoot::on_search).detach();
+        cx.subscribe_in(
+            &ignored_path_input,
+            window,
+            |root: &mut SettingsRoot, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    root.add_ignored_path(window, cx);
+                }
+            },
+        )
+        .detach();
+
+        let mut root = SettingsRoot {
+            settings: create_settings(data, window, cx),
+            search_state,
+            ignored_path_input,
+            ignored_path_error: None,
+            group_list_state: ListState::new(0, ListAlignment::Top, px(100.)),
+            backend_handle: data.backend_handle.clone(),
+            get_configuration_task: None,
+            actual_backend_config: None,
+            temp_backend_config: None,
+            on_receive_backend_config: OnReceiveBackendConfig::DoNothing,
+        };
+
+        root.update_backend_configuration(cx);
+
+        root
+    })
 }
 
 fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Settings {

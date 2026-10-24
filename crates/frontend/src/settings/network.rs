@@ -17,13 +17,13 @@ use crate::{
 
 pub(super) fn create_page() -> SettingPage {
     SettingPage {
-        title: t::settings::network,
+        title: || "Red",
         groups: vec![SettingGroup {
-            title: Some(t::settings::network::launcher_proxy),
+            title: Some(|| "Red"),
             items: vec![
                 SettingItem {
-                    title: t::settings::network::launcher_proxy::enable_proxy,
-                    description: t::settings::network::launcher_proxy::enable_proxy_desc,
+                    title: || "Usar proxy",
+                    description: || "Solo para las peticiones del launcher, no del juego",
                     widget: SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
                         Switch::new("enable-proxy")
                             .checked(backend.proxy.enabled)
@@ -41,26 +41,26 @@ pub(super) fn create_page() -> SettingPage {
                     ..Default::default()
                 },
                 SettingItem {
-                    title: t::settings::network::launcher_proxy::protocol,
-                    description: t::settings::network::launcher_proxy::protocol_desc,
+                    title: || "",
+                    description: || "",
                     widget: create_proxy_protocol_widget(),
                     ..Default::default()
                 },
                 SettingItem {
-                    title: t::settings::network::launcher_proxy::host,
-                    description: t::settings::network::launcher_proxy::host_desc,
+                    title: || "Servidor",
+                    description: || "",
                     widget: create_proxy_host_widget(),
                     ..Default::default()
                 },
                 SettingItem {
-                    title: t::settings::network::launcher_proxy::port,
-                    description: t::settings::network::launcher_proxy::port_desc,
+                    title: || "Puerto",
+                    description: || "",
                     widget: create_proxy_port_widget(),
                     ..Default::default()
                 },
                 SettingItem {
-                    title: t::settings::network::launcher_proxy::use_auth,
-                    description: t::settings::network::launcher_proxy::use_auth_desc,
+                    title: || "Con usuario y contraseña",
+                    description: || "",
                     widget: SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
                         Switch::new("enable-proxy-auth")
                             .checked(backend.proxy.auth_enabled)
@@ -78,14 +78,14 @@ pub(super) fn create_page() -> SettingPage {
                     ..Default::default()
                 },
                 SettingItem {
-                    title: t::settings::network::launcher_proxy::username,
-                    description: t::settings::network::launcher_proxy::username_desc,
+                    title: || "Usuario",
+                    description: || "",
                     widget: create_proxy_username_widget(),
                     ..Default::default()
                 },
                 SettingItem {
-                    title: t::settings::network::launcher_proxy::password,
-                    description: t::settings::network::launcher_proxy::password_desc,
+                    title: || "Contraseña",
+                    description: || "",
                     widget: create_proxy_password_widget(),
                     ..Default::default()
                 },

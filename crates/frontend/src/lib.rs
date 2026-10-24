@@ -353,10 +353,10 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     Some("skins" | "skins-url" | "skins-copy") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins
                     },
-                    Some(page)
-                        if page.starts_with("launcher-")
-                            || matches!(page, "add-instance" | "add-server" | "add-local" | "account-offline") =>
-                    {
+                    Some(page) if page == "appearance" || page.starts_with("launcher-") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::LauncherSettings;
+                    },
+                    Some(page) if matches!(page, "add-instance" | "add-server" | "add-local" | "account-offline") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
                     },
                     Some(page) if page.starts_with("content-browser:agente-274-") => {
@@ -436,12 +436,6 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 cx.set_global(LauncherRootGlobal {
                     root: launcher_root.clone(),
                 });
-                if capture_page
-                    .as_deref()
-                    .is_some_and(|page| page == "appearance" || page.starts_with("launcher-"))
-                {
-                    crate::settings::open_settings_window(window, &data, cx);
-                }
                 let root = cx.new(|cx| Root::new(launcher_root, window, cx));
                 if let Some(page) = capture_page
                     .as_deref()

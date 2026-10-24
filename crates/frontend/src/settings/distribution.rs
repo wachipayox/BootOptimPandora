@@ -23,15 +23,13 @@ enum Field {
 
 pub(super) fn create_page() -> SettingPage {
     SettingPage {
-        title: || "Global profiles",
+        title: || "Distribution",
         groups: vec![
             SettingGroup {
-                title: Some(|| "Launcher channel"),
+                title: Some(|| "Distribution"),
                 items: vec![SettingItem {
-                    title: || "Channel",
-                    description: || {
-                        "Player shows the published global profiles. Developer also shows the test profiles, labelled PRUEBA, that the server hides from players. The same setting is `channel` in the launcher configuration file."
-                    },
+                    title: || "Canal del launcher",
+                    description: || "",
                     widget: channel_widget(),
                     ..Default::default()
                 }]
@@ -39,16 +37,16 @@ pub(super) fn create_page() -> SettingPage {
                 searched_items: None,
             },
             SettingGroup {
-                title: Some(|| "Private Distribution service"),
+                title: Some(|| "Servicio Distribution privado"),
                 items: vec![
                     item(Field::Url),
                     item(Field::CaPath),
                     SettingItem {
-                        title: || "Test HTTPS connection",
-                        description: || "Checks the server certificate and protocol version. Profile verification is configured automatically over HTTPS.",
+                        title: || "Probar conexión HTTPS",
+                        description: || "",
                         widget: SettingItemWidget::Any(Rc::new(|_, cx| {
                             Button::new("check-distribution-connection")
-                                .label("Test HTTPS connection")
+                                .label("Probar conexión HTTPS")
                                 .on_click(cx.listener(|root, _, _, _| {
                                     root.backend_handle.send(MessageToBackend::CheckDistributionConnection);
                                 }))
@@ -73,11 +71,11 @@ fn channel_widget() -> SettingItemWidget {
             created = true;
             let items = vec![
                 NamedDropdownItem {
-                    name: DropdownName::new("Player"),
+                    name: DropdownName::new("Jugador"),
                     item: LauncherChannel::Player,
                 },
                 NamedDropdownItem {
-                    name: DropdownName::new("Developer"),
+                    name: DropdownName::new("Desarrollador"),
                     item: LauncherChannel::Developer,
                 },
             ];
@@ -87,7 +85,9 @@ fn channel_widget() -> SettingItemWidget {
         });
         if created {
             cx.subscribe(&state, |root, _, event: &SelectEvent<_>, cx| {
-                let SelectEvent::Confirm(Some(channel)) = event else { return };
+                let SelectEvent::Confirm(Some(channel)) = event else {
+                    return;
+                };
                 if root.backend_config().is_some_and(|config| config.channel != *channel) {
                     root.set_launcher_channel(*channel, cx);
                 }
@@ -103,14 +103,12 @@ fn channel_widget() -> SettingItemWidget {
 fn item(field: Field) -> SettingItem {
     SettingItem {
         title: match field {
-            Field::Url => || "HTTPS server URL",
-            Field::CaPath => || "TLS CA certificate path",
+            Field::Url => || "Servicio Distribution privado",
+            Field::CaPath => || "Certificado CA (TLS)",
         },
         description: match field {
-            Field::Url => || "Use the private Distribution HTTPS address, including its port.",
-            Field::CaPath => {
-                || "Path to the PEM certificate that issued the server certificate. Leave blank only when the server certificate is publicly trusted."
-            },
+            Field::Url => || "Dirección HTTPS con su puerto.",
+            Field::CaPath => || "Opcional",
         },
         widget: text_field(field),
         ..Default::default()

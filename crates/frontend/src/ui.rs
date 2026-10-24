@@ -48,6 +48,7 @@ pub enum PageType {
     #[default]
     Instances,
     Skins,
+    LauncherSettings,
     Modrinth {
         installing_for: Option<SharedString>,
     },
@@ -70,7 +71,8 @@ impl PageType {
     pub fn title(&self, data: &DataEntities, cx: &App) -> SharedString {
         match self {
             PageType::Instances => t::instance::title().into(),
-            PageType::Skins => t::skins::title().into(),
+            PageType::Skins => "Aspecto".into(),
+            PageType::LauncherSettings => "Ajustes del launcher".into(),
             PageType::Modrinth { installing_for } => {
                 if installing_for.is_some() {
                     t::instance::content::install::from_modrinth().into()
@@ -100,6 +102,7 @@ pub enum LauncherPage {
     Home(Entity<crate::pages::home::HomePage>),
     Instances(Entity<InstancesPage>),
     Skins(Entity<SkinsPage>),
+    LauncherSettings(Entity<crate::settings::SettingsRoot>),
     Modrinth(Entity<ModrinthSearchPage>),
     Curseforge(Entity<CurseforgeSearchPage>),
     Import(Entity<ImportPage>),
@@ -116,6 +119,9 @@ impl LauncherPage {
         if let LauncherPage::InstancePage(page) = &self {
             return div().size_full().child(page.clone()).into_any_element();
         }
+        if let LauncherPage::LauncherSettings(page) = &self {
+            return div().size_full().child(page.clone()).into_any_element();
+        }
         fn process(entity: Entity<impl Page>, window: &mut Window, cx: &mut App) -> (bool, AnyElement, AnyElement) {
             entity.update(cx, |page, cx| {
                 (
@@ -127,7 +133,7 @@ impl LauncherPage {
         }
 
         let (scrollable, controls, page) = match self {
-            LauncherPage::Home(_) => unreachable!(),
+            LauncherPage::Home(_) | LauncherPage::LauncherSettings(_) => unreachable!(),
             LauncherPage::Instances(entity) => process(entity, window, cx),
             LauncherPage::Skins(entity) => process(entity, window, cx),
             LauncherPage::Modrinth(entity) => process(entity, window, cx),
@@ -285,6 +291,7 @@ impl LauncherUI {
             PageType::Instances => {
                 Ok(LauncherPage::Home(cx.new(|cx| crate::pages::home::HomePage::new(data, window, cx))))
             },
+            PageType::LauncherSettings => Ok(LauncherPage::LauncherSettings(crate::settings::create(data, window, cx))),
             PageType::Skins => Ok(LauncherPage::Skins(cx.new(|cx| SkinsPage::new(data, window, cx)))),
             PageType::Modrinth { installing_for } => {
                 let installing_for = installing_for
@@ -618,7 +625,6 @@ impl LauncherUI {
                 }
             });
         let saved_accounts = self.data.accounts.read(cx).accounts.clone();
-        let settings_data = self.data.clone();
         footer = footer.child(
             h_flex()
                 .border_t_1()
@@ -653,7 +659,7 @@ impl LauncherUI {
                         .child(gpui_component::Icon::new(PandoraIcon::Settings).size(px(16.)))
                         .w(px(32.))
                         .px_0()
-                        .on_click(move |_, w, c| crate::settings::open_settings_window(w, &settings_data, c)),
+                        .on_click(cx.listener(|this, _, w, c| this.switch_page(PageType::LauncherSettings, &[], w, c))),
                 ),
         );
         let sidebar = v_flex()
