@@ -705,8 +705,7 @@ impl ChangeVersionDialog {
             (None, _) => t::common::update().into(),
         };
 
-        let action_button = design::primary("change_version_action")
-            .label(label)
+        let action_button = design::action_button("change_version_action", label, design::ButtonAction::Primary)
             .disabled(selected.is_none() || same_version)
             .when_some(selected.clone(), |button, selected| {
                 button.on_click({
