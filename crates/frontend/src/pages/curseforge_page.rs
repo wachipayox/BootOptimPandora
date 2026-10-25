@@ -22,6 +22,7 @@ use gpui_component::{
     notification::NotificationType,
     scroll::{ScrollableElement, Scrollbar},
     skeleton::Skeleton,
+    tooltip::Tooltip,
     v_flex,
 };
 use rustc_hash::FxHashMap;
@@ -42,7 +43,6 @@ use crate::{
         instance::ContentStates,
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult},
     },
-    format_downloads,
     icon::PandoraIcon,
     interface_config::InterfaceConfig,
     pages::page::Page,
@@ -536,7 +536,7 @@ impl CurseforgeSearchPage {
                     let author = &*hit.authors[0].name;
                     t::instance::content::by(author)
                 } else if hit.authors.is_empty() {
-                    t::instance::content::by("Unknown")
+                    String::new()
                 } else {
                     let mut authors_string = String::new();
                     for (i, author) in hit.authors.iter().enumerate() {
@@ -550,24 +550,19 @@ impl CurseforgeSearchPage {
 
                 let name = SharedString::new(hit.name.clone());
                 let description = SharedString::new(hit.summary.clone());
-                let tag_separator = SharedString::new("•");
-
-                let author_line = div().text_color(theme.muted_foreground).text_sm().pb_px().child(author);
-
-                let mut is_categories_empty = true;
-                let categories = hit.categories.iter().filter_map(|category| {
-                    if category.is_class {
-                        return None;
-                    }
-                    is_categories_empty = false;
-                    Some(SharedString::new(category.name.clone()).into_any_element())
-                });
-                let categories = itertools::Itertools::intersperse_with(categories, || {
-                    div().flex_shrink_0().child(tag_separator.clone()).into_any_element()
-                });
-
-                let downloads =
-                    h_flex().gap_1().child(PandoraIcon::Download).child(format_downloads(hit.download_count));
+                let author_line = div().text_color(theme.muted_foreground).text_size(px(12.)).child(author);
+                let metadata: SharedString = hit
+                    .categories
+                    .iter()
+                    .filter(|category| !category.is_class)
+                    .map(|category| category.name.as_ref())
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+                    .into();
+                let downloads = div()
+                    .text_size(px(12.))
+                    .text_color(theme.muted_foreground)
+                    .child(crate::compact_download_count(hit.download_count));
 
                 let primary_action = self.get_primary_action(hit.id, cx);
 
@@ -678,36 +673,45 @@ impl CurseforgeSearchPage {
                     });
 
                 let item = h_flex()
+                    .id(("browser-row", index))
+                    .tooltip(move |window, cx| Tooltip::new(metadata.clone()).build(window, cx))
                     .rounded(px(0.))
-                    .px_4()
-                    .py_2()
-                    .gap_4()
-                    .h_32()
+                    .px(px(14.))
+                    .py(px(6.))
+                    .gap(px(12.))
+                    .h(px(64.))
                     .bg(rgb(crate::theme::PANEL))
                     .border_color(theme.border)
-                    .border_1()
-                    .size_full()
-                    .child(image.rounded(px(0.)).size_16().min_w_16().min_h_16())
+                    .border_b_1()
+                    .w_full()
+                    .child(image.rounded(px(0.)).size(px(44.)).flex_shrink_0())
                     .child(
                         v_flex()
-                            .h(px(104.0))
+                            .min_w_0()
                             .flex_grow(1.0)
-                            .gap_1()
+                            .gap(px(2.))
                             .overflow_hidden()
-                            .child(h_flex().gap_1().items_end().line_clamp(1).text_lg().child(name).child(author_line))
-                            .child(div().flex_auto().line_height(px(20.0)).line_clamp(2).child(description))
                             .child(
                                 h_flex()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
                                     .gap_1()
-                                    .child(PandoraIcon::Tags)
-                                    .children(categories),
+                                    .items_end()
+                                    .line_clamp(1)
+                                    .text_size(px(13.))
+                                    .child(name)
+                                    .child(author_line),
+                            )
+                            .child(
+                                div()
+                                    .flex_auto()
+                                    .text_size(px(12.))
+                                    .line_height(px(16.0))
+                                    .line_clamp(2)
+                                    .child(description),
                             ),
                     )
                     .child(v_flex().items_end().child(downloads).child(install_button));
 
-                div().pl_3().pt_3().child(item)
+                div().w_full().child(item)
             })
             .collect();
 

@@ -6,9 +6,8 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Icon, Selectable, WindowExt,
-    button::{Button, ButtonGroup},
-    checkbox::Checkbox,
+    ActiveTheme, Disableable, Icon, WindowExt,
+    button::{Button, ButtonVariants},
     h_flex,
     input::{InputEvent, InputState},
     select::{Select, SelectState},
@@ -256,48 +255,44 @@ impl CreateInstanceModalState {
             show_snapshots_button = Skeleton::new().w_full().min_h_4().max_h_4().rounded_md().into_any_element();
             loader_button_group = Skeleton::new().w_full().min_h_8().max_h_8().rounded_md().into_any_element();
         } else {
-            version_dropdown = Select::new(&self.minecraft_version_dropdown).title_prefix("").search_placeholder("");
-            show_snapshots_button = Checkbox::new("show_snapshots")
-                .checked(InterfaceConfig::get(cx).show_snapshots_in_create_instance)
-                .label("Mostrar snapshots")
-                .on_click(cx.listener(move |this, show, window, cx| {
-                    InterfaceConfig::get_mut(cx).show_snapshots_in_create_instance = *show;
-                    this.reload_version_dropdown(window, cx);
-                }))
+            version_dropdown = Select::new(&self.minecraft_version_dropdown)
+                .title_prefix("")
+                .search_placeholder("")
+                .bg(rgb(crate::theme::PANEL_SUNKEN))
+                .rounded(px(0.))
+                .h(px(32.))
+                .text_size(px(13.));
+            show_snapshots_button = h_flex()
+                .gap(px(12.))
+                .child("Mostrar snapshots")
+                .child(
+                    design::YesNo::new("show_snapshots")
+                        .checked(InterfaceConfig::get(cx).show_snapshots_in_create_instance)
+                        .on_click(cx.listener(move |this, show, window, cx| {
+                            InterfaceConfig::get_mut(cx).show_snapshots_in_create_instance = *show;
+                            this.reload_version_dropdown(window, cx);
+                        })),
+                )
                 .into_any_element();
-            loader_button_group = ButtonGroup::new("loader")
-                .outline()
-                .h_full()
-                .child(
-                    Button::new("loader-vanilla")
-                        .label("Vanilla")
-                        .selected(self.selected_loader == Loader::Vanilla),
-                )
-                .child(
-                    Button::new("loader-fabric")
-                        .label(t::modrinth::category::fabric())
-                        .selected(self.selected_loader == Loader::Fabric),
-                )
-                .child(
-                    Button::new("loader-forge")
-                        .label(t::modrinth::category::forge())
-                        .selected(self.selected_loader == Loader::Forge),
-                )
-                .child(
-                    Button::new("loader-neoforge")
-                        .label(t::modrinth::category::neoforge())
-                        .selected(self.selected_loader == Loader::NeoForge),
-                )
-                .on_click(cx.listener(move |this, selected: &Vec<usize>, _, _| {
-                    match selected.first() {
-                        Some(0) => this.selected_loader = Loader::Vanilla,
-                        Some(1) => this.selected_loader = Loader::Fabric,
-                        Some(2) => this.selected_loader = Loader::Forge,
-                        Some(3) => this.selected_loader = Loader::NeoForge,
-                        _ => {},
-                    };
-                }))
-                .into_any_element();
+            let mut loaders = h_flex().gap(px(8.));
+            for (index, (loader, label)) in [
+                (Loader::Vanilla, "Vanilla"),
+                (Loader::Fabric, "Fabric"),
+                (Loader::Forge, "Forge"),
+                (Loader::NeoForge, "NeoForge"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                loaders =
+                    loaders.child(design::chip(("loader", index), label, self.selected_loader == loader).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            this.selected_loader = loader;
+                            cx.notify();
+                        }),
+                    ));
+            }
+            loader_button_group = loaders.into_any_element();
         };
 
         let content = v_flex()
@@ -315,7 +310,7 @@ impl CreateInstanceModalState {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(Button::new("icon").icon(PandoraIcon::Plus).label("Elegir icono").on_click({
+                    .child(Button::new("icon").ghost().icon(PandoraIcon::Plus).label("Elegir icono").on_click({
                         let entity = cx.entity();
                         move |_, window, cx| {
                             let entity = entity.clone();

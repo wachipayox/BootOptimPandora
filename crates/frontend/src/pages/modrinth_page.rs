@@ -22,6 +22,7 @@ use gpui_component::{
     notification::NotificationType,
     scroll::{ScrollableElement, Scrollbar},
     skeleton::Skeleton,
+    tooltip::Tooltip,
     v_flex,
 };
 use rustc_hash::FxHashMap;
@@ -43,7 +44,6 @@ use crate::{
         instance::ContentStates,
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult},
     },
-    format_downloads,
     icon::PandoraIcon,
     interface_config::InterfaceConfig,
     pages::page::Page,
@@ -569,30 +569,29 @@ impl ModrinthSearchPage {
                 let author = format!("por {}", hit.author);
                 let description = hit.description.clone().map(SharedString::new).unwrap_or_default();
 
-                let author_line = div().text_color(theme.muted_foreground).text_sm().pb_px().child(author);
+                let author_line = div().text_color(theme.muted_foreground).text_size(px(12.)).child(author);
 
                 let client_side = hit.client_side.unwrap_or(ModrinthSideRequirement::Unknown);
                 let server_side = hit.server_side.unwrap_or(ModrinthSideRequirement::Unknown);
 
-                let (env_icon, env_name) = env_display(client_side, server_side);
-
-                let environment = h_flex().gap_1().child(env_icon).child(env_name);
-
-                let categories = hit.display_categories.iter().flat_map(|categories| {
-                    categories.iter().filter_map(|category| {
-                        if category == "minecraft" {
-                            return None;
-                        }
-
-                        let icon = icon_for(category).unwrap_or("icons/diamond.svg");
-                        let icon = Icon::empty().path(icon);
-                        let translated_category =
-                            t::modrinth::category::get(category, false).unwrap_or(category.as_str());
-                        Some(h_flex().gap_1().child(icon).child(translated_category))
-                    })
-                });
-
-                let downloads = h_flex().gap_1().child(PandoraIcon::Download).child(format_downloads(hit.downloads));
+                let (_, env_name) = env_display(client_side, server_side);
+                let metadata: SharedString = std::iter::once(env_name.to_string())
+                    .chain(
+                        hit.display_categories
+                            .iter()
+                            .flatten()
+                            .filter(|category| category.as_str() != "minecraft")
+                            .map(|category| {
+                                t::modrinth::category::get(category, false).unwrap_or(category.as_str()).to_owned()
+                            }),
+                    )
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+                    .into();
+                let downloads = div()
+                    .text_size(px(12.))
+                    .text_color(theme.muted_foreground)
+                    .child(crate::compact_download_count(hit.downloads));
 
                 let open_project_page = {
                     let project_id = hit.project_id.clone();
@@ -651,22 +650,24 @@ impl ModrinthSearchPage {
                     });
 
                 let item = h_flex()
+                    .id(("browser-row", index))
+                    .tooltip(move |window, cx| Tooltip::new(metadata.clone()).build(window, cx))
                     .rounded(px(0.))
-                    .px_4()
-                    .py_2()
-                    .gap_4()
-                    .h_32()
+                    .px(px(14.))
+                    .py(px(6.))
+                    .gap(px(12.))
+                    .h(px(64.))
                     .bg(rgb(crate::theme::PANEL))
                     .border_color(theme.border)
-                    .border_1()
-                    .size_full()
-                    .child(image.rounded(px(0.)).size_16().min_w_16().min_h_16())
+                    .border_b_1()
+                    .w_full()
+                    .child(image.rounded(px(0.)).size(px(44.)).flex_shrink_0())
                     .child(
                         v_flex()
                             .id(("open-project", index))
-                            .h(px(104.0))
+                            .min_w_0()
                             .flex_grow(1.0)
-                            .gap_1()
+                            .gap(px(2.))
                             .overflow_hidden()
                             .cursor_pointer()
                             .hover(|style| style.underline())
@@ -676,27 +677,28 @@ impl ModrinthSearchPage {
                                     open_project_page(window, cx);
                                 }
                             })
-                            .child(h_flex().gap_1().items_end().line_clamp(1).text_lg().child(name).child(author_line))
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .items_end()
+                                    .line_clamp(1)
+                                    .text_size(px(13.))
+                                    .child(name)
+                                    .child(author_line),
+                            )
                             .child(
                                 div()
                                     .text_decoration_0()
                                     .flex_auto()
-                                    .line_height(px(20.0))
+                                    .text_size(px(12.))
+                                    .line_height(px(16.0))
                                     .line_clamp(2)
                                     .child(description),
-                            )
-                            .child(
-                                h_flex()
-                                    .text_decoration_0()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .gap_2p5()
-                                    .children(std::iter::once(environment).chain(categories)),
                             ),
                     )
                     .child(v_flex().items_end().child(downloads).child(install_button));
 
-                div().pl_3().pt_3().child(item)
+                div().w_full().child(item)
             })
             .collect();
 
@@ -1085,8 +1087,8 @@ impl Render for ModrinthSearchPage {
             .h_full()
             .overflow_y_scrollbar()
             .w_auto()
-            .w(px(180.))
-            .min_w(px(180.))
+            .w(px(220.))
+            .min_w(px(220.))
             .p_3()
             .gap_3()
             .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("Tipo"))
@@ -1124,7 +1126,7 @@ impl Render for ModrinthSearchPage {
             body = body.child(
                 div()
                     .id("browser-project-detail")
-                    .w(px(400.))
+                    .w(px(380.))
                     .h_full()
                     .overflow_y_scrollbar()
                     .border_l_1()

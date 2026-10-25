@@ -664,6 +664,15 @@ pub(crate) fn open_folder(path: &Path, window: &mut Window, cx: &mut App) {
     }
 }
 
+pub(crate) fn compact_download_count(downloads: u64) -> SharedString {
+    for (unit, suffix) in [(1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")] {
+        if downloads >= unit {
+            return format!("{} {suffix}", (downloads as f64 / unit as f64 * 100.).round() / 100.).into();
+        }
+    }
+    downloads.to_string().into()
+}
+
 pub fn format_downloads(downloads: u64) -> SharedString {
     if downloads >= 1_000_000_000 {
         t::instance::content::downloads::b((downloads / 10_000_000) as f64 / 100.0)
