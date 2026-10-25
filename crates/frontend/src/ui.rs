@@ -618,6 +618,20 @@ impl LauncherUI {
             )
         }
         let data = self.data.clone();
+        #[cfg(feature = "ui-capture")]
+        if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("sidebar-scroll") {
+            // Cosmetic rows exercise the real sidebar scrollbar without
+            // creating backend instances or writing any additional folders.
+            for index in 0..32 {
+                instances = instances.child(
+                    DesignButton::new(("capture-sidebar-row", index))
+                        .label_left(format!("agente-274-scroll-{index:02}"))
+                        .w_full()
+                        .h(px(42.))
+                        .on_click(|_, _, _| {}),
+                );
+            }
+        }
         instances = instances.child(
             DesignButton::new("sidebar-add")
                 .label_left("+   Añadir instancia")

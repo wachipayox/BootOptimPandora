@@ -4510,7 +4510,9 @@ impl Window {
         });
     }
 
-    pub(crate) fn insert_window_control_client_hitbox(&mut self, hitbox: Hitbox) {
+    /// Reserve a custom-painted control as client input within a drag surface.
+    /// Call during paint, in the same order as the control's mouse handlers.
+    pub fn insert_window_control_client_hitbox(&mut self, hitbox: Hitbox) {
         self.invalidator.debug_assert_paint();
         self.next_frame.window_control_hitboxes.push(WindowControlHitbox {
             area: None,

@@ -1308,6 +1308,9 @@ impl Element for Scrollbar {
 
         window.with_content_mask(Some(ContentMask { bounds: hitbox_bounds }), |window| {
             for state in prepaint.states.iter() {
+                // The track remains client input even inside a draggable
+                // sidebar. Reserving only the track keeps empty space draggable.
+                window.insert_window_control_client_hitbox(state.bar_hitbox.clone());
                 let axis = state.axis;
                 let mut radius = state.radius;
                 if theme.tokens.radius.md.is_zero() {

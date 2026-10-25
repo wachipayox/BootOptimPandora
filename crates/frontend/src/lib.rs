@@ -350,7 +350,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     }
                 }
                 match capture_page.as_deref() {
-                    Some("instances" | "home-menu" | "home-news") => {
+                    Some("instances" | "home-menu" | "home-news" | "sidebar-scroll") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances
                     },
                     Some(name) if name.starts_with("news-") => {
