@@ -16,7 +16,7 @@ This establishes a difference between renderer output and Windows presentation/c
 
 - `ui-capture` enables the existing GPUI readback API through a narrow `native-capture` feature, without enabling GPUI's test dependencies.
 - The script retains its Windows PNG and adds a separately identified `-gpu.png` of the native scene, including focused/scrolled states. It verifies matching client dimensions and records executable SHA-256, caller-supplied binary source and script revision separately.
-- GPU readback stays on the window thread. PNG encoding runs on the background executor. The request loop is excluded from ordinary builds.
+- GPU readback runs directly after a fresh frame on the window thread. Replaying an earlier scene between animated-image updates can reference evicted atlas entries; an initial direct-read attempt hit that failure, so the request now schedules a fresh frame and reads it in `on_next_frame`. PNG encoding runs on the background executor. The request loop is excluded from ordinary builds.
 
 Capture instructions have one home: [the UI workflow](../../.claude/skills/ui/SKILL.md). Community screenshots remain in the private review linked from the PR. A framebuffer image must never be described as a desktop screenshot.
 

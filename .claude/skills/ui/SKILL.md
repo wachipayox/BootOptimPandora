@@ -60,7 +60,8 @@ desktop capture; its `-gpu.png` sibling reads the same native GPUI scene before
 presentation. The manifest identifies both methods and checks matching client
 dimensions. Use the pair to distinguish renderer output from presentation/capture
 artifacts; never describe a framebuffer image as a desktop screenshot. Readback
-stays on the window thread; PNG encoding runs on the background executor. The
+is scheduled directly after a fresh frame on the window thread, so animated
+sprite atlas entries remain valid; PNG encoding runs on the background executor. The
 optional feature and file-request loop are absent from ordinary launcher builds.
 The manifest hashes the executable actually used, including with reused portable
 data. Pass `-ExecutableSourceCommit <verified SHA>` for a binary built from a

@@ -15,10 +15,21 @@ pub fn start(window: &mut Window, cx: &mut App) {
                     continue;
                 }
                 let _ = std::fs::remove_file(directory.join("request"));
-                let result = match cx.update(|window, _| window.render_to_image()) {
-                    Ok(result) => result,
-                    Err(_) => break,
-                };
+                // Animated images can evict atlas entries between frames. Read
+                // immediately after a fresh render, while its sprites are live.
+                let (send, receive) = tokio::sync::oneshot::channel();
+                if cx
+                    .update(|window, _| {
+                        window.on_next_frame(move |window, _| {
+                            let _ = send.send(window.render_to_image());
+                        });
+                        window.refresh();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                let Ok(result) = receive.await else { break };
                 let directory = directory.clone();
                 cx.background_executor()
                     .spawn(async move {
