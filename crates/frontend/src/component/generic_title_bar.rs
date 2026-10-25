@@ -1,6 +1,7 @@
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{ActiveTheme, Colorize, InteractiveElementExt, h_flex};
 
+#[cfg(not(windows))]
 use crate::icon::PandoraIcon;
 
 #[derive(IntoElement)]
