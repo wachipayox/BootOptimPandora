@@ -3,6 +3,9 @@ name = "frontend"
 version.workspace = true
 edition.workspace = true
 
+[features]
+ui-capture = ["gpui/test-support", "gpui_platform/test-support"]
+
 [dependencies]
 t.workspace = true
 chrono.workspace = true

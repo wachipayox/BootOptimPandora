@@ -15,6 +15,7 @@ param(
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
+    [switch]$Framebuffer,
     [string]$PortableDirectory
 )
 $ErrorActionPreference = 'Stop'
@@ -33,6 +34,8 @@ if (-not (Test-Path $builtExe)) { throw "Missing executable: $builtExe" }
 $ownsDirectory = -not $PortableDirectory
 $tempRoot = if ($PortableDirectory) { [IO.Path]::GetFullPath($PortableDirectory) } else { Join-Path ([IO.Path]::GetTempPath()) ("wb274-" + [guid]::NewGuid().ToString('N').Substring(0,8)) }
 $null = New-Item -ItemType Directory -Force -Path $tempRoot
+$framebufferRoot = Join-Path $tempRoot 'capture-framebuffer'
+if ($Framebuffer) { $null = New-Item -ItemType Directory -Force -Path $framebufferRoot }
 # Pandora treats an executable whose name contains "portable" as an isolated
 # portable install, so this run never resolves to the user's regular data folder.
 $portableExe = Join-Path $tempRoot 'pandora-portable.exe'
@@ -106,8 +109,29 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
             } finally { $graphics.ReleaseHdc($dc) }
         }
         $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
-        $script:captureMetadata += @{ file=[IO.Path]::GetFileName($Path); width=$width; height=$height; dpi=[CaptureWindow]::GetDpiForWindow($handle) }
+        $script:captureMetadata += @{ file=[IO.Path]::GetFileName($Path); width=$width; height=$height; dpi=[CaptureWindow]::GetDpiForWindow($handle); method='desktop' }
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
+    if ($Framebuffer) {
+        foreach ($name in @('frame.png', 'failed')) {
+            $previous = Join-Path $framebufferRoot $name
+            if (Test-Path -LiteralPath $previous) { Remove-Item -LiteralPath $previous }
+        }
+        [IO.File]::WriteAllText((Join-Path $framebufferRoot 'request'), '')
+        $deadline = (Get-Date).AddSeconds(15)
+        $frame = Join-Path $framebufferRoot 'frame.png'
+        while (-not (Test-Path -LiteralPath $frame) -and (Get-Date) -lt $deadline) {
+            if (Test-Path -LiteralPath (Join-Path $framebufferRoot 'failed')) { throw 'Native framebuffer readback failed; inspect the isolated capture directory.' }
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not (Test-Path -LiteralPath $frame)) { throw 'Native framebuffer timed out; build with --features ui-capture.' }
+        $nativePath = [IO.Path]::Combine([IO.Path]::GetDirectoryName($Path), ([IO.Path]::GetFileNameWithoutExtension($Path) + '-gpu.png'))
+        Copy-Item -LiteralPath $frame -Destination $nativePath
+        $native = [Drawing.Bitmap]::new($nativePath)
+        try {
+            if ($native.Width -ne $width -or $native.Height -ne $height) { throw 'Native framebuffer and client dimensions differ.' }
+        } finally { $native.Dispose() }
+        $script:captureMetadata += @{file=[IO.Path]::GetFileName($nativePath);width=$width;height=$height;dpi=[CaptureWindow]::GetDpiForWindow($handle);method='gpu-readback'}
+    }
 }
 
 function Close-CapturedProcess([System.Diagnostics.Process]$CapturedProcess) {
@@ -138,6 +162,8 @@ $distributionCaptureActive = $false
 $distributionOriginalConfig = $null
 $distributionConfigPath = Join-Path $tempRoot "WachilandLauncher\config.json"
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
+$oldFramebufferDirectory = $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR
+if ($Framebuffer) { $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR = $framebufferRoot }
 $oldCaptureState = $env:WBOMBO_UI_CAPTURE_STATE
 if ($CaptureState) { $env:WBOMBO_UI_CAPTURE_STATE = $CaptureState }
 $screens = @(
@@ -319,6 +345,7 @@ try {
         unavailable = if ($TestProfile -or $PortableDirectory) { @() } else { @('instance-detail and update-dialog require an owned test profile fixture') }
     } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $outputPath 'capture-manifest.json')
 } finally {
+    if ($null -ne $oldFramebufferDirectory) { $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR=$oldFramebufferDirectory } else { Remove-Item Env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR -ErrorAction SilentlyContinue }
     if ($null -ne $oldNewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS=$oldNewsFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_NEWS -ErrorAction SilentlyContinue }
     if ($null -ne $proc -and -not $proc.HasExited) {
         Close-CapturedProcess $proc

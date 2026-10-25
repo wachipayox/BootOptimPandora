@@ -28,6 +28,8 @@ use crate::{
 };
 
 pub mod background;
+#[cfg(feature = "ui-capture")]
+mod capture;
 pub mod component;
 pub mod data_asset_loader;
 pub mod entity;
@@ -561,6 +563,10 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 }
                 if capture_page.as_deref() == Some("accounts") {
                     window.on_next_frame(|_, cx| crate::root::open_home_accounts(cx));
+                }
+                #[cfg(feature = "ui-capture")]
+                if capture_page.is_some() {
+                    crate::capture::start(window, cx);
                 }
                 root
             },

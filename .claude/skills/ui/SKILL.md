@@ -53,3 +53,12 @@ These routes open native views without confirming deletion, imports or Defender
 changes. Distribution captures temporarily replace the isolated endpoint with
 `https://example.invalid` and restore the original configuration after close,
 including failure cleanup. Private compiled defaults are never safe capture data.
+
+For paired GPU/desktop evidence, build with `cargo build --release -p pandora_launcher --features ui-capture`
+and pass `-Framebuffer` to the capture script. Each normal PNG retains the Windows
+desktop capture; its `-gpu.png` sibling reads the same native GPUI scene before
+presentation. The manifest identifies both methods and checks matching client
+dimensions. Use the pair to distinguish renderer output from presentation/capture
+artifacts; never describe a framebuffer image as a desktop screenshot. Readback
+stays on the window thread; PNG encoding runs on the background executor. The
+optional feature and file-request loop are absent from ordinary launcher builds.
