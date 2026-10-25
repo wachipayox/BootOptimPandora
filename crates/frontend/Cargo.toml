@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-ui-capture = ["gpui/test-support", "gpui_platform/test-support"]
+ui-capture = ["gpui/native-capture", "gpui_platform/native-capture"]
 
 [dependencies]
 t.workspace = true

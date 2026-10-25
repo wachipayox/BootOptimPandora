@@ -24,6 +24,7 @@ readme = false
 license = "Apache-2.0"
 
 [features]
+native-capture = ["gpui/native-capture", "gpui_windows/native-capture"]
 bench-support = [
     "gpui/bench-support",
     "gpui_macos/bench-support",

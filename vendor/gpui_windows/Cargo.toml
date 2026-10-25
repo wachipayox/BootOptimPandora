@@ -27,6 +27,7 @@ license = "Apache-2.0"
 ignored = ["scap"]
 
 [features]
+native-capture = ["gpui/native-capture"]
 default = ["gpui/default"]
 screen-capture = [
     "gpui/screen-capture",
