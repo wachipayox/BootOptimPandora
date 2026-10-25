@@ -3,6 +3,38 @@
 use gpui::{App, Window};
 use std::{path::PathBuf, time::Duration};
 
+/// Creates an owned local UI fixture through the ordinary backend creation
+/// message. It needs no Distribution credentials or published test profile.
+pub fn prepare_local_fixture(data: &crate::entity::DataEntities, cx: &App) {
+    let Ok(name) = std::env::var("WBOMBO_UI_CAPTURE_LOCAL_INSTANCE") else {
+        return;
+    };
+    if name != "agente-274-window-drag" || std::env::var_os("WBOMBO_UI_CAPTURE_PAGE").is_none() {
+        log::warn!("Refusing unrecognized local capture fixture");
+        return;
+    }
+    if data
+        .instances
+        .read(cx)
+        .entries
+        .values()
+        .any(|instance| instance.read(cx).name.as_ref() == name)
+    {
+        return;
+    }
+    data.backend_handle.send(bridge::message::MessageToBackend::CreateInstance {
+        name: name.as_str().into(),
+        version: "1.21.1".into(),
+        loader: schema::loader::Loader::Vanilla,
+        icon: None,
+    });
+    log::info!("capture-local-fixture-requested pid={}", std::process::id());
+}
+
+pub fn local_fixture() -> bool {
+    std::env::var("WBOMBO_UI_CAPTURE_LOCAL_INSTANCE").is_ok_and(|name| name == "agente-274-window-drag")
+}
+
 pub fn start(window: &mut Window, cx: &mut App) {
     let Some(directory) = std::env::var_os("WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR").map(PathBuf::from) else {
         return;

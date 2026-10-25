@@ -311,6 +311,8 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
             },
             |window, cx| {
                 let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").ok();
+                #[cfg(feature = "ui-capture")]
+                crate::capture::prepare_local_fixture(&data, cx);
                 if let Some((name, subpage)) = capture_page.as_deref().and_then(capture_instance_target) {
                     InterfaceConfig::get_mut(cx).instance_subpage = subpage;
                     InterfaceConfig::get_mut(cx).main_page = ui::PageType::InstancePage { name: name.into() };

@@ -66,6 +66,7 @@ impl InstanceChangelogSubpage {
                     this.loaded = true;
                     cx.notify();
                 });
+                log::info!("instance-changelog-ready pid={}", std::process::id());
                 return;
             };
             let mut cursor = None;

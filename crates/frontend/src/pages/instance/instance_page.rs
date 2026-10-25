@@ -51,6 +51,8 @@ impl InstancePage {
         });
         cx.spawn(async move |this, cx| {
             let global = matches!(receive.await, Ok(Ok(info)) if info.global_profile_id.is_some());
+            #[cfg(feature = "ui-capture")]
+            let global = global || crate::capture::local_fixture();
             let _ = this.update(cx, |this, cx| {
                 this.has_global_history = global;
                 if !global && InterfaceConfig::get(cx).instance_subpage == InstanceSubpageType::Changelog {
