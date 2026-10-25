@@ -207,3 +207,6 @@ API token. The configuration E2E example reads `WBOMBO_DIST_URL` at runtime.
 `WBOMBO_COMMUNITY_DISCORD_URL` optionally supplies the private community link in
 About. The build workflows read the matching repository secret. When absent or
 not an HTTPS URL, that action is omitted. Keep invite values out of public source.
+
+UI capture instructions are in the [UI workflow](.claude/skills/ui/SKILL.md).
+Investigation decisions and evidence are indexed in [research records](docs/research/README.md).
