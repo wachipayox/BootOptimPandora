@@ -60,7 +60,7 @@ desktop capture; its `-gpu.png` sibling reads the same native GPUI scene before
 presentation. The manifest identifies both methods and checks matching client
 dimensions. Use the pair to distinguish renderer output from presentation/capture
 artifacts; never describe a framebuffer image as a desktop screenshot. Readback
-copies the already drawn framebuffer after a fresh frame on the window thread;
+copies the complete framebuffer inside the fresh draw, before Present rotates or discards buffers, on the window thread;
 it does not replay scene sprites that animation may have retired. PNG encoding
 runs on the background executor. The
 optional feature and file-request loop are absent from ordinary launcher builds.

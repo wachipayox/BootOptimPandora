@@ -16,7 +16,7 @@ This establishes a difference between renderer output and Windows presentation/c
 
 - `ui-capture` enables native framebuffer copying through a narrow `native-capture` feature, without enabling GPUI's test dependencies.
 - The script retains its Windows PNG and adds a separately identified `-gpu.png` of the native scene, including focused/scrolled states. It verifies matching client dimensions and records executable SHA-256, caller-supplied binary source and script revision separately.
-- GPU readback copies the already drawn render target after a fresh frame on the window thread. The test-only `render_to_image` API replays a scene; both a direct call and an `on_next_frame` call could hit evicted animated-image atlas entries. Live capture therefore uses a separate copy-only API, sharing the existing staging/readback implementation. PNG encoding runs on the background executor. The request loop is excluded from ordinary builds.
+- GPU readback copies the complete render target inside the fresh draw, before Present rotates or discards swap-chain buffers, on the window thread. The test-only `render_to_image` API replays a scene; both a direct call and an `on_next_frame` call could hit evicted animated-image atlas entries. Live capture therefore uses a separate copy-only API, sharing the existing staging/readback implementation. PNG encoding runs on the background executor. The request loop is excluded from ordinary builds.
 
 Capture instructions have one home: [the UI workflow](../../.claude/skills/ui/SKILL.md). Community screenshots remain in the private review linked from the PR. A framebuffer image must never be described as a desktop screenshot.
 

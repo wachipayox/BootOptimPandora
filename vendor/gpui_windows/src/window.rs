@@ -1000,8 +1000,14 @@ impl PlatformWindow for WindowsWindow {
     }
 
     #[cfg(feature = "native-capture")]
+    fn request_framebuffer_capture(&self) -> anyhow::Result<()> {
+        self.state.renderer.borrow_mut().request_framebuffer_capture();
+        Ok(())
+    }
+
+    #[cfg(feature = "native-capture")]
     fn capture_framebuffer(&self) -> anyhow::Result<image::RgbaImage> {
-        self.state.renderer.borrow().capture_framebuffer()
+        self.state.renderer.borrow_mut().capture_framebuffer()
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

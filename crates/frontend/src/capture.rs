@@ -20,8 +20,16 @@ pub fn start(window: &mut Window, cx: &mut App) {
                 let (send, receive) = tokio::sync::oneshot::channel();
                 if cx
                     .update(|window, _| {
+                        if let Err(error) = window.request_framebuffer_capture() {
+                            let _ = send.send(Err(error));
+                            return;
+                        }
                         window.on_next_frame(move |window, _| {
-                            let _ = send.send(window.capture_framebuffer());
+                            // Frame callbacks run before drawing. The following
+                            // callback retrieves the copy saved by this draw.
+                            window.on_next_frame(move |window, _| {
+                                let _ = send.send(window.capture_framebuffer());
+                            });
                         });
                         window.refresh();
                     })

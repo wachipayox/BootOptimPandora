@@ -2465,8 +2465,14 @@ impl Window {
             .render_to_image(&self.rendered_frame.scene)
     }
 
-    /// Copies the current native framebuffer. Schedule after a fresh frame when
-    /// collecting live evidence; this never replays potentially stale sprite IDs.
+    /// Requests a copy during the next draw, before presentation rotates buffers.
+    #[cfg(feature = "native-capture")]
+    pub fn request_framebuffer_capture(&self) -> anyhow::Result<()> {
+        self.platform_window.request_framebuffer_capture()
+    }
+
+    /// Retrieves a requested frame. Call after the next draw; this never replays
+    /// potentially stale sprite IDs.
     #[cfg(feature = "native-capture")]
     pub fn capture_framebuffer(&self) -> anyhow::Result<image::RgbaImage> {
         self.platform_window.capture_framebuffer()

@@ -54,6 +54,10 @@ pub(crate) struct DirectXRenderer {
     /// In that case we want to discard the first frame that we draw as we got reset in the middle of a frame
     /// meaning we lost all the allocated gpu textures and scene resources.
     skip_draws: bool,
+    #[cfg(feature = "native-capture")]
+    capture_requested: bool,
+    #[cfg(feature = "native-capture")]
+    captured_frame: Option<Result<image::RgbaImage>>,
 }
 
 /// Direct3D objects
@@ -194,7 +198,24 @@ impl DirectXRenderer {
             width: 1,
             height: 1,
             skip_draws: false,
+            #[cfg(feature = "native-capture")]
+            capture_requested: false,
+            #[cfg(feature = "native-capture")]
+            captured_frame: None,
         })
+    }
+
+    #[cfg(feature = "native-capture")]
+    pub(crate) fn request_framebuffer_capture(&mut self) {
+        self.captured_frame = None;
+        self.capture_requested = true;
+    }
+
+    #[cfg(feature = "native-capture")]
+    pub(crate) fn capture_framebuffer(&mut self) -> Result<image::RgbaImage> {
+        self.captured_frame
+            .take()
+            .context("requested framebuffer has not been drawn yet")?
     }
 
     pub(crate) fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -338,6 +359,12 @@ impl DirectXRenderer {
             return Ok(());
         }
         self.render(scene, background_appearance)?;
+        #[cfg(feature = "native-capture")]
+        if std::mem::take(&mut self.capture_requested) {
+            // Present can rotate/discard the swap-chain buffer. Copy the complete
+            // scene here, while it is still the frame that was just rendered.
+            self.captured_frame = Some(self.read_framebuffer());
+        }
         self.present()
     }
 
@@ -423,13 +450,13 @@ impl DirectXRenderer {
             "render_to_image unavailable while recovering from a lost device"
         );
         self.render(scene, background_appearance)?;
-        self.capture_framebuffer()
+        self.read_framebuffer()
     }
 
     /// Read pixels already drawn by the normal render path. Replaying an older
     /// scene here could reference atlas textures retired by animated images.
     #[cfg(any(test, feature = "test-support", feature = "native-capture"))]
-    pub(crate) fn capture_framebuffer(&self) -> Result<image::RgbaImage> {
+    pub(crate) fn read_framebuffer(&self) -> Result<image::RgbaImage> {
         anyhow::ensure!(!self.skip_draws, "framebuffer unavailable during device recovery");
         let devices = self.devices.as_ref().context("devices missing")?;
         let device = &devices.device;

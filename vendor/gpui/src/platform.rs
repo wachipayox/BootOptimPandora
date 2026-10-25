@@ -992,7 +992,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         anyhow::bail!("render_to_image not implemented for this platform")
     }
 
-    /// Copies the already rendered native framebuffer without replaying its scene.
+    /// Requests a copy of the next rendered frame before presentation.
+    #[cfg(feature = "native-capture")]
+    fn request_framebuffer_capture(&self) -> Result<()> {
+        anyhow::bail!("native framebuffer capture not implemented for this platform")
+    }
+
+    /// Retrieves the requested native framebuffer without replaying its scene.
     #[cfg(feature = "native-capture")]
     fn capture_framebuffer(&self) -> Result<image::RgbaImage> {
         anyhow::bail!("native framebuffer capture not implemented for this platform")
