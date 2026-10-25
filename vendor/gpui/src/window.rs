@@ -4514,12 +4514,16 @@ impl Window {
     /// Call during paint, in the same order as the control's mouse handlers.
     pub fn insert_window_control_client_hitbox(&mut self, hitbox: Hitbox) {
         self.invalidator.debug_assert_paint();
+        #[cfg(feature = "native-capture")]
+        let id = hitbox.id;
         self.next_frame.window_control_hitboxes.push(WindowControlHitbox {
             area: None,
             hitbox,
             #[cfg(feature = "native-capture")]
             label: "interactive".into(),
         });
+        #[cfg(feature = "native-capture")]
+        self.describe_window_control_hitbox(id, "interactive".into());
     }
 
     #[cfg(feature = "native-capture")]
