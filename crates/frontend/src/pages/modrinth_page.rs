@@ -17,7 +17,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Icon, Selectable, WindowExt,
     button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
-    checkbox::Checkbox,
     h_flex,
     input::{InputEvent, InputState},
     notification::NotificationType,
@@ -915,15 +914,12 @@ impl Render for ModrinthSearchPage {
 
         if self.can_install_latest {
             let install_latest = InterfaceConfig::get(cx).content_install_latest;
-            top_bar = top_bar.child(
-                Checkbox::new("install-latest")
-                    .label("Instalar siempre la última")
-                    .checked(install_latest)
-                    .on_click({
-                        move |value, _, cx| {
-                            InterfaceConfig::get_mut(cx).content_install_latest = *value;
-                        }
-                    }),
+            top_bar = top_bar.child(div().text_size(px(12.)).child("Instalar siempre la última")).child(
+                design::YesNo::new("install-latest").checked(install_latest).on_click({
+                    move |value, _, cx| {
+                        InterfaceConfig::get_mut(cx).content_install_latest = *value;
+                    }
+                }),
             );
         }
 

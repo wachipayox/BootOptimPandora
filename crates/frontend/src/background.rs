@@ -53,9 +53,12 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
         source => {
             let source = match source {
                 AppBackground::Cafe => image::load_from_memory(&Assets::get("images/cafe-ambient.png")?.data).ok()?,
-                AppBackground::Image(path) | AppBackground::Artwork(Some(path)) => image::open(path).ok()?,
-                AppBackground::Artwork(None) => {
-                    image::load_from_memory(&Assets::get("images/artwork-vanilla.png")?.data).ok()?
+                AppBackground::Image(path) => image::open(path).ok()?,
+                AppBackground::Artwork(path) => {
+                    path.as_ref().and_then(|path| image::open(path).ok()).or_else(|| {
+                        Assets::get("images/artwork-vanilla.png")
+                            .and_then(|asset| image::load_from_memory(&asset.data).ok())
+                    })?
                 },
                 _ => unreachable!(),
             };
