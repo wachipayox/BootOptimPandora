@@ -94,6 +94,7 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
     foreach($region in $regions) {
         $expected=switch($region.area) {'Some(Drag)' {2}; 'Some(Min)' {8}; 'Some(Max)' {9}; 'Some(Close)' {20}; 'None' {1}; default {throw 'Unknown capture region type'}}
         foreach($point in $region.points) {
+            if ($point -isnot [System.Array] -or $point.Count -ne 2) {throw 'A native hit-test probe must contain one x/y pair.'}
             $points+=@{label=$region.label;kind=$region.area;x=$origin.X+[int][math]::Round($point[0]*$scale);y=$origin.Y+[int][math]::Round($point[1]*$scale);expected=$expected}
         }
     }
@@ -110,7 +111,7 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
     $results=@()
     try {
         foreach($point in $points) {
-            [void][CaptureWindow]::SetCursorPos($point.x,$point.y)
+            if (-not [CaptureWindow]::SetCursorPos($point.x,$point.y)) {throw 'Cannot position the native hit-test probe.'}
             $clientX=$point.x-$origin.X; $clientY=$point.y-$origin.Y
             $client=[IntPtr](([int64]$clientY -shl 16) -bor ([int64]$clientX -band 0xffff))
             $screen=[IntPtr](([int64]$point.y -shl 16) -bor ([int64]$point.x -band 0xffff))
