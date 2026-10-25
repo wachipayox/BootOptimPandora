@@ -399,4 +399,91 @@ mod tests {
                 .is_empty()
         );
     }
+
+    fn response_server(response: Vec<u8>) -> (DistributionClient, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0u8; 1];
+            while request.len() < 8192 && !request.ends_with(b"\r\n\r\n") {
+                if socket.read_exact(&mut byte).is_err() {
+                    break;
+                }
+                request.push(byte[0]);
+            }
+            assert!(String::from_utf8_lossy(&request).starts_with("GET /v1/objects/sha256/"));
+            let _ = socket.write_all(&response);
+        });
+        // Loopback transport fixture only. The public constructor still rejects
+        // plaintext origins; use the real transport builder to retain policy.
+        let client = DistributionClient {
+            client: build_http_client(&schema::backend_config::DistributionConfig::default()).unwrap(),
+            base_url: Url::parse(&format!("http://{address}/")).unwrap(),
+            trusted_keys: BTreeMap::new(),
+            server_keys: Arc::new(tokio::sync::OnceCell::new()),
+        };
+        (client, server)
+    }
+
+    fn response(body: &[u8]) -> Vec<u8> {
+        let mut response =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
+        response.extend_from_slice(body);
+        response
+    }
+
+    #[tokio::test]
+    async fn streamed_download_enforces_signed_digest_and_size() {
+        let (release, key) = fixture();
+        let verified = verify_signature(&release, PLATFORM, "5.3.1", &key).unwrap();
+        let (client, server) = response_server(response(PAYLOAD));
+        let mut count = 0;
+        assert_eq!(client.download_launcher_artifact(&verified, |n| count += n).await.unwrap(), PAYLOAD);
+        assert_eq!(count, PAYLOAD.len());
+        server.join().unwrap();
+        let mut changed = PAYLOAD.to_vec();
+        changed[0] ^= 1;
+        let (client, server) = response_server(response(&changed));
+        assert!(matches!(
+            client.download_launcher_artifact(&verified, |_| {}).await,
+            Err(DistributionError::InvalidObject(_))
+        ));
+        server.join().unwrap();
+        let (client, server) = response_server(response(&PAYLOAD[..PAYLOAD.len() - 1]));
+        let mut count = 0;
+        assert!(client.download_launcher_artifact(&verified, |n| count += n).await.is_err());
+        assert_eq!(count, 0, "a mismatching Content-Length is rejected before body progress");
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn streamed_download_stops_chunked_overflow_and_does_not_follow_redirects() {
+        let (release, key) = fixture();
+        let verified = verify_signature(&release, PLATFORM, "5.3.1", &key).unwrap();
+        let mut chunked = format!(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n",
+            PAYLOAD.len()
+        )
+        .into_bytes();
+        chunked.extend_from_slice(PAYLOAD);
+        chunked.extend_from_slice(b"\r\n5\r\nextra\r\n0\r\n\r\n");
+        let (client, server) = response_server(chunked);
+        assert!(matches!(
+            client.download_launcher_artifact(&verified, |_| {}).await,
+            Err(DistributionError::ResponseTooLarge)
+        ));
+        server.join().unwrap();
+        let (client, server) = response_server(
+            b"HTTP/1.1 302 Found\r\nLocation: /not-followed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+        );
+        assert!(matches!(
+            client.download_launcher_artifact(&verified, |_| {}).await,
+            Err(DistributionError::HttpStatus(reqwest::StatusCode::FOUND))
+        ));
+        server.join().unwrap();
+    }
 }

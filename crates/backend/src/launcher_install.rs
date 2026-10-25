@@ -708,4 +708,69 @@ mod tests {
         assert!(!staged.exists());
         assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 1);
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_helper_replaces_and_restarts_a_benign_local_fixture() {
+        use base64::Engine;
+        use std::os::windows::process::CommandExt;
+        let scratch = Scratch::new();
+        let target = scratch.0.join("O'Brien $portable.exe");
+        let staged = scratch.0.join("candidate.exe");
+        let marker = scratch.0.join("restarted.txt");
+        let source = scratch.0.join("fixture.rs");
+        fs::write(
+            &source,
+            r#"#![windows_subsystem = "windows"]
+fn main() {
+    let path = std::env::var_os("WBOMBO_UPDATE_TEST_MARKER").unwrap();
+    std::fs::write(path, b"benign candidate restarted").unwrap();
+}
+"#,
+        )
+        .unwrap();
+        let compiler = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let compiled = Command::new(compiler)
+            .arg("--edition=2024")
+            .arg("--crate-name=wbombo_update_fixture")
+            .arg(&source)
+            .arg("-o")
+            .arg(&staged)
+            .creation_flags(0x08000000)
+            .output()
+            .unwrap();
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let candidate = fs::read(&staged).unwrap();
+        fs::write(&target, b"previous-fixture-never-executed").unwrap();
+        let script = windows_script(&target, &staged, i32::MAX as u32).unwrap();
+        let encoded: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let result = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-EncodedCommand",
+            ])
+            .arg(base64::engine::general_purpose::STANDARD.encode(encoded))
+            .env("WBOMBO_UPDATE_TEST_MARKER", &marker)
+            .creation_flags(0x08000000)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(fs::read(&marker).unwrap(), b"benign candidate restarted");
+        assert_eq!(fs::read(&target).unwrap(), candidate);
+        assert!(!staged.exists());
+        let backups: Vec<_> = fs::read_dir(&scratch.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.file_name().unwrap().to_string_lossy().contains("wbombo-previous-"))
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(fs::read(&backups[0]).unwrap(), b"previous-fixture-never-executed");
+    }
 }
