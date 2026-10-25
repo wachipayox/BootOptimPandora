@@ -62,3 +62,8 @@ dimensions. Use the pair to distinguish renderer output from presentation/captur
 artifacts; never describe a framebuffer image as a desktop screenshot. Readback
 stays on the window thread; PNG encoding runs on the background executor. The
 optional feature and file-request loop are absent from ordinary launcher builds.
+The manifest hashes the executable actually used, including with reused portable
+data. Pass `-ExecutableSourceCommit <verified SHA>` for a binary built from a
+different checkout; the script revision is recorded separately and never implies
+the binary's source. An explicit executable replaces the isolated portable copy.
+`launcher-theme-joke` captures the same dialog opened by the non-dark theme chips.

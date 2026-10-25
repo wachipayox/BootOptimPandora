@@ -2,6 +2,7 @@ param(
     [string]$Output = (Join-Path $PSScriptRoot '..\..\..\coordination\272-estetica-launchers\pandora'),
     [switch]$SkipBuild,
     [string]$Executable,
+    [ValidatePattern('^$|^[0-9a-fA-F]{7,40}$')][string]$ExecutableSourceCommit = '',
     [string]$TestProfile,
     [string]$Revision,
     [string]$InstanceName = 'agente-274-ui',
@@ -39,7 +40,10 @@ if ($Framebuffer) { $null = New-Item -ItemType Directory -Force -Path $framebuff
 # Pandora treats an executable whose name contains "portable" as an isolated
 # portable install, so this run never resolves to the user's regular data folder.
 $portableExe = Join-Path $tempRoot 'pandora-portable.exe'
-if (-not (Test-Path $portableExe) -or $ownsDirectory) { Copy-Item -LiteralPath $builtExe -Destination $portableExe }
+if (-not [string]::Equals($builtExe, $portableExe, [StringComparison]::OrdinalIgnoreCase)) {
+    Copy-Item -LiteralPath $builtExe -Destination $portableExe -Force
+}
+$executableHash = (Get-FileHash -LiteralPath $portableExe -Algorithm SHA256).Hash.ToLowerInvariant()
 
 Add-Type @'
 using System;
@@ -337,6 +341,9 @@ try {
     }
     @{
         launcher = 'BootOptimPandora'
+        executableSha256 = $executableHash
+        executableSourceCommit = $ExecutableSourceCommit
+        captureScriptCommit = (git -C $repo rev-parse HEAD)
         viewport = if ($DesignViewport) { '1280 x 860 logical pixels' } else { 'maximized' }
         captures = $captureMetadata
         diagnostics = $captureDiagnostics
