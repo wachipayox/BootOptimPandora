@@ -225,16 +225,19 @@ try {
         }
         # The user requested visible UI captures; SW_HIDE prevents GPUI's first
         # window from becoming visible and makes MainWindowHandle remain zero.
-        $proc = Start-Process -FilePath $portableExe -PassThru
+        $proc = Start-Process -FilePath $portableExe -PassThru -RedirectStandardOutput (Join-Path $tempRoot 'capture-window.out') -RedirectStandardError (Join-Path $tempRoot 'capture-window.err')
         $deadline = (Get-Date).AddSeconds(45)
-        while ((Get-Date) -lt $deadline -and ($proc.MainWindowHandle -eq 0 -or $proc.HasExited)) {
+        while ((Get-Date) -lt $deadline -and -not $proc.HasExited -and $proc.MainWindowHandle -eq 0) {
             Start-Sleep -Milliseconds 300
             $proc.Refresh()
         }
-        if ($proc.HasExited -or $proc.MainWindowHandle -eq 0) { throw "Pandora did not open for $($screen.page)" }
+        if ($proc.HasExited) { throw "Pandora exited for $($screen.page), code $($proc.ExitCode); see capture-window.err in the isolated portable directory" }
+        if ($proc.MainWindowHandle -eq 0) { throw "Pandora did not open for $($screen.page)" }
         [void][CaptureWindow]::ShowWindow($proc.MainWindowHandle, 3)
         [void][CaptureWindow]::SetForegroundWindow($proc.MainWindowHandle)
         Start-Sleep -Seconds 5
+        $proc.Refresh()
+        if ($proc.HasExited) { throw "Pandora exited for $($screen.page), code $($proc.ExitCode); see capture-window.err in the isolated portable directory" }
         if ($HomeScreens -and $screen.page -in @('instances','accounts','home-menu','home-news')) {
             $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
             $ready = "home-ready pid=$($proc.Id)"
