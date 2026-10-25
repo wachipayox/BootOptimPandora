@@ -212,7 +212,14 @@ impl Render for SettingsRoot {
 impl SettingsRoot {
     pub fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(page_ix) = self.settings.selected_page else {
-            return div().size_full().p_3().text_lg().child("No hay resultados.").into_any();
+            return div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(rgb(crate::theme::INK_MUTED))
+                .child("No hay resultados.")
+                .into_any();
         };
 
         let page = self.settings.pages[page_ix].clone();
@@ -383,8 +390,7 @@ impl SettingsRoot {
                     .when(has_backend_missing, |this| this.child(h_flex().gap_1().child(Spinner::new())))
                     .children(item_elements);
 
-                let mut panel =
-                    v_flex().w_full().bg(rgb(crate::theme::PANEL)).border_1().border_color(rgba(0xffffff0b));
+                let mut panel = v_flex().w_full().bg(rgb(crate::theme::PANEL));
                 if let Some(title) = group.title {
                     panel = panel.child(
                         div()
@@ -392,7 +398,7 @@ impl SettingsRoot {
                             .pt(px(16.))
                             .font_family(crate::theme::DISPLAY)
                             .text_size(px(15.))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(FontWeight::BOLD)
                             .text_color(rgb(crate::theme::INK))
                             .when(selected_group == Some(group_ix), Styled::underline)
                             .child((title)()),

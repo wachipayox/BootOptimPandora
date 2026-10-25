@@ -125,7 +125,7 @@ fn create_language_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWid
             .bg(rgb(crate::theme::PANEL_SUNKEN))
             .rounded(px(0.))
             .text_size(px(13.))
-            .w(px(90.))
+            .w(px(180.))
             .menu_width(px(200.0))
             .search_placeholder(t::common::search())
             .into_any_element()
