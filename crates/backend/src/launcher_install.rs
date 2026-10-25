@@ -19,33 +19,20 @@ const MAX_EXPANDED: u64 = 2 * 1024 * 1024 * 1024;
 #[cfg(any(target_os = "macos", test))]
 const MAX_EXECUTABLE: u64 = 512 * 1024 * 1024;
 
-pub(crate) fn install(bytes: &[u8]) -> Result<()> {
+pub(crate) fn install(bytes: &[u8], _temporary_directory: &Path) -> Result<()> {
     let executable = std::env::current_exe()?;
     ensure!(executable.is_absolute(), "current executable path is not absolute");
     #[cfg(target_os = "macos")]
-    if let Some(bundle) = app_path(&executable) {
-        let parent = bundle.parent().context("application has no parent")?;
-        let unpack = parent.join(format!(".wbombo-update-{}", uuid::Uuid::new_v4()));
-        fs::create_dir(&unpack)?;
-        let result = (|| {
-            let extracted = unpack_bundle(bytes, &unpack)?;
-            let _ = bundle_executable(&extracted)?;
-            let staged = unpack.with_added_extension("app");
-            fs::rename(extracted, &staged)?;
-            let result = replace_unix(bundle, &staged, true);
-            if staged.exists() {
-                let _ = fs::remove_dir_all(&staged);
-            }
-            result
-        })();
-        let _ = fs::remove_dir_all(&unpack);
-        return result;
+    if let Some(bundle) = bundle_target(&executable, _temporary_directory) {
+        let area = StageArea::new(bundle.parent().context("application has no parent")?, _temporary_directory)?;
+        let staged = unpack_bundle(bytes, &area.root)?;
+        let _ = bundle_executable(&staged)?;
+        return replace_unix(bundle, &staged, true);
     }
     #[cfg(target_os = "macos")]
     let standalone = extract_macos_executable(bytes)?;
     #[cfg(target_os = "macos")]
     let bytes = standalone.as_slice();
-
     #[cfg(target_os = "linux")]
     let executable = std::env::var_os("APPIMAGE")
         .map(PathBuf::from)
@@ -53,16 +40,73 @@ pub(crate) fn install(bytes: &[u8]) -> Result<()> {
         .transpose()?
         .unwrap_or(executable);
     validate_executable(bytes, std::env::consts::OS)?;
-    let staged = executable.with_added_extension(format!("wbombo-new-{}", uuid::Uuid::new_v4()));
-    write_staged(&staged, bytes)?;
-    #[cfg(windows)]
-    let result = launch_windows_helper(&executable, &staged);
     #[cfg(unix)]
-    let result = replace_unix(&executable, &staged, false);
-    if result.is_err() {
-        let _ = fs::remove_file(&staged);
+    {
+        let area = StageArea::new(executable.parent().context("executable has no parent")?, _temporary_directory)?;
+        let staged = area.root.join("launcher");
+        write_staged(&staged, bytes)?;
+        return replace_unix(&executable, &staged, false);
     }
-    result
+    #[cfg(windows)]
+    {
+        let staged = executable.with_added_extension(format!("wbombo-new-{}", uuid::Uuid::new_v4()));
+        write_staged(&staged, bytes)?;
+        let result = launch_windows_helper(&executable, &staged);
+        if result.is_err() {
+            let _ = fs::remove_file(&staged);
+        }
+        result
+    }
+}
+
+#[cfg(unix)]
+struct StageArea {
+    root: PathBuf,
+    parent: PathBuf,
+}
+#[cfg(unix)]
+impl StageArea {
+    fn create(parent: &Path) -> Result<Self> {
+        use std::os::unix::fs::PermissionsExt;
+        ensure!(parent.is_absolute(), "staging parent is not absolute");
+        let root = parent.join(format!(".wbombo-update-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root)?;
+        let area = Self {
+            root,
+            parent: parent.to_owned(),
+        };
+        fs::set_permissions(&area.root, fs::Permissions::from_mode(0o700))?;
+        Ok(area)
+    }
+    fn new(parent: &Path, temporary: &Path) -> Result<Self> {
+        match Self::create(parent) {
+            Ok(area) => Ok(area),
+            Err(error)
+                if error.downcast_ref::<std::io::Error>().is_some_and(|e| {
+                    e.kind() == std::io::ErrorKind::PermissionDenied || e.raw_os_error() == Some(libc::EROFS)
+                }) =>
+            {
+                ensure!(temporary.is_absolute(), "temporary directory is not absolute");
+                fs::create_dir_all(temporary)?;
+                Self::create(temporary)
+            },
+            Err(error) => Err(error),
+        }
+    }
+}
+#[cfg(unix)]
+impl Drop for StageArea {
+    fn drop(&mut self) {
+        if self.root.is_absolute()
+            && self.root.parent() == Some(self.parent.as_path())
+            && self
+                .root
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".wbombo-update-"))
+        {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
 }
 
 fn write_staged(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -110,6 +154,23 @@ fn app_path(executable: &Path) -> Option<&Path> {
     let contents = macos.parent()?;
     let app = contents.parent()?;
     (macos.file_name()? == "MacOS" && contents.file_name()? == "Contents" && app.extension()? == "app").then_some(app)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn bundle_target<'a>(executable: &'a Path, temporary: &Path) -> Option<&'a Path> {
+    let bundle = app_path(executable)?;
+    let real_bundle = bundle.canonicalize().unwrap_or_else(|_| bundle.to_owned());
+    let real_temporary = temporary
+        .canonicalize()
+        .or_else(|_| {
+            let parent = temporary.parent().ok_or_else(|| std::io::Error::other("temporary parent is missing"))?;
+            let name = temporary.file_name().ok_or_else(|| std::io::Error::other("temporary name is missing"))?;
+            Ok::<_, std::io::Error>(parent.canonicalize()?.join(name))
+        })
+        .unwrap_or_else(|_| temporary.to_owned());
+    // A portable bundle may keep data beside its renamed executable. Preserve
+    // that entire data tree by using the approved standalone executable path.
+    (!real_temporary.starts_with(real_bundle)).then_some(bundle)
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -236,8 +297,8 @@ fn previous_path(target: &Path) -> PathBuf {
 #[cfg(any(unix, test))]
 fn replace_with_backup(target: &Path, staged: &Path) -> Result<PathBuf> {
     ensure!(
-        target.is_absolute() && target.parent() == staged.parent(),
-        "replacement must be a sibling of the target"
+        target.is_absolute() && staged.is_absolute() && target != staged,
+        "replacement paths must be distinct and absolute"
     );
     let backup = previous_path(target);
     ensure!(!backup.try_exists()?, "backup path already exists");
@@ -251,7 +312,11 @@ fn replace_with_backup(target: &Path, staged: &Path) -> Result<PathBuf> {
 
 #[cfg(unix)]
 fn replace_unix(target: &Path, staged: &Path, app: bool) -> Result<()> {
-    let backup = replace_with_backup(target, staged)?;
+    replace_unix_using(target, staged, app, Path::new("/bin/sh"))
+}
+
+#[cfg(unix)]
+fn replace_unix_using(target: &Path, staged: &Path, app: bool, helper: &Path) -> Result<()> {
     // Pass paths as positional arguments, never interpolate them into shell code.
     // Retain the previous installation for recovery; never delete an existing
     // backup. Restore it immediately if helper creation fails.
@@ -260,7 +325,7 @@ fn replace_unix(target: &Path, staged: &Path, app: bool) -> Result<()> {
     } else {
         "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; exec \"$2\""
     };
-    let result = Command::new("/bin/sh")
+    let mut child = Command::new(helper)
         .arg("-c")
         .arg(script)
         .arg("wbombo-update")
@@ -269,18 +334,97 @@ fn replace_unix(target: &Path, staged: &Path, app: bool) -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn();
-    if let Err(error) = result {
-        let failed = target.with_added_extension(format!("wbombo-failed-{}", uuid::Uuid::new_v4()));
-        fs::rename(target, &failed)?;
-        fs::rename(backup, target).context("could not restore previous installation")?;
-        if failed.is_dir() {
-            let _ = fs::remove_dir_all(failed);
-        } else {
-            let _ = fs::remove_file(failed);
-        }
-        return Err(error.into());
+        .spawn()
+        .context("could not start launcher restart helper")?;
+    let result = match replace_with_backup(target, staged) {
+        Ok(_) => Ok(()),
+        Err(error)
+            if target.exists()
+                && error.downcast_ref::<std::io::Error>().is_some_and(|e| {
+                    e.kind() == std::io::ErrorKind::PermissionDenied || e.raw_os_error() == Some(libc::EXDEV)
+                }) =>
+        {
+            elevated_replace(target, staged, app)
+        },
+        Err(error) => Err(error),
+    };
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
+    result
+}
+
+#[cfg(unix)]
+const ELEVATED_REPLACE: &str = r#"set -eu
+target=$1
+staged=$2
+backup=$3
+owner=$4
+mode=$5
+app=$6
+moved=0
+restore() {
+    status=$?
+    trap - EXIT
+    if [ "$moved" = 1 ]; then
+        if [ -e "$target" ] || [ -L "$target" ]; then rm -rf "$target"; fi
+        mv "$backup" "$target" || exit 2
+    fi
+    exit "$status"
+}
+trap restore EXIT
+[ ! -e "$backup" ] && [ ! -L "$backup" ]
+mv "$target" "$backup"
+moved=1
+mv "$staged" "$target"
+if [ "$app" = 1 ]; then chown -R -h "$owner" "$target"; else chown "$owner" "$target"; fi
+chmod "$mode" "$target"
+moved=0
+"#;
+
+#[cfg(unix)]
+fn elevated_replace(target: &Path, staged: &Path, app: bool) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    ensure!(
+        target.is_absolute() && staged.is_absolute() && target != staged && target.file_name().is_some(),
+        "elevated replacement paths must be distinct absolute targets"
+    );
+    let backup = previous_path(target);
+    ensure!(backup.parent() == target.parent() && !backup.try_exists()?, "unexpected backup path");
+    let metadata = fs::metadata(target)?;
+    let owner = format!("{}:{}", metadata.uid(), metadata.gid());
+    let mode = format!("{:o}", metadata.mode() & 0o777);
+    let app = if app { "1" } else { "0" };
+    // Preserve the launcher's existing pkexec/macOS authorization path, but
+    // pass every path as an argument and restore the backup on a failed move.
+    #[cfg(target_os = "linux")]
+    let status = Command::new("pkexec")
+        .arg("/bin/sh")
+        .arg("-c")
+        .arg(ELEVATED_REPLACE)
+        .arg("wbombo-install")
+        .arg(target)
+        .arg(staged)
+        .arg(&backup)
+        .arg(&owner)
+        .arg(&mode)
+        .arg(app)
+        .status()?;
+    #[cfg(not(target_os = "linux"))]
+    let status = runas::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(ELEVATED_REPLACE)
+        .arg("wbombo-install")
+        .arg(target)
+        .arg(staged)
+        .arg(&backup)
+        .arg(&owner)
+        .arg(&mode)
+        .arg(app)
+        .gui(true)
+        .status()?;
+    ensure!(status.success(), "authorized launcher replacement failed ({status})");
     Ok(())
 }
 
@@ -397,6 +541,14 @@ mod tests {
         assert_eq!(app_path(&app.join("Contents/MacOS/launcher")), Some(app.as_path()));
         assert!(app_path(&app.join("Contents/Resources/launcher")).is_none());
         assert!(app_path(&scratch.0.join("Example/Contents/MacOS/launcher")).is_none());
+        assert_eq!(
+            bundle_target(&app.join("Contents/MacOS/launcher"), &scratch.0.join("outside/temp")),
+            Some(app.as_path())
+        );
+        assert!(
+            bundle_target(&app.join("Contents/MacOS/launcher"), &app.join("Contents/MacOS/WachilandLauncher/temp"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -458,6 +610,58 @@ mod tests {
         assert!(validate_executable(b"\x7fELF-fixture", "linux").is_ok());
         assert!(validate_executable(MACHO, "macos").is_ok());
         assert!(validate_executable(b"MZ-fixture", "linux").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_replacement_restores_previous_when_restart_helper_cannot_start() {
+        let scratch = Scratch::new();
+        let target = scratch.0.join("launcher");
+        let staged = scratch.0.join("candidate");
+        fs::write(&target, b"previous-fixture-never-executed").unwrap();
+        fs::write(&staged, b"candidate-fixture-never-executed").unwrap();
+        let missing_helper = scratch.0.join("missing-helper");
+        assert!(replace_unix_using(&target, &staged, false, &missing_helper).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"previous-fixture-never-executed");
+        assert_eq!(fs::read(&staged).unwrap(), b"candidate-fixture-never-executed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn authorized_transaction_moves_and_rolls_back_without_requesting_authorization() {
+        use std::os::unix::fs::MetadataExt;
+        let scratch = Scratch::new();
+        let target = scratch.0.join("O'Brien $launcher");
+        let payload = scratch.0.join("payload");
+        fs::create_dir(&payload).unwrap();
+        let staged = payload.join("candidate");
+        fs::write(&target, b"previous-fixture-never-executed").unwrap();
+        fs::write(&staged, b"candidate-fixture-never-executed").unwrap();
+        let metadata = fs::metadata(&target).unwrap();
+        let owner = format!("{}:{}", metadata.uid(), metadata.gid());
+        let mode = format!("{:o}", metadata.mode() & 0o777);
+        let run = |backup: &Path| {
+            Command::new("/bin/sh")
+                .args(["-c", ELEVATED_REPLACE, "wbombo-install"])
+                .arg(&target)
+                .arg(&staged)
+                .arg(backup)
+                .arg(&owner)
+                .arg(&mode)
+                .arg("0")
+                .output()
+                .unwrap()
+        };
+        let backup = previous_path(&target);
+        assert!(run(&backup).status.success());
+        assert_eq!(fs::read(&target).unwrap(), b"candidate-fixture-never-executed");
+        assert_eq!(fs::read(&backup).unwrap(), b"previous-fixture-never-executed");
+        // The staged file was consumed. A second move must restore the target.
+        let failed_backup = previous_path(&target);
+        assert!(!run(&failed_backup).status.success());
+        assert_eq!(fs::read(&target).unwrap(), b"candidate-fixture-never-executed");
+        assert!(!failed_backup.exists());
+        assert_eq!(fs::read(&backup).unwrap(), b"previous-fixture-never-executed");
     }
 
     #[cfg(windows)]

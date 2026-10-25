@@ -16,6 +16,8 @@ pub(crate) struct LauncherUpdates {
     checking: bool,
     checked: bool,
     error: Option<LauncherUpdateError>,
+    #[cfg(feature = "ui-capture")]
+    capture_override: bool,
 }
 impl Global for LauncherUpdates {}
 
@@ -26,11 +28,17 @@ pub(crate) fn init(backend: BackendHandle, cx: &mut App) {
         checking: false,
         checked: false,
         error: None,
+        #[cfg(feature = "ui-capture")]
+        capture_override: false,
     });
 }
 
 pub(crate) fn checking(cx: &mut App) {
     let state = cx.global_mut::<LauncherUpdates>();
+    #[cfg(feature = "ui-capture")]
+    if state.capture_override {
+        return;
+    }
     state.pending = None;
     state.checking = true;
     state.checked = false;
@@ -46,6 +54,10 @@ pub(crate) fn checked(
 ) {
     let (backend, update) = {
         let state = cx.global_mut::<LauncherUpdates>();
+        #[cfg(feature = "ui-capture")]
+        if state.capture_override {
+            return;
+        }
         state.checking = false;
         state.checked = true;
         match result {
@@ -83,12 +95,20 @@ pub(crate) fn indicator(cx: &App) -> AnyElement {
     design::DesignButton::new("launcher-update-indicator")
         .aria_label("Actualizar")
         .tooltip("Actualizar")
-        .w(px(32.))
-        .h(px(36.))
+        .w(px(24.))
+        .h(px(24.))
         .px_0()
-        .child(div().text_color(rgb(theme::ACCENT_TEXT)).child(PandoraIcon::RefreshCcw))
+        .child(
+            div()
+                .text_color(rgb(theme::ACCENT_TEXT))
+                .child(gpui_component::Icon::new(PandoraIcon::Download).size(px(14.))),
+        )
         .on_click(move |_, window, cx| open_prompt(update.clone(), backend.clone(), window, cx))
         .into_any_element()
+}
+
+pub(crate) fn available(cx: &App) -> bool {
+    cx.global::<LauncherUpdates>().pending.is_some()
 }
 
 pub(crate) fn about_widget(cx: &App) -> AnyElement {
@@ -109,14 +129,93 @@ pub(crate) fn about_widget(cx: &App) -> AnyElement {
 }
 
 pub fn open_prompt(update: UpdatePrompt, backend: BackendHandle, window: &mut Window, cx: &mut App) {
+    open_prompt_expanded(update, backend, false, window, cx);
+}
+
+fn open_prompt_expanded(
+    update: UpdatePrompt,
+    backend: BackendHandle,
+    expanded: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let view = cx.new(|_| UpdateView {
         update,
         backend,
-        expanded: false,
+        expanded,
     });
     window.open_dialog(cx, move |dialog, _, _| {
         design::dialog(dialog).overlay_closable(false).keyboard(false).child(view.clone())
     });
+}
+
+/// Cosmetic input for the explicit native capture feature only. The backend
+/// rejects the fixed source marker before it can fetch or install anything.
+#[cfg(feature = "ui-capture")]
+pub(crate) fn capture(page: &str, window: &mut Window, cx: &mut App) -> anyhow::Result<()> {
+    #[derive(serde::Deserialize)]
+    struct Fixture {
+        releases: Vec<schema::launcher_release::LauncherRelease>,
+    }
+    let path = std::env::var_os("WBOMBO_UI_CAPTURE_LAUNCHER_RELEASES")
+        .ok_or_else(|| anyhow::anyhow!("launcher capture fixture is missing"))?;
+    let bytes = std::fs::read(path)?;
+    anyhow::ensure!(bytes.len() <= 4 * 1024 * 1024, "launcher capture fixture is too large");
+    let fixture: Fixture = serde_json::from_slice(&bytes)?;
+    let latest = fixture
+        .releases
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("launcher capture fixture is empty"))?;
+    let update = UpdatePrompt {
+        old_version: option_env!("PANDORA_RELEASE_VERSION")
+            .unwrap_or(env!("CARGO_PKG_VERSION"))
+            .trim_start_matches('v')
+            .into(),
+        new_version: latest.version.clone().into(),
+        artifact: latest.artifact.clone(),
+        releases: fixture.releases,
+        channel: schema::backend_config::LauncherChannel::Developer,
+        source: "capture-only".into(),
+    };
+    let backend = {
+        let state = cx.global_mut::<LauncherUpdates>();
+        state.capture_override = true;
+        state.pending = if matches!(page, "launcher-update" | "launcher-update-expanded" | "launcher-update-indicator")
+        {
+            Some(update.clone())
+        } else {
+            None
+        };
+        state.checking = page == "launcher-update-checking";
+        state.checked = !state.checking;
+        state.error = match page {
+            "launcher-update-search-error" => Some(LauncherUpdateError::Search),
+            "launcher-update-verification-error" => Some(LauncherUpdateError::Verification),
+            _ => None,
+        };
+        state.backend.clone()
+    };
+    match page {
+        "launcher-update" | "launcher-update-expanded" => {
+            open_prompt_expanded(update, backend, page.ends_with("expanded"), window, cx)
+        },
+        "launcher-update-progress" => {
+            let action = ModalAction::default();
+            let tracker = action.push_tracker("Actualizando".into());
+            tracker.set_total(100);
+            tracker.set_count(62);
+            open_progress(action, window, cx);
+        },
+        "launcher-update-failed" => {
+            let action = ModalAction::default();
+            action.set_finished_with_error("No se ha podido actualizar el launcher.".into());
+            open_progress(action, window, cx);
+        },
+        _ => {},
+    }
+    cx.refresh_windows();
+    log::info!("launcher-update-ready pid={}", std::process::id());
+    Ok(())
 }
 
 struct UpdateView {

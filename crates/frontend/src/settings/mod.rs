@@ -179,7 +179,7 @@ impl SettingsRoot {
 
 impl Render for SettingsRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let header = design::page_header("LAUNCHER", window, cx);
+        let header = design::page_header("LAUNCHER", window);
         let mut tabs = h_flex()
             .w_full()
             .flex_shrink_0()
@@ -859,7 +859,11 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
         "launcher-distribution" => 3,
         "launcher-ignored" => 4,
         "launcher-windows" => 5.min(pages.len() - 1),
-        "launcher-about" => pages.len() - 1,
+        "launcher-about"
+        | "launcher-update-checking"
+        | "launcher-update-current"
+        | "launcher-update-search-error"
+        | "launcher-update-verification-error" => pages.len() - 1,
         _ => 0,
     };
     Settings {

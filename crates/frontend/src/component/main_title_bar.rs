@@ -9,13 +9,13 @@ pub struct MainTitleBar {
 }
 
 impl RenderOnce for MainTitleBar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         TitleBar {
             left_content: vec![
                 div().overflow_hidden().pr_8().child(self.page_path).into_any_element(),
                 self.controls,
             ],
-            right_content: vec![crate::launcher_updates::indicator(cx)],
+            right_content: vec![],
             content_only: !crate::root::should_render_custom_titlebar(),
         }
     }

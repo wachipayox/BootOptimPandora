@@ -7,7 +7,7 @@ use bridge::{
 };
 use gpui::{AnyWindowHandle, App, DisplayId, SharedString, Window};
 use gpui_component::{
-    Root, WindowExt,
+    WindowExt,
     notification::{Notification, NotificationType},
 };
 
@@ -19,7 +19,6 @@ use crate::{
         metadata::FrontendMetadata,
     },
     interface_config::InterfaceConfig,
-    root::LauncherRoot,
 };
 
 pub struct Processor {
@@ -225,6 +224,14 @@ impl Processor {
             },
             MessageToFrontend::Quit => {
                 cx.quit();
+            },
+            MessageToFrontend::PrepareLauncherRestart => {
+                // The backend has already checked that games, AOT and file
+                // operations are idle. Keep the existing IPC/quit handshake.
+                for handle in cx.windows() {
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                }
+                self.quit_coordinator.set_can_quit(true);
             },
             MessageToFrontend::CloseModal => {
                 let Some(handle) = self.main_window_handle else {

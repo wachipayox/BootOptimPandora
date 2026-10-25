@@ -142,18 +142,18 @@ impl InstancePage {
                 },
             )));
         }
-        let mut controls = h_flex().child(crate::launcher_updates::indicator(cx));
         if root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
-            controls = controls
-                .child(WindowControl::Minimize)
-                .child(if window.is_maximized() {
-                    WindowControl::Restore
-                } else {
-                    WindowControl::Maximize
-                })
-                .child(WindowControl::Close);
+            header = header.child(div().flex_1()).child(
+                h_flex()
+                    .child(WindowControl::Minimize)
+                    .child(if window.is_maximized() {
+                        WindowControl::Restore
+                    } else {
+                        WindowControl::Maximize
+                    })
+                    .child(WindowControl::Close),
+            );
         }
-        header = header.child(div().flex_1()).child(controls);
         header.into_any_element()
     }
 }

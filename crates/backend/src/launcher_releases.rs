@@ -312,6 +312,7 @@ mod tests {
         cases.push(r);
         let mut r = release.clone();
         r.artifact.sha256 = "a".repeat(64);
+        r.artifact.url = format!("/v1/objects/sha256/{}", r.artifact.sha256);
         cases.push(r);
         let mut r = release.clone();
         r.artifact.platform = "linux-x86_64".into();
@@ -323,6 +324,9 @@ mod tests {
             assert!(verify_signature(&r, PLATFORM, "5.3.1", &key).is_err());
         }
         assert!(verify_signature(&release, "linux-x86_64", "5.3.1", &key).is_err());
+        let mut moved = release.clone();
+        moved.artifact.platform = "linux-x86_64".into();
+        assert!(verify_signature(&moved, "linux-x86_64", "5.3.1", &key).is_err());
     }
 
     #[test]

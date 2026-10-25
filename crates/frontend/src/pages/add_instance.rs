@@ -175,7 +175,7 @@ impl Render for AddInstancePage {
         use gpui_component::scroll::ScrollableElement;
         v_flex()
             .size_full()
-            .child(design::page_header("AÑADIR INSTANCIA", window, cx))
+            .child(design::page_header("AÑADIR INSTANCIA", window))
             .child(tabs)
             .child(div().id("add-instance-body").flex_1().min_h_0().overflow_y_scrollbar().child(body))
     }

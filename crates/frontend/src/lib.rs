@@ -357,6 +357,15 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     Some("skins" | "skins-url" | "skins-copy" | "skins-import") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins
                     },
+                    Some(
+                        "launcher-update"
+                        | "launcher-update-expanded"
+                        | "launcher-update-indicator"
+                        | "launcher-update-progress"
+                        | "launcher-update-failed",
+                    ) => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
+                    },
                     Some(page) if page == "appearance" || page.starts_with("launcher-") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::LauncherSettings;
                     },
@@ -437,6 +446,15 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 });
 
                 DataEntities::init_globals(cx);
+                #[cfg(feature = "ui-capture")]
+                if let Some(page) = capture_page.as_deref().filter(|page| page.starts_with("launcher-update")) {
+                    let page = page.to_owned();
+                    window.on_next_frame(move |window, cx| {
+                        if let Err(error) = launcher_updates::capture(&page, window, cx) {
+                            log::warn!("Launcher update capture failed: {error}");
+                        }
+                    });
+                }
                 cx.set_global(LauncherRootGlobal {
                     root: launcher_root.clone(),
                 });

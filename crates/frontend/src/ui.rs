@@ -173,7 +173,7 @@ impl LauncherPage {
             v_flex()
                 .w_full()
                 .flex_shrink_0()
-                .child(crate::component::design::page_header("EXPLORAR CONTENIDO", window, cx))
+                .child(crate::component::design::page_header("EXPLORAR CONTENIDO", window))
                 .child(
                     h_flex()
                         .px(px(20.))
@@ -199,7 +199,7 @@ impl LauncherPage {
             v_flex()
                 .w_full()
                 .flex_shrink_0()
-                .child(crate::component::design::page_header("ARCHIVOS", window, cx))
+                .child(crate::component::design::page_header("ARCHIVOS", window))
                 .child(
                     h_flex().px(px(20.)).border_b_1().border_color(rgba(0xffffff0b)).child(
                         crate::component::design::tab("sync-settings-tab", "Sincronización", true)
@@ -212,7 +212,7 @@ impl LauncherPage {
             v_flex()
                 .w_full()
                 .flex_shrink_0()
-                .child(crate::component::design::page_header("AÑADIR INSTANCIA", window, cx))
+                .child(crate::component::design::page_header("AÑADIR INSTANCIA", window))
                 .child(
                     h_flex()
                         .px(px(20.))
@@ -770,10 +770,22 @@ impl LauncherUI {
                     .pt(px(16.))
                     .window_control_area(WindowControlArea::Drag)
                     .child(
-                        img(ImageSource::Resource(Resource::Embedded("images/wachiland-launcher-ancho.svg".into())))
-                            .w(px(140.))
+                        h_flex()
+                            .w_full()
                             .h(px(40.))
-                            .object_fit(ObjectFit::Contain),
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                img(ImageSource::Resource(Resource::Embedded(
+                                    "images/wachiland-launcher-ancho.svg".into(),
+                                )))
+                                .w(px(140.))
+                                .h(px(40.))
+                                .object_fit(ObjectFit::Contain),
+                            )
+                            .when(crate::launcher_updates::available(cx), |row| {
+                                row.child(crate::launcher_updates::indicator(cx))
+                            }),
                     ),
             )
             .child(div().flex_1().min_h_0().overflow_y_scrollbar().child(instances))

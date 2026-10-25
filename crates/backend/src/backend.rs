@@ -257,6 +257,7 @@ pub fn start(
         content_install_semaphore: Semaphore::new(8),
         launcher_update_check_serial: Default::default(),
         launcher_update_restarting: AtomicBool::new(false),
+        launcher_tasks: Default::default(),
         manual_curseforge_downloads: ManualCurseforgeDownloadSession::default(),
     };
 
@@ -361,6 +362,7 @@ pub struct BackendState {
     pub content_install_semaphore: Semaphore,
     pub launcher_update_check_serial: std::sync::atomic::AtomicU64,
     pub launcher_update_restarting: AtomicBool,
+    pub launcher_tasks: Arc<std::sync::atomic::AtomicUsize>,
     pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
 }
 

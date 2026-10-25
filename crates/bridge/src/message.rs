@@ -630,6 +630,7 @@ pub enum MessageToFrontend {
     },
     Refresh,
     Quit,
+    PrepareLauncherRestart,
     CloseModal,
     MoveInstanceToTop {
         id: InstanceID,
