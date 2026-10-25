@@ -30,6 +30,10 @@ use thiserror::Error;
 const MAX_JSON_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OBJECT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+#[path = "launcher_releases.rs"]
+mod launcher_releases;
+pub use launcher_releases::VerifiedLauncherArtifact;
+
 #[derive(Debug, Error)]
 pub enum DistributionError {
     #[error("Distribution HTTPS address is missing or invalid")]

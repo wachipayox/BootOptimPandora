@@ -76,3 +76,4 @@ where
 }
 
 pub mod changelog;
+pub mod launcher_release;
