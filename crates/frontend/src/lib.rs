@@ -561,6 +561,9 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 if capture_page.as_deref() == Some("components-dialog") {
                     window.on_next_frame(crate::component::design_review::open_review_dialog);
                 }
+                if capture_page.as_deref() == Some("launcher-theme-joke") {
+                    window.on_next_frame(crate::settings::open_theme_joke);
+                }
                 if capture_page.as_deref() == Some("accounts") {
                     window.on_next_frame(|_, cx| crate::root::open_home_accounts(cx));
                 }

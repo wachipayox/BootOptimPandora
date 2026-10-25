@@ -4,7 +4,7 @@ use std::rc::Rc;
 use bridge::{handle::BackendHandle, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, h_flex,
+    ActiveTheme, WindowExt, h_flex,
     input::{InputEvent, InputState},
     spinner::Spinner,
     v_flex,
@@ -21,6 +21,20 @@ mod ignored_paths;
 mod network;
 #[cfg(windows)]
 mod windows_security;
+
+pub(crate) fn open_theme_joke(window: &mut Window, cx: &mut App) {
+    window.open_dialog(cx, |dialog, _, _| {
+        design::dialog(dialog)
+            .title(design::dialog_title("Lo sentimos"))
+            .child("El launcher no acepta semejante gilipollez.")
+            .footer(
+                h_flex().justify_end().child(
+                    design::action_button("keep-dark", "Vale, oscuro", design::ButtonAction::Primary)
+                        .on_click(|_, window, cx| window.close_dialog(cx)),
+                ),
+            )
+    });
+}
 
 pub struct SettingsRoot {
     settings: Settings,
@@ -812,30 +826,30 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
     let mut about_items = group.items.to_vec();
     about_items.push(SettingItem {
         widget: SettingItemWidget::AnyWide(Rc::new(|_, _| {
-            design::DesignButton::new("report-launcher-issue")
-                .label("Reportar fallo")
-                .on_click(|_, _, cx| cx.open_url("https://github.com/wachipayox/BootOptimPandora/issues/new/choose"))
-                .into_any_element()
+            let mut actions = h_flex().gap(px(8.)).child(
+                design::DesignButton::new("report-launcher-issue")
+                    .label("Reportar fallo")
+                    .on_click(|_, _, cx| {
+                        cx.open_url("https://github.com/wachipayox/BootOptimPandora/issues/new/choose")
+                    }),
+            );
+            if let Some(link) = option_env!("WBOMBO_COMMUNITY_DISCORD_URL")
+                .filter(|link| url::Url::parse(link).is_ok_and(|url| url.scheme() == "https"))
+            {
+                actions = actions.child(
+                    design::DesignButton::new("community-discord")
+                        .label("Discord")
+                        .on_click(move |_, _, cx| cx.open_url(link)),
+                );
+            }
+            actions.into_any_element()
         })),
         ..Default::default()
     });
-    if let Some(link) = option_env!("WBOMBO_COMMUNITY_DISCORD_URL")
-        .filter(|link| url::Url::parse(link).is_ok_and(|url| url.scheme() == "https"))
-    {
-        about_items.push(SettingItem {
-            widget: SettingItemWidget::AnyWide(Rc::new(move |_, _| {
-                design::DesignButton::new("community-discord")
-                    .label("Discord")
-                    .on_click(move |_, _, cx| cx.open_url(link))
-                    .into_any_element()
-            })),
-            ..Default::default()
-        });
-    }
     group.items = about_items.into();
     let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").unwrap_or_default();
     let selected_page = match capture_page.as_str() {
-        "appearance" | "launcher-appearance" => 1,
+        "appearance" | "launcher-appearance" | "launcher-theme-joke" => 1,
         "launcher-network" => 2,
         "launcher-distribution" => 3,
         "launcher-ignored" => 4,

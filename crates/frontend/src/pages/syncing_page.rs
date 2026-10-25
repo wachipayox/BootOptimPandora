@@ -120,30 +120,44 @@ impl SyncingPage {
                     .child(format!("{synced_count} de {} instancias sincronizadas", sync_state.total_count)),
             );
         }
-        let mut base = h_flex().w_full().min_h(px(49.)).gap(px(8.)).items_center().child(title);
+        let mut warning_button = None;
         if cannot_sync_count > 0 {
             let names = sync_state
                 .targets
                 .get(&name)
                 .map(|s| s.cannot_sync_instances.join("\n"))
                 .unwrap_or_default();
-            let tooltip = format!(
-                "La ruta ya existe en {cannot_sync_count} instancias. Haz una copia antes de sincronizarla.\n{names}"
+            let status =
+                format!("No se puede sincronizar en {cannot_sync_count} de {} instancias", sync_state.total_count);
+            title = title.child(
+                div()
+                    .w_full()
+                    .text_size(px(11.))
+                    .line_height(px(15.))
+                    .text_color(warning)
+                    .child(status.clone()),
             );
-            base = base.child(
+            let tooltip = format!(
+                "{status}\nLa ruta ya existe en {cannot_sync_count} instancias. Haz una copia antes de sincronizarla.\n{names}"
+            );
+            warning_button = Some(
                 Button::new(SharedString::from(format!("sync-warning-{name}")))
                     .ghost()
                     .rounded(px(0.))
                     .compact()
+                    .flex_shrink_0()
                     .icon(PandoraIcon::TriangleAlert)
                     .text_color(warning)
-                    .tooltip(tooltip)
-                    .label(format!(
-                        "No se puede sincronizar en {cannot_sync_count} de {} instancias",
-                        sync_state.total_count
-                    )),
+                    .tooltip(tooltip),
             );
         }
+        let mut base = h_flex()
+            .w_full()
+            .min_h(px(49.))
+            .gap(px(8.))
+            .items_center()
+            .child(title)
+            .children(warning_button);
         if is_loading {
             base = base.child(Spinner::new());
         }

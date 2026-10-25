@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, ThemeRegistry, WindowExt,
+    ActiveTheme, ThemeRegistry,
     button::{Button, ButtonVariants},
     h_flex,
     select::{Select, SelectEvent},
@@ -35,21 +35,7 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                                         InterfaceConfig::apply_theme(cx, true);
                                         return;
                                     }
-                                    window.open_dialog(cx, |dialog, _, _| {
-                                        design::dialog(dialog)
-                                            .title(design::dialog_title("Lo sentimos"))
-                                            .child("El launcher no acepta semejante gilipollez.")
-                                            .footer(
-                                                h_flex().justify_end().child(
-                                                    design::action_button(
-                                                        "keep-dark",
-                                                        "Vale, oscuro",
-                                                        design::ButtonAction::Primary,
-                                                    )
-                                                    .on_click(|_, w, c| w.close_dialog(c)),
-                                                ),
-                                            )
-                                    });
+                                    super::open_theme_joke(window, cx);
                                 },
                             ));
                         }

@@ -198,7 +198,7 @@ try {
         }
     }
     if ($LauncherScreens) {
-        foreach ($launcherRoute in @('launcher-general','launcher-appearance','launcher-network','launcher-distribution','launcher-ignored','launcher-windows','launcher-about','skins','skins-url','skins-copy','skins-import','launcher-defender-dialog','accounts','account-offline','add-instance','add-server','add-local','import','syncing')) {
+        foreach ($launcherRoute in @('launcher-general','launcher-appearance','launcher-theme-joke','launcher-network','launcher-distribution','launcher-ignored','launcher-windows','launcher-about','skins','skins-url','skins-copy','skins-import','launcher-defender-dialog','accounts','account-offline','add-instance','add-server','add-local','import','syncing')) {
             $screens += @{page=$launcherRoute;file="$launcherRoute.png";label='Native launcher screen or existing dialog; no action is confirmed'}
         }
         if ($TestProfile -or $PortableDirectory) { $screens += @{page="content-browser:$InstanceName";file='content-browser.png';label='Browse content for owned fixture; no install is started'} }
