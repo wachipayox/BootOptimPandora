@@ -180,7 +180,9 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     if ($DesignViewport -and ($clientOrigin.X -lt 0 -or $clientOrigin.Y -lt 0)) { throw 'Design viewport is outside the visible desktop' }
     $width = $client.Right - $client.Left
     $height = $client.Bottom - $client.Top
-    if ($width -lt 480 -or $height -lt 270) { throw "Foreground window is not a Pandora window ($width x $height)" }
+    $minimumWidth=if($script:fixedCaptureWindow){400}else{480}
+    $minimumHeight=if($script:fixedCaptureWindow){80}else{270}
+    if ($width -lt $minimumWidth -or $height -lt $minimumHeight) { throw "Foreground window is not a Pandora window ($width x $height)" }
     $bitmap = New-Object System.Drawing.Bitmap $width, $height
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     try {

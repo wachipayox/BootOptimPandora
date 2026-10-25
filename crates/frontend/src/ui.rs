@@ -622,7 +622,7 @@ impl LauncherUI {
         if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("sidebar-scroll") {
             // Cosmetic rows exercise the real sidebar scrollbar without
             // creating backend instances or writing any additional folders.
-            for index in 0..32 {
+            for index in 0usize..32 {
                 instances = instances.child(
                     DesignButton::new(("capture-sidebar-row", index))
                         .label_left(format!("agente-274-scroll-{index:02}"))
