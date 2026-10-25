@@ -19,9 +19,13 @@ param(
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
     [switch]$Framebuffer,
+    [switch]$HitTest,
+    [string]$HitTestReferenceDirectory,
+    [switch]$DragRegions,
     [string]$PortableDirectory
 )
 $ErrorActionPreference = 'Stop'
+if (($HitTest -or $DragRegions) -and -not $Framebuffer) { throw 'Hit-test diagnostics require -Framebuffer.' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $outputPath = [IO.Path]::GetFullPath($Output)
 $null = New-Item -ItemType Directory -Force -Path $outputPath
@@ -66,12 +70,63 @@ public static class CaptureWindow {
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int x, int y, int width, int height, bool repaint);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint message, IntPtr wparam, IntPtr lparam, uint flags, uint timeout, out IntPtr result);
 }
 '@
 Add-Type -AssemblyName System.Drawing
 $oldDpiContext = [CaptureWindow]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $captureMetadata = @()
 $captureDiagnostics = @()
+
+function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, [string]$RegionsPath) {
+    [uint32]$owner=0
+    [void][CaptureWindow]::GetWindowThreadProcessId($Handle,[ref]$owner)
+    if ($owner -ne $ProcessId) { throw 'Hit-test window ownership changed.' }
+    $regions=Get-Content -LiteralPath $RegionsPath -Raw | ConvertFrom-Json
+    $origin=New-Object CaptureWindow+POINT
+    [void][CaptureWindow]::ClientToScreen($Handle,[ref]$origin)
+    $outer=New-Object CaptureWindow+RECT
+    [void][CaptureWindow]::GetWindowRect($Handle,[ref]$outer)
+    $scale=[CaptureWindow]::GetDpiForWindow($Handle)/96.0
+    $points=@()
+    foreach($region in $regions) {
+        $expected=switch($region.area) {'Some(Drag)' {2}; 'Some(Min)' {8}; 'Some(Max)' {9}; 'Some(Close)' {20}; 'None' {1}; default {throw 'Unknown capture region type'}}
+        foreach($point in $region.points) {
+            $points+=@{label=$region.label;kind=$region.area;x=$origin.X+[int][math]::Round($point[0]*$scale);y=$origin.Y+[int][math]::Round($point[1]*$scale);expected=$expected}
+        }
+    }
+    $middleX=[int](($outer.Left+$outer.Right)/2)
+    $middleY=[int](($outer.Top+$outer.Bottom)/2)
+    foreach($edge in @(
+        @('left',($outer.Left+1),$middleY,10), @('right',($outer.Right-2),$middleY,11),
+        @('top',$middleX,($outer.Top+1),12), @('bottom',$middleX,($outer.Bottom-2),15),
+        @('top-left',($outer.Left+1),($outer.Top+1),13), @('top-right',($outer.Right-2),($outer.Top+1),14),
+        @('bottom-left',($outer.Left+1),($outer.Bottom-2),16), @('bottom-right',($outer.Right-2),($outer.Bottom-2),17)
+    )) { $points+=@{label=$edge[0];kind='resize';x=$edge[1];y=$edge[2];expected=$edge[3]} }
+    $previous=New-Object CaptureWindow+POINT
+    [void][CaptureWindow]::GetCursorPos([ref]$previous)
+    $results=@()
+    try {
+        foreach($point in $points) {
+            [void][CaptureWindow]::SetCursorPos($point.x,$point.y)
+            $clientX=$point.x-$origin.X; $clientY=$point.y-$origin.Y
+            $client=[IntPtr](([int64]$clientY -shl 16) -bor ([int64]$clientX -band 0xffff))
+            $screen=[IntPtr](([int64]$point.y -shl 16) -bor ([int64]$point.x -band 0xffff))
+            $reply=[IntPtr]::Zero
+            # Update hover identically for baseline and candidate, then query
+            # the real HWND. No button-down/up or click messages are sent.
+            if ([CaptureWindow]::SendMessageTimeout($Handle,0x200,[IntPtr]::Zero,$client,2,2000,[ref]$reply) -eq [IntPtr]::Zero) {throw 'Hit-test mouse position update timed out.'}
+            if ([CaptureWindow]::SendMessageTimeout($Handle,0x84,[IntPtr]::Zero,$screen,2,2000,[ref]$reply) -eq [IntPtr]::Zero) {throw 'WM_NCHITTEST timed out.'}
+            $results+=@{label=$point.label;kind=$point.kind;x=$point.x;y=$point.y;expected=$point.expected;actual=$reply.ToInt64();passed=($reply.ToInt64() -eq $point.expected)}
+        }
+    } finally { [void][CaptureWindow]::SetCursorPos($previous.X,$previous.Y) }
+    $results | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $Path -Encoding utf8
+    $results | ForEach-Object {[pscustomobject]$_} | Export-Csv -LiteralPath ($Path -replace '\.json$','.csv') -NoTypeInformation -Encoding utf8
+    $failures=@($results|Where-Object {-not $_.passed}).Count
+    Write-Output "HIT_TEST file=$([IO.Path]::GetFileName($Path)) points=$($results.Count) mismatches=$failures"
+}
 
 function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     [uint32]$owner = 0
@@ -137,6 +192,13 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
             if ($native.Width -ne $width -or $native.Height -ne $height) { throw 'Native framebuffer and client dimensions differ.' }
         } finally { $native.Dispose() }
         $script:captureMetadata += @{file=[IO.Path]::GetFileName($nativePath);width=$width;height=$height;dpi=[CaptureWindow]::GetDpiForWindow($handle);method='gpu-readback'}
+        if ($HitTest) {
+            $stem=[IO.Path]::GetFileNameWithoutExtension($Path)
+            $regionSource=if($HitTestReferenceDirectory){Join-Path $HitTestReferenceDirectory "$stem.regions.json"}else{Join-Path $framebufferRoot 'regions.json'}
+            $regionTarget=Join-Path $outputPath "$stem.regions.json"
+            Copy-Item -LiteralPath $regionSource -Destination $regionTarget -Force
+            Test-WindowHitRegions (Join-Path $outputPath "$stem.hit-test.json") $handle $processId $regionTarget
+        }
     }
 }
 
@@ -162,6 +224,8 @@ function Invoke-CaptureCli([string[]]$Arguments) {
     if ($cli.ExitCode -ne 0) { throw "Capture CLI failed ($($cli.ExitCode)); inspect isolated capture-cli files." }
 }
 $oldNewsFixture = $env:WBOMBO_UI_CAPTURE_NEWS
+$oldDragRegions = $env:WBOMBO_UI_CAPTURE_DRAG_REGIONS
+if ($DragRegions) {$env:WBOMBO_UI_CAPTURE_DRAG_REGIONS='1'} else {Remove-Item Env:WBOMBO_UI_CAPTURE_DRAG_REGIONS -ErrorAction SilentlyContinue}
 if ($NewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS = (Resolve-Path -LiteralPath $NewsFixture).Path }
 $createdInstance = $false
 $distributionCaptureActive = $false
@@ -368,6 +432,9 @@ try {
         executableSourceCommit = $ExecutableSourceCommit
         launcherUpdateFixtureSha256 = if ($LauncherUpdateFixture) { (Get-FileHash -LiteralPath $LauncherUpdateFixture -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
         captureScriptCommit = (git -C $repo rev-parse HEAD)
+        nativeHitTest = [bool]$HitTest
+        hitTestRegionSource = if($HitTestReferenceDirectory){'candidate geometry reused for baseline HWND queries'}else{'painted native regions from this executable'}
+        diagnosticDragColors = [bool]$DragRegions
         viewport = if ($DesignViewport) { '1280 x 860 logical pixels' } else { 'maximized' }
         captures = $captureMetadata
         diagnostics = $captureDiagnostics
@@ -376,6 +443,7 @@ try {
         unavailable = if ($TestProfile -or $PortableDirectory) { @() } else { @('instance-detail and update-dialog require an owned test profile fixture') }
     } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $outputPath 'capture-manifest.json')
 } finally {
+    if ($null -ne $oldDragRegions) { $env:WBOMBO_UI_CAPTURE_DRAG_REGIONS=$oldDragRegions } else { Remove-Item Env:WBOMBO_UI_CAPTURE_DRAG_REGIONS -ErrorAction SilentlyContinue }
     if ($null -ne $oldLauncherUpdateFixture) { $env:WBOMBO_UI_CAPTURE_LAUNCHER_RELEASES=$oldLauncherUpdateFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_LAUNCHER_RELEASES -ErrorAction SilentlyContinue }
     if ($null -ne $oldFramebufferDirectory) { $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR=$oldFramebufferDirectory } else { Remove-Item Env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR -ErrorAction SilentlyContinue }
     if ($null -ne $oldNewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS=$oldNewsFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_NEWS -ErrorAction SilentlyContinue }
