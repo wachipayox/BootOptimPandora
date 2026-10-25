@@ -134,6 +134,9 @@ function Invoke-CaptureCli([string[]]$Arguments) {
 $oldNewsFixture = $env:WBOMBO_UI_CAPTURE_NEWS
 if ($NewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS = (Resolve-Path -LiteralPath $NewsFixture).Path }
 $createdInstance = $false
+$distributionCaptureActive = $false
+$distributionOriginalConfig = $null
+$distributionConfigPath = Join-Path $tempRoot "WachilandLauncher\config.json"
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
 $oldCaptureState = $env:WBOMBO_UI_CAPTURE_STATE
 if ($CaptureState) { $env:WBOMBO_UI_CAPTURE_STATE = $CaptureState }
@@ -169,7 +172,7 @@ try {
         }
     }
     if ($LauncherScreens) {
-        foreach ($launcherRoute in @('launcher-general','launcher-appearance','launcher-network','launcher-distribution','launcher-ignored','launcher-windows','skins','skins-url','skins-copy','accounts','account-offline','add-instance','add-server','add-local','import','syncing')) {
+        foreach ($launcherRoute in @('launcher-general','launcher-appearance','launcher-network','launcher-distribution','launcher-ignored','launcher-windows','launcher-about','skins','skins-url','skins-copy','skins-import','launcher-defender-dialog','accounts','account-offline','add-instance','add-server','add-local','import','syncing')) {
             $screens += @{page=$launcherRoute;file="$launcherRoute.png";label='Native launcher screen or existing dialog; no action is confirmed'}
         }
         if ($TestProfile -or $PortableDirectory) { $screens += @{page="content-browser:$InstanceName";file='content-browser.png';label='Browse content for owned fixture; no install is started'} }
@@ -181,6 +184,15 @@ try {
     }
     foreach ($screen in $screens) {
         $env:WBOMBO_UI_CAPTURE_PAGE = $screen.page
+        if ($screen.page -eq 'launcher-distribution') {
+            # Even a fresh private build embeds its endpoint: never capture it.
+            $distributionOriginalConfig = if (Test-Path -LiteralPath $distributionConfigPath) { [IO.File]::ReadAllBytes($distributionConfigPath) } else { $null }
+            $captureConfig = if ($null -ne $distributionOriginalConfig) { [Text.Encoding]::UTF8.GetString($distributionOriginalConfig) | ConvertFrom-Json } else { [pscustomobject]@{} }
+            $captureConfig | Add-Member -NotePropertyName distribution -NotePropertyValue ([pscustomobject]@{base_url='https://example.invalid';tls_ca_certificate_path=''}) -Force
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $distributionConfigPath)
+            $distributionCaptureActive = $true
+            [IO.File]::WriteAllText($distributionConfigPath, ($captureConfig | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
+        }
         # The user requested visible UI captures; SW_HIDE prevents GPUI's first
         # window from becoming visible and makes MainWindowHandle remain zero.
         $proc = Start-Process -FilePath $portableExe -PassThru
@@ -280,7 +292,7 @@ try {
                 Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
             }
         }
-        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page -in @('skins','skins-url','skins-copy','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news') -or $screen.page -match '^(instance-|derived:|duplicate:|update:)') {
+        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page -in @('skins','skins-url','skins-copy','skins-import','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news') -or $screen.page -match '^(instance-|derived:|duplicate:|update:|delete:|export:|groups:)') {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
             if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
@@ -290,6 +302,10 @@ try {
         $newsLogPath = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
         $errorsBeforeClose = @(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count
         Close-CapturedProcess $proc
+        if ($distributionCaptureActive) {
+            if ($null -ne $distributionOriginalConfig) { [IO.File]::WriteAllBytes($distributionConfigPath, $distributionOriginalConfig) } else { Remove-Item -LiteralPath $distributionConfigPath -ErrorAction SilentlyContinue }
+            $distributionCaptureActive = $false
+        }
         $captureDiagnostics += @{page=$screen.page;errorsBeforeClose=$errorsBeforeClose;errorsAfterClose=@(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count}
         Write-Output "CAPTURE_OK page=$($screen.page) file=$($screen.file)"
     }
@@ -306,6 +322,9 @@ try {
     if ($null -ne $oldNewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS=$oldNewsFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_NEWS -ErrorAction SilentlyContinue }
     if ($null -ne $proc -and -not $proc.HasExited) {
         Close-CapturedProcess $proc
+    }
+    if ($distributionCaptureActive) {
+        if ($null -ne $distributionOriginalConfig) { [IO.File]::WriteAllBytes($distributionConfigPath, $distributionOriginalConfig) } else { Remove-Item -LiteralPath $distributionConfigPath -ErrorAction SilentlyContinue }
     }
     if ($null -ne $oldCaptureState) { $env:WBOMBO_UI_CAPTURE_STATE=$oldCaptureState } else { Remove-Item Env:WBOMBO_UI_CAPTURE_STATE -ErrorAction SilentlyContinue }
     if ($null -ne $oldPage) { $env:WBOMBO_UI_CAPTURE_PAGE = $oldPage } else { Remove-Item Env:WBOMBO_UI_CAPTURE_PAGE -ErrorAction SilentlyContinue }

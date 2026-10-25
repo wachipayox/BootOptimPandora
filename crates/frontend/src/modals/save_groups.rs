@@ -256,7 +256,7 @@ pub fn open_save_groups(id: InstanceID, backend: BackendHandle, window: &mut Win
     let state = cx.new(|cx| SaveGroupsModal {
         id,
         backend: backend.clone(),
-        name: cx.new(|cx| InputState::new(window, cx).placeholder("Group name")),
+        name: cx.new(|cx| InputState::new(window, cx).placeholder("Nuevo grupo")),
         rename: None,
         groups: None,
         status: None,

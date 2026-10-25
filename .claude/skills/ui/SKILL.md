@@ -46,3 +46,10 @@ Instance captures use `-InstanceScreens` with an owned CLI fixture: Content filt
 For the owned instance routes, `-CaptureState advanced|version|expanded|editing` opens the existing advanced settings, version editor, expanded update changelog or local overrides editor. This changes presentation only. Settings and timeline captures include middle/bottom scrolling; native Tab focus is captured for instance pages/dialogs.
 
 Launcher capture routes: `launcher-general`, `launcher-appearance`, `launcher-network`, `launcher-distribution`, `launcher-ignored`, `launcher-windows`, `skins-url`, `skins-copy`, `account-offline`, `add-instance`, `add-server`, `add-local`, and `content-browser:agente-274-…`. `-LauncherScreens` collects them along with the existing skins/accounts/import/sync routes. Dialog routes open the real native dialog without confirming any action. Capture Distribution settings with a temporary portable directory explicitly configured with `https://example.invalid` so endpoint values and credentials never enter the evidence.
+
+Launcher review also supports `launcher-about`, `skins-import`,
+`launcher-defender-dialog`, and `delete:agente-274-…`, `export:…`, `groups:…`.
+These routes open native views without confirming deletion, imports or Defender
+changes. Distribution captures temporarily replace the isolated endpoint with
+`https://example.invalid` and restore the original configuration after close,
+including failure cleanup. Private compiled defaults are never safe capture data.

@@ -350,7 +350,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     Some(name) if name.starts_with("news-") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
                     },
-                    Some("skins" | "skins-url" | "skins-copy") => {
+                    Some("skins" | "skins-url" | "skins-copy" | "skins-import") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins
                     },
                     Some(page) if page == "appearance" || page.starts_with("launcher-") => {
@@ -507,6 +507,55 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                         }
                     });
                 }
+                if let Some((route, name)) =
+                    capture_page.as_deref().and_then(|page| page.split_once(':')).filter(|(route, name)| {
+                        matches!(*route, "delete" | "export" | "groups") && name.starts_with("agente-274-")
+                    })
+                {
+                    let route = route.to_owned();
+                    let name: SharedString = name.to_owned().into();
+                    let capture_data = data.clone();
+                    window.on_next_frame(move |window, cx| {
+                        let Some(id) = crate::entity::instance::InstanceEntries::find_id_by_name(
+                            &capture_data.instances,
+                            &name,
+                            cx,
+                        ) else {
+                            return;
+                        };
+                        match route.as_str() {
+                            "delete" => crate::modals::delete_instance::open_delete_instance(
+                                id,
+                                name,
+                                capture_data.backend_handle.clone(),
+                                window,
+                                cx,
+                            ),
+                            "export" => crate::modals::export_instance::open_export_instance(
+                                id,
+                                name,
+                                capture_data.backend_handle.clone(),
+                                window,
+                                cx,
+                            ),
+                            _ => crate::modals::save_groups::open_save_groups(
+                                id,
+                                capture_data.backend_handle.clone(),
+                                window,
+                                cx,
+                            ),
+                        }
+                        log::info!("launcher-dialog-ready pid={}", std::process::id());
+                    });
+                }
+                if capture_page.as_deref() == Some("skins-import") {
+                    let backend = data.backend_handle.clone();
+                    window.on_next_frame(move |window, cx| crate::modals::skin_import::open(backend, window, cx));
+                }
+                #[cfg(windows)]
+                if capture_page.as_deref() == Some("launcher-defender-dialog") {
+                    window.on_next_frame(crate::modals::windows_security::open);
+                }
                 if capture_page.as_deref() == Some("components-dialog") {
                     window.on_next_frame(crate::component::design_review::open_review_dialog);
                 }
@@ -636,7 +685,7 @@ fn capture_instance_target(page: &str) -> Option<(&str, pages::instance::instanc
         "instance-logs" | "instance-crashes" => Tab::Logs,
         "instance-overwrites" => Tab::Overwrites,
         "instance-changelog" => Tab::Changelog,
-        "instance-settings" | "derived" | "duplicate" => Tab::Settings,
+        "instance-settings" | "derived" | "duplicate" | "delete" | "export" | "groups" => Tab::Settings,
         "instance-live" => Tab::LiveGameOutput,
         _ => return None,
     };
