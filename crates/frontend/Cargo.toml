@@ -3,6 +3,9 @@ name = "frontend"
 version.workspace = true
 edition.workspace = true
 
+[features]
+ui-capture = ["gpui/native-capture", "gpui_platform/native-capture"]
+
 [dependencies]
 t.workspace = true
 chrono.workspace = true
@@ -40,6 +43,7 @@ directories.workspace = true
 log.workspace = true
 strum.workspace = true
 urlencoding.workspace = true
+url.workspace = true
 futures.workspace = true
 itertools.workspace = true
 command.workspace = true

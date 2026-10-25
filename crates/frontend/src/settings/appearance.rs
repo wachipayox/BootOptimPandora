@@ -4,10 +4,12 @@ use gpui::*;
 use gpui_component::{
     ActiveTheme, ThemeRegistry,
     button::{Button, ButtonVariants},
+    h_flex,
     select::{Select, SelectEvent},
 };
 
 use crate::{
+    component::design,
     component::named_dropdown::{DropdownName, NamedDropdownItem, SearchableNamedDropdown},
     entity::DataEntities,
     icon::PandoraIcon,
@@ -18,8 +20,32 @@ use crate::{
 pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App) -> SettingPage {
     let background = cx.new(|cx| crate::background::BackgroundSelector::new(window, cx));
     SettingPage {
-        title: t::settings::appearance,
+        title: || "Apariencia",
         groups: vec![
+            SettingGroup {
+                title: Some(|| "Tema"),
+                items: vec![SettingItem {
+                    widget: SettingItemWidget::AnyWide(Rc::new(|_, _| {
+                        let mut choices = h_flex().gap(px(8.));
+                        for (index, label) in ["Oscuro", "Claro", "Según el sistema"].into_iter().enumerate() {
+                            choices = choices.child(design::chip(("theme-choice", index), label, index == 0).on_click(
+                                move |_, window, cx| {
+                                    if index == 0 {
+                                        InterfaceConfig::get_mut(cx).set_active_theme("Wachiland Dark".into());
+                                        InterfaceConfig::apply_theme(cx, true);
+                                        return;
+                                    }
+                                    super::open_theme_joke(window, cx);
+                                },
+                            ));
+                        }
+                        choices.into_any_element()
+                    })),
+                    ..Default::default()
+                }]
+                .into(),
+                searched_items: None,
+            },
             SettingGroup {
                 title: Some(|| "Fondo de la app"),
                 items: vec![SettingItem {
@@ -31,24 +57,26 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                 searched_items: None,
             },
             SettingGroup {
-                title: Some(t::settings::appearance::theme),
+                title: Some(|| "Apariencia"),
                 items: vec![
                     SettingItem {
-                        title: t::settings::appearance::theme::base_theme,
-                        description: t::settings::appearance::theme::base_theme_desc,
+                        title: || "Temas propios",
+                        description: || "",
                         widget: create_theme_dropdown(window, cx),
                         ..Default::default()
                     },
                     SettingItem {
-                        title: t::settings::appearance::theme::open_theme_folder,
-                        description: t::settings::appearance::theme::open_theme_folder_desc,
+                        title: || "Abrir carpeta de temas",
+                        description: || "",
                         widget: SettingItemWidget::Any(Rc::new({
                             let theme_folder = data.theme_folder.clone();
                             move |_, _| {
                                 Button::new("open-theme-folder")
-                                    .info()
+                                    .ghost()
+                                    .rounded(px(0.))
+                                    .text_size(px(13.))
                                     .icon(PandoraIcon::FolderOpen)
-                                    .label(t::settings::appearance::theme::open_theme_folder())
+                                    .label("Abrir carpeta de temas")
                                     .on_click({
                                         let theme_folder = theme_folder.clone();
                                         move |_, window, cx| {
@@ -61,14 +89,14 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                         ..Default::default()
                     },
                     SettingItem {
-                        title: t::settings::appearance::theme::font,
-                        description: t::settings::appearance::theme::font_desc,
+                        title: || "Fuente",
+                        description: || "",
                         widget: create_font_dropdown(window, cx),
                         ..Default::default()
                     },
                     SettingItem {
-                        title: t::settings::appearance::theme::font_size,
-                        description: t::settings::appearance::theme::font_size_desc,
+                        title: || "Tamaño de letra",
+                        description: || "",
                         widget: SettingItemWidget::Integer {
                             get: |cx| cx.theme().font_size.as_f32().round() as i32,
                             set: |val, cx| {
@@ -85,11 +113,11 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                 searched_items: None,
             },
             SettingGroup {
-                title: Some(t::settings::appearance::window),
+                title: Some(|| "Ventana"),
                 items: vec![
                     SettingItem {
-                        title: t::settings::appearance::window::use_os_titlebar,
-                        description: t::settings::appearance::window::use_os_titlebar_desc,
+                        title: || "Usar la barra de título del sistema",
+                        description: || "Requiere reiniciar",
                         widget: SettingItemWidget::Switch(
                             |cfg| cfg.use_os_titlebar,
                             |cfg, val| cfg.use_os_titlebar = val,
@@ -97,8 +125,8 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                         ..Default::default()
                     },
                     SettingItem {
-                        title: t::settings::appearance::window::hide_main_window,
-                        description: t::settings::appearance::window::hide_main_window_desc,
+                        title: || "Ocultar el launcher al jugar",
+                        description: || "Vuelve a abrirse al cerrar el juego",
                         widget: SettingItemWidget::Switch(
                             |cfg| cfg.hide_main_window_on_launch,
                             |cfg, val| cfg.hide_main_window_on_launch = val,
@@ -106,8 +134,8 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                         ..Default::default()
                     },
                     SettingItem {
-                        title: t::settings::appearance::window::quit_when_main_window_closed,
-                        description: t::settings::appearance::window::quit_when_main_window_closed_desc,
+                        title: || "Salir al cerrar la ventana principal",
+                        description: || "",
                         widget: SettingItemWidget::Switch(
                             |cfg| cfg.quit_on_main_closed,
                             |cfg, val| cfg.quit_on_main_closed = val,
@@ -146,7 +174,15 @@ fn create_theme_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget
     })
     .detach();
 
-    SettingItemWidget::Any(Rc::new(move |_, _| Select::new(&dropdown).menu_width(px(200.0)).into_any_element()))
+    SettingItemWidget::Any(Rc::new(move |_, _| {
+        Select::new(&dropdown)
+            .h(px(32.))
+            .bg(rgb(crate::theme::PANEL_SUNKEN))
+            .rounded(px(0.))
+            .text_size(px(13.))
+            .menu_width(px(200.0))
+            .into_any_element()
+    }))
 }
 
 fn create_font_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget {
@@ -177,5 +213,13 @@ fn create_font_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget 
     })
     .detach();
 
-    SettingItemWidget::Any(Rc::new(move |_, _| Select::new(&dropdown).menu_width(px(200.0)).into_any_element()))
+    SettingItemWidget::Any(Rc::new(move |_, _| {
+        Select::new(&dropdown)
+            .h(px(32.))
+            .bg(rgb(crate::theme::PANEL_SUNKEN))
+            .rounded(px(0.))
+            .text_size(px(13.))
+            .menu_width(px(200.0))
+            .into_any_element()
+    }))
 }

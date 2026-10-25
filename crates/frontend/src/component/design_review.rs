@@ -12,7 +12,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
     v_flex()
         .size_full()
         .relative()
-        .child(crate::background::surface(cx))
+        .child(crate::background::surface(window, cx))
         .p(px(32.))
         .gap(px(24.))
         .text_color(rgb(theme::INK))

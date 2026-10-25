@@ -195,3 +195,18 @@ seeded only when the instance is first created. The launcher records them as
 user-owned after seeding, so later global or branch updates preserve player
 changes. Other player data such as `saves/`, screenshots, and launcher state
 remains excluded.
+
+Private builds can set `WBOMBO_DISTRIBUTION_DEFAULT_URL` in the build process
+before running Cargo. The compiler embeds this optional default; public builds
+without it start with no Distribution endpoint. Existing saved endpoints take
+precedence. Keep the value in private build configuration, never in source,
+workflow files or logs. The normal build and release workflows read the repository
+secret of the same name; builds without secret access leave the default empty. This variable is an endpoint, not an
+API token. The configuration E2E example reads `WBOMBO_DIST_URL` at runtime.
+
+`WBOMBO_COMMUNITY_DISCORD_URL` optionally supplies the private community link in
+About. The build workflows read the matching repository secret. When absent or
+not an HTTPS URL, that action is omitted. Keep invite values out of public source.
+
+UI capture instructions are in the [UI workflow](.claude/skills/ui/SKILL.md).
+Investigation decisions and evidence are indexed in [research records](docs/research/README.md).

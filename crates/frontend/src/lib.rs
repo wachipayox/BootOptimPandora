@@ -28,6 +28,8 @@ use crate::{
 };
 
 pub mod background;
+#[cfg(feature = "ui-capture")]
+mod capture;
 pub mod component;
 pub mod data_asset_loader;
 pub mod entity;
@@ -350,8 +352,21 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     Some(name) if name.starts_with("news-") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
                     },
-                    Some("skins") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins,
-                    Some("import") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Import,
+                    Some("skins" | "skins-url" | "skins-copy" | "skins-import") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Skins
+                    },
+                    Some(page) if page == "appearance" || page.starts_with("launcher-") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::LauncherSettings;
+                    },
+                    Some(page) if matches!(page, "add-instance" | "add-server" | "add-local" | "account-offline") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
+                    },
+                    Some(page) if page.starts_with("content-browser:agente-274-") => {
+                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Modrinth {
+                            installing_for: Some(page.split_once(':').unwrap().1.into()),
+                        };
+                    },
+                    Some("import") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::AddInstance,
                     Some("syncing") => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Syncing,
                     Some(name) if name.starts_with("instance:") || name.starts_with("update:") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::InstancePage {
@@ -423,10 +438,29 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 cx.set_global(LauncherRootGlobal {
                     root: launcher_root.clone(),
                 });
-                if capture_page.as_deref() == Some("appearance") {
-                    crate::settings::open_settings_window(window, &data, cx);
-                }
                 let root = cx.new(|cx| Root::new(launcher_root, window, cx));
+                if let Some(page) = capture_page
+                    .as_deref()
+                    .filter(|page| matches!(*page, "add-instance" | "add-server" | "add-local" | "account-offline"))
+                    .map(str::to_owned)
+                {
+                    let capture_data = data.clone();
+                    window.on_next_frame(move |window, cx| {
+                        match page.as_str() {
+                            "add-instance" => crate::pages::home::add_instance(&capture_data, window, cx),
+                            "add-server" | "add-local" => {
+                                crate::root::switch_page(ui::PageType::AddInstance, &[], window, cx)
+                            },
+                            "account-offline" => crate::modals::accounts::open_offline_account(
+                                capture_data.backend_handle.clone(),
+                                window,
+                                cx,
+                            ),
+                            _ => {},
+                        }
+                        log::info!("launcher-dialog-ready pid={}", std::process::id());
+                    });
+                }
                 if let Some(name) = capture_page.as_deref().and_then(|page| page.strip_prefix("update:")) {
                     let name: SharedString = name.to_owned().into();
                     let capture_data = data.clone();
@@ -475,11 +509,67 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                         }
                     });
                 }
+                if let Some((route, name)) =
+                    capture_page.as_deref().and_then(|page| page.split_once(':')).filter(|(route, name)| {
+                        matches!(*route, "delete" | "export" | "groups") && name.starts_with("agente-274-")
+                    })
+                {
+                    let route = route.to_owned();
+                    let name: SharedString = name.to_owned().into();
+                    let capture_data = data.clone();
+                    window.on_next_frame(move |window, cx| {
+                        let Some(id) = crate::entity::instance::InstanceEntries::find_id_by_name(
+                            &capture_data.instances,
+                            &name,
+                            cx,
+                        ) else {
+                            return;
+                        };
+                        match route.as_str() {
+                            "delete" => crate::modals::delete_instance::open_delete_instance(
+                                id,
+                                name,
+                                capture_data.backend_handle.clone(),
+                                window,
+                                cx,
+                            ),
+                            "export" => crate::modals::export_instance::open_export_instance(
+                                id,
+                                name,
+                                capture_data.backend_handle.clone(),
+                                window,
+                                cx,
+                            ),
+                            _ => crate::modals::save_groups::open_save_groups(
+                                id,
+                                capture_data.backend_handle.clone(),
+                                window,
+                                cx,
+                            ),
+                        }
+                        log::info!("launcher-dialog-ready pid={}", std::process::id());
+                    });
+                }
+                if capture_page.as_deref() == Some("skins-import") {
+                    let backend = data.backend_handle.clone();
+                    window.on_next_frame(move |window, cx| crate::modals::skin_import::open(backend, window, cx));
+                }
+                #[cfg(windows)]
+                if capture_page.as_deref() == Some("launcher-defender-dialog") {
+                    window.on_next_frame(crate::modals::windows_security::open);
+                }
                 if capture_page.as_deref() == Some("components-dialog") {
                     window.on_next_frame(crate::component::design_review::open_review_dialog);
                 }
+                if capture_page.as_deref() == Some("launcher-theme-joke") {
+                    window.on_next_frame(crate::settings::open_theme_joke);
+                }
                 if capture_page.as_deref() == Some("accounts") {
                     window.on_next_frame(|_, cx| crate::root::open_home_accounts(cx));
+                }
+                #[cfg(feature = "ui-capture")]
+                if capture_page.is_some() {
+                    crate::capture::start(window, cx);
                 }
                 root
             },
@@ -577,6 +667,15 @@ pub(crate) fn open_folder(path: &Path, window: &mut Window, cx: &mut App) {
     }
 }
 
+pub(crate) fn compact_download_count(downloads: u64) -> SharedString {
+    for (unit, suffix) in [(1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")] {
+        if downloads >= unit {
+            return format!("{} {suffix}", (downloads as f64 / unit as f64 * 100.).round() / 100.).into();
+        }
+    }
+    downloads.to_string().into()
+}
+
 pub fn format_downloads(downloads: u64) -> SharedString {
     if downloads >= 1_000_000_000 {
         t::instance::content::downloads::b((downloads / 10_000_000) as f64 / 100.0)
@@ -604,7 +703,7 @@ fn capture_instance_target(page: &str) -> Option<(&str, pages::instance::instanc
         "instance-logs" | "instance-crashes" => Tab::Logs,
         "instance-overwrites" => Tab::Overwrites,
         "instance-changelog" => Tab::Changelog,
-        "instance-settings" | "derived" | "duplicate" => Tab::Settings,
+        "instance-settings" | "derived" | "duplicate" | "delete" | "export" | "groups" => Tab::Settings,
         "instance-live" => Tab::LiveGameOutput,
         _ => return None,
     };

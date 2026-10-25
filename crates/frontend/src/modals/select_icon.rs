@@ -9,7 +9,7 @@ use gpui_component::{
 };
 use parking_lot::RwLock;
 
-use crate::icon::PandoraIcon;
+use crate::{component::design, icon::PandoraIcon};
 
 pub fn open_select_icon(selected: Box<dyn FnOnce(EmbeddedOrRaw, &mut App)>, window: &mut Window, cx: &mut App) {
     let select_file_task = Arc::new(RwLock::new(Task::ready(())));
@@ -18,7 +18,8 @@ pub fn open_select_icon(selected: Box<dyn FnOnce(EmbeddedOrRaw, &mut App)>, wind
         let icons = ICONS.iter().enumerate().map(|(index, icon)| {
             let icon = *icon;
             Button::new(index)
-                .success()
+                .ghost()
+                .rounded(px(0.))
                 .icon(Icon::default().path(icon))
                 .with_size(px(64.0))
                 .on_click({
@@ -39,8 +40,9 @@ pub fn open_select_icon(selected: Box<dyn FnOnce(EmbeddedOrRaw, &mut App)>, wind
             .gap_2()
             .child(
                 Button::new("custom_icon")
-                    .success()
-                    .label(t::common::custom_icon())
+                    .ghost()
+                    .rounded(px(0.))
+                    .label("Elegir icono")
                     .icon(PandoraIcon::File)
                     .on_click({
                         let selected = selected.clone();
@@ -50,7 +52,7 @@ pub fn open_select_icon(selected: Box<dyn FnOnce(EmbeddedOrRaw, &mut App)>, wind
                                 files: true,
                                 directories: false,
                                 multiple: false,
-                                prompt: Some(t::instance::select_png_icon().into()),
+                                prompt: Some("Elegir icono".into()),
                             });
 
                             let selected = selected.clone();
@@ -76,7 +78,7 @@ pub fn open_select_icon(selected: Box<dyn FnOnce(EmbeddedOrRaw, &mut App)>, wind
             )
             .child(grid);
 
-        dialog.title(t::instance::select_icon()).child(content)
+        design::dialog(dialog).title(design::dialog_title("Elegir icono")).child(content)
     });
 }
 

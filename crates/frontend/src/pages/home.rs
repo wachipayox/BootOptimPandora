@@ -14,7 +14,7 @@ use bridge::{
     serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{Disableable, WindowExt, h_flex, scroll::ScrollableElement, v_flex};
+use gpui_component::{Disableable, h_flex, scroll::ScrollableElement, v_flex};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -46,41 +46,10 @@ fn picture(path: &Option<std::path::PathBuf>, fallback: &'static str) -> ImageSo
 fn shade(from: u32, to: u32) -> Background {
     linear_gradient(180., linear_color_stop(rgba(from), 0.), linear_color_stop(rgba(to), 1.)).into()
 }
-pub fn add_instance(data: &DataEntities, window: &mut Window, cx: &mut App) {
-    let data = data.clone();
-    window.open_dialog(cx, move |dialog, _, _| {
-        design::dialog(dialog).title("Añadir instancia").child(
-            v_flex()
-                .gap(px(8.))
-                .child(DesignButton::new("add-from-server").label("Desde el servidor").w_full().on_click({
-                    let data = data.clone();
-                    move |_, w, c| {
-                        w.close_dialog(c);
-                        crate::modals::global_profiles::open_global_profiles(data.backend_handle.clone(), w, c);
-                    }
-                }))
-                .child(DesignButton::new("add-local").label("Nueva instancia").w_full().on_click({
-                    let data = data.clone();
-                    move |_, w, c| {
-                        w.close_dialog(c);
-                        crate::modals::create_instance::open_create_instance(
-                            data.metadata.clone(),
-                            data.instances.clone(),
-                            data.backend_handle.clone(),
-                            w,
-                            c,
-                        );
-                    }
-                }))
-                .child(DesignButton::new("add-import").label("Importar de otro launcher").w_full().on_click(
-                    |_, w, c| {
-                        w.close_dialog(c);
-                        root::switch_page(PageType::Import, &[PageType::Instances], w, c);
-                    },
-                )),
-        )
-    });
+pub fn add_instance(_data: &DataEntities, window: &mut Window, cx: &mut App) {
+    root::switch_page(PageType::AddInstance, &[PageType::Instances], window, cx);
 }
+
 impl HomePage {
     pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let entries = data.instances.read(cx).entries.clone();

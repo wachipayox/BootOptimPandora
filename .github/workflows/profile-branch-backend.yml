@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "crates/backend/src/lib.rs"
+      - "crates/backend/src/skin_import.rs"
+      - "crates/schema/src/backend_config.rs"
       - "crates/backend/src/profile_branch.rs"
       - "crates/backend/src/profile_layout_flow.rs"
       - "crates/backend/src/profile_layout_identity.rs"
@@ -34,3 +36,5 @@ jobs:
         run: cargo check -p backend --tests --frozen
       - name: Test profile branch and persistent layout behavior
         run: cargo test -p backend profile_layout --frozen -- --test-threads=1 && cargo test -p backend profile_branch --frozen -- --test-threads=1
+      - name: Test explicit skin import and saved Distribution configuration
+        run: cargo test -p backend skin_import --frozen && cargo test -p schema distribution_defaults_tests --frozen

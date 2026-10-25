@@ -2455,6 +2455,20 @@ impl BackendState {
                         .insert(account, CachedMinecraftProfile::new(profile));
                 }
             },
+            MessageToBackend::DiscoverLauncherSkins { result } => {
+                let library = self.directories.skin_library_dir.clone();
+                tokio::task::spawn_blocking(move || {
+                    _ = result.send(crate::skin_import::discover(&library));
+                });
+            },
+            MessageToBackend::ImportLauncherSkins { plan, result } => {
+                let backend = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    let outcome = crate::skin_import::import(&backend.directories.skin_library_dir, plan);
+                    SkinManager::skin_library_mark_dirty(&backend, crate::fs::FolderChanges::all_dirty());
+                    _ = result.send(outcome);
+                });
+            },
             MessageToBackend::RequestSkinLibrary => {
                 SkinManager::load_skin_library(&self);
             },
@@ -2468,7 +2482,7 @@ impl BackendState {
                             Ok(url) => url,
                             Err(err) => {
                                 log::error!("Invalid URL: {}", err);
-                                self.send.send_error(format!("Invalid URL: {}", err));
+                                self.send.send_error("La URL no es válida.");
                                 return;
                             },
                         };
@@ -2481,7 +2495,7 @@ impl BackendState {
                             Ok(response) => response,
                             Err(err) => {
                                 log::error!("Error while requesting skin: {:?}", err);
-                                self.send.send_error("Error while requesting skin, see logs for more details");
+                                self.send.send_error("No se ha podido descargar el aspecto.");
                                 return;
                             },
                         };
@@ -2490,7 +2504,7 @@ impl BackendState {
                             Ok(bytes) => bytes.to_vec(),
                             Err(err) => {
                                 log::error!("Error while downloading skin: {:?}", err);
-                                self.send.send_error("Error while downloading skin, see logs for more details");
+                                self.send.send_error("No se ha podido descargar el aspecto.");
                                 return;
                             },
                         };
@@ -2502,7 +2516,7 @@ impl BackendState {
                             Ok(bytes) => bytes,
                             Err(err) => {
                                 log::error!("Error while reading skin file: {:?}", err);
-                                self.send.send_error("Error while reading skin file, see logs for more details");
+                                self.send.send_error("No se ha podido descargar el aspecto.");
                                 return;
                             },
                         };
@@ -2522,17 +2536,16 @@ impl BackendState {
                     Ok(image) => image,
                     Err(err) => {
                         if let image::ImageError::Decoding(_) = err {
-                            self.send.send_error("Skin is not a valid PNG image");
+                            self.send.send_error("No se ha podido descargar el aspecto.");
                         } else {
                             log::error!("An error occurred while loading the image: {:?}", err);
-                            self.send
-                                .send_error("An error occurred while loading the image, see logs for more details");
+                            self.send.send_error("No se ha podido descargar el aspecto.");
                         }
                         return;
                     },
                 };
                 if !SkinManager::is_valid_size(&image) {
-                    self.send.send_error("Invalid skin file. Must be 64x64 or 64x32.");
+                    self.send.send_error("El archivo debe ser una imagen PNG de 64 × 64 o 64 × 32.");
                     return;
                 }
 
@@ -2548,7 +2561,7 @@ impl BackendState {
 
                 if let Err(err) = crate::fs::write_safe(&path, &bytes) {
                     log::error!("Error while saving skin: {:?}", err);
-                    self.send.send_error("Error while saving skin, see logs for more details");
+                    self.send.send_error("No se ha podido guardar el aspecto.");
                 }
             },
             MessageToBackend::CopyPlayerSkin { username } => {
@@ -2557,25 +2570,24 @@ impl BackendState {
                     Ok(r) => r,
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to request Mojang API: {:?}", err);
-                        self.send.send_error("Failed to request Mojang API");
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
                 if response.status() == reqwest::StatusCode::NOT_FOUND {
-                    self.send.send_error(format!("Player '{}' not found", username));
+                    self.send.send_error(format!("No se ha encontrado al jugador {username}."));
                     return;
                 }
                 if !response.status().is_success() {
                     log::error!("CopyPlayerSkin: Mojang API returned status {}", response.status());
-                    self.send
-                        .send_error(format!("Failed to request Mojang API: status {}", response.status()));
+                    self.send.send_error("No se ha podido descargar el aspecto.");
                     return;
                 }
                 let body = match response.text().await {
                     Ok(b) => b,
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to read Mojang API response: {:?}", err);
-                        self.send.send_error("Failed to read Mojang API response");
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
@@ -2583,7 +2595,7 @@ impl BackendState {
                     Ok(v) => v,
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to deserialize Mojang API response: {:?}", err);
-                        self.send.send_error("Failed to deserialize Mojang API response");
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
@@ -2591,7 +2603,7 @@ impl BackendState {
                     Some(id) => id.to_owned(),
                     None => {
                         log::error!("CopyPlayerSkin: missing 'id' field in Mojang API response");
-                        self.send.send_error("Failed to deserialize Mojang API response");
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
@@ -2601,21 +2613,20 @@ impl BackendState {
                     Ok(r) => r,
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to request session server: {:?}", err);
-                        self.send.send_error("Failed to request Mojang session server");
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
                 if !response.status().is_success() {
                     log::error!("CopyPlayerSkin: session server returned status {}", response.status());
-                    self.send
-                        .send_error(format!("Failed to request Mojang session server: status {}", response.status()));
+                    self.send.send_error("No se ha podido descargar el aspecto.");
                     return;
                 }
                 let body = match response.text().await {
                     Ok(b) => b,
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to read session server response: {:?}", err);
-                        self.send.send_error("Failed to read Mojang session server response");
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
@@ -2623,7 +2634,7 @@ impl BackendState {
                 let skin_url = match Self::extract_skin_url_from_profile(&body) {
                     Some(url) => url,
                     None => {
-                        self.send.send_error(format!("Player '{}' has no skin", username));
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
@@ -2632,7 +2643,7 @@ impl BackendState {
                     Ok(url) => url,
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to parse skin URL: {}", err);
-                        self.send.send_error("Failed to parse skin URL");
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
@@ -2643,21 +2654,20 @@ impl BackendState {
                     Ok(r) => r,
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to request skin texture: {:?}", err);
-                        self.send.send_error("Error while requesting skin, see logs for more details");
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
                 if !response.status().is_success() {
                     log::error!("CopyPlayerSkin: skin texture request returned status {}", response.status());
-                    self.send
-                        .send_error(format!("Failed to request skin texture: status {}", response.status()));
+                    self.send.send_error("No se ha podido descargar el aspecto.");
                     return;
                 }
                 let bytes = match response.bytes().await {
                     Ok(bytes) => bytes.to_vec(),
                     Err(err) => {
                         log::error!("CopyPlayerSkin: failed to read skin texture: {:?}", err);
-                        self.send.send_error("Error while downloading skin, see logs for more details");
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
@@ -2665,12 +2675,12 @@ impl BackendState {
                 let image = match image::load_from_memory_with_format(&bytes, image::ImageFormat::Png) {
                     Ok(image) => image,
                     Err(_) => {
-                        self.send.send_error("Player skin is not a valid PNG image");
+                        self.send.send_error("No se ha podido descargar el aspecto.");
                         return;
                     },
                 };
                 if !SkinManager::is_valid_size(&image) {
-                    self.send.send_error("Player skin has invalid dimensions. Must be 64x64 or 64x32.");
+                    self.send.send_error("El archivo debe ser una imagen PNG de 64 × 64 o 64 × 32.");
                     return;
                 }
 
@@ -2686,7 +2696,7 @@ impl BackendState {
 
                 if let Err(err) = crate::fs::write_safe(&path, &bytes) {
                     log::error!("CopyPlayerSkin: failed to save skin: {:?}", err);
-                    self.send.send_error("Error while saving skin, see logs for more details");
+                    self.send.send_error("No se ha podido guardar el aspecto.");
                 }
             },
             MessageToBackend::Login { account, modal_action } => {

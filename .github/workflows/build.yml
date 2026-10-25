@@ -49,6 +49,9 @@ jobs:
         uses: rui314/setup-mold@v1
 
       - name: Run build command
+        env:
+          WBOMBO_DISTRIBUTION_DEFAULT_URL: ${{ secrets.WBOMBO_DISTRIBUTION_DEFAULT_URL }}
+          WBOMBO_COMMUNITY_DISCORD_URL: ${{ secrets.WBOMBO_COMMUNITY_DISCORD_URL }}
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}
 
       - name: Name Windows artifact with short SHA
@@ -65,6 +68,10 @@ jobs:
           path: target/${{ matrix.platform.target }}/release/pandora_launcher${{ matrix.platform.binext }}
           if-no-files-found: error
           retention-days: 14
+
+      - name: Check optional Windows framebuffer capture
+        if: matrix.platform.os_name == 'Windows-x86_64'
+        run: cargo check --release -p pandora_launcher --features ui-capture --frozen --target ${{ matrix.platform.target }}
 
   backend-tests-windows:
     runs-on: windows-latest

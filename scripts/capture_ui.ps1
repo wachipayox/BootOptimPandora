@@ -2,6 +2,7 @@ param(
     [string]$Output = (Join-Path $PSScriptRoot '..\..\..\coordination\272-estetica-launchers\pandora'),
     [switch]$SkipBuild,
     [string]$Executable,
+    [ValidatePattern('^$|^[0-9a-fA-F]{7,40}$')][string]$ExecutableSourceCommit = '',
     [string]$TestProfile,
     [string]$Revision,
     [string]$InstanceName = 'agente-274-ui',
@@ -9,11 +10,13 @@ param(
     [switch]$HomeScreens,
     [switch]$NewsScreens,
     [switch]$InstanceScreens,
+    [switch]$LauncherScreens,
     [string]$NewsFixture,
     [ValidateSet('advanced','version','expanded','editing')][string]$CaptureState,
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
+    [switch]$Framebuffer,
     [string]$PortableDirectory
 )
 $ErrorActionPreference = 'Stop'
@@ -32,10 +35,15 @@ if (-not (Test-Path $builtExe)) { throw "Missing executable: $builtExe" }
 $ownsDirectory = -not $PortableDirectory
 $tempRoot = if ($PortableDirectory) { [IO.Path]::GetFullPath($PortableDirectory) } else { Join-Path ([IO.Path]::GetTempPath()) ("wb274-" + [guid]::NewGuid().ToString('N').Substring(0,8)) }
 $null = New-Item -ItemType Directory -Force -Path $tempRoot
+$framebufferRoot = Join-Path $tempRoot 'capture-framebuffer'
+if ($Framebuffer) { $null = New-Item -ItemType Directory -Force -Path $framebufferRoot }
 # Pandora treats an executable whose name contains "portable" as an isolated
 # portable install, so this run never resolves to the user's regular data folder.
 $portableExe = Join-Path $tempRoot 'pandora-portable.exe'
-if (-not (Test-Path $portableExe) -or $ownsDirectory) { Copy-Item -LiteralPath $builtExe -Destination $portableExe }
+if (-not [string]::Equals($builtExe, $portableExe, [StringComparison]::OrdinalIgnoreCase)) {
+    Copy-Item -LiteralPath $builtExe -Destination $portableExe -Force
+}
+$executableHash = (Get-FileHash -LiteralPath $portableExe -Algorithm SHA256).Hash.ToLowerInvariant()
 
 Add-Type @'
 using System;
@@ -105,8 +113,29 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
             } finally { $graphics.ReleaseHdc($dc) }
         }
         $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
-        $script:captureMetadata += @{ file=[IO.Path]::GetFileName($Path); width=$width; height=$height; dpi=[CaptureWindow]::GetDpiForWindow($handle) }
+        $script:captureMetadata += @{ file=[IO.Path]::GetFileName($Path); width=$width; height=$height; dpi=[CaptureWindow]::GetDpiForWindow($handle); method='desktop' }
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
+    if ($Framebuffer) {
+        foreach ($name in @('frame.png', 'failed')) {
+            $previous = Join-Path $framebufferRoot $name
+            if (Test-Path -LiteralPath $previous) { Remove-Item -LiteralPath $previous }
+        }
+        [IO.File]::WriteAllText((Join-Path $framebufferRoot 'request'), '')
+        $deadline = (Get-Date).AddSeconds(15)
+        $frame = Join-Path $framebufferRoot 'frame.png'
+        while (-not (Test-Path -LiteralPath $frame) -and (Get-Date) -lt $deadline) {
+            if (Test-Path -LiteralPath (Join-Path $framebufferRoot 'failed')) { throw 'Native framebuffer readback failed; inspect the isolated capture directory.' }
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not (Test-Path -LiteralPath $frame)) { throw 'Native framebuffer timed out; build with --features ui-capture.' }
+        $nativePath = [IO.Path]::Combine([IO.Path]::GetDirectoryName($Path), ([IO.Path]::GetFileNameWithoutExtension($Path) + '-gpu.png'))
+        Copy-Item -LiteralPath $frame -Destination $nativePath
+        $native = [Drawing.Bitmap]::new($nativePath)
+        try {
+            if ($native.Width -ne $width -or $native.Height -ne $height) { throw 'Native framebuffer and client dimensions differ.' }
+        } finally { $native.Dispose() }
+        $script:captureMetadata += @{file=[IO.Path]::GetFileName($nativePath);width=$width;height=$height;dpi=[CaptureWindow]::GetDpiForWindow($handle);method='gpu-readback'}
+    }
 }
 
 function Close-CapturedProcess([System.Diagnostics.Process]$CapturedProcess) {
@@ -133,7 +162,12 @@ function Invoke-CaptureCli([string[]]$Arguments) {
 $oldNewsFixture = $env:WBOMBO_UI_CAPTURE_NEWS
 if ($NewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS = (Resolve-Path -LiteralPath $NewsFixture).Path }
 $createdInstance = $false
+$distributionCaptureActive = $false
+$distributionOriginalConfig = $null
+$distributionConfigPath = Join-Path $tempRoot "WachilandLauncher\config.json"
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
+$oldFramebufferDirectory = $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR
+if ($Framebuffer) { $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR = $framebufferRoot }
 $oldCaptureState = $env:WBOMBO_UI_CAPTURE_STATE
 if ($CaptureState) { $env:WBOMBO_UI_CAPTURE_STATE = $CaptureState }
 $screens = @(
@@ -167,6 +201,12 @@ try {
             $screens += @{page="$($instanceRoute):$InstanceName";file="$instanceRoute.png";label='Owned instance screen; live output is synthetic and never starts Minecraft'}
         }
     }
+    if ($LauncherScreens) {
+        foreach ($launcherRoute in @('launcher-general','launcher-appearance','launcher-theme-joke','launcher-network','launcher-distribution','launcher-ignored','launcher-windows','launcher-about','skins','skins-url','skins-copy','skins-import','launcher-defender-dialog','accounts','account-offline','add-instance','add-server','add-local','import','syncing')) {
+            $screens += @{page=$launcherRoute;file="$launcherRoute.png";label='Native launcher screen or existing dialog; no action is confirmed'}
+        }
+        if ($TestProfile -or $PortableDirectory) { $screens += @{page="content-browser:$InstanceName";file='content-browser.png';label='Browse content for owned fixture; no install is started'} }
+    }
     if ($Pages) { $screens = @($Pages | ForEach-Object { @{ page=$_; file=(($_ -replace ':','-') + '.png'); label='Explicit native capture route' } }) }
     if ($Components) {
         $screens += @{ page = 'components'; file = 'components.png'; label = 'Wachiland base controls' }
@@ -174,18 +214,30 @@ try {
     }
     foreach ($screen in $screens) {
         $env:WBOMBO_UI_CAPTURE_PAGE = $screen.page
+        if ($screen.page -eq 'launcher-distribution') {
+            # Even a fresh private build embeds its endpoint: never capture it.
+            $distributionOriginalConfig = if (Test-Path -LiteralPath $distributionConfigPath) { [IO.File]::ReadAllBytes($distributionConfigPath) } else { $null }
+            $captureConfig = if ($null -ne $distributionOriginalConfig) { [Text.Encoding]::UTF8.GetString($distributionOriginalConfig) | ConvertFrom-Json } else { [pscustomobject]@{} }
+            $captureConfig | Add-Member -NotePropertyName distribution -NotePropertyValue ([pscustomobject]@{base_url='https://example.invalid';tls_ca_certificate_path=''}) -Force
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $distributionConfigPath)
+            $distributionCaptureActive = $true
+            [IO.File]::WriteAllText($distributionConfigPath, ($captureConfig | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
+        }
         # The user requested visible UI captures; SW_HIDE prevents GPUI's first
         # window from becoming visible and makes MainWindowHandle remain zero.
-        $proc = Start-Process -FilePath $portableExe -PassThru
+        $proc = Start-Process -FilePath $portableExe -PassThru -RedirectStandardOutput (Join-Path $tempRoot 'capture-window.out') -RedirectStandardError (Join-Path $tempRoot 'capture-window.err')
         $deadline = (Get-Date).AddSeconds(45)
-        while ((Get-Date) -lt $deadline -and ($proc.MainWindowHandle -eq 0 -or $proc.HasExited)) {
+        while ((Get-Date) -lt $deadline -and -not $proc.HasExited -and $proc.MainWindowHandle -eq 0) {
             Start-Sleep -Milliseconds 300
             $proc.Refresh()
         }
-        if ($proc.HasExited -or $proc.MainWindowHandle -eq 0) { throw "Pandora did not open for $($screen.page)" }
+        if ($proc.HasExited) { throw "Pandora exited for $($screen.page), code $($proc.ExitCode); see capture-window.err in the isolated portable directory" }
+        if ($proc.MainWindowHandle -eq 0) { throw "Pandora did not open for $($screen.page)" }
         [void][CaptureWindow]::ShowWindow($proc.MainWindowHandle, 3)
         [void][CaptureWindow]::SetForegroundWindow($proc.MainWindowHandle)
         Start-Sleep -Seconds 5
+        $proc.Refresh()
+        if ($proc.HasExited) { throw "Pandora exited for $($screen.page), code $($proc.ExitCode); see capture-window.err in the isolated portable directory" }
         if ($HomeScreens -and $screen.page -in @('instances','accounts','home-menu','home-news')) {
             $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
             $ready = "home-ready pid=$($proc.Id)"
@@ -273,7 +325,7 @@ try {
                 Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
             }
         }
-        if ($screen.page -in @('components','home-news') -or $screen.page -match '^(instance-|derived:|duplicate:|update:)') {
+        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page -in @('skins','skins-url','skins-copy','skins-import','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news') -or $screen.page -match '^(instance-|derived:|duplicate:|update:|delete:|export:|groups:)') {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
             if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
@@ -283,11 +335,18 @@ try {
         $newsLogPath = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
         $errorsBeforeClose = @(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count
         Close-CapturedProcess $proc
+        if ($distributionCaptureActive) {
+            if ($null -ne $distributionOriginalConfig) { [IO.File]::WriteAllBytes($distributionConfigPath, $distributionOriginalConfig) } else { Remove-Item -LiteralPath $distributionConfigPath -ErrorAction SilentlyContinue }
+            $distributionCaptureActive = $false
+        }
         $captureDiagnostics += @{page=$screen.page;errorsBeforeClose=$errorsBeforeClose;errorsAfterClose=@(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count}
         Write-Output "CAPTURE_OK page=$($screen.page) file=$($screen.file)"
     }
     @{
         launcher = 'BootOptimPandora'
+        executableSha256 = $executableHash
+        executableSourceCommit = $ExecutableSourceCommit
+        captureScriptCommit = (git -C $repo rev-parse HEAD)
         viewport = if ($DesignViewport) { '1280 x 860 logical pixels' } else { 'maximized' }
         captures = $captureMetadata
         diagnostics = $captureDiagnostics
@@ -296,9 +355,13 @@ try {
         unavailable = if ($TestProfile -or $PortableDirectory) { @() } else { @('instance-detail and update-dialog require an owned test profile fixture') }
     } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $outputPath 'capture-manifest.json')
 } finally {
+    if ($null -ne $oldFramebufferDirectory) { $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR=$oldFramebufferDirectory } else { Remove-Item Env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR -ErrorAction SilentlyContinue }
     if ($null -ne $oldNewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS=$oldNewsFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_NEWS -ErrorAction SilentlyContinue }
     if ($null -ne $proc -and -not $proc.HasExited) {
         Close-CapturedProcess $proc
+    }
+    if ($distributionCaptureActive) {
+        if ($null -ne $distributionOriginalConfig) { [IO.File]::WriteAllBytes($distributionConfigPath, $distributionOriginalConfig) } else { Remove-Item -LiteralPath $distributionConfigPath -ErrorAction SilentlyContinue }
     }
     if ($null -ne $oldCaptureState) { $env:WBOMBO_UI_CAPTURE_STATE=$oldCaptureState } else { Remove-Item Env:WBOMBO_UI_CAPTURE_STATE -ErrorAction SilentlyContinue }
     if ($null -ne $oldPage) { $env:WBOMBO_UI_CAPTURE_PAGE = $oldPage } else { Remove-Item Env:WBOMBO_UI_CAPTURE_PAGE -ErrorAction SilentlyContinue }

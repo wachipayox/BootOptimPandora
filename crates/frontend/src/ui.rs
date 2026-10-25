@@ -30,6 +30,7 @@ pub struct LauncherUI {
     data: DataEntities,
     page: LauncherPage,
     pub(crate) home_account_menu: bool,
+    pub(crate) browser_manual_view: bool,
     pub update: Option<UpdatePrompt>,
     recent_instances: heapless::Vec<(InstanceID, SharedString), 3>,
     page_history_backwards: VecDeque<(PageType, Arc<[PageType]>)>,
@@ -48,6 +49,8 @@ pub enum PageType {
     #[default]
     Instances,
     Skins,
+    LauncherSettings,
+    AddInstance,
     Modrinth {
         installing_for: Option<SharedString>,
     },
@@ -70,7 +73,9 @@ impl PageType {
     pub fn title(&self, data: &DataEntities, cx: &App) -> SharedString {
         match self {
             PageType::Instances => t::instance::title().into(),
-            PageType::Skins => t::skins::title().into(),
+            PageType::Skins => "Aspecto".into(),
+            PageType::LauncherSettings => "Ajustes del launcher".into(),
+            PageType::AddInstance => "Añadir instancia".into(),
             PageType::Modrinth { installing_for } => {
                 if installing_for.is_some() {
                     t::instance::content::install::from_modrinth().into()
@@ -100,6 +105,8 @@ pub enum LauncherPage {
     Home(Entity<crate::pages::home::HomePage>),
     Instances(Entity<InstancesPage>),
     Skins(Entity<SkinsPage>),
+    LauncherSettings(Entity<crate::settings::SettingsRoot>),
+    AddInstance(Entity<crate::pages::add_instance::AddInstancePage>),
     Modrinth(Entity<ModrinthSearchPage>),
     Curseforge(Entity<CurseforgeSearchPage>),
     Import(Entity<ImportPage>),
@@ -116,6 +123,15 @@ impl LauncherPage {
         if let LauncherPage::InstancePage(page) = &self {
             return div().size_full().child(page.clone()).into_any_element();
         }
+        if let LauncherPage::LauncherSettings(page) = &self {
+            return div().size_full().child(page.clone()).into_any_element();
+        }
+        if let LauncherPage::Skins(page) = &self {
+            return div().size_full().child(page.clone()).into_any_element();
+        }
+        if let LauncherPage::AddInstance(page) = &self {
+            return div().size_full().child(page.clone()).into_any_element();
+        }
         fn process(entity: Entity<impl Page>, window: &mut Window, cx: &mut App) -> (bool, AnyElement, AnyElement) {
             entity.update(cx, |page, cx| {
                 (
@@ -127,7 +143,7 @@ impl LauncherPage {
         }
 
         let (scrollable, controls, page) = match self {
-            LauncherPage::Home(_) => unreachable!(),
+            LauncherPage::Home(_) | LauncherPage::LauncherSettings(_) | LauncherPage::AddInstance(_) => unreachable!(),
             LauncherPage::Instances(entity) => process(entity, window, cx),
             LauncherPage::Skins(entity) => process(entity, window, cx),
             LauncherPage::Modrinth(entity) => process(entity, window, cx),
@@ -145,6 +161,93 @@ impl LauncherPage {
             controls,
             update: ui.update.clone(),
             send: ui.data.backend_handle.clone(),
+        };
+        let browser = matches!(config.main_page, PageType::Modrinth { .. } | PageType::Curseforge { .. });
+        let page = if browser && ui.browser_manual_view {
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(13.))
+                .text_color(rgb(crate::theme::INK_MUTED))
+                .child("No hay descargas manuales pendientes.")
+                .into_any_element()
+        } else {
+            page
+        };
+        let title_bar = if browser {
+            v_flex()
+                .w_full()
+                .flex_shrink_0()
+                .child(crate::component::design::page_header("EXPLORAR CONTENIDO", window))
+                .child(
+                    h_flex()
+                        .px(px(20.))
+                        .border_b_1()
+                        .border_color(rgba(0xffffff0b))
+                        .child(
+                            crate::component::design::tab("browser-explore", "Explorar", !ui.browser_manual_view)
+                                .h(px(32.))
+                                .px(px(2.))
+                                .on_click(|_, _, c| crate::root::set_browser_manual_view(false, c)),
+                        )
+                        .child(
+                            crate::component::design::tab(
+                                "browser-manual",
+                                "Descargas manuales",
+                                ui.browser_manual_view,
+                            )
+                            .on_click(|_, _, c| crate::root::set_browser_manual_view(true, c)),
+                        ),
+                )
+                .into_any_element()
+        } else if config.main_page == PageType::Syncing {
+            v_flex()
+                .w_full()
+                .flex_shrink_0()
+                .child(crate::component::design::page_header("ARCHIVOS", window))
+                .child(
+                    h_flex().px(px(20.)).border_b_1().border_color(rgba(0xffffff0b)).child(
+                        crate::component::design::tab("sync-settings-tab", "Sincronización", true)
+                            .h(px(32.))
+                            .px(px(2.)),
+                    ),
+                )
+                .into_any_element()
+        } else if config.main_page == PageType::Import {
+            v_flex()
+                .w_full()
+                .flex_shrink_0()
+                .child(crate::component::design::page_header("AÑADIR INSTANCIA", window))
+                .child(
+                    h_flex()
+                        .px(px(20.))
+                        .border_b_1()
+                        .border_color(rgba(0xffffff0b))
+                        .child(crate::component::design::tab("add-global-tab", "Perfil global", false).on_click({
+                            let data = ui.data.clone();
+                            move |_, w, c| {
+                                crate::modals::global_profiles::open_global_profiles(data.backend_handle.clone(), w, c)
+                            }
+                        }))
+                        .child(crate::component::design::tab("add-new-tab", "Nuevo", false).on_click({
+                            let data = ui.data.clone();
+                            move |_, w, c| {
+                                crate::modals::create_instance::open_create_instance(
+                                    data.metadata.clone(),
+                                    data.instances.clone(),
+                                    data.backend_handle.clone(),
+                                    w,
+                                    c,
+                                )
+                            }
+                        }))
+                        .child(crate::component::design::tab("add-import-tab", "Importar", true)),
+                )
+                .into_any_element()
+        } else {
+            title_bar.into_any_element()
         };
 
         if scrollable {
@@ -262,6 +365,7 @@ impl LauncherUI {
             data: data.clone(),
             page,
             home_account_menu: false,
+            browser_manual_view: false,
             update: None,
             recent_instances,
             page_history_backwards: VecDeque::with_capacity(32),
@@ -285,6 +389,10 @@ impl LauncherUI {
             PageType::Instances => {
                 Ok(LauncherPage::Home(cx.new(|cx| crate::pages::home::HomePage::new(data, window, cx))))
             },
+            PageType::AddInstance => Ok(LauncherPage::AddInstance(
+                cx.new(|cx| crate::pages::add_instance::AddInstancePage::new(data, window, cx)),
+            )),
+            PageType::LauncherSettings => Ok(LauncherPage::LauncherSettings(crate::settings::create(data, window, cx))),
             PageType::Skins => Ok(LauncherPage::Skins(cx.new(|cx| SkinsPage::new(data, window, cx)))),
             PageType::Modrinth { installing_for } => {
                 let installing_for = installing_for
@@ -352,6 +460,7 @@ impl LauncherUI {
 
     pub fn switch_page(&mut self, page: PageType, page_path: &[PageType], window: &mut Window, cx: &mut Context<Self>) {
         let page_path: Arc<[PageType]> = page_path.into();
+        self.browser_manual_view = false;
 
         let config = InterfaceConfig::get(cx);
         if config.main_page == page {
@@ -618,7 +727,6 @@ impl LauncherUI {
                 }
             });
         let saved_accounts = self.data.accounts.read(cx).accounts.clone();
-        let settings_data = self.data.clone();
         footer = footer.child(
             h_flex()
                 .border_t_1()
@@ -653,7 +761,7 @@ impl LauncherUI {
                         .child(gpui_component::Icon::new(PandoraIcon::Settings).size(px(16.)))
                         .w(px(32.))
                         .px_0()
-                        .on_click(move |_, w, c| crate::settings::open_settings_window(w, &settings_data, c)),
+                        .on_click(cx.listener(|this, _, w, c| this.switch_page(PageType::LauncherSettings, &[], w, c))),
                 ),
         );
         let sidebar = v_flex()
@@ -744,7 +852,7 @@ impl LauncherUI {
             .relative()
             .bg(rgb(theme::BG))
             .text_color(rgb(theme::INK))
-            .child(crate::background::surface(cx))
+            .child(crate::background::surface(window, cx))
             .child(sidebar)
             .child(div().flex_1().min_w_0().h_full().child(self.page.clone().render(self, window, cx)))
             .when(self.home_account_menu, |d| {
@@ -755,4 +863,68 @@ impl LauncherUI {
             })
             .into_any_element()
     }
+}
+
+pub(crate) fn browser_sources(data: &DataEntities, install_for: Option<InstanceID>, modrinth: bool, cx: &App) -> Div {
+    use crate::component::design;
+    let selected = install_for.and_then(|id| InstanceEntries::find_name_by_id(&data.instances, id, cx));
+    let mut controls = h_flex().gap(px(8.)).items_center();
+    for (index, label) in ["Modrinth", "CurseForge"].into_iter().enumerate() {
+        let target = selected.clone();
+        controls = controls.child(design::chip(("browser-provider", index), label, modrinth == (index == 0)).on_click(
+            move |_, w, c| {
+                crate::root::switch_page(
+                    if index == 0 {
+                        PageType::Modrinth {
+                            installing_for: target.clone(),
+                        }
+                    } else {
+                        PageType::Curseforge {
+                            installing_for: target.clone(),
+                        }
+                    },
+                    &[],
+                    w,
+                    c,
+                )
+            },
+        ));
+    }
+    if let Some(name) = selected {
+        let mut choices = v_flex().gap(px(4.));
+        for (_, entry) in &data.instances.read(cx).entries {
+            let target = entry.read(cx).name.clone();
+            choices = choices.child(
+                design::DesignButton::new(SharedString::from(format!("browser-target-{target}")))
+                    .label(target.clone())
+                    .w_full()
+                    .on_click(move |_, w, c| {
+                        crate::root::switch_page(
+                            if modrinth {
+                                PageType::Modrinth {
+                                    installing_for: Some(target.clone()),
+                                }
+                            } else {
+                                PageType::Curseforge {
+                                    installing_for: Some(target.clone()),
+                                }
+                            },
+                            &[],
+                            w,
+                            c,
+                        )
+                    }),
+            );
+        }
+        controls = controls.child(
+            gpui_component::popover::Popover::new("browser-targets")
+                .trigger(
+                    design::DesignButton::new("browser-target-trigger")
+                        .label(format!("Para: {name}"))
+                        .child(PandoraIcon::ChevronDown),
+                )
+                .child(choices),
+        );
+    }
+    controls
 }

@@ -121,10 +121,12 @@ pub struct InterfaceConfig {
     // Skins page
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub collapse_capes_in_skins_page: bool,
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
     pub skin_list_sort_desc: bool,
     #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
     pub skin_list_show_3d: bool,
+    #[serde(default = "schema::default_true")]
+    pub skin_preview_animation: bool,
     #[serde(default = "default_zoom", deserialize_with = "schema::try_deserialize")]
     pub player_model_zoom: i32,
 }
@@ -302,7 +304,7 @@ fn default_curseforge_class_id() -> CurseforgeClassId {
 impl Default for InterfaceConfig {
     fn default() -> Self {
         Self {
-            language: Default::default(),
+            language: t::Language::Code("es".into()),
             app_background: Default::default(),
             last_played_artwork: None,
             active_theme: Default::default(),
@@ -342,8 +344,9 @@ impl Default for InterfaceConfig {
             instances_view_mode: Default::default(),
             instance_subpage: Default::default(),
             collapse_capes_in_skins_page: false,
-            skin_list_sort_desc: false,
+            skin_list_sort_desc: true,
             skin_list_show_3d: true,
+            skin_preview_animation: true,
             player_model_zoom: default_zoom(),
         }
     }

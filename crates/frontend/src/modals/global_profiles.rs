@@ -1,3 +1,4 @@
+use crate::component::design;
 use bridge::{
     handle::BackendHandle,
     instance::InstanceID,
@@ -6,13 +7,8 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, StyledExt, WindowExt,
-    button::{Button, ButtonVariants},
-    dialog::Dialog,
-    h_flex,
-    input::{Input, InputState},
-    tooltip::Tooltip,
-    v_flex,
+    ActiveTheme, Disableable, Selectable, StyledExt, WindowExt, button::Button, dialog::Dialog, h_flex,
+    input::InputState, tooltip::Tooltip, v_flex,
 };
 use std::collections::BTreeSet;
 
@@ -29,15 +25,16 @@ pub fn family_roots(profiles: &[GlobalProfileSummary]) -> Vec<GlobalProfileSumma
 }
 
 /// Marks a test profile (`profile_test-…`), which only the `developer` launcher channel lists.
-fn test_label(cx: &App) -> impl IntoElement {
+fn test_label(_cx: &App) -> impl IntoElement {
     div()
         .flex_shrink_0()
-        .px_1p5()
-        .rounded_sm()
-        .text_xs()
+        .px(px(6.))
+        .py(px(2.))
+        .rounded(px(0.))
+        .text_size(px(10.))
         .font_semibold()
-        .bg(cx.theme().warning)
-        .text_color(cx.theme().warning_foreground)
+        .bg(rgba(0x5bcef51f))
+        .text_color(rgb(crate::theme::ACCENT_TEXT))
         .child("PRUEBA")
 }
 
@@ -156,7 +153,7 @@ impl ProfileFamilyModal {
                                             .child(div().font_semibold().child(p.name.clone())),
                                     )
                                     .child(div().text_base().child(if p.description.is_empty() {
-                                        "No description available".to_owned()
+                                        String::new()
                                     } else {
                                         p.description.clone()
                                     }))
@@ -171,25 +168,22 @@ impl ProfileFamilyModal {
             })
             .collect::<Vec<_>>();
         dialog
-            .title("Choose a global profile")
+            .title("Perfil global")
             .width(px((window.viewport_size().width.as_f32() - 48.0).min(760.0)))
             .child(
-                v_flex()
-                    .gap_3()
-                    .child("Expand branches to browse derived profiles. Hover over a profile to read its description.")
-                    .child(
-                        v_flex()
-                            .id("profile-family-tree")
-                            .gap_1()
-                            .max_h(px((window.viewport_size().height.as_f32() - 220.0).clamp(180.0, 480.0)))
-                            .overflow_y_scroll()
-                            .children(rows),
-                    ),
+                v_flex().gap_3().child("Perfiles disponibles en el servidor.").child(
+                    v_flex()
+                        .id("profile-family-tree")
+                        .gap_1()
+                        .max_h(px((window.viewport_size().height.as_f32() - 220.0).clamp(180.0, 480.0)))
+                        .overflow_y_scroll()
+                        .children(rows),
+                ),
             )
             .footer(
                 h_flex().w_full().justify_end().child(
                     Button::new("close-profile-family")
-                        .label("Close")
+                        .label("Cancelar")
                         .on_click(|_, window, cx| window.close_dialog(cx)),
                 ),
             )
@@ -224,8 +218,10 @@ pub fn open_global_profiles(backend: BackendHandle, window: &mut Window, cx: &mu
             Ok(profiles) => {
                 let roots = family_roots(&profiles);
                 window.open_dialog(cx, move |dialog, _, _| {
-                    dialog.title("Global profile families").width(px(680.0)).child(v_flex().gap_2().children(
-                        roots.iter().map(|root| {
+                    dialog
+                        .title("Perfil global")
+                        .width(px(680.0))
+                        .child(v_flex().gap_2().children(roots.iter().map(|root| {
                             let profiles = profiles.clone();
                             let root_id = root.profile_id.clone();
                             let backend = backend.clone();
@@ -239,19 +235,21 @@ pub fn open_global_profiles(backend: BackendHandle, window: &mut Window, cx: &mu
                                     cx,
                                 );
                             })
-                        }),
-                    ))
+                        })))
                 });
             },
-            Err(error) => {
-                window.open_dialog(cx, move |dialog, _, _| dialog.title("Unable to load profiles").child(error.clone()))
-            },
+            Err(error) => window.open_dialog(cx, move |dialog, _, _| {
+                log::warn!("Global profile loading failed: {error}");
+                design::dialog(dialog)
+                    .title(design::dialog_title("Perfil global"))
+                    .child("No se han podido cargar los perfiles.")
+            }),
         });
     })
     .detach();
 }
 
-struct ProfileDetailsModal {
+pub(crate) struct ProfileDetailsModal {
     profile: GlobalProfileSummary,
     backend: BackendHandle,
     name: Entity<InputState>,
@@ -315,8 +313,8 @@ impl ProfileDetailsModal {
         crate::modals::generic::show_modal(
             window,
             cx,
-            "Preparing modpack download…".into(),
-            "Global profile installation failed".into(),
+            "Crear instancia".into(),
+            "No se ha podido importar.".into(),
             modal_action.clone(),
         );
         self.backend.send(MessageToBackend::CreateGlobalProfileInstance {
@@ -329,7 +327,7 @@ impl ProfileDetailsModal {
             save_group_target,
         });
     }
-    fn render(&mut self, dialog: Dialog, window: &mut Window, cx: &mut Context<Self>) -> Dialog {
+    fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = &self.profile;
         let mut body = v_flex()
             .id("profile-details-body")
@@ -341,29 +339,29 @@ impl ProfileDetailsModal {
                     v_flex()
                         .gap_2()
                         .child(format!("Minecraft {} · {} {}", p.minecraft, p.loader.pretty_name(), p.loader_version))
-                        .child(format!("Version {}", p.stable_sequence.unwrap_or(p.latest_sequence))),
+                        .child(format!("rev. {}", p.stable_sequence.unwrap_or(p.latest_sequence))),
                 ),
             )
             .child(div().child(if p.description.is_empty() {
-                "No description available".to_owned()
+                String::new()
             } else {
                 p.description.clone()
             }))
-            .child(crate::labelled("Instance name", Input::new(&self.name)));
+            .child(crate::labelled("Nombre de la instancia", design::text_field(&self.name)));
         body = body.child(match &self.targets {
-            None => div().text_sm().child("Checking related instances’ save groups…").into_any_element(),
-            Some(Err(error)) => v_flex()
+            None => gpui_component::spinner::Spinner::new().into_any_element(),
+            Some(Err(_error)) => v_flex()
                 .gap_2()
-                .child(div().text_color(cx.theme().danger).child(error.clone()))
+                .child(div().text_color(cx.theme().danger).child("No se han podido cargar los perfiles."))
                 .child(
                     Button::new("retry-profile-groups")
-                        .label("Retry")
+                        .label("Reintentar")
                         .on_click(cx.listener(|this, _, _, cx| this.load_groups(cx))),
                 )
                 .into_any_element(),
             Some(Ok(targets)) if targets.len() > 1 => v_flex()
                 .gap_2()
-                .child("Related instances use different save groups. Choose which worlds to share:")
+                .child("Las instancias relacionadas usan grupos de mundos distintos. Elige qué mundos compartir:")
                 .children(targets.iter().map(|target| {
                     let id = target.anchor_id;
                     Button::new(format!("select-family-group-{id:?}"))
@@ -380,18 +378,25 @@ impl ProfileDetailsModal {
                 .child(
                     targets
                         .first()
-                        .map(|target| format!("Shared worlds: {}", target.name))
-                        .unwrap_or_else(|| "This instance will start with its own saves folder.".into()),
+                        .map(|target| format!("Mundos compartidos · {}", target.name))
+                        .unwrap_or_else(|| "Mundos: esta instancia empezará con su propia carpeta saves, o se une a un grupo compartido.".into()),
                 )
                 .into_any_element(),
         });
+        body.into_any_element()
+    }
+    fn render(&mut self, dialog: Dialog, window: &mut Window, cx: &mut Context<Self>) -> Dialog {
+        let body = self.body(window, cx);
+        let p = &self.profile;
         let state = cx.entity();
-        let title = if bridge::profile_family::is_test_profile(&p.profile_id) {
-            format!("{} (PRUEBA)", p.name)
-        } else {
-            p.name.clone()
-        };
-        dialog
+        let title = h_flex()
+            .gap(px(8.))
+            .items_center()
+            .child(design::dialog_title(p.name.clone()))
+            .when(bridge::profile_family::is_test_profile(&p.profile_id), |title| {
+                title.child(test_label(cx))
+            });
+        design::dialog(dialog)
             .title(title)
             .width(px((window.viewport_size().width.as_f32() - 48.0).min(760.0)))
             .on_ok(move |_, window, cx| {
@@ -406,26 +411,48 @@ impl ProfileDetailsModal {
                     .justify_end()
                     .child(
                         Button::new("close-profile-details")
-                            .label("Close")
+                            .label("Cancelar")
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(
-                        Button::new("create-global-instance")
-                            .success()
-                            .label("Create instance")
-                            .disabled(!self.can_submit(cx))
-                            .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
+                        design::action_button(
+                            "create-global-instance",
+                            "Crear instancia",
+                            design::ButtonAction::Primary,
+                        )
+                        .disabled(!self.can_submit(cx))
+                        .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
                     ),
             )
     }
 }
 
-pub fn open_global_profile_details(
+impl Render for ProfileDetailsModal {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let body = self.body(window, cx);
+        v_flex().w_full().gap(px(16.)).child(body).child(
+            h_flex()
+                .w_full()
+                .justify_end()
+                .gap(px(8.))
+                .child(
+                    design::action_button("cancel-global-inline", "Cancelar", design::ButtonAction::Secondary)
+                        .on_click(|_, w, c| crate::root::switch_page(crate::ui::PageType::Instances, &[], w, c)),
+                )
+                .child(
+                    design::action_button("create-global-inline", "Crear instancia", design::ButtonAction::Primary)
+                        .disabled(!self.can_submit(cx))
+                        .on_click(cx.listener(|this, _, w, c| this.submit(w, c))),
+                ),
+        )
+    }
+}
+pub(crate) fn create_profile_form(
     profile: GlobalProfileSummary,
     backend: BackendHandle,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> Entity<ProfileDetailsModal> {
     let state = cx.new(|cx| ProfileDetailsModal {
         name: cx.new(|cx| InputState::new(window, cx).placeholder(profile.name.clone())),
         profile,
@@ -435,6 +462,15 @@ pub fn open_global_profile_details(
         submitted: false,
     });
     state.update(cx, |this, cx| this.load_groups(cx));
+    state
+}
+pub fn open_global_profile_details(
+    profile: GlobalProfileSummary,
+    backend: BackendHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let state = create_profile_form(profile, backend, window, cx);
     window.open_dialog(cx, move |dialog, window, cx| {
         cx.update_entity(&state, |state, cx| state.render(dialog, window, cx))
     });

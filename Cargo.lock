@@ -2660,6 +2660,7 @@ dependencies = [
  "t",
  "tokio",
  "unicode-segmentation",
+ "url",
  "urlencoding",
  "ustr",
  "uuid",

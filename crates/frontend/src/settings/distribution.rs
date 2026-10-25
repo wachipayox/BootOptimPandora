@@ -4,14 +4,12 @@ use bridge::message::MessageToBackend;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, FocusableExt,
-    button::Button,
-    input::{Input, InputEvent, InputState},
-    select::{Select, SelectEvent, SelectState},
+    input::{InputEvent, InputState},
 };
 use schema::backend_config::{DistributionConfig, LauncherChannel};
 
 use crate::{
-    component::named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem},
+    component::design,
     settings::{SettingGroup, SettingItem, SettingItemWidget, SettingPage},
 };
 
@@ -23,94 +21,68 @@ enum Field {
 
 pub(super) fn create_page() -> SettingPage {
     SettingPage {
-        title: || "Global profiles",
-        groups: vec![
-            SettingGroup {
-                title: Some(|| "Launcher channel"),
-                items: vec![SettingItem {
-                    title: || "Channel",
-                    description: || {
-                        "Player shows the published global profiles. Developer also shows the test profiles, labelled PRUEBA, that the server hides from players. The same setting is `channel` in the launcher configuration file."
-                    },
+        title: || "Distribution",
+        groups: vec![SettingGroup {
+            title: Some(|| "Distribution"),
+            items: vec![
+                SettingItem {
+                    title: || "Canal del launcher",
                     widget: channel_widget(),
                     ..Default::default()
-                }]
-                .into(),
-                searched_items: None,
-            },
-            SettingGroup {
-                title: Some(|| "Private Distribution service"),
-                items: vec![
-                    item(Field::Url),
-                    item(Field::CaPath),
-                    SettingItem {
-                        title: || "Test HTTPS connection",
-                        description: || "Checks the server certificate and protocol version. Profile verification is configured automatically over HTTPS.",
-                        widget: SettingItemWidget::Any(Rc::new(|_, cx| {
-                            Button::new("check-distribution-connection")
-                                .label("Test HTTPS connection")
-                                .on_click(cx.listener(|root, _, _, _| {
-                                    root.backend_handle.send(MessageToBackend::CheckDistributionConnection);
-                                }))
-                                .into_any_element()
-                        })),
-                        ..Default::default()
-                    },
-                ]
-                .into(),
-                searched_items: None,
-            },
-        ]
+                },
+                item(Field::Url),
+                item(Field::CaPath),
+                SettingItem {
+                    widget: SettingItemWidget::AnyWide(Rc::new(|_, cx| {
+                        design::action_button(
+                            "check-distribution-connection",
+                            "Probar conexión HTTPS",
+                            design::ButtonAction::Secondary,
+                        )
+                        .on_click(cx.listener(|root, _, _, _| {
+                            root.backend_handle.send(MessageToBackend::CheckDistributionConnection)
+                        }))
+                        .into_any_element()
+                    })),
+                    ..Default::default()
+                },
+            ]
+            .into(),
+            searched_items: None,
+        }]
         .into(),
         searched_groups: None,
     }
 }
-
 fn channel_widget() -> SettingItemWidget {
-    SettingItemWidget::Backend(Rc::new(|backend, window, cx| {
-        let mut created = false;
-        let state = window.use_keyed_state("launcher-channel", cx, |window, cx| {
-            created = true;
-            let items = vec![
-                NamedDropdownItem {
-                    name: DropdownName::new("Player"),
-                    item: LauncherChannel::Player,
-                },
-                NamedDropdownItem {
-                    name: DropdownName::new("Developer"),
-                    item: LauncherChannel::Developer,
-                },
-            ];
-            let mut state = SelectState::new(NamedDropdown::new(items), None, window, cx);
-            state.set_selected_value(&backend.channel, window, cx);
-            state
-        });
-        if created {
-            cx.subscribe(&state, |root, _, event: &SelectEvent<_>, cx| {
-                let SelectEvent::Confirm(Some(channel)) = event else { return };
-                if root.backend_config().is_some_and(|config| config.channel != *channel) {
-                    root.set_launcher_channel(*channel, cx);
-                }
-            })
-            .detach();
-        } else if state.read(cx).selected_value() != Some(&backend.channel) {
-            state.update(cx, |state, cx| state.set_selected_value(&backend.channel, window, cx));
+    SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
+        let mut choices = gpui_component::h_flex().gap(px(8.));
+        for (index, label, channel) in [
+            (0usize, "Jugador", LauncherChannel::Player),
+            (1, "Desarrollador", LauncherChannel::Developer),
+        ] {
+            choices =
+                choices.child(design::chip(("launcher-channel", index), label, backend.channel == channel).on_click(
+                    cx.listener(move |root, _, _, cx| {
+                        if root.backend_config().is_some_and(|config| config.channel != channel) {
+                            root.set_launcher_channel(channel, cx);
+                        }
+                    }),
+                ));
         }
-        Select::new(&state).menu_width(px(200.0)).into_any_element()
+        choices.into_any_element()
     }))
 }
 
 fn item(field: Field) -> SettingItem {
     SettingItem {
         title: match field {
-            Field::Url => || "HTTPS server URL",
-            Field::CaPath => || "TLS CA certificate path",
+            Field::Url => || "Servicio Distribution privado",
+            Field::CaPath => || "Certificado CA (TLS)",
         },
         description: match field {
-            Field::Url => || "Use the private Distribution HTTPS address, including its port.",
-            Field::CaPath => {
-                || "Path to the PEM certificate that issued the server certificate. Leave blank only when the server certificate is publicly trusted."
-            },
+            Field::Url => || "Dirección HTTPS con su puerto.",
+            Field::CaPath => || "Opcional",
         },
         widget: text_field(field),
         ..Default::default()
@@ -175,7 +147,7 @@ fn text_field(field: Field) -> SettingItemWidget {
         if !dirty && state_read.value().as_ref() != current {
             state.update(cx, |state, cx| state.set_value(current, window, cx));
         }
-        let mut input = Input::new(&state).w(px(320.0));
+        let mut input = design::text_field(&state).w(px(320.0));
         if dirty {
             input = input.focus_ring(false).border_1().border_color(cx.theme().warning);
         }

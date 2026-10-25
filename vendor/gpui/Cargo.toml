@@ -45,6 +45,7 @@ ignored = [
 ignored-paths = ["src/_ownership_and_data_flow.rs"]
 
 [features]
+native-capture = []
 bench = ["bench-support"]
 bench-support = [
     "profiler",

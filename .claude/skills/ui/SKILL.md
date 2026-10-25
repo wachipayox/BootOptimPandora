@@ -44,3 +44,28 @@ map contains only backend-verified cache paths; an absent image renders alt text
 Instance captures use `-InstanceScreens` with an owned CLI fixture: Content filters, overrides, logs/crashes, Changelog, instance Settings, Create child and Duplicate. The live-output capture feeds synthetic messages through the native viewer; it never starts Minecraft. Explicit routes are `instance-mods:agente-274-…`, `instance-resources:…`, `instance-shaders:…`, `instance-overwrites:…`, `instance-logs:…`, `instance-crashes:…`, `instance-live:…`, `instance-changelog:…`, `instance-settings:…`, `derived:…`, and `duplicate:…`. The script waits for the real data dependencies before saving. Update captures also wait for the exact skipped-revision changelog. Keep every screenshot private in wbombo.
 
 For the owned instance routes, `-CaptureState advanced|version|expanded|editing` opens the existing advanced settings, version editor, expanded update changelog or local overrides editor. This changes presentation only. Settings and timeline captures include middle/bottom scrolling; native Tab focus is captured for instance pages/dialogs.
+
+Launcher capture routes: `launcher-general`, `launcher-appearance`, `launcher-network`, `launcher-distribution`, `launcher-ignored`, `launcher-windows`, `skins-url`, `skins-copy`, `account-offline`, `add-instance`, `add-server`, `add-local`, and `content-browser:agente-274-…`. `-LauncherScreens` collects them along with the existing skins/accounts/import/sync routes. Dialog routes open the real native dialog without confirming any action. Capture Distribution settings with a temporary portable directory explicitly configured with `https://example.invalid` so endpoint values and credentials never enter the evidence.
+
+Launcher review also supports `launcher-about`, `skins-import`,
+`launcher-defender-dialog`, and `delete:agente-274-…`, `export:…`, `groups:…`.
+These routes open native views without confirming deletion, imports or Defender
+changes. Distribution captures temporarily replace the isolated endpoint with
+`https://example.invalid` and restore the original configuration after close,
+including failure cleanup. Private compiled defaults are never safe capture data.
+
+For paired GPU/desktop evidence, build with `cargo build --release -p pandora_launcher --features ui-capture`
+and pass `-Framebuffer` to the capture script. Each normal PNG retains the Windows
+desktop capture; its `-gpu.png` sibling reads the same native GPUI scene before
+presentation. The manifest identifies both methods and checks matching client
+dimensions. Use the pair to distinguish renderer output from presentation/capture
+artifacts; never describe a framebuffer image as a desktop screenshot. Readback
+copies the complete framebuffer inside the fresh draw, before Present rotates or discards buffers, on the window thread;
+it does not replay scene sprites that animation may have retired. PNG encoding
+runs on the background executor. The
+optional feature and file-request loop are absent from ordinary launcher builds.
+The manifest hashes the executable actually used, including with reused portable
+data. Pass `-ExecutableSourceCommit <verified SHA>` for a binary built from a
+different checkout; the script revision is recorded separately and never implies
+the binary's source. An explicit executable replaces the isolated portable copy.
+`launcher-theme-joke` captures the same dialog opened by the non-dark theme chips.

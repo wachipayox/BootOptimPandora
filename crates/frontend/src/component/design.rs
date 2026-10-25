@@ -715,3 +715,39 @@ fn notched_fill(fill: Background) -> Div {
         .size_full(),
     )
 }
+
+/// Main-shell heading shared by launcher destinations.
+pub fn page_header(label: impl Into<SharedString>, window: &Window) -> Div {
+    use super::generic_title_bar::WindowControl;
+    let label = label.into();
+    let stacked = matches!(label.as_ref(), "LAUNCHER" | "AÑADIR INSTANCIA" | "ARCHIVOS" | "EXPLORAR CONTENIDO");
+    let title = div()
+        .font_family(theme::DISPLAY)
+        .text_size(px(11.))
+        .line_height(px(14.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(0xd8d8dc))
+        .when(stacked, |title| title.relative().top(px(4.)))
+        .child(TrackedText::new(label, 0.16));
+    let mut header = h_flex()
+        .h(px(if stacked { 40. } else { 48. }))
+        .flex_shrink_0()
+        .px(px(20.))
+        .bg(rgba(0x0b0b0ce6))
+        .border_b_1()
+        .border_color(rgba(0xffffff0b))
+        .window_control_area(WindowControlArea::Drag)
+        .child(title)
+        .child(div().flex_1());
+    if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
+        header = header
+            .child(WindowControl::Minimize)
+            .child(if window.is_maximized() {
+                WindowControl::Restore
+            } else {
+                WindowControl::Maximize
+            })
+            .child(WindowControl::Close);
+    }
+    header
+}

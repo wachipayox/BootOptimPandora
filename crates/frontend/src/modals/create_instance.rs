@@ -6,13 +6,10 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Icon, Selectable, WindowExt,
-    alert::Alert,
-    button::{Button, ButtonGroup, ButtonVariants},
-    checkbox::Checkbox,
-    dialog::Dialog,
+    ActiveTheme, Disableable, Icon, WindowExt,
+    button::{Button, ButtonVariants},
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{InputEvent, InputState},
     select::{Select, SelectState},
     skeleton::Skeleton,
     v_flex,
@@ -23,6 +20,7 @@ use schema::{
 };
 
 use crate::{
+    component::design,
     entity::{
         instance::InstanceEntries,
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState},
@@ -33,7 +31,7 @@ use crate::{
     png_render_cache,
 };
 
-struct CreateInstanceModalState {
+pub(crate) struct CreateInstanceModalState {
     metadata: Entity<FrontendMetadata>,
     versions: Entity<FrontendMetadataState>,
     backend_handle: BackendHandle,
@@ -71,7 +69,7 @@ impl CreateInstanceModalState {
                 this.update_fallback_name(window, cx);
             });
 
-        let name_input_state = cx.new(|cx| InputState::new(window, cx).placeholder(t::instance::unnamed()));
+        let name_input_state = cx.new(|cx| InputState::new(window, cx).placeholder("Nueva instancia"));
 
         let _name_input_subscription = {
             let instance_names = Arc::clone(&instance_names);
@@ -126,7 +124,7 @@ impl CreateInstanceModalState {
             .read(cx)
             .selected_value()
             .cloned()
-            .unwrap_or(t::instance::unnamed().into());
+            .unwrap_or("Nueva instancia".into());
 
         if self.original_fallback_name != selected {
             self.original_fallback_name = selected.clone();
@@ -225,31 +223,25 @@ impl CreateInstanceModalState {
         }
     }
 
-    pub fn render(&mut self, modal: Dialog, _window: &mut Window, cx: &mut Context<Self>) -> Dialog {
-        if let Some(error) = self.error_loading_versions.clone() {
-            let error_widget = Alert::new("error", format!("{}", error))
-                .icon(PandoraIcon::CircleX)
-                .title(t::instance::versions_loading::error());
-
+    fn render_body(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(error) = &self.error_loading_versions {
+            log::warn!("Create instance versions failed: {error}");
             let metadata = self.metadata.clone();
-            let reload_button = Button::new("reload-versions")
-                .primary()
-                .label(t::instance::versions_loading::reload())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.error_loading_versions = None;
-                    FrontendMetadata::force_reload(
-                        &metadata,
-                        bridge::meta::MetadataRequest::MinecraftVersionManifest,
-                        cx,
-                    );
-                }));
-
-            return modal
-                .title(t::instance::create())
-                .child(v_flex().gap_3().child(error_widget).child(reload_button))
-                .footer(Button::new("ok").label(t::common::ok()).on_click(|_, window, cx| window.close_dialog(cx)));
+            return v_flex()
+                .gap(px(12.))
+                .child("No se han podido cargar las versiones.")
+                .child(design::DesignButton::new("reload-versions").label("Reintentar").on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.error_loading_versions = None;
+                        FrontendMetadata::force_reload(
+                            &metadata,
+                            bridge::meta::MetadataRequest::MinecraftVersionManifest,
+                            cx,
+                        );
+                    },
+                )))
+                .into_any_element();
         }
-
         let version_dropdown;
         let show_snapshots_button;
         let loader_button_group;
@@ -258,72 +250,67 @@ impl CreateInstanceModalState {
             version_dropdown = Select::new(&self.minecraft_version_dropdown)
                 .w_full()
                 .disabled(true)
-                .placeholder(t::instance::versions_loading::game_versions())
-                .search_placeholder(t::common::search());
+                .placeholder("")
+                .search_placeholder("");
             show_snapshots_button = Skeleton::new().w_full().min_h_4().max_h_4().rounded_md().into_any_element();
             loader_button_group = Skeleton::new().w_full().min_h_8().max_h_8().rounded_md().into_any_element();
         } else {
             version_dropdown = Select::new(&self.minecraft_version_dropdown)
-                .title_prefix(format!("{}: ", t::instance::mc_version()))
-                .search_placeholder(t::common::search());
-            show_snapshots_button = Checkbox::new("show_snapshots")
-                .checked(InterfaceConfig::get(cx).show_snapshots_in_create_instance)
-                .label(t::instance::show_snapshots())
-                .on_click(cx.listener(move |this, show, window, cx| {
-                    InterfaceConfig::get_mut(cx).show_snapshots_in_create_instance = *show;
-                    this.reload_version_dropdown(window, cx);
-                }))
+                .title_prefix("")
+                .search_placeholder("")
+                .bg(rgb(crate::theme::PANEL_SUNKEN))
+                .rounded(px(0.))
+                .h(px(32.))
+                .text_size(px(13.));
+            show_snapshots_button = h_flex()
+                .gap(px(12.))
+                .child("Mostrar snapshots")
+                .child(
+                    design::YesNo::new("show_snapshots")
+                        .checked(InterfaceConfig::get(cx).show_snapshots_in_create_instance)
+                        .on_click(cx.listener(move |this, show, window, cx| {
+                            InterfaceConfig::get_mut(cx).show_snapshots_in_create_instance = *show;
+                            this.reload_version_dropdown(window, cx);
+                        })),
+                )
                 .into_any_element();
-            loader_button_group = ButtonGroup::new("loader")
-                .outline()
-                .h_full()
-                .child(
-                    Button::new("loader-vanilla")
-                        .label(t::instance::vanilla())
-                        .selected(self.selected_loader == Loader::Vanilla),
-                )
-                .child(
-                    Button::new("loader-fabric")
-                        .label(t::modrinth::category::fabric())
-                        .selected(self.selected_loader == Loader::Fabric),
-                )
-                .child(
-                    Button::new("loader-forge")
-                        .label(t::modrinth::category::forge())
-                        .selected(self.selected_loader == Loader::Forge),
-                )
-                .child(
-                    Button::new("loader-neoforge")
-                        .label(t::modrinth::category::neoforge())
-                        .selected(self.selected_loader == Loader::NeoForge),
-                )
-                .on_click(cx.listener(move |this, selected: &Vec<usize>, _, _| {
-                    match selected.first() {
-                        Some(0) => this.selected_loader = Loader::Vanilla,
-                        Some(1) => this.selected_loader = Loader::Fabric,
-                        Some(2) => this.selected_loader = Loader::Forge,
-                        Some(3) => this.selected_loader = Loader::NeoForge,
-                        _ => {},
-                    };
-                }))
-                .into_any_element();
+            let mut loaders = h_flex().gap(px(8.));
+            for (index, (loader, label)) in [
+                (Loader::Vanilla, "Vanilla"),
+                (Loader::Fabric, "Fabric"),
+                (Loader::Forge, "Forge"),
+                (Loader::NeoForge, "NeoForge"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                loaders =
+                    loaders.child(design::chip(("loader", index), label, self.selected_loader == loader).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            this.selected_loader = loader;
+                            cx.notify();
+                        }),
+                    ));
+            }
+            loader_button_group = loaders.into_any_element();
         };
 
         let content = v_flex()
             .gap_3()
             .child(crate::labelled(
-                t::instance::name(),
-                Input::new(&self.name_input_state).when(self.name_invalid, |this| this.border_color(cx.theme().danger)),
+                "Nombre",
+                design::text_field(&self.name_input_state)
+                    .when(self.name_invalid, |this| this.border_color(cx.theme().danger)),
             ))
             .child(crate::labelled(
-                t::instance::version(),
+                "Minecraft",
                 v_flex().gap_2().child(version_dropdown).child(show_snapshots_button),
             ))
-            .child(crate::labelled(t::instance::modloader(), loader_button_group))
+            .child(crate::labelled("Cargador", loader_button_group))
             .child(
                 h_flex()
                     .gap_2()
-                    .child(Button::new("icon").icon(PandoraIcon::Plus).label(t::instance::select_icon()).on_click({
+                    .child(Button::new("icon").ghost().icon(PandoraIcon::Plus).label("Elegir icono").on_click({
                         let entity = cx.entity();
                         move |_, window, cx| {
                             let entity = entity.clone();
@@ -358,63 +345,53 @@ impl CreateInstanceModalState {
                     }),
             );
 
-        let name_is_invalid = self.name_invalid;
-        modal
-            .overlay_closable(false)
-            .title(t::instance::create())
+        v_flex()
+            .w_full()
+            .gap(px(20.))
             .child(content)
-            .when(name_is_invalid, |modal| {
-                modal.footer(
-                    h_flex()
-                        .gap_2()
-                        .w_full()
-                        .child(
-                            Button::new("cancel")
-                                .flex_1()
-                                .label(t::common::cancel())
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(Button::new("ok").flex_1().opacity(0.5).label(t::common::ok())),
-                )
-            })
-            .when(!name_is_invalid, |modal| {
-                modal.footer(
-                    h_flex()
-                        .gap_2()
-                        .w_full()
-                        .child(
-                            Button::new("cancel")
-                                .flex_1()
-                                .label(t::common::cancel())
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(Button::new("ok").flex_1().label(t::common::ok()).on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                if name_is_invalid {
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        design::action_button("cancel-new-instance", "Cancelar", design::ButtonAction::Secondary)
+                            .on_click(|_, w, c| {
+                                w.close_dialog(c);
+                                crate::root::switch_page(crate::ui::PageType::Instances, &[], w, c);
+                            }),
+                    )
+                    .child(
+                        design::action_button("create-new-instance", "Crear", design::ButtonAction::Primary)
+                            .disabled(self.name_invalid || !self.loaded_versions)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if this.name_invalid {
                                     return;
                                 }
-                                let Some(selected_version) =
-                                    this.minecraft_version_dropdown.read(cx).selected_value().cloned()
+                                let Some(version) = this.minecraft_version_dropdown.read(cx).selected_value().cloned()
                                 else {
                                     return;
                                 };
-
                                 let mut name = this.name_input_state.read(cx).value().clone();
                                 if name.is_empty() {
                                     name = this.unique_fallback_name.clone();
                                 }
-
                                 this.backend_handle.send(MessageToBackend::CreateInstance {
                                     name: name.as_str().into(),
-                                    version: selected_version.as_str().into(),
+                                    version: version.as_str().into(),
                                     loader: this.selected_loader,
                                     icon: this.icon.clone(),
                                 });
                                 window.close_dialog(cx);
-                            },
-                        ))),
-                )
-            })
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+impl Render for CreateInstanceModalState {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_body(window, cx)
     }
 }
 
@@ -427,7 +404,7 @@ pub fn open_create_instance(
 ) {
     let state = cx.new(|cx| CreateInstanceModalState::new(metadata, instances, backend_handle, window, cx));
 
-    window.open_dialog(cx, move |modal, window, cx| {
-        cx.update_entity(&state, |state, cx| state.render(modal, window, cx))
+    window.open_dialog(cx, move |modal, _, _| {
+        design::dialog(modal).title(design::dialog_title("Nueva instancia")).child(state.clone())
     });
 }

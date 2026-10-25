@@ -217,7 +217,7 @@ impl Render for ModrinthProjectPage {
         let content: AnyElement = if let Some(error) = &self.error {
             v_flex()
                 .p_4()
-                .child(ErrorAlert::new(t::instance::content::error_loading().into(), error.clone()))
+                .child(ErrorAlert::new("No se ha podido cargar el contenido.".into(), error.clone()))
                 .into_any_element()
         } else if let Some(project) = &self.project {
             let project = Arc::clone(project);
@@ -225,7 +225,7 @@ impl Render for ModrinthProjectPage {
             let icon = gpui::img(SharedUri::from(
                 project.icon_url.as_ref().map(|url| url.to_string()).unwrap_or_else(|| "".to_string()),
             ))
-            .with_fallback(|| Skeleton::new().rounded_lg().size_20().into_any_element());
+            .with_fallback(|| Skeleton::new().rounded(px(0.)).size_20().into_any_element());
 
             let (env_icon, env_name) = env_display(project.client_side.unwrap(), project.server_side.unwrap());
 
@@ -279,7 +279,9 @@ impl Render for ModrinthProjectPage {
                 Button::new("install_project")
                     .label(primary_action.text())
                     .icon(primary_action.icon())
-                    .with_variant(primary_action.button_variant())
+                    .ghost()
+                    .rounded(px(0.))
+                    .text_size(px(13.))
                     .my_auto()
                     .px_6()
                     .on_click({
@@ -314,7 +316,8 @@ impl Render for ModrinthProjectPage {
                 Button::new("modrinth_web")
                     .label(t::modrinth::name())
                     .icon(PandoraIcon::ExternalLink)
-                    .info()
+                    .ghost()
+                    .rounded(px(0.))
                     .on_click({
                         let url = format!("https://modrinth.com/{}/{}", project_type_str, slug);
                         move |_, _, cx| {
@@ -329,7 +332,8 @@ impl Render for ModrinthProjectPage {
                     Button::new("source")
                         .label(t::instance::content::links::source())
                         .icon(PandoraIcon::CodeXml)
-                        .info()
+                        .ghost()
+                        .rounded(px(0.))
                         .on_click(move |_, _, cx| {
                             cx.open_url(&url);
                         }),
@@ -341,7 +345,8 @@ impl Render for ModrinthProjectPage {
                     Button::new("issues")
                         .label(t::instance::content::links::issues())
                         .icon(PandoraIcon::Bug)
-                        .info()
+                        .ghost()
+                        .rounded(px(0.))
                         .on_click(move |_, _, cx| {
                             cx.open_url(&url);
                         }),
@@ -349,21 +354,26 @@ impl Render for ModrinthProjectPage {
             }
             if let Some(url) = &project.wiki_url {
                 let url = url.clone();
-                link_row =
-                    link_row.child(Button::new("wiki").label(t::instance::content::links::wiki()).info().on_click(
-                        move |_, _, cx| {
+                link_row = link_row.child(
+                    Button::new("wiki")
+                        .label(t::instance::content::links::wiki())
+                        .ghost()
+                        .rounded(px(0.))
+                        .on_click(move |_, _, cx| {
                             cx.open_url(&url);
-                        },
-                    ));
+                        }),
+                );
             }
             if let Some(url) = &project.discord_url {
                 let url = url.clone();
                 link_row = link_row.child(
-                    Button::new("discord").label(t::instance::content::links::discord()).info().on_click(
-                        move |_, _, cx| {
+                    Button::new("discord")
+                        .label(t::instance::content::links::discord())
+                        .ghost()
+                        .rounded(px(0.))
+                        .on_click(move |_, _, cx| {
                             cx.open_url(&url);
-                        },
-                    ),
+                        }),
                 );
             }
 
@@ -442,14 +452,14 @@ impl Render for ModrinthProjectPage {
                     .child(h_flex().flex_wrap().gap_3().children(gallery.into_iter().flatten().enumerate().map(
                         |(idx, img)| {
                             v_flex()
-                                .rounded_lg()
+                                .rounded(px(0.))
                                 .h_80()
                                 .child(
                                     gpui::img(SharedUri::from(&img.url))
                                         .w_full()
                                         .h_72()
                                         .cursor_pointer()
-                                        .rounded_t_lg()
+                                        .rounded_t(px(0.))
                                         .id(("gallery_img", idx))
                                         .on_click({
                                             let url = img.url.clone();
@@ -474,12 +484,7 @@ impl Render for ModrinthProjectPage {
                 v_flex()
                     .mt_2()
                     .pt_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(t::instance::content::no_description()),
-                    )
+                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child(""))
                     .into_any_element()
             };
 
@@ -488,7 +493,7 @@ impl Render for ModrinthProjectPage {
                 .gap_3()
                 .w_full()
                 .child(
-                    h_flex().gap_4().child(icon.rounded_lg().size_24().min_w_24().min_h_24()).child(
+                    h_flex().gap_4().child(icon.rounded(px(0.)).size_24().min_w_24().min_h_24()).child(
                         v_flex()
                             .w_full()
                             .line_height(relative(1.1))
@@ -524,7 +529,7 @@ impl Render for ModrinthProjectPage {
                 .child(
                     h_flex()
                         .gap_4()
-                        .child(Skeleton::new().rounded_lg().size_24().min_w_24().min_h_24())
+                        .child(Skeleton::new().rounded(px(0.)).size_24().min_w_24().min_h_24())
                         .child(
                             v_flex()
                                 .w_full()
@@ -547,7 +552,7 @@ impl Render for ModrinthProjectPage {
                         ),
                 )
                 .child(Skeleton::new().h_6().w_64().rounded_md())
-                .child(Skeleton::new().h_6().w_64().rounded_lg())
+                .child(Skeleton::new().h_6().w_64().rounded(px(0.)))
                 .child(Skeleton::new().h_6().w_64().rounded_md())
                 .into_any_element()
         };

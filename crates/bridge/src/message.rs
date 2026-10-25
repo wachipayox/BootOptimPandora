@@ -506,6 +506,13 @@ pub enum MessageToBackend {
         cape: Option<Uuid>,
     },
     RequestSkinLibrary,
+    DiscoverLauncherSkins {
+        result: tokio::sync::oneshot::Sender<Result<SkinImportPlan, String>>,
+    },
+    ImportLauncherSkins {
+        plan: SkinImportPlan,
+        result: tokio::sync::oneshot::Sender<Result<usize, String>>,
+    },
     RemoveFromSkinLibrary {
         skin: UniqueBytes,
     },
@@ -902,6 +909,7 @@ pub enum AccountCapesResult {
 pub struct SkinLibrary {
     pub state: BridgeDataLoadState,
     pub skins: Arc<[UniqueBytes]>,
+    pub names: Arc<std::collections::HashMap<UniqueBytes, Arc<str>>>,
     pub folder: Arc<Path>,
 }
 
@@ -988,4 +996,22 @@ pub struct InheritedGlobalUpdate {
     pub profile_id: String,
     pub current_revision: String,
     pub available_revision: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SkinImportPlan {
+    pub sources: Vec<SkinImportSource>,
+    pub candidates: Vec<SkinImportCandidate>,
+    pub repeated: usize,
+}
+#[derive(Debug, Clone)]
+pub struct SkinImportSource {
+    pub label: String,
+    pub found: usize,
+    pub repeated: usize,
+}
+#[derive(Debug, Clone)]
+pub struct SkinImportCandidate {
+    pub name: String,
+    pub bytes: Vec<u8>,
 }

@@ -13,3 +13,5 @@ pub mod home;
 pub mod news;
 
 pub mod news_changelog;
+
+pub mod add_instance;

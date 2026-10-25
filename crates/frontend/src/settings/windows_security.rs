@@ -12,31 +12,31 @@ use super::{SettingGroup, SettingItem, SettingItemWidget, SettingPage};
 
 pub(super) fn create_page() -> SettingPage {
     SettingPage {
-        title: || "Windows security",
+        title: || "Seguridad de Windows",
         groups: vec![SettingGroup {
             title: None,
             items: vec![SettingItem {
                 title: || "Microsoft Defender",
-                description: || "Optional process exclusion for the canonical Wachiland Launcher executable.",
-                widget: SettingItemWidget::Any(Rc::new(|window, cx| {
+                description: || "Exclusión opcional de Microsoft Defender para el ejecutable del launcher: acelera el arranque. Pide permiso de administrador.",
+                widget: SettingItemWidget::Any(Rc::new(|_window, cx| {
                     let (status, action, label) = match command::defender_process_local_state() {
                         DefenderProcessLocalState::NotManaged => (
-                            "Not enabled. Defender scans files opened by Wachiland Launcher normally.",
+                            "Desactivada",
                             Some(DefenderProcessAction::Enable),
-                            "Enable optimization",
+                            "Activar optimización",
                         ),
                         DefenderProcessLocalState::ManagedCurrent => (
-                            "Enabled and owned by Wachiland Launcher for this executable.",
+                            "Activada",
                             Some(DefenderProcessAction::Remove),
-                            "Remove optimization",
+                            "Quitar optimización",
                         ),
                         DefenderProcessLocalState::ManagedPrevious => (
-                            "A previous Wachiland Launcher executable in this installation still has an owned exclusion.",
+                            "Existe una exclusión de un ejecutable anterior de esta instalación.",
                             Some(DefenderProcessAction::Remove),
-                            "Remove previous exclusion",
+                            "Quitar exclusión anterior",
                         ),
                         DefenderProcessLocalState::InvalidOwnershipRecord => (
-                            "Wachiland Launcher cannot validate its local exclusion ownership record, so automatic removal is disabled.",
+                            "No se ha podido comprobar la exclusión. No se puede quitar automáticamente.",
                             None,
                             "",
                         ),
@@ -47,7 +47,7 @@ pub(super) fn create_page() -> SettingPage {
                         controls = controls.child(
                             Button::new("pandora-defender-process-action")
                                 .label(label)
-                                .when(action == DefenderProcessAction::Enable, ButtonVariants::success)
+                                .ghost().rounded(px(0.)).text_size(px(13.))
                                 .on_click(move |_, window, cx| {
                                     crate::windows_security_ui::request_action(action, window, cx);
                                 }),
@@ -59,7 +59,7 @@ pub(super) fn create_page() -> SettingPage {
                             .id("pandora-defender-process-details")
                             .text_sm()
                             .underline()
-                            .child("How process exclusions work")
+                            .child("Cómo funciona")
                             .on_click(|_, _, _| {
                                 _ = open::that_detached(
                                     "https://learn.microsoft.com/defender-endpoint/microsoft-defender-antivirus-exclusions-overview",
@@ -71,7 +71,7 @@ pub(super) fn create_page() -> SettingPage {
                         .gap_1()
                         .max_w(px(560.0))
                         .child(div().text_sm().child(
-                            "Defender will not scan files opened by this Wachiland Launcher executable. Java, Minecraft and game folders are not added as exclusions.",
+                            "Defender dejará de analizar los archivos que abre este ejecutable del launcher. Requiere permiso de administrador.",
                         ))
                         .child(div().text_sm().text_color(cx.theme().muted_foreground).child(status))
                         .child(controls)
