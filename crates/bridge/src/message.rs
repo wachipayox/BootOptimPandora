@@ -455,6 +455,7 @@ pub enum MessageToBackend {
         update: UpdatePrompt,
         modal_action: ModalAction,
     },
+    CheckLauncherUpdates,
     ImportFromOtherLauncher {
         launcher: OtherLauncher,
         import_job: ImportFromOtherLauncherJob,
@@ -641,8 +642,12 @@ pub enum MessageToFrontend {
     SkinLibraryUpdated {
         skin_library: SkinLibrary,
     },
-    UpdateAvailable {
-        update: UpdatePrompt,
+    LauncherUpdateChecking {
+        manual: bool,
+    },
+    LauncherUpdateChecked {
+        manual: bool,
+        result: Result<Option<UpdatePrompt>, schema::pandora_update::LauncherUpdateError>,
     },
     OpenOrFocusMainWindow {
         /// One-based display number from the platform's active display list.

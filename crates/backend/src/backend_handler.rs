@@ -2149,11 +2149,13 @@ impl BackendState {
                 self.config.lock().modify(|backend_config| {
                     backend_config.distribution = config;
                 });
+                crate::update::spawn_update_check(self, false);
             },
             MessageToBackend::SetLauncherChannel { channel } => {
                 self.config.lock().modify(|backend_config| {
                     backend_config.channel = channel;
                 });
+                crate::update::spawn_update_check(self, false);
             },
             MessageToBackend::SetProxyPassword { password } => {
                 match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
@@ -2296,13 +2298,12 @@ impl BackendState {
                 }
             },
             MessageToBackend::InstallUpdate { update, modal_action } => {
-                tokio::task::spawn(crate::update::install_update(
-                    self.http_client_provider.redirecting(),
-                    self.directories.clone(),
-                    self.send.clone(),
-                    update,
-                    modal_action,
-                ));
+                // Keep new launch requests queued until the signed update has
+                // either failed or handed off to the orderly backend shutdown.
+                crate::update::install_update(self.clone(), update, modal_action).await;
+            },
+            MessageToBackend::CheckLauncherUpdates => {
+                crate::update::spawn_update_check(self, true);
             },
             MessageToBackend::ImportFromOtherLauncher {
                 launcher,

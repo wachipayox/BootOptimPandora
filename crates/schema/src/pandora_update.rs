@@ -1,54 +1,31 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
-
-use serde::Deserialize;
-
-#[derive(Debug, Clone)]
-pub enum UpdateInstallType {
-    AppImage(PathBuf),
-    Executable,
-    App(PathBuf),
-}
-
-impl UpdateInstallType {
-    pub fn key(&self) -> &'static str {
-        match self {
-            UpdateInstallType::AppImage(..) => "appimage",
-            UpdateInstallType::Executable => "executable",
-            UpdateInstallType::App(..) => "app",
-        }
-    }
-}
+use crate::{
+    backend_config::LauncherChannel,
+    launcher_release::{LauncherArtifact, LauncherRelease},
+};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct UpdatePrompt {
     pub old_version: Arc<str>,
     pub new_version: Arc<str>,
-    pub install_type: UpdateInstallType,
-    pub exe: UpdateManifestExe,
+    pub artifact: LauncherArtifact,
+    pub releases: Vec<LauncherRelease>,
+    pub channel: LauncherChannel,
+    /// Hash of the configuration used to offer this update; no endpoint is exposed.
+    pub source: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-pub struct UpdateManifest {
-    pub version: Arc<str>,
-    pub downloads: UpdateManifestArchs,
+#[derive(Debug, Clone, Copy)]
+pub enum LauncherUpdateError {
+    Search,
+    Verification,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-pub struct UpdateManifestArchs {
-    #[serde(flatten)]
-    pub archs: HashMap<Arc<str>, UpdateManifestExes>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct UpdateManifestExes {
-    #[serde(flatten)]
-    pub exes: HashMap<Arc<str>, UpdateManifestExe>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct UpdateManifestExe {
-    pub download: Arc<str>,
-    pub size: usize,
-    pub sha1: Arc<str>,
-    pub sig: Arc<str>,
+impl LauncherUpdateError {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Search => "No se ha podido buscar la actualización.",
+            Self::Verification => "No se ha podido verificar la actualización.",
+        }
+    }
 }
