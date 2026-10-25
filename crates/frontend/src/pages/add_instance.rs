@@ -59,6 +59,9 @@ impl AddInstancePage {
         self.task = Some(cx.spawn(async move |entity, cx| {
             let result = receive.await.unwrap_or_else(|_| Err("backend closed".into()));
             _ = entity.update(cx, |page, cx| {
+                if let Err(error) = &result {
+                    log::warn!("Profile catalog failed: {error}");
+                }
                 page.profiles = Some(result);
                 cx.notify();
             });
@@ -75,14 +78,17 @@ impl Page for AddInstancePage {
 }
 impl Render for AddInstancePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut tabs = h_flex().w_full().px(px(20.)).border_b_1().border_color(rgba(0xffffff0b));
+        let mut tabs = h_flex().w_full().gap(px(28.)).px(px(20.)).border_b_1().border_color(rgba(0xffffff0b));
         for (index, label) in ["Perfil global", "Nuevo", "Importar"].into_iter().enumerate() {
-            tabs = tabs.child(design::tab(("add-instance-tab", index), label, self.tab == index).on_click(
-                cx.listener(move |page, _, _, cx| {
-                    page.tab = index;
-                    cx.notify();
-                }),
-            ));
+            tabs = tabs.child(
+                design::tab(("add-instance-tab", index), label, self.tab == index)
+                    .h(px(32.))
+                    .px(px(2.))
+                    .on_click(cx.listener(move |page, _, _, cx| {
+                        page.tab = index;
+                        cx.notify();
+                    })),
+            );
         }
         let body = match self.tab {
             1 => v_flex()
@@ -108,8 +114,7 @@ impl Render for AddInstancePage {
                     );
                 match &self.profiles {
                     None => content = content.child(Spinner::new()),
-                    Some(Err(error)) => {
-                        log::warn!("Profile catalog failed: {error}");
+                    Some(Err(_error)) => {
                         content = content.child("No se han podido cargar los perfiles.").child(
                             design::DesignButton::new("retry-add-catalog")
                                 .label("Reintentar")

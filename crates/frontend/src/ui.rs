@@ -188,6 +188,8 @@ impl LauncherPage {
                         .border_color(rgba(0xffffff0b))
                         .child(
                             crate::component::design::tab("browser-explore", "Explorar", !ui.browser_manual_view)
+                                .h(px(32.))
+                                .px(px(2.))
                                 .on_click(|_, _, c| crate::root::set_browser_manual_view(false, c)),
                         )
                         .child(
@@ -206,11 +208,11 @@ impl LauncherPage {
                 .flex_shrink_0()
                 .child(crate::component::design::page_header("ARCHIVOS", window))
                 .child(
-                    h_flex()
-                        .px(px(20.))
-                        .border_b_1()
-                        .border_color(rgba(0xffffff0b))
-                        .child(crate::component::design::tab("sync-settings-tab", "Sincronización", true)),
+                    h_flex().px(px(20.)).border_b_1().border_color(rgba(0xffffff0b)).child(
+                        crate::component::design::tab("sync-settings-tab", "Sincronización", true)
+                            .h(px(32.))
+                            .px(px(2.)),
+                    ),
                 )
                 .into_any_element()
         } else if config.main_page == PageType::Import {

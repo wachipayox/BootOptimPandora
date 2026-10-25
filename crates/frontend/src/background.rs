@@ -171,6 +171,9 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
 
 pub struct BackgroundSelector {
     color: Entity<gpui_component::input::InputState>,
+    artwork_source: Option<Option<std::path::PathBuf>>,
+    artwork_preview: Option<Arc<RenderImage>>,
+    artwork_task: Option<Task<()>>,
 }
 impl BackgroundSelector {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -193,13 +196,56 @@ impl BackgroundSelector {
             }
         })
         .detach();
-        Self { color }
+        Self {
+            color,
+            artwork_source: None,
+            artwork_preview: None,
+            artwork_task: None,
+        }
+    }
+    fn artwork_preview(&mut self, cx: &mut Context<Self>) -> Option<Arc<RenderImage>> {
+        let source = InterfaceConfig::get(cx).last_played_artwork.clone();
+        if self.artwork_source.as_ref() != Some(&source) {
+            self.artwork_source = Some(source.clone());
+            self.artwork_preview = None;
+            let expected = source.clone();
+            let work = cx.background_executor().spawn(async move {
+                let image = source.as_ref().and_then(|path| image::open(path).ok()).or_else(|| {
+                    Assets::get("images/artwork-vanilla.png")
+                        .and_then(|asset| image::load_from_memory(&asset.data).ok())
+                })?;
+                let mut pixels = image
+                    .resize_to_fill(1280, 720, image::imageops::FilterType::Triangle)
+                    .blur(90.)
+                    .resize_to_fill(400, 225, image::imageops::FilterType::Triangle)
+                    .to_rgba8();
+                for pixel in pixels.pixels_mut() {
+                    let [r, g, b, _] = pixel.0;
+                    let luminance = 0.213 * r as f32 + 0.715 * g as f32 + 0.072 * b as f32;
+                    for channel in &mut pixel.0[..3] {
+                        *channel = (luminance + (*channel as f32 - luminance) * 1.3).round().clamp(0., 255.) as u8;
+                    }
+                    pixel.0.swap(0, 2);
+                }
+                Some(Arc::new(RenderImage::new([image::Frame::new(pixels)])))
+            });
+            self.artwork_task = Some(cx.spawn(async move |entity, cx| {
+                let preview = work.await;
+                _ = entity.update(cx, |selector, cx| {
+                    if selector.artwork_source.as_ref() == Some(&expected) {
+                        selector.artwork_preview = preview;
+                        cx.notify();
+                    }
+                });
+            }));
+        }
+        self.artwork_preview.clone()
     }
 }
 impl Render for BackgroundSelector {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         use crate::component::design::{self, DesignButton};
-        use gpui_component::{h_flex, v_flex};
+        use gpui_component::{WindowExt, h_flex, v_flex};
         let active = InterfaceConfig::get(cx).app_background.clone();
         let mut choices = h_flex().gap(px(10.)).w_full();
         let preview_width = ((window.viewport_size().width.as_f32() - 220. - 48. - 36. - 30.) / 4.).clamp(60., 400.);
@@ -210,6 +256,17 @@ impl Render for BackgroundSelector {
             (2, "Color específico", ""),
             (3, "Imagen propia", "Elegir archivo…"),
         ] {
+            let note = if index == 2 {
+                format!(
+                    "#{:06x}",
+                    match active {
+                        AppBackground::Color(color) => color,
+                        _ => 0x0b1a20,
+                    }
+                )
+            } else {
+                note.to_owned()
+            };
             let selected = matches!(
                 (&active, index),
                 (AppBackground::Cafe, 0)
@@ -224,16 +281,9 @@ impl Render for BackgroundSelector {
                         .size_full()
                         .object_fit(ObjectFit::Cover),
                 ),
-                1 => {
-                    let source = InterfaceConfig::get(cx)
-                        .last_played_artwork
-                        .as_ref()
-                        .map(|path| ImageSource::Resource(Resource::Path(Arc::from(path.as_path()))))
-                        .unwrap_or_else(|| {
-                            ImageSource::Resource(Resource::Embedded("images/artwork-vanilla.png".into()))
-                        });
-                    preview.child(img(source).size_full().object_fit(ObjectFit::Cover))
-                },
+                1 => preview.when_some(self.artwork_preview(cx), |preview, image| {
+                    preview.child(img(image).size_full().object_fit(ObjectFit::Cover))
+                }),
                 2 => preview.bg(rgb(match active {
                     AppBackground::Color(color) => color,
                     _ => 0x0b1a20,
@@ -256,65 +306,95 @@ impl Render for BackgroundSelector {
                     }
                 },
             };
-            choices = choices.child(
-                DesignButton::new(("app-background", index))
-                    .toggled(selected)
-                    .paint(
-                        180.,
-                        if selected {
-                            [[0x5bcef51c, 0x5bcef505]; 3]
-                        } else {
-                            [[0xffffff05; 2]; 3]
-                        },
-                        rgb(theme::INK).into(),
-                        rgb(theme::INK).into(),
-                    )
-                    .when(selected, |button| button.border_t_2().border_color(rgb(theme::ACCENT_TEXT)))
-                    .flex_1()
-                    .min_w_0()
-                    .h(px(preview_height + 72.))
-                    .px(px(8.))
-                    .pt(px(8.))
-                    .pb(px(12.))
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .items_start()
-                            .gap(px(8.))
-                            .child(preview)
-                            .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(title))
-                            .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(note)),
-                    )
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        if index == 3 {
-                            let path = cx.prompt_for_paths(PathPromptOptions {
-                                files: true,
-                                directories: false,
-                                multiple: false,
-                                prompt: Some("Elegir archivo…".into()),
-                            });
-                            cx.spawn(async move |_, cx| {
-                                if let Ok(Ok(Some(paths))) = path.await {
-                                    if let Some(path) = paths.into_iter().next() {
-                                        let _ = cx.update(|cx| {
-                                            InterfaceConfig::get_mut(cx).app_background = AppBackground::Image(path);
-                                            cx.refresh_windows();
-                                        });
+            choices =
+                choices.child(
+                    DesignButton::new(("app-background", index))
+                        .toggled(selected)
+                        .paint(
+                            180.,
+                            if selected {
+                                [[0x5bcef51c, 0x5bcef505]; 3]
+                            } else {
+                                [[0xffffff05; 2]; 3]
+                            },
+                            rgb(theme::INK).into(),
+                            rgb(theme::INK).into(),
+                        )
+                        .when(selected, |button| button.border_t_2().border_color(rgb(theme::ACCENT_TEXT)))
+                        .flex_1()
+                        .min_w_0()
+                        .h(px(preview_height + 72.))
+                        .px(px(8.))
+                        .pt(px(8.))
+                        .pb(px(12.))
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .items_start()
+                                .gap(px(8.))
+                                .child(preview)
+                                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(title))
+                                .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(note)),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if index == 3 {
+                                let handle = window.window_handle();
+                                let path = cx.prompt_for_paths(PathPromptOptions {
+                                    files: true,
+                                    directories: false,
+                                    multiple: false,
+                                    prompt: Some("Elegir archivo…".into()),
+                                });
+                                cx.spawn(async move |_, cx| {
+                                    if let Ok(Ok(Some(paths))) = path.await {
+                                        if let Some(path) = paths.into_iter().next() {
+                                            let validation_path = path.clone();
+                                            let valid = cx
+                                                .background_executor()
+                                                .spawn(async move {
+                                                    image::ImageReader::open(validation_path)
+                                                        .ok()
+                                                        .and_then(|reader| reader.with_guessed_format().ok())
+                                                        .and_then(|reader| reader.into_dimensions().ok())
+                                                        .is_some_and(|(width, height)| {
+                                                            width > 0 && height > 0 && width <= 16384 && height <= 16384
+                                                        })
+                                                })
+                                                .await;
+                                            if !valid {
+                                                _ =
+                                                    cx.update_window(handle, |_, window, cx| {
+                                                        window.push_notification(
+                                                gpui_component::notification::Notification::new()
+                                                    .with_type(gpui_component::notification::NotificationType::Error)
+                                                    .title("No se ha podido abrir la imagen."),cx)
+                                                    });
+                                                return;
+                                            }
+                                            let _ = cx.update(|cx| {
+                                                InterfaceConfig::get_mut(cx).app_background =
+                                                    AppBackground::Image(path);
+                                                cx.refresh_windows();
+                                            });
+                                        }
                                     }
-                                }
-                            })
-                            .detach();
-                        } else {
-                            let cfg = InterfaceConfig::get_mut(cx);
-                            cfg.app_background = match index {
-                                0 => AppBackground::Cafe,
-                                1 => AppBackground::Artwork(cfg.last_played_artwork.clone()),
-                                _ => AppBackground::Color(0x0b1a20),
-                            };
-                            cx.refresh_windows();
-                        }
-                    })),
-            );
+                                })
+                                .detach();
+                            } else {
+                                let color =
+                                    u32::from_str_radix(this.color.read(cx).value().trim().trim_start_matches('#'), 16)
+                                        .unwrap_or(0x0b1a20)
+                                        & 0xffffff;
+                                let cfg = InterfaceConfig::get_mut(cx);
+                                cfg.app_background = match index {
+                                    0 => AppBackground::Cafe,
+                                    1 => AppBackground::Artwork(cfg.last_played_artwork.clone()),
+                                    _ => AppBackground::Color(color),
+                                };
+                                cx.refresh_windows();
+                            }
+                        })),
+                );
         }
         let mut colors = h_flex()
             .gap(px(10.))
@@ -325,6 +405,11 @@ impl Render for BackgroundSelector {
                 DesignButton::new(("background-color", color as usize))
                     .size(px(26.))
                     .bg(rgb(color))
+                    .border_1()
+                    .border_color(rgba(0xffffff1f))
+                    .when(active == AppBackground::Color(color), |button| {
+                        button.border_2().border_color(rgb(theme::ACCENT_TEXT))
+                    })
                     .on_click(cx.listener(move |this, _, w, cx| {
                         InterfaceConfig::get_mut(cx).app_background = AppBackground::Color(color);
                         this.color.update(cx, |s, cx| s.set_value(format!("#{color:06x}"), w, cx));

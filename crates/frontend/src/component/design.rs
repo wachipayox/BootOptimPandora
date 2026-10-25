@@ -723,8 +723,18 @@ fn notched_fill(fill: Background) -> Div {
 /// Main-shell heading shared by launcher destinations.
 pub fn page_header(label: impl Into<SharedString>, window: &Window) -> Div {
     use super::generic_title_bar::WindowControl;
+    let label = label.into();
+    let stacked = matches!(label.as_ref(), "LAUNCHER" | "AÑADIR INSTANCIA" | "ARCHIVOS" | "EXPLORAR CONTENIDO");
+    let title = div()
+        .font_family(theme::DISPLAY)
+        .text_size(px(11.))
+        .line_height(px(14.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(0xd8d8dc))
+        .when(stacked, |title| title.relative().top(px(4.)))
+        .child(TrackedText::new(label, 0.16));
     let mut header = h_flex()
-        .h(px(48.))
+        .h(px(if stacked { 40. } else { 48. }))
         .flex_shrink_0()
         .px(px(20.))
         .bg(linear_gradient(
@@ -735,7 +745,7 @@ pub fn page_header(label: impl Into<SharedString>, window: &Window) -> Div {
         .border_b_1()
         .border_color(rgba(0xffffff0b))
         .window_control_area(WindowControlArea::Drag)
-        .child(eyebrow(label))
+        .child(title)
         .child(div().flex_1());
     if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
         header = header

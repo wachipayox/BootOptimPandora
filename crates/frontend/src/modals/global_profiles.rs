@@ -389,13 +389,15 @@ impl ProfileDetailsModal {
         let body = self.body(window, cx);
         let p = &self.profile;
         let state = cx.entity();
-        let title = if bridge::profile_family::is_test_profile(&p.profile_id) {
-            format!("{} (PRUEBA)", p.name)
-        } else {
-            p.name.clone()
-        };
+        let title = h_flex()
+            .gap(px(8.))
+            .items_center()
+            .child(design::dialog_title(p.name.clone()))
+            .when(bridge::profile_family::is_test_profile(&p.profile_id), |title| {
+                title.child(test_label(cx))
+            });
         design::dialog(dialog)
-            .title(design::dialog_title(title))
+            .title(title)
             .width(px((window.viewport_size().width.as_f32() - 48.0).min(760.0)))
             .on_ok(move |_, window, cx| {
                 state.update(cx, |this, cx| this.submit(window, cx));

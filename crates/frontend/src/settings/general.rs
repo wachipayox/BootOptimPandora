@@ -121,6 +121,7 @@ fn create_language_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWid
 
     SettingItemWidget::Any(Rc::new(move |_, _| {
         Select::new(&dropdown)
+            .w(px(90.))
             .menu_width(px(200.0))
             .search_placeholder(t::common::search())
             .into_any_element()

@@ -166,7 +166,13 @@ impl SettingsRoot {
 impl Render for SettingsRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = design::page_header("LAUNCHER", window);
-        let mut tabs = h_flex().w_full().flex_shrink_0().px(px(20.)).border_b_1().border_color(rgba(0xffffff0b));
+        let mut tabs = h_flex()
+            .w_full()
+            .flex_shrink_0()
+            .gap(px(28.))
+            .px(px(20.))
+            .border_b_1()
+            .border_color(rgba(0xffffff0b));
         for index in 0..self.settings.pages.len() {
             if self.settings.searched_pages.as_ref().is_some_and(|pages| !pages.contains(&index)) {
                 continue;
@@ -177,6 +183,8 @@ impl Render for SettingsRoot {
                     (self.settings.pages[index].title)(),
                     self.settings.selected_page == Some(index),
                 )
+                .h(px(32.))
+                .px(px(2.))
                 .on_click(cx.listener(move |root, _, _, cx| {
                     root.settings.selected_page = Some(index);
                     root.settings.selected_group = None;
@@ -187,29 +195,30 @@ impl Render for SettingsRoot {
         }
         v_flex()
             .size_full()
+            .relative()
             .child(header)
             .child(tabs)
+            .child(div().flex_1().min_h_0().px(px(12.)).py(px(12.)).child(self.render_page(window, cx)))
             .child(
-                h_flex()
-                    .w_full()
-                    .px(px(24.))
-                    .pt(px(18.))
-                    .child(div().flex_1())
-                    .child(design::text_field(&self.search_state).prefix(PandoraIcon::Search).w(px(260.))),
+                div()
+                    .absolute()
+                    .top(px(6.))
+                    .right(px(132.))
+                    .child(design::text_field(&self.search_state).prefix(PandoraIcon::Search).w(px(260.)).h(px(28.))),
             )
-            .child(div().flex_1().min_h_0().px(px(12.)).py(px(12.)).child(self.render_page(cx)))
     }
 }
 
 impl SettingsRoot {
-    pub fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(page_ix) = self.settings.selected_page else {
             return div().size_full().p_3().text_lg().child("No hay resultados.").into_any();
         };
 
         let page = self.settings.pages[page_ix].clone();
 
-        let two_columns = page_ix == 0 && self.settings.last_query.is_none();
+        let two_columns =
+            page_ix == 0 && self.settings.last_query.is_none() && window.viewport_size().width.as_f32() >= 1240.;
         let group_count = if two_columns {
             2
         } else {
@@ -361,7 +370,8 @@ impl SettingsRoot {
                 let items = v_flex()
                     .w_full()
                     .px(px(18.))
-                    .py(px(16.))
+                    .pt(px(10.))
+                    .pb(px(16.))
                     .gap(px(10.))
                     .bg(rgb(crate::theme::PANEL))
                     .rounded(px(0.))
