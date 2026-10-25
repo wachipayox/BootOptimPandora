@@ -23,7 +23,7 @@ use schema::{
 use strum::IntoEnumIterator;
 
 use crate::{
-    component::{design, error_alert::ErrorAlert},
+    component::error_alert::ErrorAlert,
     entity::{
         DataEntities,
         instance::ContentStates,

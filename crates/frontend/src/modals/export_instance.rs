@@ -9,10 +9,9 @@ use bridge::{
 use gpui::{prelude::*, *};
 use gpui_component::{
     Disableable, IndexPath, Sizable, WindowExt,
-    button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
-    input::{Input, InputState, NumberInput, Textarea, TextareaState},
+    input::{InputState, NumberInput, Textarea, TextareaState},
     select::{SelectEvent, SelectState},
     v_flex,
 };

@@ -51,6 +51,7 @@ jobs:
       - name: Run build command
         env:
           WBOMBO_DISTRIBUTION_DEFAULT_URL: ${{ secrets.WBOMBO_DISTRIBUTION_DEFAULT_URL }}
+          WBOMBO_COMMUNITY_DISCORD_URL: ${{ secrets.WBOMBO_COMMUNITY_DISCORD_URL }}
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}
 
       - name: Name Windows artifact with short SHA

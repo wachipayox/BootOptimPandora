@@ -53,6 +53,7 @@ jobs:
           GITHUB_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
           PANDORA_DISTRIBUTION: official
           WBOMBO_DISTRIBUTION_DEFAULT_URL: ${{ secrets.WBOMBO_DISTRIBUTION_DEFAULT_URL }}
+          WBOMBO_COMMUNITY_DISCORD_URL: ${{ secrets.WBOMBO_COMMUNITY_DISCORD_URL }}
         run: ${{ matrix.platform.buildscript }} ${{ github.ref_name }}
         shell: bash
 

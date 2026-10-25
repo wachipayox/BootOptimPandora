@@ -304,7 +304,7 @@ fn default_curseforge_class_id() -> CurseforgeClassId {
 impl Default for InterfaceConfig {
     fn default() -> Self {
         Self {
-            language: Default::default(),
+            language: t::Language::Code("es".into()),
             app_background: Default::default(),
             last_played_artwork: None,
             active_theme: Default::default(),

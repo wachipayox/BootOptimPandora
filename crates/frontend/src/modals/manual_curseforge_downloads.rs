@@ -15,7 +15,7 @@ use gpui_component::{
 };
 
 use crate::{
-    component::{path_label::PathLabel, shrinking_text::ShrinkingText},
+    component::{design, path_label::PathLabel, shrinking_text::ShrinkingText},
     icon::PandoraIcon,
 };
 
@@ -181,39 +181,47 @@ impl ManualCurseforgeDownloadsDialog {
             let start_watching = cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.start_watching(cx);
             });
-            return modal.title(t::instance::content::manual_curseforge_downloads::title()).child(
-                v_flex()
-                    .gap_2()
-                    .w_full()
-                    .min_w_0()
-                    .line_height(rems(1.2))
-                    .child(
-                        div()
-                            .w_full()
-                            .whitespace_normal()
-                            .child(t::instance::content::manual_curseforge_downloads::description()),
-                    )
-                    .child(self.download_path.button("choose-folder").on_click(select_folder))
-                    // todo: translate
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .w_full()
-                            .child(Button::new("skip").flex_1().warning().label(t::common::skip()).on_click(
-                                move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                },
-                            ))
-                            .child(
-                                Button::new("start")
-                                    .flex_1()
-                                    .success()
-                                    .label(t::common::cont())
-                                    .disabled(!self.download_path_valid)
-                                    .on_click(start_watching),
-                            ),
-                    ),
-            );
+            return design::dialog(modal)
+                .title(t::instance::content::manual_curseforge_downloads::title())
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .w_full()
+                        .min_w_0()
+                        .line_height(rems(1.2))
+                        .child(
+                            div()
+                                .w_full()
+                                .whitespace_normal()
+                                .child(t::instance::content::manual_curseforge_downloads::description()),
+                        )
+                        .child(self.download_path.button("choose-folder").on_click(select_folder))
+                        // todo: translate
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .w_full()
+                                .child(
+                                    Button::new("skip")
+                                        .flex_1()
+                                        .ghost()
+                                        .rounded(px(0.))
+                                        .label(t::common::skip())
+                                        .on_click(move |_, window, cx| {
+                                            window.close_dialog(cx);
+                                        }),
+                                )
+                                .child(
+                                    Button::new("start")
+                                        .flex_1()
+                                        .ghost()
+                                        .rounded(px(0.))
+                                        .label(t::common::cont())
+                                        .disabled(!self.download_path_valid)
+                                        .on_click(start_watching),
+                                ),
+                        ),
+                );
         }
 
         let max_list_height = window.viewport_size().height * 0.55;
@@ -240,7 +248,8 @@ impl ManualCurseforgeDownloadsDialog {
                             };
                             Button::new(SharedString::new(format!("open-{}", file.file_id)))
                                 .flex_shrink_0()
-                                .info()
+                                .ghost()
+                                .rounded(px(0.))
                                 .label(t::instance::content::manual_curseforge_downloads::open())
                                 .on_click(open)
                                 .into_any_element()
@@ -281,7 +290,7 @@ impl ManualCurseforgeDownloadsDialog {
             .child(uniform_list)
             .vertical_scrollbar(&self.scroll_handle);
 
-        modal
+        design::dialog(modal)
             .title(t::instance::content::manual_curseforge_downloads::title())
             .child(
                 v_flex()
@@ -301,7 +310,7 @@ impl ManualCurseforgeDownloadsDialog {
                 h_flex()
                     .gap_2()
                     .w_full()
-                    .child(Button::new("skip").flex_1().warning().label(t::common::skip()).on_click(
+                    .child(Button::new("skip").flex_1().ghost().rounded(px(0.)).label(t::common::skip()).on_click(
                         move |_, window, cx| {
                             window.close_dialog(cx);
                         },
@@ -309,7 +318,8 @@ impl ManualCurseforgeDownloadsDialog {
                     .child(
                         Button::new("open-all")
                             .flex_1()
-                            .info()
+                            .ghost()
+                            .rounded(px(0.))
                             .icon(PandoraIcon::ExternalLink)
                             .label(t::instance::content::manual_curseforge_downloads::open_all())
                             .on_click(open_all),

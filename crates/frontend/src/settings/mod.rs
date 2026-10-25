@@ -22,7 +22,7 @@ mod network;
 #[cfg(windows)]
 mod windows_security;
 
-pub(crate) struct SettingsRoot {
+pub struct SettingsRoot {
     settings: Settings,
     search_state: Entity<InputState>,
     ignored_path_input: Entity<InputState>,
@@ -787,6 +787,32 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
         .into(),
         searched_groups: None,
     });
+    let last = pages.last_mut().expect("About page");
+    let group = Rc::make_mut(&mut last.groups).first_mut().expect("About group");
+    let mut about_items = group.items.to_vec();
+    about_items.push(SettingItem {
+        widget: SettingItemWidget::AnyWide(Rc::new(|_, _| {
+            design::DesignButton::new("report-launcher-issue")
+                .label("Reportar fallo")
+                .on_click(|_, _, cx| cx.open_url("https://github.com/wachipayox/BootOptimPandora/issues/new/choose"))
+                .into_any_element()
+        })),
+        ..Default::default()
+    });
+    if let Some(link) = option_env!("WBOMBO_COMMUNITY_DISCORD_URL")
+        .filter(|link| url::Url::parse(link).is_ok_and(|url| url.scheme() == "https"))
+    {
+        about_items.push(SettingItem {
+            widget: SettingItemWidget::AnyWide(Rc::new(move |_, _| {
+                design::DesignButton::new("community-discord")
+                    .label("Discord")
+                    .on_click(move |_, _, cx| cx.open_url(link))
+                    .into_any_element()
+            })),
+            ..Default::default()
+        });
+    }
+    group.items = about_items.into();
     let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").unwrap_or_default();
     let selected_page = match capture_page.as_str() {
         "appearance" | "launcher-appearance" => 1,
