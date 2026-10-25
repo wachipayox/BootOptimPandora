@@ -248,8 +248,6 @@ impl Render for UpdateView {
         let mut notes = v_flex()
             .gap(px(14.))
             .w_full()
-            .p(px(14.))
-            .bg(rgba(0xffffff05))
             .text_size(px(12.5))
             .line_height(px(19.))
             .text_color(rgb(theme::INK_MUTED));
@@ -264,23 +262,31 @@ impl Render for UpdateView {
                 .unwrap_or_default();
             let mut section = v_flex().gap(px(4.)).child(
                 h_flex()
-                    .justify_between()
+                    .gap(px(8.))
                     .child(
                         div()
                             .font_family(theme::DISPLAY)
-                            .text_color(rgb(theme::ACCENT_TEXT))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(11.))
                             .child(release.version.clone()),
                     )
                     .child(div().text_size(px(11.)).child(date)),
             );
             // Notes are plain server text. No HTML, Markdown links or executable media.
             for line in release.notes.lines() {
-                section = section.child(div().min_h(px(19.)).child(line.to_owned()));
+                section = section.child(
+                    h_flex()
+                        .items_start()
+                        .gap(px(8.))
+                        .min_h(px(19.))
+                        .child(div().flex_none().child("•"))
+                        .child(div().flex_1().min_w_0().child(line.to_owned())),
+                );
             }
             notes = notes.child(section);
         }
         if has_notes {
-            content = content.child(if self.expanded {
+            let body = if self.expanded {
                 div()
                     .id("launcher-update-notes-scroll")
                     .max_h(px(320.))
@@ -299,24 +305,29 @@ impl Render for UpdateView {
                         linear_color_stop(rgb(0x0e0e11), 1.),
                     )))
                     .into_any_element()
-            });
+            };
             content = content.child(
-                design::DesignButton::new("launcher-update-expand")
-                    .h(px(24.))
-                    .px_0()
-                    .self_start()
-                    .label(if self.expanded { "Ver menos ↑" } else { "Ver todo ↓" })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.expanded = !this.expanded;
-                        cx.notify();
-                    })),
+                v_flex().gap(px(6.)).px(px(14.)).py(px(12.)).bg(rgba(0xffffff05)).child(body).child(
+                    design::DesignButton::new("launcher-update-expand")
+                        .h(px(24.))
+                        .px_0()
+                        .self_start()
+                        .font_family(theme::DISPLAY)
+                        .text_size(px(12.))
+                        .text_color(rgb(theme::ACCENT_TEXT))
+                        .label(if self.expanded { "Ver menos ↑" } else { "Ver todo ↓" })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.expanded = !this.expanded;
+                            cx.notify();
+                        })),
+                ),
             );
         }
         let size = format!("{:.0} MB", self.update.artifact.size as f64 / 1_000_000.);
         content
             .child(
                 h_flex()
-                    .justify_between()
+                    .gap(px(8.))
                     .text_size(px(11.))
                     .text_color(rgb(theme::INK_MUTED))
                     .child(size)
