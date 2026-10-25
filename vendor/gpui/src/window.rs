@@ -2459,10 +2459,17 @@ impl Window {
     /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
-    #[cfg(any(test, feature = "test-support", feature = "native-capture"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn render_to_image(&self) -> anyhow::Result<image::RgbaImage> {
         self.platform_window
             .render_to_image(&self.rendered_frame.scene)
+    }
+
+    /// Copies the current native framebuffer. Schedule after a fresh frame when
+    /// collecting live evidence; this never replays potentially stale sprite IDs.
+    #[cfg(feature = "native-capture")]
+    pub fn capture_framebuffer(&self) -> anyhow::Result<image::RgbaImage> {
+        self.platform_window.capture_framebuffer()
     }
 
     /// Returns the quads in the most recently rendered frame's scene, so tests can assert on

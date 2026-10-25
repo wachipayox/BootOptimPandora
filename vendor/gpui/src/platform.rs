@@ -987,9 +987,15 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Renders the given scene to a texture and returns the pixel data as an RGBA image.
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
-    #[cfg(any(test, feature = "test-support", feature = "native-capture"))]
-    fn render_to_image(&self, _scene: &Scene) -> Result<image::RgbaImage> {
+    #[cfg(any(test, feature = "test-support"))]
+    fn render_to_image(&self, _scene: &Scene) -> Result<RgbaImage> {
         anyhow::bail!("render_to_image not implemented for this platform")
+    }
+
+    /// Copies the already rendered native framebuffer without replaying its scene.
+    #[cfg(feature = "native-capture")]
+    fn capture_framebuffer(&self) -> Result<image::RgbaImage> {
+        anyhow::bail!("native framebuffer capture not implemented for this platform")
     }
 }
 

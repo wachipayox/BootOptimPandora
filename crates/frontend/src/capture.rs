@@ -15,13 +15,13 @@ pub fn start(window: &mut Window, cx: &mut App) {
                     continue;
                 }
                 let _ = std::fs::remove_file(directory.join("request"));
-                // Animated images can evict atlas entries between frames. Read
-                // immediately after a fresh render, while its sprites are live.
+                // Copy a fresh framebuffer without replaying scene sprite IDs:
+                // animated images can retire those between frame callbacks.
                 let (send, receive) = tokio::sync::oneshot::channel();
                 if cx
                     .update(|window, _| {
                         window.on_next_frame(move |window, _| {
-                            let _ = send.send(window.render_to_image());
+                            let _ = send.send(window.capture_framebuffer());
                         });
                         window.refresh();
                     })

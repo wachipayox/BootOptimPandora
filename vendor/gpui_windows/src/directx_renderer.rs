@@ -409,7 +409,7 @@ impl DirectXRenderer {
     /// goes through MetalRenderer; this is the Windows analogue). Draws into
     /// the existing render target, copies it into a `D3D11_USAGE_STAGING`
     /// texture, maps it, and converts BGRA to RGBA.
-    #[cfg(any(test, feature = "test-support", feature = "native-capture"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn render_to_image(
         &mut self,
         scene: &Scene,
@@ -423,7 +423,14 @@ impl DirectXRenderer {
             "render_to_image unavailable while recovering from a lost device"
         );
         self.render(scene, background_appearance)?;
+        self.capture_framebuffer()
+    }
 
+    /// Read pixels already drawn by the normal render path. Replaying an older
+    /// scene here could reference atlas textures retired by animated images.
+    #[cfg(any(test, feature = "test-support", feature = "native-capture"))]
+    pub(crate) fn capture_framebuffer(&self) -> Result<image::RgbaImage> {
+        anyhow::ensure!(!self.skip_draws, "framebuffer unavailable during device recovery");
         let devices = self.devices.as_ref().context("devices missing")?;
         let device = &devices.device;
         let context = &devices.device_context;
