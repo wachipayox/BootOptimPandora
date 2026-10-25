@@ -312,7 +312,7 @@ impl Render for ImportPage {
                         .ghost()
                         .rounded(px(0.))
                         .text_size(px(13.))
-                        .label(label.clone())
+                        .label(label)
                         .on_click(cx.listener(move |page, _, window, cx| {
                             let Some(import_job) = &page.import_job else {
                                 return;
@@ -338,7 +338,7 @@ impl Render for ImportPage {
                                 modal_action: modal_action.clone(),
                             });
 
-                            let title = SharedString::new(label.clone());
+                            let title = SharedString::new_static(label);
                             crate::modals::generic::show_modal(
                                 window,
                                 cx,

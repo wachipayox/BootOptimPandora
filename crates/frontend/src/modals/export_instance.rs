@@ -13,11 +13,11 @@ use gpui_component::{
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputState, NumberInput, Textarea, TextareaState},
-    select::{Select, SelectEvent, SelectState},
+    select::{SelectEvent, SelectState},
     v_flex,
 };
 
-use crate::{labelled, modals::generic};
+use crate::{component::design, labelled, modals::generic};
 
 struct ExportInstanceModalState {
     instance_id: InstanceID,
@@ -57,9 +57,9 @@ impl ExportInstanceModalState {
         cx: &mut Context<Self>,
     ) -> Self {
         let format_options = vec![
-            SharedString::new_static(t::instance::export::format::zip()),
-            SharedString::new_static(t::instance::export::format::modrinth()),
-            SharedString::new_static(t::instance::export::format::curseforge()),
+            SharedString::new_static("Zip"),
+            SharedString::new_static(".mrpack"),
+            SharedString::new_static("CurseForge"),
         ];
         let format_select_state = cx.new(|cx| {
             let mut state = SelectState::new(format_options.clone(), None, window, cx);
@@ -188,95 +188,99 @@ impl ExportInstanceModalState {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui_component::dialog::Dialog {
-        let format_group = Select::new(&self.format_select_state);
+        let mut format_group = h_flex().gap(px(8.));
+        for (index, label, format) in [
+            (0usize, "Zip", ExportFormat::Zip),
+            (1, ".mrpack", ExportFormat::Modrinth),
+            (2, "CurseForge", ExportFormat::Curseforge),
+        ] {
+            let selected = std::mem::discriminant(&self.format) == std::mem::discriminant(&format);
+            format_group = format_group.child(design::chip(("export-format", index), label, selected).on_click(
+                cx.listener(move |this, _, window, cx| {
+                    this.format = format;
+                    this.format_select_state
+                        .update(cx, |state, cx| state.set_selected_index(Some(IndexPath::new(index)), window, cx));
+                    cx.notify();
+                }),
+            ));
+        }
 
-        let common_options = v_flex()
-            .gap_2()
-            .child(
-                Checkbox::new("include_saves")
-                    .checked(self.include_saves)
-                    .label(t::instance::export::include_saves())
-                    .on_click(cx.listener(|this, value, _, cx| {
+        let common_options =
+            v_flex()
+                .gap_2()
+                .child(Checkbox::new("include_saves").checked(self.include_saves).label("Mundos").on_click(
+                    cx.listener(|this, value, _, cx| {
                         this.include_saves = *value;
                         cx.notify();
-                    })),
-            )
-            .child(
-                Checkbox::new("include_mods")
-                    .checked(self.include_mods)
-                    .label(t::instance::export::include_mods())
-                    .on_click(cx.listener(|this, value, _, cx| {
-                        this.include_mods = *value;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Checkbox::new("include_resourcepacks")
-                    .checked(self.include_resourcepacks)
-                    .label(t::instance::export::include_resourcepacks())
-                    .on_click(cx.listener(|this, value, _, cx| {
-                        this.include_resourcepacks = *value;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Checkbox::new("include_shaders")
-                    .checked(self.include_shaders)
-                    .label(t::instance::export::include_shaders())
-                    .on_click(cx.listener(|this, value, _, cx| {
+                    }),
+                ))
+                .child(
+                    Checkbox::new("include_mods")
+                        .checked(self.include_mods)
+                        .label("Mods")
+                        .on_click(cx.listener(|this, value, _, cx| {
+                            this.include_mods = *value;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Checkbox::new("include_resourcepacks")
+                        .checked(self.include_resourcepacks)
+                        .label("Recursos")
+                        .on_click(cx.listener(|this, value, _, cx| {
+                            this.include_resourcepacks = *value;
+                            cx.notify();
+                        })),
+                )
+                .child(Checkbox::new("include_shaders").checked(self.include_shaders).label("Shaders").on_click(
+                    cx.listener(|this, value, _, cx| {
                         this.include_shaders = *value;
                         cx.notify();
-                    })),
-            )
-            .child(
-                Checkbox::new("include_configs")
-                    .checked(self.include_configs)
-                    .label(t::instance::export::include_configs())
-                    .on_click(cx.listener(|this, value, _, cx| {
-                        this.include_configs = *value;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Checkbox::new("include_screenshots")
-                    .checked(self.include_screenshots)
-                    .label(t::instance::export::include_screenshots())
-                    .on_click(cx.listener(|this, value, _, cx| {
-                        this.include_screenshots = *value;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Checkbox::new("include_backups")
-                    .checked(self.include_backups)
-                    .label(t::instance::export::include_backups())
-                    .on_click(cx.listener(|this, value, _, cx| {
-                        this.include_backups = *value;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Checkbox::new("include_logs")
-                    .checked(self.include_logs)
-                    .label(t::instance::export::include_logs())
-                    .on_click(cx.listener(|this, value, _, cx| {
+                    }),
+                ))
+                .child(
+                    Checkbox::new("include_configs")
+                        .checked(self.include_configs)
+                        .label("Configuración")
+                        .on_click(cx.listener(|this, value, _, cx| {
+                            this.include_configs = *value;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Checkbox::new("include_screenshots")
+                        .checked(self.include_screenshots)
+                        .label("Capturas")
+                        .on_click(cx.listener(|this, value, _, cx| {
+                            this.include_screenshots = *value;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Checkbox::new("include_backups")
+                        .checked(self.include_backups)
+                        .label("Copias de seguridad")
+                        .on_click(cx.listener(|this, value, _, cx| {
+                            this.include_backups = *value;
+                            cx.notify();
+                        })),
+                )
+                .child(Checkbox::new("include_logs").checked(self.include_logs).label("Registros").on_click(
+                    cx.listener(|this, value, _, cx| {
                         this.include_logs = *value;
                         cx.notify();
-                    })),
-            )
-            .child(
-                Checkbox::new("include_cache")
-                    .checked(self.include_cache)
-                    .label(t::instance::export::include_cache())
-                    .on_click(cx.listener(|this, value, _, cx| {
+                    }),
+                ))
+                .child(Checkbox::new("include_cache").checked(self.include_cache).label("Caché").on_click(
+                    cx.listener(|this, value, _, cx| {
                         this.include_cache = *value;
                         cx.notify();
-                    })),
-            );
+                    }),
+                ));
         let common_options = common_options.child(
             Checkbox::new("include_synced")
                 .checked(self.include_synced)
-                .label(t::instance::export::include_synced())
+                .label("Archivos sincronizados")
                 .on_click(cx.listener(|this, value, _, cx| {
                     this.include_synced = *value;
                     cx.notify();
@@ -285,22 +289,22 @@ impl ExportInstanceModalState {
 
         let modrinth_options = v_flex()
             .gap_2()
-            .child(labelled(t::instance::export::name(), Input::new(&self.name_input)))
-            .child(labelled(t::instance::export::version(), Input::new(&self.version_input)))
-            .child(labelled(t::instance::export::summary(), Textarea::new(&self.modrinth_summary_input)));
+            .child(labelled("Nombre", design::text_field(&self.name_input)))
+            .child(labelled("Versión", design::text_field(&self.version_input)))
+            .child(labelled("Resumen", Textarea::new(&self.modrinth_summary_input)));
 
         let curseforge_options = v_flex()
             .gap_2()
-            .child(labelled(t::instance::export::name(), Input::new(&self.name_input)))
-            .child(labelled(t::instance::export::version(), Input::new(&self.version_input)))
-            .child(labelled(t::instance::export::author(), Input::new(&self.curseforge_author_input)))
+            .child(labelled("Nombre", design::text_field(&self.name_input)))
+            .child(labelled("Versión", design::text_field(&self.version_input)))
+            .child(labelled("Autor", design::text_field(&self.curseforge_author_input)))
             .child(
                 h_flex()
                     .gap_2()
                     .child(
                         Checkbox::new("curseforge_ram")
                             .checked(self.curseforge_recommended_ram_enabled)
-                            .label(t::instance::export::recommended_ram())
+                            .label("RAM recomendada (MiB)")
                             .on_click(cx.listener(|this, value, _, cx| {
                                 this.curseforge_recommended_ram_enabled = *value;
                                 cx.notify();
@@ -316,85 +320,91 @@ impl ExportInstanceModalState {
 
         let content = v_flex()
             .gap_3()
-            .child(labelled(t::instance::export::format::label(), format_group))
-            .child(labelled(t::instance::export::options(), common_options))
+            .child(labelled("Formato", format_group))
+            .child(labelled("", common_options))
             .when(self.format == ExportFormat::Modrinth, |this| {
-                this.child(labelled(t::instance::export::modrinth_options(), modrinth_options))
+                this.child(labelled("Modrinth", modrinth_options))
             })
             .when(self.format == ExportFormat::Curseforge, |this| {
-                this.child(labelled(t::instance::export::curseforge_options(), curseforge_options))
+                this.child(labelled("CurseForge", curseforge_options))
             });
 
-        dialog.title(t::instance::export::title()).child(content).footer(
-            h_flex()
-                .gap_2()
-                .child(
-                    Button::new("cancel")
-                        .label(t::common::cancel())
-                        .on_click(|_, window, cx| window.close_dialog(cx)),
-                )
-                .child(Button::new("export").label(t::instance::export::action()).success().on_click({
-                    let instance_id = self.instance_id;
-                    let instance_name = self.instance_name.clone();
-                    let backend_handle = self.backend_handle.clone();
-                    let format = self.format;
-                    let options = self.build_options(cx);
-                    move |_, window, cx| {
-                        window.close_dialog(cx);
+        design::dialog(dialog)
+            .title(design::dialog_title("Exportar instancia"))
+            .child(content)
+            .footer(
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        design::action_button("cancel", "Cancelar", design::ButtonAction::Secondary)
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(design::action_button("export", "Exportar", design::ButtonAction::Primary).on_click({
+                        let instance_id = self.instance_id;
+                        let instance_name = self.instance_name.clone();
+                        let backend_handle = self.backend_handle.clone();
+                        let format = self.format;
+                        let options = self.build_options(cx);
+                        move |_, window, cx| {
+                            window.close_dialog(cx);
 
-                        let backend_handle = backend_handle.clone();
-                        let options = options.clone();
-                        let format = format;
-                        let instance_id = instance_id;
-                        let instance_name = instance_name.clone();
+                            let backend_handle = backend_handle.clone();
+                            let options = options.clone();
+                            let format = format;
+                            let instance_id = instance_id;
+                            let instance_name = instance_name.clone();
 
-                        let suggested = match format {
-                            ExportFormat::Zip => format!("{}.zip", instance_name),
-                            ExportFormat::Modrinth => format!("{}.mrpack", instance_name),
-                            ExportFormat::Curseforge => format!("{}.zip", instance_name),
-                        };
-
-                        let user_dirs = directories::UserDirs::new();
-                        let directory =
-                            user_dirs.as_ref().and_then(directories::UserDirs::desktop_dir).unwrap_or(Path::new("."));
-
-                        let receiver = cx.prompt_for_new_path(directory, Some(&suggested));
-                        let modal_action = ModalAction::default();
-                        generic::show_modal(
-                            window,
-                            cx,
-                            t::instance::export::progress().into(),
-                            t::instance::export::error().into(),
-                            modal_action.clone(),
-                        );
-
-                        cx.spawn(async move |_| {
-                            let Ok(Ok(Some(mut path))) = receiver.await else {
-                                modal_action.set_finished();
-                                return;
+                            let suggested = match format {
+                                ExportFormat::Zip => format!("{}.zip", instance_name),
+                                ExportFormat::Modrinth => format!("{}.mrpack", instance_name),
+                                ExportFormat::Curseforge => format!("{}.zip", instance_name),
                             };
 
-                            let extension = match format {
-                                ExportFormat::Zip => "zip",
-                                ExportFormat::Modrinth => "mrpack",
-                                ExportFormat::Curseforge => "zip",
-                            };
-                            if path.extension().is_none() {
-                                path.set_extension(extension);
-                            }
+                            let user_dirs = directories::UserDirs::new();
+                            let directory = user_dirs
+                                .as_ref()
+                                .and_then(directories::UserDirs::desktop_dir)
+                                .unwrap_or(Path::new("."));
 
-                            backend_handle.send(MessageToBackend::ExportInstance {
-                                id: instance_id,
-                                format,
-                                options,
-                                output: path,
-                                modal_action,
-                            });
-                        })
-                        .detach();
-                    }
-                })),
-        )
+                            let receiver = cx.prompt_for_new_path(directory, Some(&suggested));
+                            let modal_action = ModalAction::default();
+                            generic::show_modal(
+                                window,
+                                cx,
+                                "Exportar instancia".into(),
+                                t::instance::export::error().into(),
+                                modal_action.clone(),
+                            );
+
+                            cx.spawn(async move |_| {
+                                let Ok(Ok(Some(mut path))) = receiver.await else {
+                                    modal_action.set_finished();
+                                    return;
+                                };
+
+                                let extension = match format {
+                                    ExportFormat::Zip => "zip",
+                                    ExportFormat::Modrinth => "mrpack",
+                                    ExportFormat::Curseforge => "zip",
+                                };
+                                if path.extension().is_none() {
+                                    path.set_extension(extension);
+                                }
+
+                                backend_handle.send(MessageToBackend::ExportInstance {
+                                    id: instance_id,
+                                    format,
+                                    options,
+                                    output: path,
+                                    modal_action,
+                                });
+                            })
+                            .detach();
+                        }
+                    })),
+            )
     }
 }
 
