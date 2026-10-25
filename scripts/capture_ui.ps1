@@ -73,6 +73,7 @@ public static class CaptureWindow {
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint message, IntPtr wparam, IntPtr lparam, uint flags, uint timeout, out IntPtr result);
+  [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
 }
 '@
 Add-Type -AssemblyName System.Drawing
@@ -91,10 +92,29 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
     [void][CaptureWindow]::GetWindowRect($Handle,[ref]$outer)
     $scale=[CaptureWindow]::GetDpiForWindow($Handle)/96.0
     $points=@()
+    $boundaryProbes=@()
+    $resizable=([CaptureWindow]::GetWindowLongPtr($Handle,-16).ToInt64() -band 0x40000) -ne 0
     foreach($region in $regions) {
         $expected=switch($region.area) {'Some(Drag)' {2}; 'Some(Min)' {8}; 'Some(Max)' {9}; 'Some(Close)' {20}; 'None' {1}; default {throw 'Unknown capture region type'}}
-        foreach($point in $region.points) {
+        :probe foreach($point in $region.points) {
             if ($point -isnot [System.Array] -or $point.Count -ne 2) {throw 'A native hit-test probe must contain one x/y pair.'}
+            # Require caption samples to be strictly away from a control's
+            # one-physical-pixel boundary band. DPI rounding can otherwise
+            # project a logical gap onto the first pixel of a button.
+            if ($region.area -eq 'Some(Drag)') {
+                $qx=[math]::Round($point[0]*$scale)/$scale
+                $qy=[math]::Round($point[1]*$scale)/$scale
+                $margin=1.0/$scale
+                foreach($control in $regions | Where-Object area -ne 'Some(Drag)') {
+                    $b=$control.bounds; $right=$b.x+$b.width; $bottom=$b.y+$b.height
+                    $expanded=($qx -ge $b.x-$margin -and $qx -le $right+$margin -and $qy -ge $b.y-$margin -and $qy -le $bottom+$margin)
+                    $interior=($qx -gt $b.x+$margin -and $qx -lt $right-$margin -and $qy -gt $b.y+$margin -and $qy -lt $bottom-$margin)
+                    if ($expanded -and -not $interior) {
+                        $boundaryProbes+=@{label=$region.label;x=$qx;y=$qy;near=$control.label;reason='one physical pixel from an interactive boundary; not queried'}
+                        continue probe
+                    }
+                }
+            }
             $points+=@{label=$region.label;kind=$region.area;x=$origin.X+[int][math]::Round($point[0]*$scale);y=$origin.Y+[int][math]::Round($point[1]*$scale);expected=$expected}
         }
     }
@@ -105,7 +125,7 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
         @('top',$middleX,($outer.Top+1),12), @('bottom',$middleX,($outer.Bottom-2),15),
         @('top-left',($outer.Left+1),($outer.Top+1),13), @('top-right',($outer.Right-2),($outer.Top+1),14),
         @('bottom-left',($outer.Left+1),($outer.Bottom-2),16), @('bottom-right',($outer.Right-2),($outer.Bottom-2),17)
-    )) { $points+=@{label=$edge[0];kind='resize';x=$edge[1];y=$edge[2];expected=$edge[3]} }
+    )) { $points+=@{label=$edge[0];kind='resize';x=$edge[1];y=$edge[2];expected=if($resizable){$edge[3]}else{$null}} }
     $previous=New-Object CaptureWindow+POINT
     [void][CaptureWindow]::GetCursorPos([ref]$previous)
     $results=@()
@@ -120,10 +140,12 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
             # the real HWND. No button-down/up or click messages are sent.
             if ([CaptureWindow]::SendMessageTimeout($Handle,0x200,[IntPtr]::Zero,$client,2,2000,[ref]$reply) -eq [IntPtr]::Zero) {throw 'Hit-test mouse position update timed out.'}
             if ([CaptureWindow]::SendMessageTimeout($Handle,0x84,[IntPtr]::Zero,$screen,2,2000,[ref]$reply) -eq [IntPtr]::Zero) {throw 'WM_NCHITTEST timed out.'}
-            $results+=@{label=$point.label;kind=$point.kind;x=$point.x;y=$point.y;expected=$point.expected;actual=$reply.ToInt64();passed=($reply.ToInt64() -eq $point.expected)}
+            $passed=if($null -ne $point.expected){$reply.ToInt64() -eq $point.expected}else{$reply.ToInt64() -notin (10..17)}
+            $results+=@{label=$point.label;kind=$point.kind;x=$point.x;y=$point.y;expected=$point.expected;actual=$reply.ToInt64();resizable=$resizable;passed=$passed}
         }
     } finally { [void][CaptureWindow]::SetCursorPos($previous.X,$previous.Y) }
     $results | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $Path -Encoding utf8
+    ConvertTo-Json -InputObject @($boundaryProbes) -Depth 5 | Set-Content -LiteralPath ($Path -replace '\.json$','-boundary.json') -Encoding utf8
     $results | ForEach-Object {[pscustomobject]$_} | Export-Csv -LiteralPath ($Path -replace '\.json$','.csv') -NoTypeInformation -Encoding utf8
     $failures=@($results|Where-Object {-not $_.passed}).Count
     Write-Output "HIT_TEST file=$([IO.Path]::GetFileName($Path)) points=$($results.Count) mismatches=$failures"
@@ -140,7 +162,7 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     Start-Sleep -Milliseconds 700
     $rect = New-Object CaptureWindow+RECT
     if (-not [CaptureWindow]::GetWindowRect($handle, [ref]$rect)) { throw 'Cannot read foreground window bounds' }
-    if ($DesignViewport) {
+    if ($DesignViewport -and -not $script:fixedCaptureWindow) {
         $client = New-Object CaptureWindow+RECT
         [void][CaptureWindow]::GetClientRect($handle, [ref]$client)
         $scale = [CaptureWindow]::GetDpiForWindow($handle) / 96.0
@@ -377,7 +399,20 @@ try {
             while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { if ($proc.HasExited) { throw "Capture process exited before $instanceMarker" };Start-Sleep -Milliseconds 300 }
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw "Instance capture did not settle: $instanceMarker" }
         }
-        Save-Window (Join-Path $outputPath $screen.file) $proc.MainWindowHandle $proc.Id
+        $captureHandle=$proc.MainWindowHandle
+        $script:fixedCaptureWindow=$screen.page -eq 'window-dialog'
+        if ($script:fixedCaptureWindow) {
+            $ready="window-dialog-ready pid=$($proc.Id)"
+            $log=Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $deadline=(Get-Date).AddSeconds(30)
+            while((Get-Date) -lt $deadline -and -not(Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)){Start-Sleep -Milliseconds 100}
+            if(-not(Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)){throw 'Standalone dialog did not become ready.'}
+            $captureHandle=[CaptureWindow]::GetForegroundWindow()
+            [uint32]$dialogOwner=0
+            [void][CaptureWindow]::GetWindowThreadProcessId($captureHandle,[ref]$dialogOwner)
+            if($dialogOwner -ne $proc.Id -or $captureHandle -eq $proc.MainWindowHandle){throw 'Standalone dialog HWND is not the active owned secondary window.'}
+        }
+        Save-Window (Join-Path $outputPath $screen.file) $captureHandle $proc.Id
         if ($screen.page.StartsWith('news-article')) {
             # Wheel packets target only the verified capture window. They never
             # move the pointer or send input to another foreground application.

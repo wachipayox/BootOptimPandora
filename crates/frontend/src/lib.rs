@@ -590,7 +590,11 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     window.on_next_frame(|_, cx| crate::root::open_home_accounts(cx));
                 }
                 #[cfg(feature = "ui-capture")]
-                if capture_page.is_some() {
+                if capture_page.as_deref() == Some("window-dialog") {
+                    window.on_next_frame(crate::capture::open_window_dialog);
+                }
+                #[cfg(feature = "ui-capture")]
+                if capture_page.is_some() && capture_page.as_deref() != Some("window-dialog") {
                     crate::capture::start(window, cx);
                 }
                 root

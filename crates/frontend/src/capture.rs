@@ -35,6 +35,18 @@ pub fn local_fixture() -> bool {
     std::env::var("WBOMBO_UI_CAPTURE_LOCAL_INSTANCE").is_ok_and(|name| name == "agente-274-window-drag")
 }
 
+pub fn open_window_dialog(window: &mut Window, cx: &mut App) {
+    let action = bridge::modal_action::ModalAction::default();
+    action.set_finished_with_error("No se ha podido actualizar el launcher.".into());
+    crate::modals::generic::show_modal(
+        window,
+        cx,
+        "Actualizando".into(),
+        "No se ha podido actualizar el launcher.".into(),
+        action,
+    );
+}
+
 pub fn start(window: &mut Window, cx: &mut App) {
     let Some(directory) = std::env::var_os("WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR").map(PathBuf::from) else {
         return;

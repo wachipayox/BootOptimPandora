@@ -416,6 +416,11 @@ pub fn show_modal(
             ..Default::default()
         },
         move |window, cx| {
+            #[cfg(feature = "ui-capture")]
+            if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("window-dialog") {
+                crate::capture::start(window, cx);
+                log::info!("window-dialog-ready pid={}", std::process::id());
+            }
             let notify = modal_action.get_notify();
             let task = window.spawn(cx, async move |cx| {
                 loop {
