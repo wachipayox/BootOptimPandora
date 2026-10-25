@@ -256,6 +256,7 @@ pub fn start(
         should_quit: AtomicBool::new(false),
         content_install_semaphore: Semaphore::new(8),
         launcher_update_check_serial: Default::default(),
+        launcher_update_restarting: AtomicBool::new(false),
         manual_curseforge_downloads: ManualCurseforgeDownloadSession::default(),
     };
 
@@ -359,6 +360,7 @@ pub struct BackendState {
     pub should_quit: AtomicBool,
     pub content_install_semaphore: Semaphore,
     pub launcher_update_check_serial: std::sync::atomic::AtomicU64,
+    pub launcher_update_restarting: AtomicBool,
     pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
 }
 
@@ -691,14 +693,18 @@ impl BackendState {
                 }
             }
 
-            self.start_aot_retries();
-            self.start_aot_creates();
+            if !self.launcher_update_restarting.load(Ordering::SeqCst) {
+                self.start_aot_retries();
+                self.start_aot_creates();
+            }
 
             if self.should_quit.load(Ordering::Relaxed) {
-                while let Some(message) = backend_recv.try_recv() {
-                    self.handle_message(message).await;
+                if !self.launcher_update_restarting.load(Ordering::SeqCst) {
+                    while let Some(message) = backend_recv.try_recv() {
+                        self.handle_message(message).await;
+                    }
+                    self.handle_tick();
                 }
-                self.handle_tick();
                 break;
             }
         }

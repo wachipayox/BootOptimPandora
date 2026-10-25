@@ -28,7 +28,7 @@ fn source(config: &DistributionConfig) -> String {
 
 pub fn spawn_update_check(backend: &Arc<BackendState>, manual: bool) {
     let (distribution, channel, serial) = {
-        let guard = backend.config.lock();
+        let mut guard = backend.config.lock();
         let config = guard.get();
         let serial = backend.launcher_update_check_serial.fetch_add(1, Ordering::SeqCst) + 1;
         backend.send.send(MessageToFrontend::LauncherUpdateChecking { manual });
@@ -39,7 +39,7 @@ pub fn spawn_update_check(backend: &Arc<BackendState>, manual: bool) {
         let result = check(&distribution, channel).await;
         // Serialize result publication with configuration changes/check starts.
         // A late developer-channel response cannot overwrite a player check.
-        let guard = backend.config.lock();
+        let mut guard = backend.config.lock();
         let config = guard.get();
         if backend.launcher_update_check_serial.load(Ordering::SeqCst) == serial
             && config.channel == channel
@@ -87,7 +87,16 @@ async fn check(
 pub async fn install_update(backend: Arc<BackendState>, update: UpdatePrompt, action: ModalAction) {
     if let Err(error) = install_inner(&backend, &update, &action).await {
         log::warn!("Launcher update installation failed: {error}");
-        action.set_finished_with_error("No se ha podido actualizar el launcher.".into());
+        let message = match error.downcast_ref::<crate::distribution::DistributionError>() {
+            Some(
+                crate::distribution::DistributionError::InvalidSignature
+                | crate::distribution::DistributionError::InvalidSigningKey
+                | crate::distribution::DistributionError::InvalidObject(_)
+                | crate::distribution::DistributionError::ResponseTooLarge,
+            ) => "No se ha podido verificar la actualización.",
+            _ => "No se ha podido actualizar el launcher.",
+        };
+        action.set_finished_with_error(message.into());
         action.set_finished();
         backend.send.send(MessageToFrontend::Refresh);
         return;
@@ -95,6 +104,7 @@ pub async fn install_update(backend: Arc<BackendState>, update: UpdatePrompt, ac
     action.set_finished();
     // The replacement helper waits for this process to release its executable
     // and socket. The backend drains/shuts down before it tells GPUI to quit.
+    backend.launcher_update_restarting.store(true, Ordering::SeqCst);
     backend.should_quit.store(true, Ordering::SeqCst);
 }
 
@@ -117,7 +127,7 @@ async fn install_inner(backend: &BackendState, update: &UpdatePrompt, action: &M
         .try_acquire_many(8)
         .map_err(|_| anyhow::anyhow!("content installation is active"))?;
     let (config, channel) = {
-        let guard = backend.config.lock();
+        let mut guard = backend.config.lock();
         (guard.get().distribution.clone(), guard.get().channel)
     };
     anyhow::ensure!(
@@ -137,8 +147,7 @@ async fn install_inner(backend: &BackendState, update: &UpdatePrompt, action: &M
     let tracker = action.push_tracker("Actualizando".into());
     tracker.set_total(usize::try_from(latest.artifact.size)?);
     let bytes = client.download_launcher_artifact(&verified, |count| tracker.add_count(count)).await?;
-    let directory = backend.directories.temp_dir.clone();
-    tokio::task::spawn_blocking(move || crate::launcher_install::install(&bytes, &directory)).await??;
+    tokio::task::spawn_blocking(move || crate::launcher_install::install(&bytes)).await??;
     tracker.set_finished(ProgressTrackerFinishType::Normal);
     Ok(())
 }

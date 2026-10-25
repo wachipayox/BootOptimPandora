@@ -19,8 +19,9 @@ const MAX_EXPANDED: u64 = 2 * 1024 * 1024 * 1024;
 #[cfg(any(target_os = "macos", test))]
 const MAX_EXECUTABLE: u64 = 512 * 1024 * 1024;
 
-pub(crate) fn install(bytes: &[u8], _temporary_directory: &Path) -> Result<()> {
-    let executable = std::env::current_exe()?.canonicalize()?;
+pub(crate) fn install(bytes: &[u8]) -> Result<()> {
+    let executable = std::env::current_exe()?;
+    ensure!(executable.is_absolute(), "current executable path is not absolute");
     #[cfg(target_os = "macos")]
     if let Some(bundle) = app_path(&executable) {
         let parent = bundle.parent().context("application has no parent")?;
@@ -188,10 +189,13 @@ fn extract_macos_executable(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut archive = tar::Archive::new(decoder);
     let mut binary = None;
     let mut count = 0usize;
+    let mut expanded = 0u64;
     for entry in archive.entries()? {
         let mut entry = entry?;
         count += 1;
         ensure!(count <= 50_000, "application archive has too many entries");
+        expanded = expanded.checked_add(entry.size()).context("archive size overflow")?;
+        ensure!(expanded <= MAX_EXPANDED, "application archive expands beyond the limit");
         let parts = archive_path(&entry.path()?)?;
         if parts.len() != 4 || parts[1] != "Contents" || parts[2] != "MacOS" || !entry.header().entry_type().is_file() {
             continue;
@@ -216,6 +220,7 @@ fn bundle_executable(bundle: &Path) -> Result<PathBuf> {
         let entry = entry?;
         if entry.file_type()?.is_file() {
             ensure!(found.is_none(), "application has multiple executables");
+            ensure!(entry.metadata()?.len() <= MAX_EXECUTABLE, "application executable is too large");
             let bytes = fs::read(entry.path())?;
             validate_executable(&bytes, "macos")?;
             found = Some(entry.path());
