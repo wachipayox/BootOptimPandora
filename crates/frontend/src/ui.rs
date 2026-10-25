@@ -757,6 +757,7 @@ impl LauncherUI {
                 ),
         );
         let sidebar = v_flex()
+            .window_control_area(WindowControlArea::Drag)
             .w(px(220.))
             .min_w(px(220.))
             .h_full()

@@ -207,7 +207,7 @@ impl ModalRoot {
             .on_mouse_down(MouseButton::Left, {
                 let should_move = self.should_move.clone();
                 move |_, window, _| {
-                    should_move.store(!window.default_prevented(), Ordering::Relaxed);
+                    should_move.store(!cfg!(windows) && !window.default_prevented(), Ordering::Relaxed);
                 }
             })
             .on_mouse_up(MouseButton::Left, {

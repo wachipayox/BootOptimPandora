@@ -366,6 +366,7 @@ impl Render for HomePage {
             self.request_heads(server, window, cx);
         }
         let mut header = h_flex()
+            .window_control_area(WindowControlArea::Drag)
             .h(px(48.))
             .px(px(24.))
             .gap(px(20.))

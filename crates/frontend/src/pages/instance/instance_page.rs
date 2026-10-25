@@ -86,7 +86,7 @@ impl InstancePage {
             .on_mouse_down_out(window.listener_for(&state, |s, _, _, _| s.should_move = false))
             .on_mouse_down(
                 MouseButton::Left,
-                window.listener_for(&state, |s, _, w, _| s.should_move = !w.default_prevented()),
+                window.listener_for(&state, |s, _, w, _| s.should_move = !cfg!(windows) && !w.default_prevented()),
             )
             .on_mouse_up(MouseButton::Left, window.listener_for(&state, |s, _, _, _| s.should_move = false))
             .on_mouse_move(window.listener_for(&state, |s, _, w, _| {

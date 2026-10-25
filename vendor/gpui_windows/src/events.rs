@@ -898,6 +898,19 @@ impl WindowsWindowInner {
             } as _);
         }
 
+        // Preserve native side/bottom/corner resize borders even when the
+        // adjacent client surface is draggable. Top inset handling above is
+        // still needed for our client-decorated titlebar.
+        if self.is_resizable && !self.state.is_maximized() {
+            let native = unsafe { DefWindowProcW(handle, WM_NCHITTEST, WPARAM(0), lparam) };
+            if matches!(
+                native.0 as u32,
+                HTLEFT | HTRIGHT | HTBOTTOM | HTBOTTOMLEFT | HTBOTTOMRIGHT | HTTOPLEFT | HTTOPRIGHT
+            ) {
+                return Some(native.0);
+            }
+        }
+
         drag_area
     }
 

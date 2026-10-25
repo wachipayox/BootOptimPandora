@@ -2231,7 +2231,22 @@ impl Interactivity {
 
                                     if let Some(area) = self.window_control {
                                         window.insert_window_control_hitbox(area, hitbox.clone());
+                                    } else if self.focusable
+                                        || self.tracked_focus_handle.is_some()
+                                        || !self.mouse_down_listeners.is_empty()
+                                        || !self.mouse_up_listeners.is_empty()
+                                        || !self.click_listeners.is_empty()
+                                        || !self.aux_click_listeners.is_empty()
+                                        || self.drag_listener.is_some()
+                                    {
+                                        window.insert_window_control_client_hitbox(hitbox.clone());
                                     }
+
+                                    #[cfg(feature = "native-capture")]
+                                    window.describe_window_control_hitbox(
+                                        hitbox.id,
+                                        format!("{} {:?}", self.aria.label.as_deref().unwrap_or(""), global_id),
+                                    );
 
                                     self.paint_mouse_listeners(hitbox, element_state.as_mut(), window, cx);
                                     self.paint_scroll_listener(hitbox, &style, window, cx);

@@ -28,7 +28,9 @@ pub fn start(window: &mut Window, cx: &mut App) {
                             // Frame callbacks run before drawing. The following
                             // callback retrieves the copy saved by this draw.
                             window.on_next_frame(move |window, _| {
-                                let _ = send.send(window.capture_framebuffer());
+                                let _ = send.send(window.capture_framebuffer().map(|image| {
+                                    (image, window.capture_window_hit_regions())
+                                }));
                             });
                         });
                         window.refresh();
@@ -41,7 +43,17 @@ pub fn start(window: &mut Window, cx: &mut App) {
                 let directory = directory.clone();
                 cx.background_executor()
                     .spawn(async move {
-                        let result = result.and_then(|image| {
+                        let result = result.and_then(|(image, regions)| {
+                            let regions: Vec<_> = regions.into_iter().map(|(label, area, bounds, points)| {
+                                serde_json::json!({
+                                    "label": label, "area": area,
+                                    "bounds": {"x": f32::from(bounds.origin.x), "y": f32::from(bounds.origin.y),
+                                        "width": f32::from(bounds.size.width), "height": f32::from(bounds.size.height)},
+                                    "points": points.into_iter().map(|p| [f32::from(p.x), f32::from(p.y)]).collect::<Vec<_>>()
+                                })
+                            }).collect();
+                            std::fs::write(directory.join("regions.pending.json"), serde_json::to_vec(&regions)?)?;
+                            std::fs::rename(directory.join("regions.pending.json"), directory.join("regions.json"))?;
                             let pending = directory.join("frame.pending.png");
                             image.save(&pending)?;
                             std::fs::rename(pending, directory.join("frame.png"))?;
