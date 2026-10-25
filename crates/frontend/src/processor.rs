@@ -7,7 +7,7 @@ use bridge::{
 };
 use gpui::{AnyWindowHandle, App, DisplayId, SharedString, Window};
 use gpui_component::{
-    Root, WindowExt,
+    WindowExt,
     notification::{Notification, NotificationType},
 };
 
@@ -19,7 +19,6 @@ use crate::{
         metadata::FrontendMetadata,
     },
     interface_config::InterfaceConfig,
-    root::LauncherRoot,
 };
 
 pub struct Processor {
@@ -226,6 +225,14 @@ impl Processor {
             MessageToFrontend::Quit => {
                 cx.quit();
             },
+            MessageToFrontend::PrepareLauncherRestart => {
+                // The backend has already checked that games, AOT and file
+                // operations are idle. Keep the existing IPC/quit handshake.
+                for handle in cx.windows() {
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                }
+                self.quit_coordinator.set_can_quit(true);
+            },
             MessageToFrontend::CloseModal => {
                 let Some(handle) = self.main_window_handle else {
                     return;
@@ -247,22 +254,15 @@ impl Processor {
             MessageToFrontend::SkinLibraryUpdated { skin_library } => {
                 self.data.set_skin_library(skin_library, cx);
             },
-            MessageToFrontend::UpdateAvailable { .. } => {
+            MessageToFrontend::LauncherUpdateChecking { .. } => {
+                crate::launcher_updates::checking(cx);
+            },
+            MessageToFrontend::LauncherUpdateChecked { .. } => {
                 self.with_main_window(message, cx, |_, message, window, cx| {
-                    let MessageToFrontend::UpdateAvailable { update } = message else {
-                        unreachable!();
+                    let MessageToFrontend::LauncherUpdateChecked { manual, result } = message else {
+                        unreachable!()
                     };
-
-                    if let Some(root) = window.root::<Root>().flatten() {
-                        if let Ok(launcher_root) = root.read(cx).view().clone().downcast::<LauncherRoot>() {
-                            launcher_root.update(cx, |launcher_root, cx| {
-                                launcher_root.ui.update(cx, |ui, cx| {
-                                    ui.update = Some(update);
-                                    cx.notify();
-                                });
-                            });
-                        }
-                    }
+                    crate::launcher_updates::checked(result, manual, window, cx);
                 });
             },
             MessageToFrontend::ManualCurseforgeDownloadsRequired { request: _ } => {

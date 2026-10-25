@@ -142,6 +142,9 @@ impl BackendState {
     }
 
     pub async fn handle_message(self: &Arc<Self>, message: MessageToBackend) {
+        if self.launcher_update_restarting.load(Ordering::SeqCst) && !matches!(&message, MessageToBackend::Quit) {
+            return;
+        }
         match message {
             MessageToBackend::GetSaveGroups { id, channel } => {
                 let _ = channel.send(crate::BackendState::list_save_groups(self, id));
@@ -253,7 +256,7 @@ impl BackendState {
                 from_index,
                 to_index,
             } => {
-                tokio::task::spawn(Instance::reorder_servers(self.clone(), id, from_index, to_index));
+                self.spawn_launcher_task(Instance::reorder_servers(self.clone(), id, from_index, to_index));
             },
             MessageToBackend::RequestLoadContentFolder { id, content_folder } => {
                 tokio::task::spawn(Instance::load_content(self.clone(), id, content_folder));
@@ -265,7 +268,7 @@ impl BackendState {
                 icon,
             } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     backend.create_instance(&name, &version, loader, icon).await;
                 });
             },
@@ -279,7 +282,7 @@ impl BackendState {
             },
             MessageToBackend::DuplicateInstance { id, name, modal_action } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     crate::duplicate::duplicate_instance(backend, id, &name, modal_action).await;
                 });
             },
@@ -292,7 +295,7 @@ impl BackendState {
                 modal_action,
             } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     backend.send.send_info(format!("Creating local branch '{name}'"));
                     crate::duplicate::create_local_branch(
                         backend,
@@ -314,7 +317,7 @@ impl BackendState {
                 modal_action,
             } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     crate::export::export_instance(backend, id, format, options, output, modal_action).await;
                 });
             },
@@ -582,7 +585,7 @@ impl BackendState {
             },
             MessageToBackend::SetInstanceHomeArtwork { id, path, channel } => {
                 let backend = self.clone();
-                tokio::task::spawn_blocking(move || {
+                self.spawn_launcher_task_blocking(move || {
                     let _ = channel.send(backend.set_instance_home_artwork(id, path.as_deref()));
                 });
             },
@@ -710,13 +713,13 @@ impl BackendState {
                 outcome,
             } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     backend.cli_start_instance_by_name(name, modal_action, update_policy, outcome).await;
                 });
             },
             MessageToBackend::CliInstanceCommand { command, outcome } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     let result = crate::cli_instances::run(&backend, command).await;
                     _ = outcome.send(result);
                 });
@@ -956,7 +959,7 @@ impl BackendState {
                 };
 
                 let this = self.clone();
-                tokio::spawn(async move {
+                self.spawn_launcher_task(async move {
                     this.download_modpack_children(&summary, loader, minecraft_version, &modal_action).await;
                     if let Some(instance) = this.instance_state.write().instances.get_mut(id) {
                         let mut changes = FolderChanges::no_changes();
@@ -973,7 +976,7 @@ impl BackendState {
             MessageToBackend::InstallContent { content, modal_action } => {
                 let this = self.clone();
 
-                tokio::spawn(async move {
+                self.spawn_launcher_task(async move {
                     this.install_content(content, modal_action.clone()).await;
                     modal_action.set_finished();
                     this.send.send(MessageToFrontend::Refresh);
@@ -1025,7 +1028,7 @@ impl BackendState {
 
                 let this = self.clone();
 
-                tokio::spawn(async move {
+                self.spawn_launcher_task(async move {
                     this.install_content(content_install, modal_action.clone()).await;
                     modal_action.set_finished();
                     this.send.send(MessageToFrontend::Refresh);
@@ -1799,13 +1802,13 @@ impl BackendState {
                 channel,
             } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     let _ = channel.send(backend.save_profile_text_file(id, path, contents, expected_sha256).await);
                 });
             },
             MessageToBackend::ToggleProfileMod { id, path, channel } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     let _ = channel.send(backend.toggle_profile_mod(id, path).await);
                 });
             },
@@ -1816,7 +1819,7 @@ impl BackendState {
                 channel,
             } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     let _ = channel.send(backend.restore_profile_file(id, path, source).await);
                 });
             },
@@ -1833,7 +1836,7 @@ impl BackendState {
                 modal_action,
             } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     let _ = channel.send(backend.update_inherited_chain(id, &modal_action).await);
                 });
             },
@@ -1866,7 +1869,7 @@ impl BackendState {
                 modal_action,
             } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     let progress = modal_action.push_tracker("Preparing modpack assets".into());
                     progress.set_total(1);
                     let revision = crate::distribution::RevisionRef {
@@ -1907,7 +1910,7 @@ impl BackendState {
             },
             MessageToBackend::UpdateGlobalProfileInstance { id } => {
                 let backend = self.clone();
-                tokio::task::spawn(async move {
+                self.spawn_launcher_task(async move {
                     backend.send.send_info("Checking for inherited profile updates".to_owned());
                     let parent_kind = backend
                         .persistent_profile_branch_status(id, None)
@@ -2149,11 +2152,13 @@ impl BackendState {
                 self.config.lock().modify(|backend_config| {
                     backend_config.distribution = config;
                 });
+                crate::update::spawn_update_check(self, false);
             },
             MessageToBackend::SetLauncherChannel { channel } => {
                 self.config.lock().modify(|backend_config| {
                     backend_config.channel = channel;
                 });
+                crate::update::spawn_update_check(self, false);
             },
             MessageToBackend::SetProxyPassword { password } => {
                 match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
@@ -2296,13 +2301,12 @@ impl BackendState {
                 }
             },
             MessageToBackend::InstallUpdate { update, modal_action } => {
-                tokio::task::spawn(crate::update::install_update(
-                    self.http_client_provider.redirecting(),
-                    self.directories.clone(),
-                    self.send.clone(),
-                    update,
-                    modal_action,
-                ));
+                // Keep new launch requests queued until the signed update has
+                // either failed or handed off to the orderly backend shutdown.
+                crate::update::install_update(self.clone(), update, modal_action).await;
+            },
+            MessageToBackend::CheckLauncherUpdates => {
+                crate::update::spawn_update_check(self, true);
             },
             MessageToBackend::ImportFromOtherLauncher {
                 launcher,
@@ -2463,7 +2467,7 @@ impl BackendState {
             },
             MessageToBackend::ImportLauncherSkins { plan, result } => {
                 let backend = self.clone();
-                tokio::task::spawn_blocking(move || {
+                self.spawn_launcher_task_blocking(move || {
                     let outcome = crate::skin_import::import(&backend.directories.skin_library_dir, plan);
                     SkinManager::skin_library_mark_dirty(&backend, crate::fs::FolderChanges::all_dirty());
                     _ = result.send(outcome);

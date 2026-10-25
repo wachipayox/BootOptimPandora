@@ -69,3 +69,16 @@ data. Pass `-ExecutableSourceCommit <verified SHA>` for a binary built from a
 different checkout; the script revision is recorded separately and never implies
 the binary's source. An explicit executable replaces the isolated portable copy.
 `launcher-theme-joke` captures the same dialog opened by the non-dark theme chips.
+
+Launcher update review uses `-LauncherUpdateScreens -LauncherUpdateFixture <private JSON>`
+with the optional `ui-capture` build. The fixture contains `releases` in the
+Distribution read schema and stays in private wbombo. Routes are
+`launcher-update-indicator`, `launcher-update`, `launcher-update-expanded`,
+`launcher-update-progress`, `launcher-update-failed`, `launcher-update-checking`,
+`launcher-update-current`, `launcher-update-search-error` and
+`launcher-update-verification-error`. They render native views with cosmetic
+local input and a fixed source marker that the backend rejects before download
+or installation. The script records the fixture SHA-256 and readiness signal.
+`-HomeScreens` also waits for Home/artwork/glass behind update dialogs.
+Do not publish a release to create screenshots, and do not describe fixture
+captures as proof of a real server update or successful self-installation.

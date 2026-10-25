@@ -46,6 +46,7 @@ mod profile_layout_ownership;
 mod profile_layout_service;
 mod profile_overwrites;
 pub use profile_layout_service::{ProfileBranchSnapshot, ProfileLayoutServiceError};
+mod launcher_install;
 mod save_groups;
 mod server_list_pinger;
 mod shortcut;

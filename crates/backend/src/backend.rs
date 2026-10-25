@@ -255,6 +255,9 @@ pub fn start(
         aot_create_requests: Default::default(),
         should_quit: AtomicBool::new(false),
         content_install_semaphore: Semaphore::new(8),
+        launcher_update_check_serial: Default::default(),
+        launcher_update_restarting: AtomicBool::new(false),
+        launcher_tasks: Default::default(),
         manual_curseforge_downloads: ManualCurseforgeDownloadSession::default(),
     };
 
@@ -357,6 +360,9 @@ pub struct BackendState {
     pub aot_create_requests: Mutex<Vec<(InstanceID, aot_cache::PendingCreate)>>,
     pub should_quit: AtomicBool,
     pub content_install_semaphore: Semaphore,
+    pub launcher_update_check_serial: std::sync::atomic::AtomicU64,
+    pub launcher_update_restarting: AtomicBool,
+    pub launcher_tasks: Arc<std::sync::atomic::AtomicUsize>,
     pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
 }
 
@@ -458,15 +464,12 @@ impl BackendState {
     async fn start(self, recv: BackendReceiver, watcher_rx: Receiver<notify_debouncer_full::DebounceEventResult>) {
         log::info!("Starting backend");
 
-        tokio::task::spawn(crate::update::check_for_updates(
-            self.http_client_provider.redirecting(),
-            self.send.clone(),
-        ));
-
         // Pre-fetch version manifest
         self.meta.preload(MinecraftVersionManifestMetadataItem);
 
-        Arc::new(self).handle(recv, watcher_rx).await;
+        let backend = Arc::new(self);
+        crate::update::spawn_update_check(&backend, false);
+        backend.handle(recv, watcher_rx).await;
     }
 
     pub async fn load_all_instances(&self) {
@@ -692,14 +695,18 @@ impl BackendState {
                 }
             }
 
-            self.start_aot_retries();
-            self.start_aot_creates();
+            if !self.launcher_update_restarting.load(Ordering::SeqCst) {
+                self.start_aot_retries();
+                self.start_aot_creates();
+            }
 
             if self.should_quit.load(Ordering::Relaxed) {
-                while let Some(message) = backend_recv.try_recv() {
-                    self.handle_message(message).await;
+                if !self.launcher_update_restarting.load(Ordering::SeqCst) {
+                    while let Some(message) = backend_recv.try_recv() {
+                        self.handle_message(message).await;
+                    }
+                    self.handle_tick();
                 }
-                self.handle_tick();
                 break;
             }
         }

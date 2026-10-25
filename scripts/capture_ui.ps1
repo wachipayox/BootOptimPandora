@@ -11,6 +11,8 @@ param(
     [switch]$NewsScreens,
     [switch]$InstanceScreens,
     [switch]$LauncherScreens,
+    [switch]$LauncherUpdateScreens,
+    [string]$LauncherUpdateFixture,
     [string]$NewsFixture,
     [ValidateSet('advanced','version','expanded','editing')][string]$CaptureState,
     [string[]]$Pages,
@@ -170,12 +172,17 @@ $oldFramebufferDirectory = $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR
 if ($Framebuffer) { $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR = $framebufferRoot }
 $oldCaptureState = $env:WBOMBO_UI_CAPTURE_STATE
 if ($CaptureState) { $env:WBOMBO_UI_CAPTURE_STATE = $CaptureState }
+$oldLauncherUpdateFixture = $env:WBOMBO_UI_CAPTURE_LAUNCHER_RELEASES
 $screens = @(
     @{ page = 'instances'; file = 'instances.png'; label = 'Inicio con la instancia seleccionada o el fallback Vanilla' },
     @{ page = 'appearance'; file = 'settings-appearance.png'; label = 'Ajustes y apariencia' },
     @{ page = 'accounts'; file = 'accounts.png'; label = 'Menú de cuentas (sin iniciar sesión)' }
 )
 try {
+    if ($LauncherUpdateFixture) { $env:WBOMBO_UI_CAPTURE_LAUNCHER_RELEASES = (Resolve-Path -LiteralPath $LauncherUpdateFixture).Path }
+    if (($LauncherUpdateScreens -or @($Pages | Where-Object { $_ -like 'launcher-update*' }).Count -gt 0) -and -not $LauncherUpdateFixture) {
+        throw 'Launcher update captures require an explicit private cosmetic fixture; never publish a release for capture.'
+    }
     if ($TestProfile) {
         $createArgs = @('--create-instance', $InstanceName, '--from-profile', $TestProfile)
         if ($Revision) { $createArgs += @('--revision', $Revision) }
@@ -206,6 +213,11 @@ try {
             $screens += @{page=$launcherRoute;file="$launcherRoute.png";label='Native launcher screen or existing dialog; no action is confirmed'}
         }
         if ($TestProfile -or $PortableDirectory) { $screens += @{page="content-browser:$InstanceName";file='content-browser.png';label='Browse content for owned fixture; no install is started'} }
+    }
+    if ($LauncherUpdateScreens) {
+        foreach ($updateRoute in @('launcher-update-indicator','launcher-update','launcher-update-expanded','launcher-update-progress','launcher-update-failed','launcher-update-checking','launcher-update-current','launcher-update-search-error','launcher-update-verification-error')) {
+            $screens += @{page=$updateRoute;file="$updateRoute.png";label='Cosmetic local fixture only; installation is rejected by its fixed capture source marker'}
+        }
     }
     if ($Pages) { $screens = @($Pages | ForEach-Object { @{ page=$_; file=(($_ -replace ':','-') + '.png'); label='Explicit native capture route' } }) }
     if ($Components) {
@@ -238,13 +250,21 @@ try {
         Start-Sleep -Seconds 5
         $proc.Refresh()
         if ($proc.HasExited) { throw "Pandora exited for $($screen.page), code $($proc.ExitCode); see capture-window.err in the isolated portable directory" }
-        if ($HomeScreens -and $screen.page -in @('instances','accounts','home-menu','home-news')) {
+        if ($screen.page -like 'launcher-update*') {
+            $ready="launcher-update-ready pid=$($proc.Id)"
+            $log=Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $deadline=(Get-Date).AddSeconds(45)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Launcher update capture fixture did not become ready.' }
+        }
+        $updateHome = $screen.page -in @('launcher-update-indicator','launcher-update','launcher-update-expanded','launcher-update-progress','launcher-update-failed')
+        if ($HomeScreens -and ($screen.page -in @('instances','accounts','home-menu','home-news') -or $updateHome)) {
             $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
             $ready = "home-ready pid=$($proc.Id)"
             $deadline = (Get-Date).AddSeconds(120)
             while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Home presentation did not settle before capture.' }
-            if ($screen.page -in @('instances','accounts','home-menu')) {
+            if ($screen.page -in @('instances','accounts','home-menu') -or $updateHome) {
                 $ready = "glass-ready pid=$($proc.Id)"
                 $deadline = (Get-Date).AddSeconds(60)
                 while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
@@ -346,6 +366,7 @@ try {
         launcher = 'BootOptimPandora'
         executableSha256 = $executableHash
         executableSourceCommit = $ExecutableSourceCommit
+        launcherUpdateFixtureSha256 = if ($LauncherUpdateFixture) { (Get-FileHash -LiteralPath $LauncherUpdateFixture -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
         captureScriptCommit = (git -C $repo rev-parse HEAD)
         viewport = if ($DesignViewport) { '1280 x 860 logical pixels' } else { 'maximized' }
         captures = $captureMetadata
@@ -355,6 +376,7 @@ try {
         unavailable = if ($TestProfile -or $PortableDirectory) { @() } else { @('instance-detail and update-dialog require an owned test profile fixture') }
     } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $outputPath 'capture-manifest.json')
 } finally {
+    if ($null -ne $oldLauncherUpdateFixture) { $env:WBOMBO_UI_CAPTURE_LAUNCHER_RELEASES=$oldLauncherUpdateFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_LAUNCHER_RELEASES -ErrorAction SilentlyContinue }
     if ($null -ne $oldFramebufferDirectory) { $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR=$oldFramebufferDirectory } else { Remove-Item Env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR -ErrorAction SilentlyContinue }
     if ($null -ne $oldNewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS=$oldNewsFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_NEWS -ErrorAction SilentlyContinue }
     if ($null -ne $proc -and -not $proc.HasExited) {

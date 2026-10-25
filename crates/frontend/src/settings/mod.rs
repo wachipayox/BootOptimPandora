@@ -825,6 +825,11 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
     let group = Rc::make_mut(&mut last.groups).first_mut().expect("About group");
     let mut about_items = group.items.to_vec();
     about_items.push(SettingItem {
+        title: || "Buscar actualización",
+        widget: SettingItemWidget::AnyWide(Rc::new(|_, cx| crate::launcher_updates::about_widget(cx))),
+        ..Default::default()
+    });
+    about_items.push(SettingItem {
         widget: SettingItemWidget::AnyWide(Rc::new(|_, _| {
             let mut actions = h_flex().gap(px(8.)).child(
                 design::DesignButton::new("report-launcher-issue")
@@ -854,7 +859,11 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
         "launcher-distribution" => 3,
         "launcher-ignored" => 4,
         "launcher-windows" => 5.min(pages.len() - 1),
-        "launcher-about" => pages.len() - 1,
+        "launcher-about"
+        | "launcher-update-checking"
+        | "launcher-update-current"
+        | "launcher-update-search-error"
+        | "launcher-update-verification-error" => pages.len() - 1,
         _ => 0,
     };
     Settings {

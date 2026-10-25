@@ -230,7 +230,7 @@ impl ModalRoot {
     }
 }
 
-fn render_progress_trackers(modal_action: &ModalAction, elapsed_modal: f32) -> (Vec<Div>, bool) {
+pub(crate) fn render_progress_trackers(modal_action: &ModalAction, elapsed_modal: f32) -> (Vec<Div>, bool) {
     modal_action.write_trackers(|trackers| {
         let mut progress_entries = Vec::with_capacity(trackers.len());
         let mut needs_animation = false;
@@ -288,7 +288,11 @@ fn render_progress_trackers(modal_action: &ModalAction, elapsed_modal: f32) -> (
 
             let title = tracker.get_title();
             let row = div().gap_3().child(SharedString::from(title)).child(progress_bar).opacity(opacity);
-            progress_entries.push(if tracker.is_subtask() { row.pl_4().text_sm() } else { row });
+            progress_entries.push(if tracker.is_subtask() {
+                row.pl_4().text_sm()
+            } else {
+                row
+            });
         }
         (progress_entries, needs_animation)
     })
@@ -451,5 +455,7 @@ pub fn show_modal(
                 _notify_task: Arc::new(task),
             })
         },
-    ).ok().map(Into::into)
+    )
+    .ok()
+    .map(Into::into)
 }

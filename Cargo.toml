@@ -85,6 +85,7 @@ ustr = { version = "1.1.0", features = ["serde"] }
 base64 = "0.22.1"
 oauth2 = { version = "5.0.0", features = ["reqwest"] }
 sha2 = "0.10.9"
+semver = "1.0.28"
 zip = "8.5.1"
 url = "2.5.7"
 uuid = { version = "1.18.1", features = ["serde"] }

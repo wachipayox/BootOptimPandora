@@ -38,6 +38,16 @@ The launcher configuration has a `channel` option with two values: `player` (the
 
 The private launcher starts from the instance's existing `.minecraft` directory and keeps it writable across runs. Start does not rotate or rebuild `mods/`; the private updater must install pack changes into the instance before launch. The former `original_mods` layout is restored only when migrating an instance left by an older launcher build. Third-party Modrinth/CurseForge modpack expansion is not part of this private Start path.
 
+## Signed launcher updates
+
+The launcher reads `/v1/launcher/pandora/releases` from its configured Distribution service, using the current platform, Player/Developer channel and installed SemVer. The Distribution service version is independent of the launcher version. The update icon beside the sidebar logo opens the version dialog; **Buscar actualización** in About also checks explicitly. **Más tarde** saves the skipped version locally and suppresses its automatic dialog; the icon and manual check remain available.
+
+Before offering an update, Pandora verifies Ed25519 over the exact decoded `artifact.statement` bytes, using the same HTTPS signing-key discovery and configured pins as profiles. It checks the statement type, application, platform, version, SHA-256 and size, and requires strictly greater SemVer precedence (build metadata does not make a version newer). Before installation it rechecks the current channel/source and release, then verifies the bounded download's SHA-256 and length. Redirects and external artifact origins are not accepted. See Distribution's [launcher contract](https://github.com/wachipayox/BootOptimDistribution/blob/agent/integration-current/docs/PROFILE_PROTOCOL.md).
+
+Windows installs an EXE; Linux accepts AppImage/ELF; macOS uses `.app.tar.gz`. A standalone macOS installation extracts only the bundle executable; the same rule protects a portable bundle containing launcher data. Archive paths/links and expansion are bounded. The current installation path is kept and a uniquely named `.wbombo-previous-…` sibling is retained for recovery. Existing Linux/macOS authorization is preserved when the installation needs elevated permissions. Games, AOT, authentication and pending file operations must be idle; replacement uses the existing window/IPC shutdown coordinator before restarting. Launcher configuration, accounts and instances are preserved.
+
+Legacy GitHub update manifests produced by packaging scripts are not read by this client. This implementation does not publish Distribution releases.
+
 ## Features
 - (Optional) sandboxing, to prevent mods from harming your system
 - Cross-instance file syncing (options, saves, etc.) (https://youtu.be/wb5EY2VsMKg)

@@ -4,7 +4,6 @@ use bridge::instance::InstanceID;
 use gpui::{prelude::*, *};
 use gpui_component::{h_flex, scroll::ScrollableElement, v_flex};
 use rustc_hash::FxHashMap;
-use schema::pandora_update::UpdatePrompt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -31,7 +30,6 @@ pub struct LauncherUI {
     page: LauncherPage,
     pub(crate) home_account_menu: bool,
     pub(crate) browser_manual_view: bool,
-    pub update: Option<UpdatePrompt>,
     recent_instances: heapless::Vec<(InstanceID, SharedString), 3>,
     page_history_backwards: VecDeque<(PageType, Arc<[PageType]>)>,
     page_history_forwards: Vec<(PageType, Arc<[PageType]>)>,
@@ -156,12 +154,7 @@ impl LauncherPage {
 
         let config = InterfaceConfig::get(cx);
         let page_path = PagePath::new(ui.data.clone(), config.main_page.clone(), config.page_path.clone());
-        let title_bar = MainTitleBar {
-            page_path,
-            controls,
-            update: ui.update.clone(),
-            send: ui.data.backend_handle.clone(),
-        };
+        let title_bar = MainTitleBar { page_path, controls };
         let browser = matches!(config.main_page, PageType::Modrinth { .. } | PageType::Curseforge { .. });
         let page = if browser && ui.browser_manual_view {
             div()
@@ -366,7 +359,6 @@ impl LauncherUI {
             page,
             home_account_menu: false,
             browser_manual_view: false,
-            update: None,
             recent_instances,
             page_history_backwards: VecDeque::with_capacity(32),
             page_history_forwards: Vec::new(),
@@ -778,10 +770,22 @@ impl LauncherUI {
                     .pt(px(16.))
                     .window_control_area(WindowControlArea::Drag)
                     .child(
-                        img(ImageSource::Resource(Resource::Embedded("images/wachiland-launcher-ancho.svg".into())))
-                            .w(px(140.))
+                        h_flex()
+                            .w_full()
                             .h(px(40.))
-                            .object_fit(ObjectFit::Contain),
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                img(ImageSource::Resource(Resource::Embedded(
+                                    "images/wachiland-launcher-ancho.svg".into(),
+                                )))
+                                .w(px(140.))
+                                .h(px(40.))
+                                .object_fit(ObjectFit::Contain),
+                            )
+                            .when(crate::launcher_updates::available(cx), |row| {
+                                row.child(crate::launcher_updates::indicator(cx))
+                            }),
                     ),
             )
             .child(div().flex_1().min_h_0().overflow_y_scrollbar().child(instances))
