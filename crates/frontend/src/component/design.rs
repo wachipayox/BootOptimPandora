@@ -451,11 +451,7 @@ pub fn dialog(dialog: gpui_component::dialog::Dialog) -> gpui_component::dialog:
     dialog
         .w(px(416.))
         .close_button(false)
-        .bg(linear_gradient(
-            180.,
-            linear_color_stop(rgba(theme::DIALOG_BG), 0.),
-            linear_color_stop(rgba(theme::DIALOG_BG), 1.),
-        ))
+        .bg(rgba(theme::DIALOG_BG))
         .border_1()
         .border_color(rgba(theme::DIALOG_OUTLINE))
         .rounded(px(0.))
@@ -737,11 +733,7 @@ pub fn page_header(label: impl Into<SharedString>, window: &Window) -> Div {
         .h(px(if stacked { 40. } else { 48. }))
         .flex_shrink_0()
         .px(px(20.))
-        .bg(linear_gradient(
-            180.,
-            linear_color_stop(rgba(0x0b0b0ce6), 0.),
-            linear_color_stop(rgba(0x0b0b0ce6), 1.),
-        ))
+        .bg(rgba(0x0b0b0ce6))
         .border_b_1()
         .border_color(rgba(0xffffff0b))
         .window_control_area(WindowControlArea::Drag)
