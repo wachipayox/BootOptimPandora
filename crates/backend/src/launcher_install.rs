@@ -472,4 +472,36 @@ mod tests {
         assert!(!script.contains("--run-instance"));
         assert!(windows_script(target, Path::new("D:\\different\\next.exe"), 12345).is_err());
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_helper_restores_previous_file_when_os_rejects_candidate() {
+        use base64::Engine;
+        use std::os::windows::process::CommandExt;
+        let scratch = Scratch::new();
+        let target = scratch.0.join("O'Brien $portable.exe");
+        let staged = scratch.0.join("candidate.exe");
+        // Invalid PE fixtures: neither contains executable code. Exercise the
+        // real replacement/rollback script without running a launcher or game.
+        fs::write(&target, b"MZ-previous-invalid-fixture").unwrap();
+        fs::write(&staged, b"MZ-candidate-invalid-fixture").unwrap();
+        let script = windows_script(&target, &staged, i32::MAX as u32).unwrap();
+        let encoded: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let result = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-EncodedCommand",
+            ])
+            .arg(base64::engine::general_purpose::STANDARD.encode(encoded))
+            .creation_flags(0x08000000)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert_eq!(fs::read(&target).unwrap(), b"MZ-previous-invalid-fixture");
+        assert!(!staged.exists());
+        assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 1);
+    }
 }
