@@ -69,6 +69,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Check optional Windows framebuffer capture
+        if: matrix.platform.os_name == 'Windows-x86_64'
+        run: cargo check --release -p pandora_launcher --features ui-capture --frozen --target ${{ matrix.platform.target }}
+
   backend-tests-windows:
     runs-on: windows-latest
     timeout-minutes: 45
