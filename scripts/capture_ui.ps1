@@ -410,7 +410,7 @@ try {
             $captureHandle=[CaptureWindow]::GetForegroundWindow()
             [uint32]$dialogOwner=0
             [void][CaptureWindow]::GetWindowThreadProcessId($captureHandle,[ref]$dialogOwner)
-            if($dialogOwner -ne $proc.Id -or $captureHandle -eq $proc.MainWindowHandle){throw 'Standalone dialog HWND is not the active owned secondary window.'}
+            if($dialogOwner -ne $proc.Id -or ([CaptureWindow]::GetWindowLongPtr($captureHandle,-16).ToInt64() -band 0x40000) -ne 0){throw 'Standalone dialog HWND is not the active owned nonresizable window.'}
         }
         Save-Window (Join-Path $outputPath $screen.file) $captureHandle $proc.Id
         if ($screen.page.StartsWith('news-article')) {
@@ -445,12 +445,12 @@ try {
                 Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
             }
         }
-        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page -in @('skins','skins-url','skins-copy','skins-import','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news') -or $screen.page -match '^(instance-|derived:|duplicate:|update:|delete:|export:|groups:)') {
+        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page -in @('skins','skins-url','skins-copy','skins-import','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news','window-dialog') -or $screen.page -match '^(instance-|derived:|duplicate:|update:|delete:|export:|groups:)') {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
-            if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
-            if (-not [CaptureWindow]::PostMessage($proc.MainWindowHandle, 0x101, [IntPtr]9, [IntPtr]0xc00f0001L)) { throw 'Cannot send capture Tab keyup' }
-            Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-focus.png')) $proc.MainWindowHandle $proc.Id
+            if (-not [CaptureWindow]::PostMessage($captureHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
+            if (-not [CaptureWindow]::PostMessage($captureHandle, 0x101, [IntPtr]9, [IntPtr]0xc00f0001L)) { throw 'Cannot send capture Tab keyup' }
+            Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-focus.png')) $captureHandle $proc.Id
         }
         $newsLogPath = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
         $errorsBeforeClose = @(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count
