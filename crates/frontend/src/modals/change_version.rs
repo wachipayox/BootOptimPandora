@@ -9,7 +9,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, IndexPath, Sizable, WindowExt,
     button::{Button, ButtonVariants},
-    checkbox::Checkbox,
     dialog::Dialog,
     h_flex,
     list::ListState,
@@ -38,7 +37,7 @@ use schema::{
 use ustr::Ustr;
 
 use crate::{
-    component::{content_list::ContentListDelegate, error_alert::ErrorAlert},
+    component::{content_list::ContentListDelegate, design},
     entity::{
         DataEntities,
         metadata::{AsMetadataResult, FrontendMetadata, FrontendMetadataResult, FrontendMetadataState},
@@ -394,6 +393,7 @@ impl ChangeVersionDialog {
                     },
                     FrontendMetadataResult::Loading => {},
                     FrontendMetadataResult::Error(error, alive) => {
+                        log::warn!("Content versions failed: {error}");
                         self.versions_error = Some(error);
 
                         if let Some(alive) = alive {
@@ -416,6 +416,7 @@ impl ChangeVersionDialog {
                     },
                     FrontendMetadataResult::Loading => {},
                     FrontendMetadataResult::Error(error, alive) => {
+                        log::warn!("Content versions failed: {error}");
                         self.versions_error = Some(error);
 
                         if let Some(alive) = alive {
@@ -491,6 +492,7 @@ impl ChangeVersionDialog {
                             .map(|changelog| ChangelogContent::Markdown(SharedString::from(changelog.to_string()))),
                     ),
                     FrontendMetadataResult::Error(error, alive) => {
+                        log::warn!("Content changelog failed: {error}");
                         self.changelog_error = Some(error);
 
                         if let Some(alive) = alive {
@@ -519,6 +521,7 @@ impl ChangeVersionDialog {
                             .map(|data| ChangelogContent::Html(SharedString::from(data.to_string()))),
                     ),
                     FrontendMetadataResult::Error(error, alive) => {
+                        log::warn!("Content changelog failed: {error}");
                         self.changelog_error = Some(error);
 
                         if let Some(alive) = alive {
@@ -598,8 +601,11 @@ impl ChangeVersionDialog {
             },
         };
 
-        if let Some(error) = self.changelog_error.clone() {
-            return ErrorAlert::new(t::instance::content::change_version::error_loading_changelog().into(), error)
+        if self.changelog_error.is_some() {
+            return div()
+                .text_center()
+                .text_color(cx.theme().muted_foreground)
+                .child(t::instance::content::change_version::error_loading_changelog())
                 .into_any_element();
         }
 
@@ -612,7 +618,6 @@ impl ChangeVersionDialog {
                 .gap_2()
                 .text_color(cx.theme().muted_foreground)
                 .child(Spinner::new().color(cx.theme().muted_foreground).with_size(px(18.0)))
-                .child(t::instance::content::change_version::loading_changelog())
                 .into_any_element(),
             ChangelogDisplay::Loaded(None) => h_flex()
                 .h_full()
@@ -620,7 +625,6 @@ impl ChangeVersionDialog {
                 .items_center()
                 .justify_center()
                 .text_color(cx.theme().muted_foreground)
-                .child(t::instance::content::change_version::no_changelog())
                 .into_any_element(),
             ChangelogDisplay::Loaded(Some(ChangelogContent::Markdown(changelog))) => {
                 TextView::markdown("changelog", changelog)
@@ -659,17 +663,19 @@ impl ChangeVersionDialog {
     }
 
     fn render(&mut self, modal: Dialog, window: &mut Window, cx: &mut Context<Self>) -> Dialog {
-        let modal = modal.title(self.title.clone()).width(px(560.0));
+        let modal = design::dialog(modal).title(self.title.clone()).width(px(560.0));
 
         if self.items.is_none() && self.versions_error.is_none() {
             self.request_versions(cx);
         }
 
-        if let Some(error) = self.versions_error.clone() {
-            return modal.child(v_flex().gap_3().child(ErrorAlert::new(
-                t::instance::content::change_version::error_loading_versions().into(),
-                error,
-            )));
+        if self.versions_error.is_some() {
+            return modal.child(
+                div()
+                    .text_center()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(t::instance::content::change_version::error_loading_versions()),
+            );
         }
 
         let version_select = self.render_version_select(window, cx);
@@ -699,11 +705,9 @@ impl ChangeVersionDialog {
             (None, _) => t::common::update().into(),
         };
 
-        let action_button = Button::new("change_version_action")
+        let action_button = design::primary("change_version_action")
             .label(label)
             .disabled(selected.is_none() || same_version)
-            .when(is_downgrade, |button| button.warning())
-            .when(!is_downgrade, |button| button.success())
             .when_some(selected.clone(), |button, selected| {
                 button.on_click({
                     let instance_id = self.instance_id;
@@ -825,7 +829,7 @@ impl ChangeVersionDialog {
             .w_full()
             .justify_end()
             .gap_2()
-            .child(Button::new("cancel").label(t::common::cancel()).on_click(|_, window, cx| {
+            .child(Button::new("cancel").ghost().label(t::common::cancel()).on_click(|_, window, cx| {
                 window.close_dialog(cx);
             }))
             .child(action_button);
@@ -841,15 +845,19 @@ impl ChangeVersionDialog {
                     .child(version_select),
             )
             .child(
-                Checkbox::new("show_incompatible")
-                    .label(t::instance::content::change_version::show_incompatible())
-                    .checked(self.show_incompatible)
-                    .disabled(self.version_select_state.is_none())
-                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                        this.show_incompatible = *checked;
-                        this.request_versions(cx);
-                        cx.notify();
-                    })),
+                h_flex()
+                    .justify_between()
+                    .child(t::instance::content::change_version::show_incompatible())
+                    .child(
+                        design::YesNo::new("show_incompatible")
+                            .checked(self.show_incompatible)
+                            .disabled(self.version_select_state.is_none())
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.show_incompatible = *checked;
+                                this.request_versions(cx);
+                                cx.notify();
+                            })),
+                    ),
             )
             .child(changelog_area)
             .child(buttons);
