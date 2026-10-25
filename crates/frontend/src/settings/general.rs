@@ -121,6 +121,10 @@ fn create_language_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWid
 
     SettingItemWidget::Any(Rc::new(move |_, _| {
         Select::new(&dropdown)
+            .h(px(32.))
+            .bg(rgb(crate::theme::PANEL_SUNKEN))
+            .rounded(px(0.))
+            .text_size(px(13.))
             .w(px(90.))
             .menu_width(px(200.0))
             .search_placeholder(t::common::search())
@@ -156,5 +160,13 @@ fn create_live_game_output_dropdown(window: &mut Window, cx: &mut App) -> Settin
     })
     .detach();
 
-    SettingItemWidget::Any(Rc::new(move |_, _| Select::new(&dropdown).menu_width(px(200.0)).into_any_element()))
+    SettingItemWidget::Any(Rc::new(move |_, _| {
+        Select::new(&dropdown)
+            .h(px(32.))
+            .bg(rgb(crate::theme::PANEL_SUNKEN))
+            .rounded(px(0.))
+            .text_size(px(13.))
+            .menu_width(px(200.0))
+            .into_any_element()
+    }))
 }

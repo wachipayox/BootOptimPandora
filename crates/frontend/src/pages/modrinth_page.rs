@@ -38,7 +38,7 @@ use strum::IntoEnumIterator;
 use ustr::Ustr;
 
 use crate::{
-    component::{design, error_alert::ErrorAlert},
+    component::design,
     entity::{
         DataEntities,
         instance::ContentStates,
@@ -68,7 +68,6 @@ pub struct ModrinthSearchPage {
     filter_categories: BTreeSet<&'static str>,
     sort_option: ModrinthSearchIndex,
     show_categories: Arc<AtomicBool>,
-    show_sort_options: Arc<AtomicBool>,
     can_install_latest: bool,
     specific_installed_content_by_project: enum_map::EnumMap<ContentFolder, FxHashMap<Arc<str>, Vec<InstalledContent>>>,
     all_installed_content_by_project: FxHashMap<Arc<str>, Vec<InstalledContent>>,
@@ -265,7 +264,6 @@ impl ModrinthSearchPage {
             filter_categories: Default::default(),
             sort_option: ModrinthSearchIndex::default(),
             show_categories: Arc::new(AtomicBool::new(false)),
-            show_sort_options: Arc::new(AtomicBool::new(false)),
             can_install_latest,
             specific_installed_content_by_project,
             all_installed_content_by_project,
@@ -540,11 +538,14 @@ impl ModrinthSearchPage {
         let items = visible_range
             .map(|index| {
                 let Some(hit) = self.hits.get(index) else {
-                    if let Some(search_error) = self.search_error.clone() {
-                        return div().pl_3().pt_3().child(ErrorAlert::new(
-                            t::instance::content::requesting_from_error("Modrinth").into(),
-                            search_error,
-                        ));
+                    if self.search_error.is_some() {
+                        return div()
+                            .w_full()
+                            .p(px(24.))
+                            .text_center()
+                            .text_size(px(13.))
+                            .text_color(rgb(crate::theme::INK_MUTED))
+                            .child("No se ha podido cargar el contenido.");
                     } else {
                         should_load_more = true;
                         return div().pl_3().pt_3().child(Skeleton::new().w_full().h(px(28.0 * 4.0)).rounded(px(0.)));
@@ -587,7 +588,7 @@ impl ModrinthSearchPage {
                         let icon = icon_for(category).unwrap_or("icons/diamond.svg");
                         let icon = Icon::empty().path(icon);
                         let translated_category =
-                            t::modrinth::category::get(category, false).unwrap_or("missing_translation");
+                            t::modrinth::category::get(category, false).unwrap_or(category.as_str());
                         Some(h_flex().gap_1().child(icon).child(translated_category))
                     })
                 });
@@ -892,6 +893,19 @@ impl Render for ModrinthSearchPage {
                     .track_scroll(&scroll_handle),
             )
             .child(div().w_3().h_full().py_3().child(Scrollbar::vertical(&scroll_handle)));
+        let list = if self.hits.is_empty() && self.total_hits == 0 && self.search_error.is_none() {
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(13.))
+                .text_color(rgb(crate::theme::INK_MUTED))
+                .child("No hay resultados.")
+                .into_any_element()
+        } else {
+            list.into_any_element()
+        };
 
         let mut top_bar = h_flex()
             .w_full()
@@ -926,7 +940,7 @@ impl Render for ModrinthSearchPage {
 
         let type_button_group = ButtonGroup::new("type")
             .layout(Axis::Vertical)
-            .outline()
+            .ghost()
             .child(
                 Button::new("mods")
                     .label("Mods")
@@ -1037,7 +1051,7 @@ impl Render for ModrinthSearchPage {
                                         .justify_start()
                                         .gap_2()
                                         .when_some(icon_for(id), |this, icon| this.child(Icon::empty().path(icon)))
-                                        .child(t::modrinth::category::get(id, true).unwrap_or("missing_translation")),
+                                        .child(t::modrinth::category::get(id, true).unwrap_or(id)),
                                 )
                                 .selected(self.filter_categories.contains(id))
                         }))
@@ -1047,44 +1061,6 @@ impl Render for ModrinthSearchPage {
                                 window,
                                 cx,
                             );
-                        })),
-                )
-            })
-            .into_any_element();
-
-        let is_sort_shown = self.show_sort_options.load(std::sync::atomic::Ordering::Relaxed);
-        let show_sort_options = self.show_sort_options.clone();
-
-        let _sort = v_flex()
-            .gap_1()
-            .child(
-                Button::new("toggle-sort")
-                    .label("Ordenar")
-                    .icon(if is_sort_shown {
-                        PandoraIcon::ChevronDown
-                    } else {
-                        PandoraIcon::ChevronRight
-                    })
-                    .when(!is_sort_shown, |this| this.outline())
-                    .on_click(move |_, _, _| {
-                        show_sort_options.store(!is_sort_shown, std::sync::atomic::Ordering::Relaxed);
-                    }),
-            )
-            .when(is_sort_shown, |this| {
-                this.child(
-                    ButtonGroup::new("sort_group")
-                        .layout(Axis::Vertical)
-                        .outline()
-                        .children(ModrinthSearchIndex::iter().map(|search_index| {
-                            Button::new(search_index.as_str())
-                                .child(h_flex().w_full().justify_start().gap_2().child(
-                                    t::modrinth::sort::get(search_index.as_str()).unwrap_or("missing_translation"),
-                                ))
-                                .selected(search_index == self.sort_option)
-                        }))
-                        .on_click(cx.listener(move |page, clicked: &Vec<usize>, window, cx| {
-                            let sort_option = ModrinthSearchIndex::iter().nth(clicked[0]).unwrap_or_default();
-                            page.set_sort_option(sort_option, window, cx);
                         })),
                 )
             })
@@ -1113,9 +1089,11 @@ impl Render for ModrinthSearchPage {
             .h_full()
             .overflow_y_scrollbar()
             .w_auto()
-            .min_w(px(200.0))
+            .w(px(180.))
+            .min_w(px(180.))
             .p_3()
             .gap_3()
+            .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("Tipo"))
             .child(type_button_group)
             .when_some(loader_button_group, |this, group| this.child(group))
             .when_some(filter_version_toggle, |this, button| this.child(button))

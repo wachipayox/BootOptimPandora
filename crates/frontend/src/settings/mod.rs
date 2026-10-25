@@ -324,7 +324,11 @@ impl SettingsRoot {
                                 })
                                 .detach();
                             }
-                            gpui_component::input::NumberInput::new(&state).w(px(200.0)).into_any_element()
+                            gpui_component::input::NumberInput::new(&state)
+                                .bg(rgb(crate::theme::PANEL_SUNKEN))
+                                .rounded(px(0.))
+                                .w(px(200.0))
+                                .into_any_element()
                         },
                         SettingItemWidget::Backend(func) => {
                             let Some(backend_config) = root.backend_config() else {

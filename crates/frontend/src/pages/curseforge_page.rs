@@ -37,7 +37,7 @@ use strum::IntoEnumIterator;
 use ustr::Ustr;
 
 use crate::{
-    component::{design, error_alert::ErrorAlert},
+    component::design,
     entity::{
         DataEntities,
         instance::ContentStates,
@@ -510,11 +510,14 @@ impl CurseforgeSearchPage {
         let items = visible_range
             .map(|index| {
                 let Some(hit) = self.hits.get(index) else {
-                    if let Some(search_error) = self.search_error.clone() {
-                        return div().pl_3().pt_3().child(ErrorAlert::new(
-                            t::instance::content::requesting_from_error("Curseforge").into(),
-                            search_error,
-                        ));
+                    if self.search_error.is_some() {
+                        return div()
+                            .w_full()
+                            .p(px(24.))
+                            .text_center()
+                            .text_size(px(13.))
+                            .text_color(rgb(crate::theme::INK_MUTED))
+                            .child("No se ha podido cargar el contenido.");
                     } else {
                         should_load_more = true;
                         return div().pl_3().pt_3().child(Skeleton::new().w_full().h(px(28.0 * 4.0)).rounded(px(0.)));
@@ -807,6 +810,19 @@ impl Render for CurseforgeSearchPage {
                     .track_scroll(&scroll_handle),
             )
             .child(div().w_3().h_full().py_3().child(Scrollbar::vertical(&scroll_handle)));
+        let list = if self.hits.is_empty() && self.total_hits == 0 && self.search_error.is_none() {
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(13.))
+                .text_color(rgb(crate::theme::INK_MUTED))
+                .child("No hay resultados.")
+                .into_any_element()
+        } else {
+            list.into_any_element()
+        };
 
         let mut top_bar = h_flex()
             .w_full()
@@ -842,7 +858,7 @@ impl Render for CurseforgeSearchPage {
 
         let type_button_group = ButtonGroup::new("type")
             .layout(Axis::Vertical)
-            .outline()
+            .ghost()
             .child(Button::new("mods").label("Mods").selected(filter_project_type == CurseforgeClassId::Mod))
             .child(
                 Button::new("modpacks")
@@ -1019,9 +1035,11 @@ impl Render for CurseforgeSearchPage {
             .h_full()
             .overflow_y_scrollbar()
             .w_auto()
-            .min_w(px(200.0))
+            .w(px(180.))
+            .min_w(px(180.))
             .p_3()
             .gap_3()
+            .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("Tipo"))
             .child(type_button_group)
             .when_some(loader_button_group, |this, group| this.child(group))
             .when_some(filter_version_toggle, |this, button| this.child(button))

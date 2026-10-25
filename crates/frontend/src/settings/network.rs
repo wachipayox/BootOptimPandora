@@ -5,12 +5,13 @@ use bridge::message::MessageToBackend;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, FocusableExt,
-    input::{Input, InputEvent, InputState, NumberInput},
+    input::{InputEvent, InputState, NumberInput},
     select::{Select, SelectEvent, SelectState},
 };
 use schema::backend_config::ProxyProtocol;
 
 use crate::{
+    component::design,
     component::named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem},
     settings::{SettingGroup, SettingItem, SettingItemWidget, SettingPage},
 };
@@ -136,7 +137,13 @@ fn create_proxy_protocol_widget() -> SettingItemWidget {
         } else if state.read(cx).selected_value() != Some(&backend.proxy.protocol) {
             state.update(cx, |state, cx| state.set_selected_value(&backend.proxy.protocol, window, cx));
         }
-        Select::new(&state).menu_width(px(200.0)).into_any_element()
+        Select::new(&state)
+            .h(px(32.))
+            .bg(rgb(crate::theme::PANEL_SUNKEN))
+            .rounded(px(0.))
+            .text_size(px(13.))
+            .menu_width(px(200.0))
+            .into_any_element()
     }))
 }
 
@@ -176,7 +183,7 @@ fn create_proxy_host_widget() -> SettingItemWidget {
                 }
             }
         }
-        let mut input = Input::new(&state).w(px(200.0));
+        let mut input = design::text_field(&state).w(px(200.0));
         if dirty {
             input = input.focus_ring(false).border_1().border_color(cx.theme().warning);
         }
@@ -223,7 +230,7 @@ fn create_proxy_port_widget() -> SettingItemWidget {
                 }
             }
         }
-        let mut input = NumberInput::new(&state).w(px(200.0));
+        let mut input = NumberInput::new(&state).bg(rgb(crate::theme::PANEL_SUNKEN)).rounded(px(0.)).w(px(200.0));
         if dirty {
             input = input.focus_ring(false).border_1().border_color(cx.theme().warning);
         }
@@ -267,7 +274,7 @@ fn create_proxy_username_widget() -> SettingItemWidget {
                 }
             }
         }
-        let mut input = Input::new(&state).w(px(200.0));
+        let mut input = design::text_field(&state).w(px(200.0));
         if dirty {
             input = input.focus_ring(false).border_1().border_color(cx.theme().warning);
         }
@@ -305,7 +312,7 @@ fn create_proxy_password_widget() -> SettingItemWidget {
             empty = state_read.value().is_empty();
             dirty = state_read.focus_handle(cx).is_focused(window) || !empty;
         }
-        let mut input = Input::new(&state).w(px(200.0));
+        let mut input = design::text_field(&state).w(px(200.0));
         if dirty {
             input = input.focus_ring(false).border_1().border_color(cx.theme().warning);
         }

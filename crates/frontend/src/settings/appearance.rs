@@ -188,7 +188,15 @@ fn create_theme_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget
     })
     .detach();
 
-    SettingItemWidget::Any(Rc::new(move |_, _| Select::new(&dropdown).menu_width(px(200.0)).into_any_element()))
+    SettingItemWidget::Any(Rc::new(move |_, _| {
+        Select::new(&dropdown)
+            .h(px(32.))
+            .bg(rgb(crate::theme::PANEL_SUNKEN))
+            .rounded(px(0.))
+            .text_size(px(13.))
+            .menu_width(px(200.0))
+            .into_any_element()
+    }))
 }
 
 fn create_font_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget {
@@ -219,5 +227,13 @@ fn create_font_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget 
     })
     .detach();
 
-    SettingItemWidget::Any(Rc::new(move |_, _| Select::new(&dropdown).menu_width(px(200.0)).into_any_element()))
+    SettingItemWidget::Any(Rc::new(move |_, _| {
+        Select::new(&dropdown)
+            .h(px(32.))
+            .bg(rgb(crate::theme::PANEL_SUNKEN))
+            .rounded(px(0.))
+            .text_size(px(13.))
+            .menu_width(px(200.0))
+            .into_any_element()
+    }))
 }
