@@ -717,7 +717,7 @@ fn notched_fill(fill: Background) -> Div {
 }
 
 /// Main-shell heading shared by launcher destinations.
-pub fn page_header(label: impl Into<SharedString>, window: &Window) -> Div {
+pub fn page_header(label: impl Into<SharedString>, window: &Window, cx: &App) -> Div {
     use super::generic_title_bar::WindowControl;
     let label = label.into();
     let stacked = matches!(label.as_ref(), "LAUNCHER" | "AÑADIR INSTANCIA" | "ARCHIVOS" | "EXPLORAR CONTENIDO");
@@ -738,7 +738,8 @@ pub fn page_header(label: impl Into<SharedString>, window: &Window) -> Div {
         .border_color(rgba(0xffffff0b))
         .window_control_area(WindowControlArea::Drag)
         .child(title)
-        .child(div().flex_1());
+        .child(div().flex_1())
+        .child(crate::launcher_updates::indicator(cx));
     if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
         header = header
             .child(WindowControl::Minimize)

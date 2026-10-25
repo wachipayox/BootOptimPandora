@@ -36,6 +36,7 @@ pub mod entity;
 pub mod game_output;
 pub mod icon;
 pub mod interface_config;
+mod launcher_updates;
 pub mod modals;
 pub mod pages;
 pub mod png_render_cache;
@@ -191,6 +192,7 @@ pub fn start(
                     deadlock_message,
                 }),
             };
+            launcher_updates::init(data.backend_handle.clone(), cx);
 
             cx.on_action({
                 let data = data.clone();

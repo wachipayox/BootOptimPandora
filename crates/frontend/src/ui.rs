@@ -4,7 +4,6 @@ use bridge::instance::InstanceID;
 use gpui::{prelude::*, *};
 use gpui_component::{h_flex, scroll::ScrollableElement, v_flex};
 use rustc_hash::FxHashMap;
-use schema::pandora_update::UpdatePrompt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -31,7 +30,6 @@ pub struct LauncherUI {
     page: LauncherPage,
     pub(crate) home_account_menu: bool,
     pub(crate) browser_manual_view: bool,
-    pub update: Option<UpdatePrompt>,
     recent_instances: heapless::Vec<(InstanceID, SharedString), 3>,
     page_history_backwards: VecDeque<(PageType, Arc<[PageType]>)>,
     page_history_forwards: Vec<(PageType, Arc<[PageType]>)>,
@@ -156,12 +154,7 @@ impl LauncherPage {
 
         let config = InterfaceConfig::get(cx);
         let page_path = PagePath::new(ui.data.clone(), config.main_page.clone(), config.page_path.clone());
-        let title_bar = MainTitleBar {
-            page_path,
-            controls,
-            update: ui.update.clone(),
-            send: ui.data.backend_handle.clone(),
-        };
+        let title_bar = MainTitleBar { page_path, controls };
         let browser = matches!(config.main_page, PageType::Modrinth { .. } | PageType::Curseforge { .. });
         let page = if browser && ui.browser_manual_view {
             div()
@@ -180,7 +173,7 @@ impl LauncherPage {
             v_flex()
                 .w_full()
                 .flex_shrink_0()
-                .child(crate::component::design::page_header("EXPLORAR CONTENIDO", window))
+                .child(crate::component::design::page_header("EXPLORAR CONTENIDO", window, cx))
                 .child(
                     h_flex()
                         .px(px(20.))
@@ -206,7 +199,7 @@ impl LauncherPage {
             v_flex()
                 .w_full()
                 .flex_shrink_0()
-                .child(crate::component::design::page_header("ARCHIVOS", window))
+                .child(crate::component::design::page_header("ARCHIVOS", window, cx))
                 .child(
                     h_flex().px(px(20.)).border_b_1().border_color(rgba(0xffffff0b)).child(
                         crate::component::design::tab("sync-settings-tab", "Sincronización", true)
@@ -219,7 +212,7 @@ impl LauncherPage {
             v_flex()
                 .w_full()
                 .flex_shrink_0()
-                .child(crate::component::design::page_header("AÑADIR INSTANCIA", window))
+                .child(crate::component::design::page_header("AÑADIR INSTANCIA", window, cx))
                 .child(
                     h_flex()
                         .px(px(20.))
@@ -366,7 +359,6 @@ impl LauncherUI {
             page,
             home_account_menu: false,
             browser_manual_view: false,
-            update: None,
             recent_instances,
             page_history_backwards: VecDeque::with_capacity(32),
             page_history_forwards: Vec::new(),

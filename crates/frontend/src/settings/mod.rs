@@ -179,7 +179,7 @@ impl SettingsRoot {
 
 impl Render for SettingsRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let header = design::page_header("LAUNCHER", window);
+        let header = design::page_header("LAUNCHER", window, cx);
         let mut tabs = h_flex()
             .w_full()
             .flex_shrink_0()
@@ -824,6 +824,11 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
     let last = pages.last_mut().expect("About page");
     let group = Rc::make_mut(&mut last.groups).first_mut().expect("About group");
     let mut about_items = group.items.to_vec();
+    about_items.push(SettingItem {
+        title: || "Buscar actualización",
+        widget: SettingItemWidget::AnyWide(Rc::new(|_, cx| crate::launcher_updates::about_widget(cx))),
+        ..Default::default()
+    });
     about_items.push(SettingItem {
         widget: SettingItemWidget::AnyWide(Rc::new(|_, _| {
             let mut actions = h_flex().gap(px(8.)).child(

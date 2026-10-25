@@ -955,7 +955,7 @@ impl Render for SkinsPage {
             .overflow_hidden();
         v_flex()
             .size_full()
-            .child(design::page_header(heading, window))
+            .child(design::page_header(heading, window, cx))
             .child(div().flex_1().min_h_0().child(body))
     }
 }

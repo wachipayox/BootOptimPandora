@@ -247,22 +247,15 @@ impl Processor {
             MessageToFrontend::SkinLibraryUpdated { skin_library } => {
                 self.data.set_skin_library(skin_library, cx);
             },
-            MessageToFrontend::UpdateAvailable { .. } => {
+            MessageToFrontend::LauncherUpdateChecking { .. } => {
+                crate::launcher_updates::checking(cx);
+            },
+            MessageToFrontend::LauncherUpdateChecked { .. } => {
                 self.with_main_window(message, cx, |_, message, window, cx| {
-                    let MessageToFrontend::UpdateAvailable { update } = message else {
-                        unreachable!();
+                    let MessageToFrontend::LauncherUpdateChecked { manual, result } = message else {
+                        unreachable!()
                     };
-
-                    if let Some(root) = window.root::<Root>().flatten() {
-                        if let Ok(launcher_root) = root.read(cx).view().clone().downcast::<LauncherRoot>() {
-                            launcher_root.update(cx, |launcher_root, cx| {
-                                launcher_root.ui.update(cx, |ui, cx| {
-                                    ui.update = Some(update);
-                                    cx.notify();
-                                });
-                            });
-                        }
-                    }
+                    crate::launcher_updates::checked(result, manual, window, cx);
                 });
             },
             MessageToFrontend::ManualCurseforgeDownloadsRequired { request: _ } => {

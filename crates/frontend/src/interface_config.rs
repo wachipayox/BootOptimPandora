@@ -45,6 +45,12 @@ pub struct InterfaceConfig {
     pub main_page: PageType,
     #[serde(default)]
     pub home_instance: Option<SharedString>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "schema::try_deserialize"
+    )]
+    pub skipped_launcher_version: Option<String>,
     #[serde(default = "schema::default_true")]
     pub home_general_news: bool,
     #[serde(default)]
@@ -314,6 +320,7 @@ impl Default for InterfaceConfig {
             sidebar_width: Default::default(),
             main_page: Default::default(),
             home_instance: None,
+            skipped_launcher_version: None,
             home_general_news: true,
             home_read_news: Default::default(),
             news_marks: Default::default(),
