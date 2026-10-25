@@ -579,7 +579,7 @@ impl ModrinthSearchPage {
                     .chain(
                         hit.display_categories
                             .iter()
-                            .flatten()
+                            .flat_map(|categories| categories.iter())
                             .filter(|category| category.as_str() != "minecraft")
                             .map(|category| {
                                 t::modrinth::category::get(category, false).unwrap_or(category.as_str()).to_owned()
