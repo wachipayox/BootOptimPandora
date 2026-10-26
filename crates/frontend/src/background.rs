@@ -16,8 +16,6 @@ pub enum AppBackground {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Key {
     source: AppBackground,
-    width: u32,
-    height: u32,
 }
 #[derive(Default)]
 struct BackdropCache {
@@ -34,9 +32,9 @@ impl BackdropCache {
             self.failed = None;
         }
         self.key = Some(key.clone());
-        // Keep the last complete surface throughout a resize/source change.
-        // A single worker follows the latest request instead of queuing every
-        // intermediate resize or clearing the visible image between jobs.
+        // Prepare each source once. Resizing only changes its paint transform:
+        // replacing a pre-cropped texture after resize changes its sampling
+        // and subtly shifts brightness between the first and settled frames.
         if self.pending.is_some()
             || self.failed.as_ref() == Some(&key)
             || self.image.as_ref().is_some_and(|image| image.key == key)
@@ -63,6 +61,8 @@ impl BackdropCache {
 #[derive(Clone)]
 struct PreparedBackdrop {
     key: Key,
+    width: u32,
+    height: u32,
     surface: Arc<RenderImage>,
     glass: Arc<RenderImage>,
 }
@@ -74,8 +74,8 @@ pub fn surface(window: &mut Window, cx: &mut App) -> AnyElement {
 fn prepare(key: &Key) -> Option<PreparedBackdrop> {
     let scene = match &key.source {
         AppBackground::Color(color) => image::RgbaImage::from_pixel(
-            key.width,
-            key.height,
+            1,
+            1,
             image::Rgba([
                 ((color >> 16) & 255) as u8,
                 ((color >> 8) & 255) as u8,
@@ -95,11 +95,17 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
                 },
                 _ => unreachable!(),
             };
-            let mut scene = source
-                .resize_to_fill(key.width, key.height, image::imageops::FilterType::Triangle)
-                .to_rgba8();
+            // Keep the complete source and its aspect ratio. Never bake the
+            // current viewport's crop into a replacement texture.
+            let source = if source.width() > 1920 || source.height() > 1920 {
+                source.resize(1920, 1920, image::imageops::FilterType::Triangle)
+            } else {
+                source
+            };
+            let reference_scale = (1280. / source.width() as f32).max(860. / source.height() as f32);
+            let mut scene = source.to_rgba8();
             if !matches!(key.source, AppBackground::Cafe) {
-                scene = image::DynamicImage::ImageRgba8(scene).blur(90.).to_rgba8();
+                scene = image::DynamicImage::ImageRgba8(scene).blur(90. / reference_scale).to_rgba8();
                 for pixel in scene.pixels_mut() {
                     let [r, g, b, _] = pixel.0;
                     let luminance = 0.213 * r as f32 + 0.715 * g as f32 + 0.072 * b as f32;
@@ -123,7 +129,12 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
             scene
         },
     };
-    let glass = crate::component::design::prepare_play_artwork(&image::DynamicImage::ImageRgba8(scene.clone()));
+    let (width, height) = scene.dimensions();
+    let reference_scale = (1280. / width as f32).max(860. / height as f32);
+    let glass = crate::component::design::prepare_play_artwork(
+        &image::DynamicImage::ImageRgba8(scene.clone()),
+        14. / reference_scale,
+    );
     fn render_image(mut image: image::RgbaImage) -> Arc<RenderImage> {
         for pixel in image.pixels_mut() {
             pixel.0.swap(0, 2);
@@ -132,6 +143,8 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
     }
     Some(PreparedBackdrop {
         key: key.clone(),
+        width,
+        height,
         surface: render_image(scene),
         glass: render_image(glass),
     })
@@ -144,8 +157,6 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
     let size = window.viewport_size();
     let key = Key {
         source: InterfaceConfig::get(cx).app_background.clone(),
-        width: size.width.as_f32().ceil().clamp(1., 8192.) as u32,
-        height: size.height.as_f32().ceil().clamp(1., 8192.) as u32,
     };
     // Solid colors are already ready. Neither a resize nor a theme change
     // needs to wait for a full-sized bitmap to be prepared on a worker.
@@ -165,11 +176,9 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
                 Arc::new(RenderImage::new([image::Frame::new(image::RgbaImage::from_pixel(1, 1, pixel))]))
             };
             state.image = Some(PreparedBackdrop {
-                key: Key {
-                    width: 1,
-                    height: 1,
-                    ..key
-                },
+                key,
+                width: 1,
+                height: 1,
                 surface: pixel(color),
                 glass: pixel(saturated_color(color, 1.5)),
             });
@@ -187,8 +196,8 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
             } else {
                 prepared.surface.clone()
             },
-            prepared.key.width,
-            prepared.key.height,
+            prepared.width,
+            prepared.height,
         )
     });
     if let Some(key) = work {
@@ -258,11 +267,9 @@ mod tests {
     use gpui::{RenderImage, px, size};
     use std::sync::Arc;
 
-    fn key(width: u32) -> Key {
+    fn key() -> Key {
         Key {
             source: AppBackground::Cafe,
-            width,
-            height: 600,
         }
     }
 
@@ -270,33 +277,35 @@ mod tests {
         let image = Arc::new(RenderImage::new([image::Frame::new(image::RgbaImage::new(1, 1))]));
         PreparedBackdrop {
             key,
+            width: 1920,
+            height: 1080,
             surface: image.clone(),
             glass: image,
         }
     }
 
     #[test]
-    fn rapid_resizes_keep_a_surface_and_coalesce_to_the_latest_size() {
+    fn repeated_viewports_reuse_the_same_texture_without_preparing_a_replacement() {
         let mut cache = BackdropCache::default();
-        let original = key(1280);
+        let original = key();
         let first = cache.request(original.clone()).unwrap();
         cache.complete(&first, Some(prepared(first.clone())));
-        let resize = cache.request(key(1100)).unwrap();
-        assert!(cache.request(key(1000)).is_none());
-        assert!(cache.request(key(960)).is_none());
-        assert_eq!(cache.image.as_ref().unwrap().key, original);
-        cache.complete(&resize, Some(prepared(resize.clone())));
-        assert_eq!(cache.image.as_ref().unwrap().key, resize);
-        assert_eq!(cache.request(key(960)), Some(key(960)));
+        let image = cache.image.as_ref().unwrap().surface.clone();
+        for (width, height) in [(1100., 740.), (960., 600.), (1280., 860.), (1000., 700.)] {
+            assert!(cache.request(original.clone()).is_none());
+            let prepared = cache.image.as_ref().unwrap();
+            assert!(Arc::ptr_eq(&image, &prepared.surface));
+            let cover = cover_bounds(size(px(width), px(height)), prepared.width, prepared.height);
+            assert!(cover.size.width >= px(width) && cover.size.height >= px(height));
+        }
     }
 
     #[test]
     fn obsolete_source_cannot_replace_a_new_selection() {
         let mut cache = BackdropCache::default();
-        let old = cache.request(key(1280)).unwrap();
+        let old = cache.request(key()).unwrap();
         let selected = Key {
             source: AppBackground::Color(0x0b1a20),
-            ..key(1280)
         };
         cache.key = Some(selected.clone());
         cache.complete(&old, Some(prepared(old.clone())));
@@ -307,16 +316,15 @@ mod tests {
     #[test]
     fn failed_replacement_keeps_the_last_good_image_without_retrying_every_frame() {
         let mut cache = BackdropCache::default();
-        cache.image = Some(prepared(key(1280)));
+        cache.image = Some(prepared(key()));
         let failed = Key {
             source: AppBackground::Image("missing.png".into()),
-            ..key(1280)
         };
         let _ = cache.request(failed.clone());
         cache.complete(&failed, None);
         assert!(cache.image.is_some());
         assert!(cache.request(failed.clone()).is_none());
-        assert!(cache.request(key(1280)).is_none());
+        assert!(cache.request(key()).is_none());
         assert!(cache.request(failed).is_some());
     }
 

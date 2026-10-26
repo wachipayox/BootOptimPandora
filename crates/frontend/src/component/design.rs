@@ -633,9 +633,9 @@ impl RenderOnce for PlayButton {
     }
 }
 
-/// CSS saturate(1.5) after the specified 14 px Gaussian blur, cached by the caller.
-pub fn prepare_play_artwork(crop: &image::DynamicImage) -> image::RgbaImage {
-    let mut blurred = crop.blur(14.).to_rgba8();
+/// CSS saturate(1.5), with the 14 logical px blur converted to source pixels.
+pub fn prepare_play_artwork(crop: &image::DynamicImage, source_blur: f32) -> image::RgbaImage {
+    let mut blurred = crop.blur(source_blur).to_rgba8();
     for pixel in blurred.pixels_mut() {
         let [r, g, b, a] = pixel.0;
         let luminance = 0.213 * r as f32 + 0.715 * g as f32 + 0.072 * b as f32;
