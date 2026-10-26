@@ -131,7 +131,9 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
         $controlChecks=@()
         foreach($area in @('Some(Min)','Some(Max)','Some(Close)')) {
             $control=@($regions|Where-Object area -eq $area)
-            $controlChecks+=@{area=$area;bounds=@($control|ForEach-Object bounds);passed=$control.Count -eq 1 -and $control[0].bounds.width -ge 31.9 -and $control[0].bounds.height -ge 31.9}
+            # WindowControl uses size_8 (two rem), not a fixed pixel size.
+            # A flex-row squeeze shortens width while height stays unchanged.
+            $controlChecks+=@{area=$area;bounds=@($control|ForEach-Object bounds);passed=$control.Count -eq 1 -and $control[0].bounds.width -ge 16 -and [math]::Abs($control[0].bounds.width-$control[0].bounds.height) -lt 0.1}
         }
         $controlChecks|ConvertTo-Json -Depth 5|Set-Content -LiteralPath ($Path -replace '\.json$','-controls.json') -Encoding utf8
     }
