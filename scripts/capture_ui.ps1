@@ -110,6 +110,14 @@ function Save-FirstResizeFrames([string]$Stem, [IntPtr]$Handle) {
         # Give the old implementation time to prepare too. Each sample starts
         # with an available previous surface, not another unfinished sample.
         Start-Sleep -Seconds 2
+        Remove-Item -LiteralPath $frame
+        [IO.File]::WriteAllText((Join-Path $framebufferRoot 'request'), '')
+        $deadline=(Get-Date).AddSeconds(20)
+        while(-not(Test-Path -LiteralPath $frame) -and (Get-Date) -lt $deadline){Start-Sleep -Milliseconds 50}
+        if(-not(Test-Path -LiteralPath $frame)){throw 'Settled resize comparison timed out.'}
+        $settled="$Stem-settled-resize-$($dimensions[0])x$($dimensions[1])-gpu.png"
+        Copy-Item -LiteralPath $frame -Destination (Join-Path $outputPath $settled)
+        $samples[-1].settledFile=$settled
     }
     $samples|ConvertTo-Json -Depth 5|Set-Content -Encoding utf8 (Join-Path $outputPath "$Stem-first-resize.json")
 }
