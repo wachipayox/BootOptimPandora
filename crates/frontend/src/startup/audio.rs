@@ -1,7 +1,11 @@
 //! Vorbis decoding and the common playback boundary. No UI/rendering runs here.
 use std::{
     io::Cursor,
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant},
 };
 
@@ -42,12 +46,15 @@ enum Command {
 pub(super) struct Audio {
     commands: mpsc::Sender<Command>,
     pub clock: Arc<Mutex<Option<Instant>>>,
+    failed: Arc<AtomicBool>,
 }
 impl Audio {
     pub fn prepare(bytes: Vec<u8>) -> Self {
         let (send, receive) = mpsc::channel();
         let clock = Arc::new(Mutex::new(None));
         let worker_clock = clock.clone();
+        let failed = Arc::new(AtomicBool::new(false));
+        let worker_failed = failed.clone();
         // COM and the audio device stay on this thread for their whole lifetime.
         let _ = std::thread::Builder::new().name("startup-audio".into()).spawn(move || {
             let result = (|| {
@@ -63,14 +70,19 @@ impl Audio {
             })();
             if let Err(error) = result {
                 log::warn!("Intro music unavailable: {error}");
-            }
-            if let Ok(mut clock) = worker_clock.lock() {
-                if clock.is_none() {
-                    *clock = Some(Instant::now());
-                }
+                // Failure does not start the intro before its first poster paint.
+                // The UI chooses the silent clock when it actually starts.
+                worker_failed.store(true, Ordering::Release);
             }
         });
-        Self { commands: send, clock }
+        Self {
+            commands: send,
+            clock,
+            failed,
+        }
+    }
+    pub fn failed(&self) -> bool {
+        self.failed.load(Ordering::Acquire)
     }
     pub fn start(&self) {
         let _ = self.commands.send(Command::Start);
@@ -233,6 +245,16 @@ mod tests {
     fn bad_or_non_vorbis_audio_is_silently_recoverable() {
         assert!(decode(b"").is_err());
         assert!(decode(b"OggS OpusHead").is_err());
+    }
+    #[test]
+    fn decode_failure_cannot_start_the_intro_clock_before_the_poster() {
+        let audio = super::Audio::prepare(Vec::new());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !audio.failed() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(audio.failed());
+        assert!(audio.clock.lock().unwrap().is_none());
     }
     #[test]
     fn fade_has_monotone_gain_and_ends_at_150_ms() {

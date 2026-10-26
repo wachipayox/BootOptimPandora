@@ -151,7 +151,7 @@ impl Controller {
                     self.audio_requested = true;
                 }
                 self.clock = audio.clock.lock().ok().and_then(|clock| *clock);
-                if elapsed >= std::time::Duration::from_secs(1) && self.clock.is_none() {
+                if self.clock.is_none() && (audio.failed() || elapsed >= std::time::Duration::from_secs(1)) {
                     // Device/decoder stalls must never hold the animation or UI.
                     self.audio = None;
                     self.clock = Some(now);
