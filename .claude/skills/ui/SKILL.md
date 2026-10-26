@@ -82,3 +82,18 @@ or installation. The script records the fixture SHA-256 and readiness signal.
 `-HomeScreens` also waits for Home/artwork/glass behind update dialogs.
 Do not publish a release to create screenshots, and do not describe fixture
 captures as proof of a real server update or successful self-installation.
+
+Frameless-window review uses `-Framebuffer -HitTest`: painted region sidecars
+and actual HWND `WM_NCHITTEST` results cover client controls, caption gaps and
+eight resize edges, with separate clipped-control checks. This sends mouse-move
+packets, never button-down/up or clicks; it does not prove actual dragging or
+activation. `-DragRegions` adds capture-only diagnostic colors. Use
+`-DesignViewport -ViewportWidth 960 -ViewportHeight 600` for minimum-width
+review. `window-dialog` opens a real, nonresizable secondary window;
+`sidebar-scroll` adds cosmetic rows without backend instances. If remote test
+profile provisioning is unavailable, `WBOMBO_UI_CAPTURE_LOCAL_INSTANCE` accepts
+only `agente-274-window-drag` and creates that owned Vanilla instance through
+the existing backend message. Clean up its exact owned path afterwards.
+`backdrop-probe -ResizeProbe` isolates the app surface and retains the first
+fresh GPU draw armed before each resize, instead of waiting for the backdrop
+worker; compare it with the settled frame to detect blank resize frames.

@@ -183,8 +183,10 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
             # the real HWND. No button-down/up or click messages are sent.
             if ([CaptureWindow]::SendMessageTimeout($Handle,0x200,[IntPtr]::Zero,$client,2,2000,[ref]$reply) -eq [IntPtr]::Zero) {throw 'Hit-test mouse position update timed out.'}
             if ([CaptureWindow]::SendMessageTimeout($Handle,0x84,[IntPtr]::Zero,$screen,2,2000,[ref]$reply) -eq [IntPtr]::Zero) {throw 'WM_NCHITTEST timed out.'}
+            $observed=New-Object CaptureWindow+POINT
+            if(-not [CaptureWindow]::GetCursorPos([ref]$observed)){throw 'Cannot verify the native probe position.'}
             $passed=if($null -ne $point.expected){$reply.ToInt64() -eq $point.expected}else{$reply.ToInt64() -notin (10..17)}
-            $results+=@{label=$point.label;kind=$point.kind;x=$point.x;y=$point.y;expected=$point.expected;actual=$reply.ToInt64();resizable=$resizable;passed=$passed}
+            $results+=@{label=$point.label;kind=$point.kind;x=$point.x;y=$point.y;expected=$point.expected;actual=$reply.ToInt64();resizable=$resizable;passed=$passed;observedPointer=@($observed.X,$observed.Y);pointerMatchesQuery=$observed.X -eq $point.x -and $observed.Y -eq $point.y}
         }
     } finally { [void][CaptureWindow]::SetCursorPos($previous.X,$previous.Y) }
     $results | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $Path -Encoding utf8
