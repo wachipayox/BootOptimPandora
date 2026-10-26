@@ -703,12 +703,26 @@ pub(crate) fn frame_timed(t: f64, first_paint_origin: Option<FirstPaint>) -> Any
                 if !signal.scheduled.swap(true, std::sync::atomic::Ordering::AcqRel) {
                 let painted = std::time::Instant::now();
                 log::info!(
-                    "startup-first-paint pid={} native_window_to_paint_us={} main_to_paint_us={}",
+                    "startup-poster-scene pid={} native_window_to_scene_us={} main_to_scene_us={}",
                     std::process::id(),
                     painted.duration_since(signal.native).as_micros(), painted.duration_since(signal.main).as_micros()
                 );
                 let ready = signal.ready.clone();
-                window.on_next_frame(move |_, _| ready.store(true, std::sync::atomic::Ordering::Release));
+                let (native, main) = (signal.native, signal.main);
+                // open_window can paint its initial scene before the first
+                // platform draw. The first callback runs before that draw;
+                // only the following callback may release the poster.
+                window.on_next_frame(move |window, _| {
+                    window.on_next_frame(move |_, _| {
+                        let completed = std::time::Instant::now();
+                        log::info!(
+                            "startup-poster-frame-complete pid={} native_window_to_callback_us={} main_to_callback_us={}",
+                            std::process::id(), completed.duration_since(native).as_micros(),
+                            completed.duration_since(main).as_micros()
+                        );
+                        ready.store(true, std::sync::atomic::Ordering::Release);
+                    });
+                });
                 }
             }
         },
