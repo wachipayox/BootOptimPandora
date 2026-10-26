@@ -152,6 +152,9 @@ impl Controller {
         if self.fade.is_none() && intro_finished && may_reveal(elapsed, self.ready_frames >= 2, self.kind, self.skipped)
         {
             self.fade = Some(now);
+            if !ready {
+                crate::background::fade_late_completion(cx);
+            }
             log::info!(
                 "startup-home-ready pid={} window_open_to_ready_us={} capped={} main_to_reveal_us={}",
                 std::process::id(),

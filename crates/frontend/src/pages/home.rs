@@ -71,7 +71,7 @@ impl HomePage {
             instance,
             presentation: HomePresentation::default(),
             loaded: false,
-            startup_cached: std::env::var_os("WBOMBO_UI_CAPTURE_PAGE").is_none(),
+            startup_cached: !std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page != "startup-live"),
             artwork_image: Default::default(),
             logo_image: Default::default(),
             requested: false,

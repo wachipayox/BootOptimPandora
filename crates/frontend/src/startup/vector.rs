@@ -150,6 +150,24 @@ impl Painter<'_> {
             .with_content_mask(Some(ContentMask { bounds: mask }), |window| window.paint_quad(fill(bounds, color)));
     }
     fn path(&mut self, commands: &[Command], color: u32, even_odd: bool) {
+        // Bézier curves stay inside their control hull. Skip only hulls wholly
+        // outside the clip, with two physical pixels of antialiasing padding.
+        // The giant mirrored words otherwise tessellate dozens of invisible
+        // letters on every frame. This check runs on the window thread too.
+        let [left, top, right, bottom] = command_bounds(commands);
+        if !left.is_finite() {
+            return;
+        }
+        let bounds = self.rect_bounds(left, top, right - left, bottom - top);
+        let mask = self.state.mask;
+        let margin = px(2. / self.window.scale_factor());
+        if bounds.origin.x + bounds.size.width < mask.origin.x - margin
+            || bounds.origin.y + bounds.size.height < mask.origin.y - margin
+            || bounds.origin.x > mask.origin.x + mask.size.width + margin
+            || bounds.origin.y > mask.origin.y + mask.size.height + margin
+        {
+            return;
+        }
         let rule = if even_odd { FillRule::EvenOdd } else { FillRule::NonZero };
         let mut path = PathBuilder::fill().with_style(PathStyle::Fill(
             FillOptions::default()
@@ -513,6 +531,49 @@ impl Painter<'_> {
             self.lockup(DARK, |_| 1., 0., 0., 1.);
             self.debris(t, DARK, 13, 8, 1. - eo(seg(t, 5.3, 5.7)));
         }
+    }
+}
+fn command_bounds(commands: &[Command]) -> [f64; 4] {
+    let mut bounds = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let mut include = |x: f64, y: f64| {
+        bounds[0] = bounds[0].min(x);
+        bounds[1] = bounds[1].min(y);
+        bounds[2] = bounds[2].max(x);
+        bounds[3] = bounds[3].max(y);
+    };
+    for command in commands {
+        match *command {
+            Command::Move(x, y) | Command::Line(x, y) => include(x, y),
+            Command::Quad(cx, cy, x, y) => {
+                include(cx, cy);
+                include(x, y);
+            },
+            Command::Cubic(ax, ay, bx, by, x, y) => {
+                include(ax, ay);
+                include(bx, by);
+                include(x, y);
+            },
+            Command::Close => {},
+        }
+    }
+    bounds
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Command, command_bounds};
+    #[test]
+    fn control_hull_keeps_curves_whose_endpoints_are_outside_the_viewport() {
+        let quadratic = [Command::Move(-100., 0.), Command::Quad(300., 100., -100., 200.)];
+        let bounds = command_bounds(&quadratic);
+        // At t=1/2 the curve reaches x=100 despite both endpoints being x=-100.
+        assert!(bounds[0] <= 100. && bounds[2] >= 100.);
+        let cubic = [
+            Command::Move(-100., 0.),
+            Command::Cubic(300., -40., 400., 240., -100., 200.),
+        ];
+        let bounds = command_bounds(&cubic);
+        assert_eq!(bounds, [-100., -40., 400., 240.]);
     }
 }
 #[derive(Clone, Copy, Default)]
