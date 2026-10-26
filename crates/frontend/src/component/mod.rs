@@ -1,8 +1,7 @@
 mod background_motion;
-pub mod tracked_text;
-pub mod design_review;
-pub mod design;
 pub mod content_list;
+pub mod design;
+pub mod design_review;
 pub mod error_alert;
 pub mod generic_title_bar;
 pub mod horizontal_sections;
@@ -19,8 +18,10 @@ pub mod progress_bar;
 pub mod readonly_text_field;
 pub mod resize_panel;
 pub mod responsive_grid;
+pub(crate) mod retained_image;
 pub mod search_helper;
 pub mod shrinking_text;
+pub mod tracked_text;
 
 pub fn create_styled_text(text: &schema::text_component::FlatTextComponent, grayscale: bool) -> gpui::StyledText {
     gpui::StyledText::new(&text.content).with_highlights(text.runs.iter().map(|run| {

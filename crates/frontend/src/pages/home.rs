@@ -25,6 +25,8 @@ pub struct HomePage {
     presentation: HomePresentation,
     loaded: bool,
     startup_cached: bool,
+    artwork_image: crate::component::retained_image::RetainedImage,
+    logo_image: crate::component::retained_image::RetainedImage,
     requested: bool,
     refreshed: Instant,
     menu: bool,
@@ -70,6 +72,8 @@ impl HomePage {
             presentation: HomePresentation::default(),
             loaded: false,
             startup_cached: std::env::var_os("WBOMBO_UI_CAPTURE_PAGE").is_none(),
+            artwork_image: Default::default(),
+            logo_image: Default::default(),
             requested: false,
             refreshed: Instant::now(),
             menu: std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-menu"),
@@ -451,17 +455,31 @@ impl Render for HomePage {
                     .child(WindowControl::Close),
             );
         }
+        let resource = |path: &Option<std::path::PathBuf>, fallback: &'static str| {
+            path.as_ref()
+                .map(|path| Resource::Path(Arc::from(path.as_path())))
+                .unwrap_or_else(|| Resource::Embedded(fallback.into()))
+        };
+        let artwork = self.artwork_image.render(
+            resource(&self.presentation.artwork, "images/artwork-vanilla.png"),
+            "images/artwork-vanilla.png",
+            ObjectFit::Cover,
+            window,
+            cx,
+        );
+        let logo = self.logo_image.render(
+            resource(&self.presentation.logo, "images/logo-vanilla.png"),
+            "images/logo-vanilla.png",
+            ObjectFit::Contain,
+            window,
+            cx,
+        );
         let hero = div()
             .relative()
             .h(px(440.))
             .w_full()
             .flex_shrink_0()
-            .child(
-                img(picture(&self.presentation.artwork, "images/artwork-vanilla.png"))
-                    .absolute()
-                    .size_full()
-                    .object_fit(ObjectFit::Cover),
-            )
+            .child(div().child(artwork).absolute().size_full())
             .child(div().absolute().bottom_0().w_full().h(relative(0.55)).bg(shade(0x06060700, 0x060607ff)))
             .child(
                 div()
@@ -472,12 +490,7 @@ impl Render for HomePage {
                     .pr(px(if instance.is_some() { 60. } else { 0. }))
                     .flex()
                     .justify_center()
-                    .child(
-                        img(picture(&self.presentation.logo, "images/logo-vanilla.png"))
-                            .w(px(370.))
-                            .h(px(70.))
-                            .object_fit(ObjectFit::Contain),
-                    ),
+                    .child(div().child(logo).w(px(370.)).h(px(70.))),
             )
             .child(div().absolute().top_0().w_full().child(header))
             .when_some(server.as_ref(), |d, s| d.child(self.server_panel(s, cx)))

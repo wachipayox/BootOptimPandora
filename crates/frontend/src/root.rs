@@ -236,13 +236,13 @@ impl Render for LauncherRoot {
             .children(notification_layer)
             .children(startup_layer)
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" {
-                    if let Some(startup) = &mut this.startup {
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if let Some(startup) = &mut this.startup {
+                    if event.keystroke.key == "escape" {
                         startup.skip();
-                        cx.stop_propagation();
                         cx.notify();
                     }
+                    cx.stop_propagation();
                 }
             }))
             .on_action(|_: &CloseWindow, window, _| {
