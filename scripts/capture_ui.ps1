@@ -228,6 +228,11 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
         [void][CaptureWindow]::GetWindowRect($handle, [ref]$rect)
     }
     if ([CaptureWindow]::IsIconic($handle)) { [void][CaptureWindow]::ShowWindow($handle, 9); Start-Sleep -Milliseconds 500; [void][CaptureWindow]::GetWindowRect($handle, [ref]$rect) }
+    if ($env:WBOMBO_UI_CAPTURE_PAGE -like 'startup-bench:*') {
+        # Collect stable frames after the requested viewport has settled.
+        # Paint cost excludes logging; frame intervals include the normal loop.
+        Start-Sleep -Seconds 5
+    }
     # Capture the client area, excluding invisible DWM margins and desktop pixels.
     $client = New-Object CaptureWindow+RECT
     $clientOrigin = New-Object CaptureWindow+POINT
@@ -480,6 +485,9 @@ try {
             if($dialogOwner -ne $proc.Id -or ([CaptureWindow]::GetWindowLongPtr($captureHandle,-16).ToInt64() -band 0x40000) -ne 0){throw 'Standalone dialog HWND is not the active owned nonresizable window.'}
         }
         Save-Window (Join-Path $outputPath $screen.file) $captureHandle $proc.Id
+        if ($screen.page -like 'startup-bench:*' -or $screen.page -eq 'startup-live') {
+            Copy-Item -LiteralPath (Join-Path $tempRoot 'WachilandLauncher/launcher.log') -Destination (Join-Path $outputPath ($screen.file -replace '\.png$', '.log')) -Force
+        }
         if ($ResizeProbe -and -not $script:fixedCaptureWindow) {
             Save-FirstResizeFrames ([IO.Path]::GetFileNameWithoutExtension($screen.file)) $captureHandle
         }
