@@ -23,9 +23,14 @@ pub(super) fn intro_kind(existing_install: bool, last_version: Option<&str>, cur
     }
 }
 
-pub(super) fn may_reveal(elapsed: Duration, ready: bool, intro: IntroKind, skipped: bool) -> bool {
-    let visuals_ready = ready || elapsed >= PRELOAD_LIMIT;
-    visuals_ready && (intro == IntroKind::None || skipped || elapsed >= INTRO)
+pub(super) fn may_reveal(
+    elapsed: Duration,
+    animation_elapsed: Duration,
+    ready: bool,
+    intro: IntroKind,
+    skipped: bool,
+) -> bool {
+    elapsed >= PRELOAD_LIMIT || (ready && (intro == IntroKind::None || skipped || animation_elapsed >= INTRO))
 }
 
 /// Uniform selection over all eligible files, excluding the last track whenever
@@ -51,13 +56,34 @@ mod tests {
 
     #[test]
     fn intro_and_preload_both_gate_reveal_but_never_beyond_eight_seconds() {
-        assert!(!may_reveal(Duration::from_secs(1), true, IntroKind::Update, false));
-        assert!(may_reveal(Duration::from_secs(6), true, IntroKind::Update, false));
-        assert!(!may_reveal(Duration::from_secs(7), false, IntroKind::Update, false));
-        assert!(may_reveal(Duration::from_secs(8), false, IntroKind::Update, false));
-        assert!(may_reveal(Duration::ZERO, true, IntroKind::None, false));
-        assert!(may_reveal(Duration::from_secs(1), true, IntroKind::Update, true));
-        assert!(!may_reveal(Duration::from_secs(1), false, IntroKind::Update, true));
+        assert!(!may_reveal(
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            true,
+            IntroKind::Update,
+            false
+        ));
+        assert!(may_reveal(Duration::from_secs(6), Duration::from_secs(6), true, IntroKind::Update, false));
+        assert!(!may_reveal(
+            Duration::from_secs(7),
+            Duration::from_secs(6),
+            false,
+            IntroKind::Update,
+            false
+        ));
+        assert!(may_reveal(
+            Duration::from_secs(8),
+            Duration::from_secs(6),
+            false,
+            IntroKind::Update,
+            false
+        ));
+        assert!(may_reveal(Duration::ZERO, Duration::ZERO, true, IntroKind::None, false));
+        assert!(may_reveal(Duration::from_secs(1), Duration::ZERO, true, IntroKind::Update, true));
+        assert!(!may_reveal(Duration::from_secs(1), Duration::ZERO, false, IntroKind::Update, true));
+        // A stalled audio/device/frame callback cannot extend the absolute cap.
+        assert!(may_reveal(Duration::from_secs(8), Duration::ZERO, true, IntroKind::Update, false));
+        assert!(may_reveal(Duration::from_secs(8), Duration::ZERO, false, IntroKind::Update, false));
     }
 
     #[test]

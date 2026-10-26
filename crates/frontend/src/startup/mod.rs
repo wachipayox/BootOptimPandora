@@ -6,7 +6,7 @@ pub(crate) mod vector;
 
 use crate::interface_config::InterfaceConfig;
 use gpui::{prelude::*, *};
-use policy::{INTRO, IntroKind, TRANSITION, intro_kind, may_reveal};
+use policy::{INTRO, IntroKind, PRELOAD_LIMIT, TRANSITION, intro_kind, may_reveal};
 use std::time::Instant;
 
 struct Session {
@@ -143,13 +143,13 @@ impl Controller {
             );
         }
         let animation_elapsed = self.clock.map(|clock| now.duration_since(clock)).unwrap_or_default();
-        let intro_finished = self.kind == IntroKind::None || self.skipped || animation_elapsed >= INTRO;
-        if animation_elapsed >= INTRO {
+        if animation_elapsed >= INTRO || elapsed >= PRELOAD_LIMIT {
             if let Some(audio) = &self.audio {
                 audio.fade();
             }
         }
-        if self.fade.is_none() && intro_finished && may_reveal(elapsed, self.ready_frames >= 2, self.kind, self.skipped)
+        if self.fade.is_none()
+            && may_reveal(elapsed, animation_elapsed, self.ready_frames >= 2, self.kind, self.skipped)
         {
             self.fade = Some(now);
             if !ready {
