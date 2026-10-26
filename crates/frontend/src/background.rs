@@ -254,7 +254,9 @@ fn saturated_color(color: u32, saturation: f32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AppBackground, BackdropCache, Key, PreparedBackdrop, cover_bounds, saturated_color};
+    use gpui::{RenderImage, px, size};
+    use std::sync::Arc;
 
     fn key(width: u32) -> Key {
         Key {
