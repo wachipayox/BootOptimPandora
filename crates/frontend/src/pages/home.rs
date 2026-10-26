@@ -153,7 +153,11 @@ impl HomePage {
         self.news_view
     }
     pub(crate) fn startup_ready(&self, window: &mut Window, cx: &mut App) -> bool {
-        let mut ready = self.loaded;
+        // load_servers publishes the local servers.dat summary immediately;
+        // Server List Ping runs independently and must never gate startup.
+        let local_servers_ready =
+            self.instance.as_ref().is_none_or(|instance| instance.read(cx).servers.read(cx).is_some());
+        let mut ready = self.loaded && local_servers_ready;
         let general = InterfaceConfig::get(cx).home_general_news;
         for source in [
             picture(&self.presentation.artwork, "images/artwork-vanilla.png"),
