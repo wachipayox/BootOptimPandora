@@ -30,6 +30,9 @@ impl Global for BackdropCache {}
 
 impl BackdropCache {
     fn request(&mut self, key: Key) -> Option<Key> {
+        if self.key.as_ref().is_some_and(|previous| previous.source != key.source) {
+            self.failed = None;
+        }
         self.key = Some(key.clone());
         // Keep the last complete surface throughout a resize/source change.
         // A single worker follows the latest request instead of queuing every
@@ -310,8 +313,9 @@ mod tests {
         let _ = cache.request(failed.clone());
         cache.complete(&failed, None);
         assert!(cache.image.is_some());
-        assert!(cache.request(failed).is_none());
-        assert!(cache.request(key(1000)).is_some());
+        assert!(cache.request(failed.clone()).is_none());
+        assert!(cache.request(key(1280)).is_none());
+        assert!(cache.request(failed).is_some());
     }
 
     #[test]
