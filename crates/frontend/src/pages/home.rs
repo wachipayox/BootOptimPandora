@@ -464,14 +464,14 @@ impl Render for HomePage {
         let artwork = self.artwork_image.render(
             resource(&self.presentation.artwork, "images/artwork-vanilla.png"),
             "images/artwork-vanilla.png",
-            ObjectFit::Cover,
+            true,
             window,
             cx,
         );
         let logo = self.logo_image.render(
             resource(&self.presentation.logo, "images/logo-vanilla.png"),
             "images/logo-vanilla.png",
-            ObjectFit::Contain,
+            false,
             window,
             cx,
         );

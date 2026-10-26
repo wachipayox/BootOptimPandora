@@ -16,7 +16,7 @@ impl RetainedImage {
         &mut self,
         source: Resource,
         fallback: &'static str,
-        fit: ObjectFit,
+        cover: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -49,6 +49,7 @@ impl RetainedImage {
             self.previous = None;
         }
         let mut layer = div().relative().size_full();
+        let fit = || if cover { ObjectFit::Cover } else { ObjectFit::Contain };
         if let Some(previous) = &self.previous {
             window.request_animation_frame();
             layer = layer.child(
@@ -57,7 +58,7 @@ impl RetainedImage {
                     .inset_0()
                     .size_full()
                     .opacity(1. - progress)
-                    .child(img(previous.clone()).size_full().object_fit(fit.clone())),
+                    .child(img(previous.clone()).size_full().object_fit(fit())),
             );
         }
         if let Some((_, image)) = &self.current {
@@ -67,7 +68,7 @@ impl RetainedImage {
                     .inset_0()
                     .size_full()
                     .opacity(if self.previous.is_some() { progress } else { 1. })
-                    .child(img(image.clone()).size_full().object_fit(fit)),
+                    .child(img(image.clone()).size_full().object_fit(fit())),
             );
         }
         layer.into_any_element()
