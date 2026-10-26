@@ -123,3 +123,32 @@ pub fn start(window: &mut Window, cx: &mut App) {
         })
         .detach();
 }
+
+/// Arms the very first native draw, before the window factory returns its root.
+/// Ordinary capture routes still bypass startup; startup-live uses real policy.
+pub fn startup_first_frame(window: &mut Window, _cx: &mut App) {
+    if std::env::var("WBOMBO_UI_CAPTURE_STARTUP_FIRST_FRAME").as_deref() != Ok("1") {
+        return;
+    }
+    let Some(directory) = std::env::var_os("WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR").map(PathBuf::from) else {
+        return;
+    };
+    if let Err(error) = window.request_framebuffer_capture() {
+        log::warn!("Could not arm first startup frame: {error}");
+        return;
+    }
+    window.on_next_frame(move |window, _| {
+        window.on_next_frame(move |window, cx| match window.capture_framebuffer() {
+            Ok(image) => cx
+                .background_executor()
+                .spawn(async move {
+                    if let Err(error) = image.save(directory.join("startup-first.png")) {
+                        log::warn!("Could not save first startup frame: {error}");
+                    }
+                })
+                .detach(),
+            Err(error) => log::warn!("Could not read first startup frame: {error}"),
+        });
+        window.refresh();
+    });
+}

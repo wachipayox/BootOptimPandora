@@ -101,6 +101,7 @@ struct Cli {
 pub mod panic;
 
 fn main() {
+    let process_started = std::time::Instant::now();
     let cli = Cli::parse();
     // Instance management never opens a window; the launcher process that runs it exits when it is done.
     let instance_command = cli_instance_command(&cli).is_some();
@@ -315,6 +316,7 @@ fn main() {
         );
         frontend::start(
             launcher_dir.clone(),
+            process_started,
             existing_install,
             allow_startup,
             panic_message,

@@ -13,14 +13,16 @@ struct Session {
     existing_install: bool,
     consumed: bool,
     active: bool,
+    process_started: Instant,
 }
 impl Global for Session {}
 
-pub(crate) fn init(existing_install: bool, allow_startup: bool, cx: &mut App) {
+pub(crate) fn init(existing_install: bool, allow_startup: bool, process_started: Instant, cx: &mut App) {
     cx.set_global(Session {
         existing_install,
         consumed: !allow_startup,
         active: false,
+        process_started,
     });
 }
 pub(crate) fn is_active(cx: &App) -> bool {
@@ -37,10 +39,12 @@ pub(crate) struct Controller {
     first_frame: bool,
     audio: Option<audio::Audio>,
     audio_requested: bool,
+    process_started: Instant,
+    preload_reported: bool,
 }
 impl Controller {
     pub(crate) fn new(opened: Instant, cx: &mut App) -> Option<Self> {
-        if std::env::var_os("WBOMBO_UI_CAPTURE_PAGE").is_some() {
+        if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page != "startup-live") {
             return None;
         }
         let session = cx.global_mut::<Session>();
@@ -50,6 +54,7 @@ impl Controller {
         session.consumed = true;
         session.active = true;
         let existing = session.existing_install;
+        let process_started = session.process_started;
         let version = option_env!("PANDORA_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
         let kind = intro_kind(existing, InterfaceConfig::get(cx).startup_seen_version.as_deref(), version);
         let mut tracks: Vec<String> = crate::Assets::iter()
@@ -83,6 +88,8 @@ impl Controller {
             first_frame: true,
             audio,
             audio_requested: false,
+            process_started,
+            preload_reported: false,
         })
     }
 
@@ -96,7 +103,7 @@ impl Controller {
     pub(crate) fn layer(&mut self, ready: bool, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let now = Instant::now();
         let elapsed = now.duration_since(self.opened);
-        let first_paint_origin = self.first_frame.then_some(self.opened);
+        let first_paint_origin = self.first_frame.then_some((self.opened, self.process_started));
         if self.first_frame {
             self.first_frame = false;
         } else if self.clock.is_none() {
@@ -116,6 +123,15 @@ impl Controller {
             }
         }
         self.ready_frames = if ready { self.ready_frames.saturating_add(1) } else { 0 };
+        if self.ready_frames >= 2 && !self.preload_reported {
+            self.preload_reported = true;
+            log::info!(
+                "startup-preload-ready pid={} native_window_to_ready_us={} main_to_ready_us={}",
+                std::process::id(),
+                elapsed.as_micros(),
+                now.duration_since(self.process_started).as_micros()
+            );
+        }
         let animation_elapsed = self.clock.map(|clock| now.duration_since(clock)).unwrap_or_default();
         let intro_finished = self.kind == IntroKind::None || self.skipped || animation_elapsed >= INTRO;
         if animation_elapsed >= INTRO {
@@ -127,10 +143,11 @@ impl Controller {
         {
             self.fade = Some(now);
             log::info!(
-                "startup-home-ready pid={} window_open_to_ready_us={} capped={}",
+                "startup-home-ready pid={} window_open_to_ready_us={} capped={} main_to_reveal_us={}",
                 std::process::id(),
                 elapsed.as_micros(),
-                !ready
+                !ready,
+                now.duration_since(self.process_started).as_micros()
             );
         }
         let opacity = 1.

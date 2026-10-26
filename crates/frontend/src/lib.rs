@@ -81,6 +81,7 @@ actions!([Quit, CloseWindow, OpenSettings, Forwards, Backwards, Confirm]);
 
 pub fn start(
     launcher_dir: PathBuf,
+    process_started: std::time::Instant,
     existing_install: bool,
     allow_startup: bool,
     panic_message: Arc<RwLock<Option<String>>>,
@@ -114,7 +115,7 @@ pub fn start(
             theme::init(cx);
             pages::news::init(cx);
             InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
-            startup::init(existing_install, allow_startup, cx);
+            startup::init(existing_install, allow_startup, process_started, cx);
 
             t::set_lang(&InterfaceConfig::get(cx).language);
 
@@ -479,7 +480,10 @@ pub fn open_main_window(
                 let root = cx.new(|cx| {
                     let root = Root::new(launcher_root, window, cx);
                     #[cfg(feature = "ui-capture")]
-                    if capture_page.as_deref().is_some_and(|page| page.starts_with("startup-")) {
+                    if capture_page
+                        .as_deref()
+                        .is_some_and(|page| page.starts_with("startup-") && page != "startup-live")
+                    {
                         return root.bordered(false);
                     }
                     root
@@ -617,7 +621,8 @@ pub fn open_main_window(
                     window.on_next_frame(crate::capture::open_window_dialog);
                 }
                 #[cfg(feature = "ui-capture")]
-                if capture_page.is_some() && capture_page.as_deref() != Some("window-dialog") {
+                if capture_page.as_deref() != Some("window-dialog") {
+                    crate::capture::startup_first_frame(window, cx);
                     crate::capture::start(window, cx);
                 }
                 root

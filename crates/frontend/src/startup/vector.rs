@@ -9,9 +9,7 @@ pub(super) enum Command {
     Move(f64, f64),
     Line(f64, f64),
     Quad(f64, f64, f64, f64),
-    #[allow(dead_code)]
     Cubic(f64, f64, f64, f64, f64, f64),
-    Arc(f64, f64, f64, bool, bool, f64, f64),
     Close,
 }
 const BG: u32 = 0x0e0e0f;
@@ -153,7 +151,11 @@ impl Painter<'_> {
     }
     fn path(&mut self, commands: &[Command], color: u32, even_odd: bool) {
         let rule = if even_odd { FillRule::EvenOdd } else { FillRule::NonZero };
-        let mut path = PathBuilder::fill().with_style(PathStyle::Fill(FillOptions::default().with_fill_rule(rule)));
+        let mut path = PathBuilder::fill().with_style(PathStyle::Fill(
+            FillOptions::default()
+                .with_fill_rule(rule)
+                .with_tolerance(0.02 / self.window.scale_factor()),
+        ));
         for c in commands {
             match *c {
                 Command::Move(x, y) => path.move_to(self.point(x, y)),
@@ -162,20 +164,6 @@ impl Painter<'_> {
                 Command::Cubic(ax, ay, bx, by, x, y) => {
                     path.cubic_bezier_to(self.point(x, y), self.point(ax, ay), self.point(bx, by))
                 },
-                Command::Arc(rx, ry, angle, large, sweep, x, y) => path.arc_to(
-                    point(
-                        px((rx * self.state.sx.abs() * self.scale) as f32),
-                        px((ry * self.state.sy.abs() * self.scale) as f32),
-                    ),
-                    px(angle as f32),
-                    large,
-                    if self.state.sx * self.state.sy < 0. {
-                        !sweep
-                    } else {
-                        sweep
-                    },
-                    self.point(x, y),
-                ),
                 Command::Close => path.close(),
             }
         }
@@ -199,14 +187,30 @@ impl Painter<'_> {
         self.paint(path, color);
     }
     fn arc(&mut self, x: f64, y: f64, radius: f64, width: f64, color: u32, start: f64, end: f64) {
-        let mut path = PathBuilder::stroke(px((width * self.state.sx.abs() * self.scale) as f32));
+        let mut path =
+            PathBuilder::stroke(px((width * self.state.sx.abs() * self.scale) as f32)).with_style(PathStyle::Stroke(
+                StrokeOptions::default()
+                    .with_line_width((width * self.state.sx.abs() * self.scale) as f32)
+                    .with_tolerance(0.02 / self.window.scale_factor()),
+            ));
         let span = (end - start).min(TAU);
-        let n = (span / (PI / 2.)).ceil().max(1.) as usize;
+        // GPUI's SVG arc_to converts arcs into quadratic pieces of up to 45°.
+        // At the intro's large zoom that visibly moves the circular contour.
+        // Small cubic pieces retain the source circle to subpixel precision.
+        let n = (span / (PI / 8.)).ceil().max(1.) as usize;
         path.move_to(self.point(x + radius * start.cos(), y + radius * start.sin()));
         for i in 1..=n {
+            let previous = start + span * (i - 1) as f64 / n as f64;
             let a = start + span * i as f64 / n as f64;
-            let r = px((radius * self.state.sx.abs() * self.scale) as f32);
-            path.arc_to(point(r, r), px(0.), false, true, self.point(x + radius * a.cos(), y + radius * a.sin()));
+            let k = 4. / 3. * ((a - previous) / 4.).tan();
+            path.cubic_bezier_to(
+                self.point(x + radius * a.cos(), y + radius * a.sin()),
+                self.point(
+                    x + radius * (previous.cos() - k * previous.sin()),
+                    y + radius * (previous.sin() + k * previous.cos()),
+                ),
+                self.point(x + radius * (a.cos() + k * a.sin()), y + radius * (a.sin() - k * a.cos())),
+            );
         }
         if (span - TAU).abs() < 1e-8 {
             path.close();
@@ -567,7 +571,7 @@ pub(crate) fn paint(t: f64, bounds: Bounds<Pixels>, window: &mut Window) {
 pub(crate) fn frame(t: f64) -> AnyElement {
     frame_timed(t, None)
 }
-pub(crate) fn frame_timed(t: f64, first_paint_origin: Option<std::time::Instant>) -> AnyElement {
+pub(crate) fn frame_timed(t: f64, first_paint_origin: Option<(std::time::Instant, std::time::Instant)>) -> AnyElement {
     canvas(
         move |bounds, _, _| bounds,
         move |bounds, _, window, _| {
@@ -576,21 +580,24 @@ pub(crate) fn frame_timed(t: f64, first_paint_origin: Option<std::time::Instant>
             paint(t, bounds, window);
             #[cfg(feature = "ui-capture")]
             if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page.starts_with("startup-bench:")) {
+                static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+                let origin = *ORIGIN.get_or_init(|| started);
                 log::info!(
-                    "startup-frame-cost pid={} t={} logical_width={} logical_height={} scale={} cpu_paint_ns={}",
+                    "startup-frame-cost pid={} t={} logical_width={} logical_height={} scale={} cpu_paint_ns={} wall_frame_start_ns={}",
                     std::process::id(),
                     t,
                     bounds.size.width.as_f32(),
                     bounds.size.height.as_f32(),
                     window.scale_factor(),
-                    started.elapsed().as_nanos()
+                    started.elapsed().as_nanos(), started.duration_since(origin).as_nanos()
                 );
             }
-            if let Some(origin) = first_paint_origin {
+            if let Some((native, main)) = first_paint_origin {
+                let painted = std::time::Instant::now();
                 log::info!(
-                    "startup-first-paint pid={} native_window_to_paint_us={}",
+                    "startup-first-paint pid={} native_window_to_paint_us={} main_to_paint_us={}",
                     std::process::id(),
-                    origin.elapsed().as_micros()
+                    painted.duration_since(native).as_micros(), painted.duration_since(main).as_micros()
                 );
             }
         },

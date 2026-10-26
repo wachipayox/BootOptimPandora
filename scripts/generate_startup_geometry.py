@@ -4,8 +4,50 @@ The source HTML is supplied separately; no browser or video is bundled.
 """
 import argparse
 import json
+import math
 import re
 from pathlib import Path
+
+
+def arc_cubics(start, values):
+    """SVG endpoint arc to <=22.5-degree cubics, without GPUI's coarse quadratics."""
+    rx, ry, rotation, large, sweep, x, y = values
+    if not rx or not ry or start == (x, y):
+        return []
+    rx, ry = abs(rx), abs(ry)
+    phi = math.radians(rotation)
+    cp, sp = math.cos(phi), math.sin(phi)
+    dx, dy = (start[0] - x) / 2, (start[1] - y) / 2
+    xp, yp = cp * dx + sp * dy, -sp * dx + cp * dy
+    scale = math.sqrt(max(1, (xp / rx) ** 2 + (yp / ry) ** 2))
+    rx, ry = rx * scale, ry * scale
+    denominator = rx * rx * yp * yp + ry * ry * xp * xp
+    factor = math.sqrt(max(0, (rx * rx * ry * ry - denominator) / denominator))
+    if bool(large) == bool(sweep):
+        factor = -factor
+    cxp, cyp = factor * rx * yp / ry, -factor * ry * xp / rx
+    cx = cp * cxp - sp * cyp + (start[0] + x) / 2
+    cy = sp * cxp + cp * cyp + (start[1] + y) / 2
+    u = ((xp - cxp) / rx, (yp - cyp) / ry)
+    v = ((-xp - cxp) / rx, (-yp - cyp) / ry)
+    a = math.atan2(u[1], u[0])
+    span = math.atan2(u[0] * v[1] - u[1] * v[0], u[0] * v[0] + u[1] * v[1])
+    if sweep and span < 0:
+        span += math.tau
+    if not sweep and span > 0:
+        span -= math.tau
+    count = max(1, math.ceil(abs(span) / (math.pi / 8)))
+    def point(ex, ey):
+        return (cx + cp * rx * ex - sp * ry * ey, cy + sp * rx * ex + cp * ry * ey)
+    curves = []
+    for i in range(count):
+        b = a + span / count
+        k = 4 / 3 * math.tan((b - a) / 4)
+        curves.append((*point(math.cos(a) - k * math.sin(a), math.sin(a) + k * math.cos(a)),
+                       *point(math.cos(b) + k * math.sin(b), math.sin(b) - k * math.cos(b)),
+                       *(point(math.cos(b), math.sin(b)) if i + 1 < count else (x, y))))
+        a = b
+    return curves
 
 
 def commands(path):
@@ -49,10 +91,12 @@ def commands(path):
             kind = "Quad" if mode == "Q" else "Cubic"
             result.append(f"Command::{kind}({', '.join(map(number, values))})")
         else:
+            curves = arc_cubics((x, y), values)
             x, y = values[-2:]
-            rx, ry, angle, large, sweep, x, y = values
-            result.append(f"Command::Arc({number(rx)}, {number(ry)}, {number(angle)}, "
-                          f"{str(bool(large)).lower()}, {str(bool(sweep)).lower()}, {number(x)}, {number(y)})")
+            if curves:
+                result.extend(f"Command::Cubic({', '.join(map(number, curve))})" for curve in curves)
+            else:
+                result.append(f"Command::Line({number(x)}, {number(y)})")
     return result
 
 
