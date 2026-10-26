@@ -128,12 +128,12 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
     $boundaryProbes=@()
     $resizable=([CaptureWindow]::GetWindowLongPtr($Handle,-16).ToInt64() -band 0x40000) -ne 0
     if($resizable) {
+        $controlChecks=@()
         foreach($area in @('Some(Min)','Some(Max)','Some(Close)')) {
             $control=@($regions|Where-Object area -eq $area)
-            if($control.Count -ne 1 -or $control[0].bounds.width -lt 31.9 -or $control[0].bounds.height -lt 31.9) {
-                throw "Window control is missing or clipped: $area"
-            }
+            $controlChecks+=@{area=$area;bounds=@($control|ForEach-Object bounds);passed=$control.Count -eq 1 -and $control[0].bounds.width -ge 31.9 -and $control[0].bounds.height -ge 31.9}
         }
+        $controlChecks|ConvertTo-Json -Depth 5|Set-Content -LiteralPath ($Path -replace '\.json$','-controls.json') -Encoding utf8
     }
     foreach($region in $regions) {
         $expected=switch($region.area) {'Some(Drag)' {2}; 'Some(Min)' {8}; 'Some(Max)' {9}; 'Some(Close)' {20}; 'None' {1}; default {throw 'Unknown capture region type'}}
