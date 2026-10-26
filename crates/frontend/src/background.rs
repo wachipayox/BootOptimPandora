@@ -147,7 +147,30 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
     // Solid colors are already ready. Neither a resize nor a theme change
     // needs to wait for a full-sized bitmap to be prepared on a worker.
     if let AppBackground::Color(color) = key.source {
-        cx.default_global::<BackdropCache>().key = Some(key);
+        let state = cx.default_global::<BackdropCache>();
+        state.key = Some(key.clone());
+        if !state.image.as_ref().is_some_and(|image| image.key.source == key.source) {
+            // Retain this ready color too when an image is selected next.
+            // Two one-pixel textures suffice, independently of viewport size.
+            let pixel = |color: u32| {
+                let pixel = image::Rgba([
+                    (color & 255) as u8,
+                    ((color >> 8) & 255) as u8,
+                    ((color >> 16) & 255) as u8,
+                    255,
+                ]);
+                Arc::new(RenderImage::new([image::Frame::new(image::RgbaImage::from_pixel(1, 1, pixel))]))
+            };
+            state.image = Some(PreparedBackdrop {
+                key: Key {
+                    width: 1,
+                    height: 1,
+                    ..key
+                },
+                surface: pixel(color),
+                glass: pixel(saturated_color(color, 1.5)),
+            });
+        }
         let color = if glass { saturated_color(color, 1.5) } else { color };
         return div().absolute().top_0().left_0().size_full().bg(rgb(color)).into_any_element();
     }
