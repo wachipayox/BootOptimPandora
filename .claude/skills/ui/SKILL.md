@@ -88,6 +88,8 @@ and actual HWND `WM_NCHITTEST` results cover client controls, caption gaps and
 eight resize edges, with separate clipped-control checks. This sends mouse-move
 packets, never button-down/up or clicks; it does not prove actual dragging or
 activation. `-DragRegions` adds capture-only diagnostic colors. Use
+`-HitTestPointOnly` with the corrected native backend to query the supplied
+message coordinates without moving the cursor or sending mouse-move packets.
 `-DesignViewport -ViewportWidth 960 -ViewportHeight 600` for minimum-width
 review. `window-dialog` opens a real, nonresizable secondary window;
 `sidebar-scroll` adds cosmetic rows without backend instances. If remote test

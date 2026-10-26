@@ -847,7 +847,15 @@ impl WindowsWindowInner {
 
         let callback = self.state.callbacks.hit_test_window_control.take();
         let drag_area = if let Some(mut callback) = callback {
+            let mut query = POINT {
+                x: lparam.signed_loword().into(),
+                y: lparam.signed_hiword().into(),
+            };
+            unsafe { ScreenToClient(handle, &mut query).ok().log_err() };
+            let position = logical_point(query.x as f32, query.y as f32, self.state.scale_factor.get());
+            let previous = self.state.hit_test_position.replace(Some(position));
             let area = callback();
+            self.state.hit_test_position.set(previous);
             self.state.callbacks.hit_test_window_control.set(Some(callback));
             area.and_then(|area| match area {
                 WindowControlArea::Drag if self.is_movable => Some(HTCAPTION as _),

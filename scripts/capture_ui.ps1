@@ -22,6 +22,7 @@ param(
     [int]$ViewportHeight = 860,
     [switch]$Framebuffer,
     [switch]$HitTest,
+    [switch]$HitTestPointOnly,
     [string]$HitTestReferenceDirectory,
     [switch]$DragRegions,
     [switch]$ResizeProbe,
@@ -182,21 +183,21 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
     $results=@()
     try {
         foreach($point in $points) {
-            if (-not [CaptureWindow]::SetCursorPos($point.x,$point.y)) {throw 'Cannot position the native hit-test probe.'}
+            if (-not $HitTestPointOnly -and -not [CaptureWindow]::SetCursorPos($point.x,$point.y)) {throw 'Cannot position the native hit-test probe.'}
             $clientX=$point.x-$origin.X; $clientY=$point.y-$origin.Y
             $client=[IntPtr](([int64]$clientY -shl 16) -bor ([int64]$clientX -band 0xffff))
             $screen=[IntPtr](([int64]$point.y -shl 16) -bor ([int64]$point.x -band 0xffff))
             $reply=[IntPtr]::Zero
             # Update hover identically for baseline and candidate, then query
             # the real HWND. No button-down/up or click messages are sent.
-            if ([CaptureWindow]::SendMessageTimeout($Handle,0x200,[IntPtr]::Zero,$client,2,2000,[ref]$reply) -eq [IntPtr]::Zero) {throw 'Hit-test mouse position update timed out.'}
+            if (-not $HitTestPointOnly -and [CaptureWindow]::SendMessageTimeout($Handle,0x200,[IntPtr]::Zero,$client,2,2000,[ref]$reply) -eq [IntPtr]::Zero) {throw 'Hit-test mouse position update timed out.'}
             if ([CaptureWindow]::SendMessageTimeout($Handle,0x84,[IntPtr]::Zero,$screen,2,2000,[ref]$reply) -eq [IntPtr]::Zero) {throw 'WM_NCHITTEST timed out.'}
             $observed=New-Object CaptureWindow+POINT
             if(-not [CaptureWindow]::GetCursorPos([ref]$observed)){throw 'Cannot verify the native probe position.'}
             $passed=if($null -ne $point.expected){$reply.ToInt64() -eq $point.expected}else{$reply.ToInt64() -notin (10..17)}
             $results+=@{label=$point.label;kind=$point.kind;x=$point.x;y=$point.y;expected=$point.expected;actual=$reply.ToInt64();resizable=$resizable;passed=$passed;observedPointer=@($observed.X,$observed.Y);pointerMatchesQuery=$observed.X -eq $point.x -and $observed.Y -eq $point.y}
         }
-    } finally { [void][CaptureWindow]::SetCursorPos($previous.X,$previous.Y) }
+    } finally { if(-not $HitTestPointOnly){[void][CaptureWindow]::SetCursorPos($previous.X,$previous.Y)} }
     $results | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $Path -Encoding utf8
     ConvertTo-Json -InputObject @($boundaryProbes) -Depth 5 | Set-Content -LiteralPath ($Path -replace '\.json$','-boundary.json') -Encoding utf8
     $results | ForEach-Object {[pscustomobject]$_} | Export-Csv -LiteralPath ($Path -replace '\.json$','.csv') -NoTypeInformation -Encoding utf8
@@ -529,6 +530,7 @@ try {
         captureScriptCommit = (git -C $repo rev-parse HEAD)
         captureScriptSha256 = $scriptHashAtStart
         nativeHitTest = [bool]$HitTest
+        hitTestPointOnly = [bool]$HitTestPointOnly
         hitTestRegionSource = if($HitTestReferenceDirectory){'candidate geometry reused for baseline HWND queries'}else{'painted native regions from this executable'}
         diagnosticDragColors = [bool]$DragRegions
         viewport = if ($DesignViewport) { "$ViewportWidth x $ViewportHeight logical pixels" } else { 'maximized' }

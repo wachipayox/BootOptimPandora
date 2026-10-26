@@ -43,6 +43,8 @@ impl std::ops::Deref for WindowsWindow {
 pub struct WindowsWindowState {
     pub origin: Cell<Point<Pixels>>,
     pub logical_size: Cell<Size<Pixels>>,
+    /// Scoped to WM_NCHITTEST: its query can differ from the current cursor.
+    pub hit_test_position: Cell<Option<Point<Pixels>>>,
     pub min_size: Option<Size<Pixels>>,
     pub fullscreen_restore_bounds: Cell<Bounds<Pixels>>,
     pub border_offset: WindowBorderOffset,
@@ -153,6 +155,7 @@ impl WindowsWindowState {
         Ok(Self {
             origin: Cell::new(origin),
             logical_size: Cell::new(logical_size),
+            hit_test_position: Cell::new(None),
             fullscreen_restore_bounds: Cell::new(fullscreen_restore_bounds),
             border_offset,
             appearance: Cell::new(appearance),
@@ -624,6 +627,9 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
+        if let Some(position) = self.state.hit_test_position.get() {
+            return position;
+        }
         let scale_factor = self.scale_factor();
         let point = unsafe {
             let mut point: POINT = std::mem::zeroed();
