@@ -18,7 +18,7 @@ use crate::{
 };
 use bridge::{handle::BackendHandle, instance::InstanceID};
 use gpui::{prelude::*, *};
-use gpui_component::{Disableable, h_flex, v_flex};
+use gpui_component::{Disableable, h_flex, scroll::ScrollableElement, v_flex};
 use serde::{Deserialize, Serialize};
 
 pub struct InstancePage {
@@ -102,6 +102,9 @@ impl InstancePage {
             }))
             .child(
                 div()
+                    .max_w(px(200.))
+                    .flex_shrink_0()
+                    .overflow_hidden()
                     .font_family(theme::DISPLAY)
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
@@ -113,6 +116,7 @@ impl InstancePage {
             InstanceSubpageType::Mods | InstanceSubpageType::ResourcePacks | InstanceSubpageType::Shaders
         );
         let logs = matches!(selected, InstanceSubpageType::Logs | InstanceSubpageType::LiveGameOutput);
+        let mut tabs = h_flex().h_full().gap(px(20.)).flex_shrink_0();
         for (ix, label, target, active) in [
             (0, "Jugar", InstanceSubpageType::Quickplay, false),
             (1, "Contenido", InstanceSubpageType::Mods, content),
@@ -135,7 +139,7 @@ impl InstancePage {
                 continue;
             }
             let name = name.clone();
-            header = header.child(design::tab(("instance-tab", ix as usize), label, active).on_click(cx.listener(
+            tabs = tabs.child(design::tab(("instance-tab", ix as usize), label, active).on_click(cx.listener(
                 move |_, _, w, c| {
                     if target == InstanceSubpageType::Quickplay {
                         InterfaceConfig::get_mut(c).home_instance = Some(name.clone());
@@ -147,9 +151,11 @@ impl InstancePage {
                 },
             )));
         }
+        header = header.child(div().flex_1().min_w_0().h_full().overflow_x_scrollbar().child(tabs));
         if root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
-            header = header.child(div().flex_1()).child(
+            header = header.child(
                 h_flex()
+                    .flex_shrink_0()
                     .child(WindowControl::Minimize)
                     .child(if window.is_maximized() {
                         WindowControl::Restore

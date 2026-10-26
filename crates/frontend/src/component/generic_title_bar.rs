@@ -118,6 +118,7 @@ impl RenderOnce for WindowControl {
                 WindowControl::Close => WindowControlArea::Close,
             })
             .size_8()
+            .flex_shrink_0()
             .justify_center()
             .content_center()
             .rounded(cx.theme().radius)

@@ -13,7 +13,7 @@ pub enum AppBackground {
     Image(std::path::PathBuf),
     Artwork(Option<std::path::PathBuf>),
 }
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Key {
     source: AppBackground,
     width: u32,
@@ -23,13 +23,43 @@ struct Key {
 struct BackdropCache {
     key: Option<Key>,
     image: Option<PreparedBackdrop>,
-    pending: bool,
-    attempted: bool,
+    pending: Option<Key>,
+    failed: Option<Key>,
 }
 impl Global for BackdropCache {}
 
+impl BackdropCache {
+    fn request(&mut self, key: Key) -> Option<Key> {
+        self.key = Some(key.clone());
+        // Keep the last complete surface throughout a resize/source change.
+        // A single worker follows the latest request instead of queuing every
+        // intermediate resize or clearing the visible image between jobs.
+        if self.pending.is_some()
+            || self.failed.as_ref() == Some(&key)
+            || self.image.as_ref().is_some_and(|image| image.key == key)
+        {
+            return None;
+        }
+        self.pending = Some(key.clone());
+        Some(key)
+    }
+
+    fn complete(&mut self, key: &Key, image: Option<PreparedBackdrop>) {
+        self.pending = None;
+        if self.key.as_ref().is_some_and(|requested| requested.source == key.source) {
+            if let Some(image) = image {
+                self.image = Some(image);
+                self.failed = None;
+            } else {
+                self.failed = Some(key.clone());
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 struct PreparedBackdrop {
+    key: Key,
     surface: Arc<RenderImage>,
     glass: Arc<RenderImage>,
 }
@@ -98,6 +128,7 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
         Arc::new(RenderImage::new([image::Frame::new(image)]))
     }
     Some(PreparedBackdrop {
+        key: key.clone(),
         surface: render_image(scene),
         glass: render_image(glass),
     })
@@ -113,30 +144,35 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
         width: size.width.as_f32().ceil().clamp(1., 8192.) as u32,
         height: size.height.as_f32().ceil().clamp(1., 8192.) as u32,
     };
-    let state = cx.default_global::<BackdropCache>();
-    if state.key.as_ref() != Some(&key) {
-        state.key = Some(key.clone());
-        state.image = None;
-        state.attempted = false;
+    // Solid colors are already ready. Neither a resize nor a theme change
+    // needs to wait for a full-sized bitmap to be prepared on a worker.
+    if let AppBackground::Color(color) = key.source {
+        cx.default_global::<BackdropCache>().key = Some(key);
+        let color = if glass { saturated_color(color, 1.5) } else { color };
+        return div().absolute().top_0().left_0().size_full().bg(rgb(color)).into_any_element();
     }
+    let state = cx.default_global::<BackdropCache>();
+    let work = state.request(key.clone());
     let image = state.image.as_ref().map(|prepared| {
-        if glass {
-            prepared.glass.clone()
-        } else {
-            prepared.surface.clone()
-        }
+        (
+            if glass {
+                prepared.glass.clone()
+            } else {
+                prepared.surface.clone()
+            },
+            prepared.key.width,
+            prepared.key.height,
+        )
     });
-    if image.is_none() && !state.pending && !state.attempted {
-        state.pending = true;
-        state.attempted = true;
+    if let Some(key) = work {
         let work_key = key.clone();
         let work = cx.background_executor().spawn(async move { prepare(&work_key) });
         cx.spawn(async move |cx| {
             let result = work.await;
             let _ = cx.update_global::<BackdropCache, _>(|cache, cx| {
-                cache.pending = false;
-                if cache.key.as_ref() == Some(&key) {
-                    cache.image = result;
+                let ready = result.is_some();
+                cache.complete(&key, result);
+                if ready {
                     log::info!("glass-ready pid={}", std::process::id());
                 }
                 cx.refresh_windows();
@@ -144,24 +180,23 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
         })
         .detach();
     }
-    if !glass {
-        let base = div().absolute().top_0().left_0().size_full();
-        return if let Some(image) = image {
-            base.child(img(image).size_full().object_fit(ObjectFit::Cover)).into_any_element()
-        } else {
-            base.bg(rgb(theme::BG)).into_any_element()
-        };
-    }
+    // Cafe's embedded center pixel (33,16,12) is available immediately, before
+    // its first decode. Retained surfaces cover subsequent pending requests.
+    let fallback = if matches!(key.source, AppBackground::Cafe) {
+        0x21100c
+    } else {
+        theme::BG
+    };
     canvas(
         move |bounds, _, _| bounds,
         move |bounds, _, window, _| {
-            if let Some(image) = &image {
-                let full = Bounds::new(point(px(0.), px(0.)), size);
+            if let Some((image, width, height)) = &image {
+                let full = cover_bounds(size, *width, *height);
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
                     let _ = window.paint_image(full, full, Default::default(), image.clone(), 0, false);
                 });
             } else {
-                window.paint_quad(fill(bounds, rgb(theme::BG)));
+                window.paint_quad(fill(bounds, rgb(fallback)));
             }
         },
     )
@@ -170,6 +205,99 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
     .left_0()
     .size_full()
     .into_any_element()
+}
+
+fn cover_bounds(viewport: Size<Pixels>, width: u32, height: u32) -> Bounds<Pixels> {
+    let scale = (viewport.width.as_f32() / width as f32).max(viewport.height.as_f32() / height as f32);
+    let size = size(px(width as f32 * scale), px(height as f32 * scale));
+    Bounds::new(point((viewport.width - size.width) / 2., (viewport.height - size.height) / 2.), size)
+}
+
+fn saturated_color(color: u32, saturation: f32) -> u32 {
+    let channels = [
+        ((color >> 16) & 255) as f32,
+        ((color >> 8) & 255) as f32,
+        (color & 255) as f32,
+    ];
+    let luminance = 0.213 * channels[0] + 0.715 * channels[1] + 0.072 * channels[2];
+    channels.into_iter().fold(0, |value, channel| {
+        (value << 8) | (luminance + (channel - luminance) * saturation).round().clamp(0., 255.) as u32
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(width: u32) -> Key {
+        Key {
+            source: AppBackground::Cafe,
+            width,
+            height: 600,
+        }
+    }
+
+    fn prepared(key: Key) -> PreparedBackdrop {
+        let image = Arc::new(RenderImage::new([image::Frame::new(image::RgbaImage::new(1, 1))]));
+        PreparedBackdrop {
+            key,
+            surface: image.clone(),
+            glass: image,
+        }
+    }
+
+    #[test]
+    fn rapid_resizes_keep_a_surface_and_coalesce_to_the_latest_size() {
+        let mut cache = BackdropCache::default();
+        let original = key(1280);
+        let first = cache.request(original.clone()).unwrap();
+        cache.complete(&first, Some(prepared(first.clone())));
+        let resize = cache.request(key(1100)).unwrap();
+        assert!(cache.request(key(1000)).is_none());
+        assert!(cache.request(key(960)).is_none());
+        assert_eq!(cache.image.as_ref().unwrap().key, original);
+        cache.complete(&resize, Some(prepared(resize.clone())));
+        assert_eq!(cache.image.as_ref().unwrap().key, resize);
+        assert_eq!(cache.request(key(960)), Some(key(960)));
+    }
+
+    #[test]
+    fn obsolete_source_cannot_replace_a_new_selection() {
+        let mut cache = BackdropCache::default();
+        let old = cache.request(key(1280)).unwrap();
+        let selected = Key {
+            source: AppBackground::Color(0x0b1a20),
+            ..key(1280)
+        };
+        cache.key = Some(selected.clone());
+        cache.complete(&old, Some(prepared(old.clone())));
+        assert!(cache.image.is_none());
+        assert_eq!(cache.key, Some(selected));
+    }
+
+    #[test]
+    fn failed_replacement_keeps_the_last_good_image_without_retrying_every_frame() {
+        let mut cache = BackdropCache::default();
+        cache.image = Some(prepared(key(1280)));
+        let failed = Key {
+            source: AppBackground::Image("missing.png".into()),
+            ..key(1280)
+        };
+        let _ = cache.request(failed.clone());
+        cache.complete(&failed, None);
+        assert!(cache.image.is_some());
+        assert!(cache.request(failed).is_none());
+        assert!(cache.request(key(1000)).is_some());
+    }
+
+    #[test]
+    fn retained_surface_and_glass_share_centered_cover_coordinates() {
+        let bounds = cover_bounds(size(px(960.), px(600.)), 1280, 860);
+        assert_eq!(bounds.origin.x, px(0.));
+        assert_eq!(bounds.origin.y, px(-22.5));
+        assert_eq!(bounds.size, size(px(960.), px(645.)));
+        assert_eq!(saturated_color(0x202020, 1.5), 0x202020);
+    }
 }
 
 pub struct BackgroundSelector {

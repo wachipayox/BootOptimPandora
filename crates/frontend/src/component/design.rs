@@ -432,6 +432,7 @@ pub fn tab(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: b
         .aria_label(label.clone())
         .child(div().font_family(theme::SANS).text_size(px(13.)).line_height(px(18.)).child(label))
         .h(px(42.))
+        .flex_shrink_0()
         .rounded(px(0.))
         .border_0()
         .when(selected, |b| b.border_b_2().border_color(rgb(theme::ACCENT_TEXT)))

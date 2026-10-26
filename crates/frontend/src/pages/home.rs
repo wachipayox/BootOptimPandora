@@ -372,9 +372,13 @@ impl Render for HomePage {
             .gap(px(20.))
             .items_center()
             .bg(shade(0x0b0b0ce6, 0x0b0b0c00));
+        let mut tabs = h_flex().h_full().gap(px(20.)).flex_shrink_0();
         if let Some(i) = &instance {
             header = header.child(
                 div()
+                    .max_w(px(200.))
+                    .flex_shrink_0()
+                    .overflow_hidden()
                     .font_family(theme::DISPLAY)
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
@@ -391,19 +395,21 @@ impl Render for HomePage {
                 if tab == Some(InstanceSubpageType::Changelog) && self.presentation.profile_id.is_none() {
                     continue;
                 }
-                header = header.child(design::tab(("home-tab", index as usize), label, index == 0).on_click(
-                    cx.listener(move |this, _, w, c| {
+                tabs = tabs.child(design::tab(("home-tab", index as usize), label, index == 0).on_click(cx.listener(
+                    move |this, _, w, c| {
                         if let Some(t) = tab {
                             this.open_tab(t, w, c);
                         }
-                    }),
-                ));
+                    },
+                )));
             }
         }
+        header = header.child(div().flex_1().min_w_0().h_full().overflow_x_scrollbar().child(tabs));
         if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
             use crate::component::generic_title_bar::WindowControl;
-            header = header.child(div().flex_1()).child(
+            header = header.child(
                 h_flex()
+                    .flex_shrink_0()
                     .child(WindowControl::Minimize)
                     .child(if window.is_maximized() {
                         WindowControl::Restore
