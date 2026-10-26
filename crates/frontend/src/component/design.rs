@@ -432,6 +432,7 @@ pub fn tab(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: b
         .aria_label(label.clone())
         .child(div().font_family(theme::SANS).text_size(px(13.)).line_height(px(18.)).child(label))
         .h(px(42.))
+        .flex_shrink_0()
         .rounded(px(0.))
         .border_0()
         .when(selected, |b| b.border_b_2().border_color(rgb(theme::ACCENT_TEXT)))
@@ -632,9 +633,9 @@ impl RenderOnce for PlayButton {
     }
 }
 
-/// CSS saturate(1.5) after the specified 14 px Gaussian blur, cached by the caller.
-pub fn prepare_play_artwork(crop: &image::DynamicImage) -> image::RgbaImage {
-    let mut blurred = crop.blur(14.).to_rgba8();
+/// CSS saturate(1.5), with the 14 logical px blur converted to source pixels.
+pub fn prepare_play_artwork(crop: &image::DynamicImage, source_blur: f32) -> image::RgbaImage {
+    let mut blurred = crop.blur(source_blur).to_rgba8();
     for pixel in blurred.pixels_mut() {
         let [r, g, b, a] = pixel.0;
         let luminance = 0.213 * r as f32 + 0.715 * g as f32 + 0.072 * b as f32;

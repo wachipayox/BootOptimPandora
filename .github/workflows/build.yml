@@ -73,6 +73,10 @@ jobs:
         if: matrix.platform.os_name == 'Windows-x86_64'
         run: cargo check --release -p pandora_launcher --features ui-capture --frozen --target ${{ matrix.platform.target }}
 
+      - name: Test retained backdrop state and cover transform
+        if: matrix.platform.os_name == 'Windows-x86_64'
+        run: cargo test --release -p frontend --lib background::tests --frozen --target ${{ matrix.platform.target }}
+
       - name: Test signed launcher updates and local replacement on Unix
         if: matrix.platform.os_name != 'Windows-x86_64'
         run: cargo test --release -p backend --lib launcher_ --frozen --target ${{ matrix.platform.target }}

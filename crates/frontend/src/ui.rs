@@ -557,6 +557,10 @@ impl Render for LauncherUI {
 
 impl LauncherUI {
     fn render_wachiland(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        #[cfg(feature = "ui-capture")]
+        if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page == "backdrop-probe") {
+            return div().size_full().child(crate::background::surface(window, cx)).into_any_element();
+        }
         use crate::{
             component::design::{self, DesignButton},
             theme,
@@ -618,6 +622,20 @@ impl LauncherUI {
             )
         }
         let data = self.data.clone();
+        #[cfg(feature = "ui-capture")]
+        if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("sidebar-scroll") {
+            // Cosmetic rows exercise the real sidebar scrollbar without
+            // creating backend instances or writing any additional folders.
+            for index in 0usize..32 {
+                instances = instances.child(
+                    DesignButton::new(("capture-sidebar-row", index))
+                        .label_left(format!("agente-274-scroll-{index:02}"))
+                        .w_full()
+                        .h(px(42.))
+                        .on_click(|_, _, _| {}),
+                );
+            }
+        }
         instances = instances.child(
             DesignButton::new("sidebar-add")
                 .label_left("+   Añadir instancia")
@@ -757,6 +775,7 @@ impl LauncherUI {
                 ),
         );
         let sidebar = v_flex()
+            .window_control_area(WindowControlArea::Drag)
             .w(px(220.))
             .min_w(px(220.))
             .h_full()

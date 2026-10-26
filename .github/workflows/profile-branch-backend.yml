@@ -1,6 +1,7 @@
 name: Persistent profile branch backend
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "crates/backend/src/lib.rs"

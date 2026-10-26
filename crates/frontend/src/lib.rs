@@ -268,6 +268,10 @@ fn close_all_windows(cx: &mut App) {
 
 pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: &mut App) -> AnyWindowHandle {
     let config = InterfaceConfig::get(cx);
+    // 220 px sidebar plus a usable 740 px content area. Tabs may scroll;
+    // native window controls always keep their full width.
+    const MIN_WIDTH: f32 = 960.;
+    const MIN_HEIGHT: f32 = 600.;
 
     // A display override should use that display's default placement, not coordinates saved for another screen.
     let window_bounds = if display_id.is_some() {
@@ -275,9 +279,10 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
     } else {
         match config.main_window_bounds {
             interface_config::WindowBounds::Inherit => None,
-            interface_config::WindowBounds::Windowed { x, y, w, h } => {
-                Some(WindowBounds::Windowed(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
-            },
+            interface_config::WindowBounds::Windowed { x, y, w, h } => Some(WindowBounds::Windowed(Bounds::new(
+                Point::new(px(x), px(y)),
+                Size::new(px(w.max(MIN_WIDTH)), px(h.max(MIN_HEIGHT))),
+            ))),
             interface_config::WindowBounds::Maximized { x, y, w, h } => {
                 Some(WindowBounds::Maximized(Bounds::new(Point::new(px(x), px(y)), Size::new(px(w), px(h)))))
             },
@@ -293,7 +298,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
         .open_window(
             WindowOptions {
                 app_id: Some("PandoraLauncher".into()),
-                window_min_size: Some(size(px(480.0), px(270.0))),
+                window_min_size: Some(size(px(MIN_WIDTH), px(MIN_HEIGHT))),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Wachiland Launcher".into()),
                     appears_transparent: use_custom_titlebar,
@@ -311,6 +316,8 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
             },
             |window, cx| {
                 let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").ok();
+                #[cfg(feature = "ui-capture")]
+                crate::capture::prepare_local_fixture(&data, cx);
                 if let Some((name, subpage)) = capture_page.as_deref().and_then(capture_instance_target) {
                     InterfaceConfig::get_mut(cx).instance_subpage = subpage;
                     InterfaceConfig::get_mut(cx).main_page = ui::PageType::InstancePage { name: name.into() };
@@ -348,7 +355,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     }
                 }
                 match capture_page.as_deref() {
-                    Some("instances" | "home-menu" | "home-news") => {
+                    Some("instances" | "home-menu" | "home-news" | "sidebar-scroll") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances
                     },
                     Some(name) if name.starts_with("news-") => {
@@ -588,7 +595,11 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     window.on_next_frame(|_, cx| crate::root::open_home_accounts(cx));
                 }
                 #[cfg(feature = "ui-capture")]
-                if capture_page.is_some() {
+                if capture_page.as_deref() == Some("window-dialog") {
+                    window.on_next_frame(crate::capture::open_window_dialog);
+                }
+                #[cfg(feature = "ui-capture")]
+                if capture_page.is_some() && capture_page.as_deref() != Some("window-dialog") {
                     crate::capture::start(window, cx);
                 }
                 root

@@ -207,7 +207,7 @@ impl ModalRoot {
             .on_mouse_down(MouseButton::Left, {
                 let should_move = self.should_move.clone();
                 move |_, window, _| {
-                    should_move.store(!window.default_prevented(), Ordering::Relaxed);
+                    should_move.store(!cfg!(windows) && !window.default_prevented(), Ordering::Relaxed);
                 }
             })
             .on_mouse_up(MouseButton::Left, {
@@ -416,6 +416,11 @@ pub fn show_modal(
             ..Default::default()
         },
         move |window, cx| {
+            #[cfg(feature = "ui-capture")]
+            if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("window-dialog") {
+                crate::capture::start(window, cx);
+                log::info!("window-dialog-ready pid={}", std::process::id());
+            }
             let notify = modal_action.get_notify();
             let task = window.spawn(cx, async move |cx| {
                 loop {

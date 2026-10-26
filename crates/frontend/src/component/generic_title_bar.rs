@@ -1,6 +1,7 @@
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{ActiveTheme, Colorize, InteractiveElementExt, h_flex};
 
+#[cfg(not(windows))]
 use crate::icon::PandoraIcon;
 
 #[derive(IntoElement)]
@@ -54,8 +55,8 @@ impl RenderOnce for TitleBar {
             })
             .on_mouse_down(
                 MouseButton::Left,
-                window.listener_for(&state, |state, _, _, _| {
-                    state.should_move = true;
+                window.listener_for(&state, |state, _, window, _| {
+                    state.should_move = !cfg!(windows) && !window.default_prevented();
                 }),
             )
             .on_mouse_up(
@@ -74,42 +75,22 @@ impl RenderOnce for TitleBar {
                 h_flex()
                     .left_2()
                     .w_full()
-                    .on_any_mouse_down(stop_propagation_if_default_prevented)
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .gap_1()
-                            .flex_1()
-                            .overflow_hidden()
-                            .on_any_mouse_down(stop_propagation_if_default_prevented)
-                            .children(self.left_content),
-                    )
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .gap_1()
-                            .flex_shrink_0()
-                            .on_any_mouse_down(stop_propagation_if_default_prevented)
-                            .children(self.right_content)
-                            .when(!cfg!(target_os = "macos"), |this| {
-                                this.when(window_controls.minimize, |this| this.child(WindowControl::Minimize))
-                                    .when(window_controls.maximize, |this| {
-                                        this.child(if window.is_maximized() {
-                                            WindowControl::Restore
-                                        } else {
-                                            WindowControl::Maximize
-                                        })
+                    .child(h_flex().h_full().gap_1().flex_1().overflow_hidden().children(self.left_content))
+                    .child(h_flex().h_full().gap_1().flex_shrink_0().children(self.right_content).when(
+                        !cfg!(target_os = "macos"),
+                        |this| {
+                            this.when(window_controls.minimize, |this| this.child(WindowControl::Minimize))
+                                .when(window_controls.maximize, |this| {
+                                    this.child(if window.is_maximized() {
+                                        WindowControl::Restore
+                                    } else {
+                                        WindowControl::Maximize
                                     })
-                                    .child(WindowControl::Close)
-                            }),
-                    ),
+                                })
+                                .child(WindowControl::Close)
+                        },
+                    )),
             )
-    }
-}
-
-fn stop_propagation_if_default_prevented(_: &MouseDownEvent, window: &mut Window, cx: &mut App) {
-    if window.default_prevented() {
-        cx.stop_propagation();
     }
 }
 
@@ -137,6 +118,7 @@ impl RenderOnce for WindowControl {
                 WindowControl::Close => WindowControlArea::Close,
             })
             .size_8()
+            .flex_shrink_0()
             .justify_center()
             .content_center()
             .rounded(cx.theme().radius)

@@ -13,23 +13,56 @@ pub enum AppBackground {
     Image(std::path::PathBuf),
     Artwork(Option<std::path::PathBuf>),
 }
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Key {
     source: AppBackground,
-    width: u32,
-    height: u32,
 }
 #[derive(Default)]
 struct BackdropCache {
     key: Option<Key>,
     image: Option<PreparedBackdrop>,
-    pending: bool,
-    attempted: bool,
+    pending: Option<Key>,
+    failed: Option<Key>,
 }
 impl Global for BackdropCache {}
 
+impl BackdropCache {
+    fn request(&mut self, key: Key) -> Option<Key> {
+        if self.key.as_ref().is_some_and(|previous| previous.source != key.source) {
+            self.failed = None;
+        }
+        self.key = Some(key.clone());
+        // Prepare each source once. Resizing only changes its paint transform:
+        // replacing a pre-cropped texture after resize changes its sampling
+        // and subtly shifts brightness between the first and settled frames.
+        if self.pending.is_some()
+            || self.failed.as_ref() == Some(&key)
+            || self.image.as_ref().is_some_and(|image| image.key == key)
+        {
+            return None;
+        }
+        self.pending = Some(key.clone());
+        Some(key)
+    }
+
+    fn complete(&mut self, key: &Key, image: Option<PreparedBackdrop>) {
+        self.pending = None;
+        if self.key.as_ref().is_some_and(|requested| requested.source == key.source) {
+            if let Some(image) = image {
+                self.image = Some(image);
+                self.failed = None;
+            } else {
+                self.failed = Some(key.clone());
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 struct PreparedBackdrop {
+    key: Key,
+    width: u32,
+    height: u32,
     surface: Arc<RenderImage>,
     glass: Arc<RenderImage>,
 }
@@ -41,8 +74,8 @@ pub fn surface(window: &mut Window, cx: &mut App) -> AnyElement {
 fn prepare(key: &Key) -> Option<PreparedBackdrop> {
     let scene = match &key.source {
         AppBackground::Color(color) => image::RgbaImage::from_pixel(
-            key.width,
-            key.height,
+            1,
+            1,
             image::Rgba([
                 ((color >> 16) & 255) as u8,
                 ((color >> 8) & 255) as u8,
@@ -62,11 +95,17 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
                 },
                 _ => unreachable!(),
             };
-            let mut scene = source
-                .resize_to_fill(key.width, key.height, image::imageops::FilterType::Triangle)
-                .to_rgba8();
+            // Keep the complete source and its aspect ratio. Never bake the
+            // current viewport's crop into a replacement texture.
+            let source = if source.width() > 1920 || source.height() > 1920 {
+                source.resize(1920, 1920, image::imageops::FilterType::Triangle)
+            } else {
+                source
+            };
+            let reference_scale = (1280. / source.width() as f32).max(860. / source.height() as f32);
+            let mut scene = source.to_rgba8();
             if !matches!(key.source, AppBackground::Cafe) {
-                scene = image::DynamicImage::ImageRgba8(scene).blur(90.).to_rgba8();
+                scene = image::DynamicImage::ImageRgba8(scene).blur(90. / reference_scale).to_rgba8();
                 for pixel in scene.pixels_mut() {
                     let [r, g, b, _] = pixel.0;
                     let luminance = 0.213 * r as f32 + 0.715 * g as f32 + 0.072 * b as f32;
@@ -90,7 +129,12 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
             scene
         },
     };
-    let glass = crate::component::design::prepare_play_artwork(&image::DynamicImage::ImageRgba8(scene.clone()));
+    let (width, height) = scene.dimensions();
+    let reference_scale = (1280. / width as f32).max(860. / height as f32);
+    let glass = crate::component::design::prepare_play_artwork(
+        &image::DynamicImage::ImageRgba8(scene.clone()),
+        14. / reference_scale,
+    );
     fn render_image(mut image: image::RgbaImage) -> Arc<RenderImage> {
         for pixel in image.pixels_mut() {
             pixel.0.swap(0, 2);
@@ -98,6 +142,9 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
         Arc::new(RenderImage::new([image::Frame::new(image)]))
     }
     Some(PreparedBackdrop {
+        key: key.clone(),
+        width,
+        height,
         surface: render_image(scene),
         glass: render_image(glass),
     })
@@ -110,33 +157,58 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
     let size = window.viewport_size();
     let key = Key {
         source: InterfaceConfig::get(cx).app_background.clone(),
-        width: size.width.as_f32().ceil().clamp(1., 8192.) as u32,
-        height: size.height.as_f32().ceil().clamp(1., 8192.) as u32,
     };
-    let state = cx.default_global::<BackdropCache>();
-    if state.key.as_ref() != Some(&key) {
+    // Solid colors are already ready. Neither a resize nor a theme change
+    // needs to wait for a full-sized bitmap to be prepared on a worker.
+    if let AppBackground::Color(color) = key.source {
+        let state = cx.default_global::<BackdropCache>();
         state.key = Some(key.clone());
-        state.image = None;
-        state.attempted = false;
-    }
-    let image = state.image.as_ref().map(|prepared| {
-        if glass {
-            prepared.glass.clone()
-        } else {
-            prepared.surface.clone()
+        if !state.image.as_ref().is_some_and(|image| image.key.source == key.source) {
+            // Retain this ready color too when an image is selected next.
+            // Two one-pixel textures suffice, independently of viewport size.
+            let pixel = |color: u32| {
+                let pixel = image::Rgba([
+                    (color & 255) as u8,
+                    ((color >> 8) & 255) as u8,
+                    ((color >> 16) & 255) as u8,
+                    255,
+                ]);
+                Arc::new(RenderImage::new([image::Frame::new(image::RgbaImage::from_pixel(1, 1, pixel))]))
+            };
+            state.image = Some(PreparedBackdrop {
+                key,
+                width: 1,
+                height: 1,
+                surface: pixel(color),
+                glass: pixel(saturated_color(color, 1.5)),
+            });
+            log::info!("glass-ready pid={}", std::process::id());
         }
+        let color = if glass { saturated_color(color, 1.5) } else { color };
+        return div().absolute().top_0().left_0().size_full().bg(rgb(color)).into_any_element();
+    }
+    let state = cx.default_global::<BackdropCache>();
+    let work = state.request(key.clone());
+    let image = state.image.as_ref().map(|prepared| {
+        (
+            if glass {
+                prepared.glass.clone()
+            } else {
+                prepared.surface.clone()
+            },
+            prepared.width,
+            prepared.height,
+        )
     });
-    if image.is_none() && !state.pending && !state.attempted {
-        state.pending = true;
-        state.attempted = true;
+    if let Some(key) = work {
         let work_key = key.clone();
         let work = cx.background_executor().spawn(async move { prepare(&work_key) });
         cx.spawn(async move |cx| {
             let result = work.await;
             let _ = cx.update_global::<BackdropCache, _>(|cache, cx| {
-                cache.pending = false;
-                if cache.key.as_ref() == Some(&key) {
-                    cache.image = result;
+                let ready = result.is_some();
+                cache.complete(&key, result);
+                if ready {
                     log::info!("glass-ready pid={}", std::process::id());
                 }
                 cx.refresh_windows();
@@ -144,24 +216,23 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
         })
         .detach();
     }
-    if !glass {
-        let base = div().absolute().top_0().left_0().size_full();
-        return if let Some(image) = image {
-            base.child(img(image).size_full().object_fit(ObjectFit::Cover)).into_any_element()
-        } else {
-            base.bg(rgb(theme::BG)).into_any_element()
-        };
-    }
+    // Cafe's embedded center pixel (33,16,12) is available immediately, before
+    // its first decode. Retained surfaces cover subsequent pending requests.
+    let fallback = if matches!(key.source, AppBackground::Cafe) {
+        0x21100c
+    } else {
+        theme::BG
+    };
     canvas(
         move |bounds, _, _| bounds,
         move |bounds, _, window, _| {
-            if let Some(image) = &image {
-                let full = Bounds::new(point(px(0.), px(0.)), size);
+            if let Some((image, width, height)) = &image {
+                let full = cover_bounds(size, *width, *height);
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
                     let _ = window.paint_image(full, full, Default::default(), image.clone(), 0, false);
                 });
             } else {
-                window.paint_quad(fill(bounds, rgb(theme::BG)));
+                window.paint_quad(fill(bounds, rgb(fallback)));
             }
         },
     )
@@ -170,6 +241,106 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
     .left_0()
     .size_full()
     .into_any_element()
+}
+
+fn cover_bounds(viewport: Size<Pixels>, width: u32, height: u32) -> Bounds<Pixels> {
+    let scale = (viewport.width.as_f32() / width as f32).max(viewport.height.as_f32() / height as f32);
+    // Floating-point multiplication can land one ULP below the viewport.
+    // Keep cover coverage exact even at fractional sizes/DPI.
+    let size = size(
+        px((width as f32 * scale).max(viewport.width.as_f32())),
+        px((height as f32 * scale).max(viewport.height.as_f32())),
+    );
+    Bounds::new(point((viewport.width - size.width) / 2., (viewport.height - size.height) / 2.), size)
+}
+
+fn saturated_color(color: u32, saturation: f32) -> u32 {
+    let channels = [
+        ((color >> 16) & 255) as f32,
+        ((color >> 8) & 255) as f32,
+        (color & 255) as f32,
+    ];
+    let luminance = 0.213 * channels[0] + 0.715 * channels[1] + 0.072 * channels[2];
+    channels.into_iter().fold(0, |value, channel| {
+        (value << 8) | (luminance + (channel - luminance) * saturation).round().clamp(0., 255.) as u32
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppBackground, BackdropCache, Key, PreparedBackdrop, cover_bounds, saturated_color};
+    use gpui::{RenderImage, px, size};
+    use std::sync::Arc;
+
+    fn key() -> Key {
+        Key {
+            source: AppBackground::Cafe,
+        }
+    }
+
+    fn prepared(key: Key) -> PreparedBackdrop {
+        let image = Arc::new(RenderImage::new([image::Frame::new(image::RgbaImage::new(1, 1))]));
+        PreparedBackdrop {
+            key,
+            width: 1920,
+            height: 1080,
+            surface: image.clone(),
+            glass: image,
+        }
+    }
+
+    #[test]
+    fn repeated_viewports_reuse_the_same_texture_without_preparing_a_replacement() {
+        let mut cache = BackdropCache::default();
+        let original = key();
+        let first = cache.request(original.clone()).unwrap();
+        cache.complete(&first, Some(prepared(first.clone())));
+        let image = cache.image.as_ref().unwrap().surface.clone();
+        for (width, height) in [(1100., 740.), (960., 600.), (1280., 860.), (1000., 700.)] {
+            assert!(cache.request(original.clone()).is_none());
+            let prepared = cache.image.as_ref().unwrap();
+            assert!(Arc::ptr_eq(&image, &prepared.surface));
+            let cover = cover_bounds(size(px(width), px(height)), prepared.width, prepared.height);
+            assert!(cover.size.width >= px(width) && cover.size.height >= px(height));
+        }
+    }
+
+    #[test]
+    fn obsolete_source_cannot_replace_a_new_selection() {
+        let mut cache = BackdropCache::default();
+        let old = cache.request(key()).unwrap();
+        let selected = Key {
+            source: AppBackground::Color(0x0b1a20),
+        };
+        cache.key = Some(selected.clone());
+        cache.complete(&old, Some(prepared(old.clone())));
+        assert!(cache.image.is_none());
+        assert_eq!(cache.key, Some(selected));
+    }
+
+    #[test]
+    fn failed_replacement_keeps_the_last_good_image_without_retrying_every_frame() {
+        let mut cache = BackdropCache::default();
+        cache.image = Some(prepared(key()));
+        let failed = Key {
+            source: AppBackground::Image("missing.png".into()),
+        };
+        let _ = cache.request(failed.clone());
+        cache.complete(&failed, None);
+        assert!(cache.image.is_some());
+        assert!(cache.request(failed.clone()).is_none());
+        assert!(cache.request(key()).is_none());
+        assert!(cache.request(failed).is_some());
+    }
+
+    #[test]
+    fn retained_surface_and_glass_share_centered_cover_coordinates() {
+        let bounds = cover_bounds(size(px(960.), px(600.)), 1280, 860);
+        assert_eq!(bounds.origin.x, px(0.));
+        assert_eq!(bounds.origin.y, px(-22.5));
+        assert_eq!(bounds.size, size(px(960.), px(645.)));
+        assert_eq!(saturated_color(0x202020, 1.5), 0x202020);
+    }
 }
 
 pub struct BackgroundSelector {

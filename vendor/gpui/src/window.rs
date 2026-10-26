@@ -725,6 +725,14 @@ pub enum WindowControlArea {
     Min,
 }
 
+#[derive(Clone)]
+pub(crate) struct WindowControlHitbox {
+    area: Option<WindowControlArea>,
+    hitbox: Hitbox,
+    #[cfg(feature = "native-capture")]
+    label: String,
+}
+
 /// An identifier for a [Hitbox] which also includes [HitboxBehavior].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
@@ -946,7 +954,7 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
-    pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
+    pub(crate) window_control_hitboxes: Vec<WindowControlHitbox>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
@@ -1070,6 +1078,18 @@ impl Frame {
             hit_test.hover_hitbox_count = hit_test.ids.len();
         }
         hit_test
+    }
+
+    fn window_control_at(&self, position: Point<Pixels>) -> Option<WindowControlArea> {
+        let hit = self.hit_test(position);
+        for region in self.window_control_hitboxes.iter().rev() {
+            if hit.ids.iter().take(hit.hover_hitbox_count).any(|id| *id == region.hitbox.id) {
+                // An interactive child reserves HTCLIENT without changing mouse
+                // bubbling, scrolling or the parent's empty drag surface.
+                return region.area;
+            }
+        }
+        None
     }
 
     pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -1683,12 +1703,10 @@ impl Window {
             Box::new(move || {
                 handle
                     .update(&mut cx, |_, window, _cx| {
-                        for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
-                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
-                                return Some(*area);
-                            }
-                        }
-                        None
+                        // Non-client queries precede mouse-move dispatch. Resolve
+                        // the current pointer against the painted z-order, not
+                        // yesterday's hover or the first enclosing drag region.
+                        window.rendered_frame.window_control_at(window.platform_window.mouse_position())
                     })
                     .log_err()
                     .unwrap_or(None)
@@ -4484,7 +4502,82 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn insert_window_control_hitbox(&mut self, area: WindowControlArea, hitbox: Hitbox) {
         self.invalidator.debug_assert_paint();
-        self.next_frame.window_control_hitboxes.push((area, hitbox));
+        self.next_frame.window_control_hitboxes.push(WindowControlHitbox {
+            area: Some(area),
+            hitbox,
+            #[cfg(feature = "native-capture")]
+            label: format!("{area:?}"),
+        });
+    }
+
+    /// Reserve a custom-painted control as client input within a drag surface.
+    /// Call during paint, in the same order as the control's mouse handlers.
+    pub fn insert_window_control_client_hitbox(&mut self, hitbox: Hitbox) {
+        self.invalidator.debug_assert_paint();
+        #[cfg(feature = "native-capture")]
+        let id = hitbox.id;
+        self.next_frame.window_control_hitboxes.push(WindowControlHitbox {
+            area: None,
+            hitbox,
+            #[cfg(feature = "native-capture")]
+            label: "interactive".into(),
+        });
+        #[cfg(feature = "native-capture")]
+        self.describe_window_control_hitbox(id, "interactive".into());
+    }
+
+    #[cfg(feature = "native-capture")]
+    pub(crate) fn describe_window_control_hitbox(&mut self, id: HitboxId, label: String) {
+        if let Some(region) = self.next_frame.window_control_hitboxes.last_mut().filter(|r| r.hitbox.id == id) {
+            region.label = label;
+            if std::env::var_os("WBOMBO_UI_CAPTURE_DRAG_REGIONS").is_some() {
+                let color = if region.area == Some(WindowControlArea::Drag) {
+                    0x42df9226
+                } else {
+                    0xf0787820
+                };
+                let bounds = region.hitbox.bounds.intersect(&region.hitbox.content_mask.bounds);
+                self.paint_quad(crate::fill(bounds, crate::rgba(color)));
+            }
+        }
+    }
+
+    /// Painted regions and visible probe points for native WM_NCHITTEST evidence.
+    /// This introspection is absent from ordinary launcher builds.
+    #[cfg(feature = "native-capture")]
+    pub fn capture_window_hit_regions(&self) -> Vec<(String, String, Bounds<Pixels>, Vec<Point<Pixels>>)> {
+        self.rendered_frame
+            .window_control_hitboxes
+            .iter()
+            .filter_map(|region| {
+                let bounds = region.hitbox.bounds.intersect(&region.hitbox.content_mask.bounds);
+                if bounds.size.width <= px(0.) || bounds.size.height <= px(0.) {
+                    return None;
+                }
+                let mut probes = vec![bounds.center()];
+                if region.area == Some(WindowControlArea::Drag) {
+                    let mut x = bounds.origin.x + px(12.);
+                    while x < bounds.right() {
+                        probes.push(point(x, bounds.center().y));
+                        x += px(24.);
+                    }
+                    let mut y = bounds.origin.y + px(12.);
+                    while y < bounds.bottom() {
+                        probes.push(point(bounds.center().x, y));
+                        y += px(24.);
+                    }
+                }
+                probes.retain(|p| {
+                    let hit = self.rendered_frame.hit_test(*p);
+                    hit.ids.iter().take(hit.hover_hitbox_count).any(|id| *id == region.hitbox.id)
+                        && self.rendered_frame.window_control_at(*p) == region.area
+                });
+                if probes.is_empty() {
+                    return None;
+                }
+                Some((region.label.clone(), format!("{:?}", region.area), bounds, probes))
+            })
+            .collect()
     }
 
     /// Sets the key context for the current element. This context will be used to translate

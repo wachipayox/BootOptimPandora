@@ -18,7 +18,7 @@ use crate::{
 };
 use bridge::{handle::BackendHandle, instance::InstanceID};
 use gpui::{prelude::*, *};
-use gpui_component::{Disableable, h_flex, v_flex};
+use gpui_component::{Disableable, h_flex, scroll::ScrollableElement, v_flex};
 use serde::{Deserialize, Serialize};
 
 pub struct InstancePage {
@@ -51,6 +51,11 @@ impl InstancePage {
         });
         cx.spawn(async move |this, cx| {
             let global = matches!(receive.await, Ok(Ok(info)) if info.global_profile_id.is_some());
+            #[cfg(feature = "ui-capture")]
+            let global = global
+                || (crate::capture::local_fixture()
+                    && std::env::var("WBOMBO_UI_CAPTURE_PAGE")
+                        .is_ok_and(|page| page.starts_with("instance-changelog:")));
             let _ = this.update(cx, |this, cx| {
                 this.has_global_history = global;
                 if !global && InterfaceConfig::get(cx).instance_subpage == InstanceSubpageType::Changelog {
@@ -86,7 +91,7 @@ impl InstancePage {
             .on_mouse_down_out(window.listener_for(&state, |s, _, _, _| s.should_move = false))
             .on_mouse_down(
                 MouseButton::Left,
-                window.listener_for(&state, |s, _, w, _| s.should_move = !w.default_prevented()),
+                window.listener_for(&state, |s, _, w, _| s.should_move = !cfg!(windows) && !w.default_prevented()),
             )
             .on_mouse_up(MouseButton::Left, window.listener_for(&state, |s, _, _, _| s.should_move = false))
             .on_mouse_move(window.listener_for(&state, |s, _, w, _| {
@@ -97,6 +102,9 @@ impl InstancePage {
             }))
             .child(
                 div()
+                    .max_w(px(200.))
+                    .flex_shrink_0()
+                    .overflow_hidden()
                     .font_family(theme::DISPLAY)
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
@@ -108,6 +116,7 @@ impl InstancePage {
             InstanceSubpageType::Mods | InstanceSubpageType::ResourcePacks | InstanceSubpageType::Shaders
         );
         let logs = matches!(selected, InstanceSubpageType::Logs | InstanceSubpageType::LiveGameOutput);
+        let mut tabs = h_flex().h_full().gap(px(20.)).flex_shrink_0();
         for (ix, label, target, active) in [
             (0, "Jugar", InstanceSubpageType::Quickplay, false),
             (1, "Contenido", InstanceSubpageType::Mods, content),
@@ -130,7 +139,7 @@ impl InstancePage {
                 continue;
             }
             let name = name.clone();
-            header = header.child(design::tab(("instance-tab", ix as usize), label, active).on_click(cx.listener(
+            tabs = tabs.child(design::tab(("instance-tab", ix as usize), label, active).on_click(cx.listener(
                 move |_, _, w, c| {
                     if target == InstanceSubpageType::Quickplay {
                         InterfaceConfig::get_mut(c).home_instance = Some(name.clone());
@@ -142,9 +151,11 @@ impl InstancePage {
                 },
             )));
         }
+        header = header.child(div().flex_1().min_w_0().h_full().overflow_x_scrollbar().child(tabs));
         if root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
-            header = header.child(div().flex_1()).child(
+            header = header.child(
                 h_flex()
+                    .flex_shrink_0()
                     .child(WindowControl::Minimize)
                     .child(if window.is_maximized() {
                         WindowControl::Restore
