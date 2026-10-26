@@ -154,6 +154,7 @@ impl HomePage {
     }
     pub(crate) fn startup_ready(&self, window: &mut Window, cx: &mut App) -> bool {
         let mut ready = self.loaded;
+        let general = InterfaceConfig::get(cx).home_general_news;
         for source in [
             picture(&self.presentation.artwork, "images/artwork-vanilla.png"),
             picture(&self.presentation.logo, "images/logo-vanilla.png"),
@@ -163,7 +164,7 @@ impl HomePage {
             self.presentation
                 .news
                 .iter()
-                .filter(|n| InterfaceConfig::get(cx).home_general_news || n.target_profile_id.is_some())
+                .filter(|n| general || n.target_profile_id.is_some())
                 .take(4)
                 .filter_map(|n| n.image.as_ref())
                 .map(|p| ImageSource::Resource(Resource::Path(Arc::from(p.as_path())))),

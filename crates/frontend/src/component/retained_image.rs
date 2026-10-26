@@ -57,7 +57,7 @@ impl RetainedImage {
                     .inset_0()
                     .size_full()
                     .opacity(1. - progress)
-                    .child(img(previous.clone()).size_full().object_fit(fit)),
+                    .child(img(previous.clone()).size_full().object_fit(fit.clone())),
             );
         }
         if let Some((_, image)) = &self.current {
