@@ -558,6 +558,13 @@ impl Render for LauncherUI {
 impl LauncherUI {
     fn render_wachiland(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         #[cfg(feature = "ui-capture")]
+        if let Some(t) = std::env::var("WBOMBO_UI_CAPTURE_PAGE")
+            .ok()
+            .and_then(|p| p.strip_prefix("startup-frame:").and_then(|t| t.parse::<f64>().ok()))
+        {
+            return crate::startup::vector::frame(t);
+        }
+        #[cfg(feature = "ui-capture")]
         if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page == "backdrop-probe") {
             return div().size_full().child(crate::background::surface(window, cx)).into_any_element();
         }

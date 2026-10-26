@@ -45,6 +45,7 @@ pub mod root;
 pub mod settings;
 pub mod skin_renderer;
 pub mod skin_thumbnail_cache;
+mod startup;
 pub mod theme;
 mod theme_palette;
 pub mod ui;
@@ -465,7 +466,14 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 cx.set_global(LauncherRootGlobal {
                     root: launcher_root.clone(),
                 });
-                let root = cx.new(|cx| Root::new(launcher_root, window, cx));
+                let root = cx.new(|cx| {
+                    let root = Root::new(launcher_root, window, cx);
+                    #[cfg(feature = "ui-capture")]
+                    if capture_page.as_deref().is_some_and(|page| page.starts_with("startup-frame:")) {
+                        return root.bordered(false);
+                    }
+                    root
+                });
                 if let Some(page) = capture_page
                     .as_deref()
                     .filter(|page| matches!(*page, "add-instance" | "add-server" | "add-local" | "account-offline"))
