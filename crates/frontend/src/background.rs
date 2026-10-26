@@ -245,7 +245,12 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
 
 fn cover_bounds(viewport: Size<Pixels>, width: u32, height: u32) -> Bounds<Pixels> {
     let scale = (viewport.width.as_f32() / width as f32).max(viewport.height.as_f32() / height as f32);
-    let size = size(px(width as f32 * scale), px(height as f32 * scale));
+    // Floating-point multiplication can land one ULP below the viewport.
+    // Keep cover coverage exact even at fractional sizes/DPI.
+    let size = size(
+        px((width as f32 * scale).max(viewport.width.as_f32())),
+        px((height as f32 * scale).max(viewport.height.as_f32())),
+    );
     Bounds::new(point((viewport.width - size.width) / 2., (viewport.height - size.height) / 2.), size)
 }
 
