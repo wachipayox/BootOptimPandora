@@ -170,6 +170,7 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
                 surface: pixel(color),
                 glass: pixel(saturated_color(color, 1.5)),
             });
+            log::info!("glass-ready pid={}", std::process::id());
         }
         let color = if glass { saturated_color(color, 1.5) } else { color };
         return div().absolute().top_0().left_0().size_full().bg(rgb(color)).into_any_element();
