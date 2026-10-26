@@ -13,6 +13,30 @@ struct CachedDocument {
     fetched_at: u64,
 }
 impl DistributionClient {
+    fn cached_cosmetic_document(&self, route: &str, root: &Path) -> Option<Value> {
+        let key = hex::encode(Sha256::digest(format!("{}{}", self.base_url, route).as_bytes()));
+        fs::read(root.join(format!("{key}.json")))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<CachedDocument>(&b).ok())
+            .map(|c| c.value)
+    }
+
+    async fn home_image_mode(&self, value: &Value, root: &Path, kind: &str, cache_only: bool) -> Option<PathBuf> {
+        if !cache_only {
+            return self.home_image(value, root, kind).await;
+        }
+        let key = if let Some(url) = value.get("url").and_then(Value::as_str) {
+            hex::encode(Sha256::digest(Url::parse(url).ok()?.as_str().as_bytes()))
+        } else {
+            let object: ManifestObjectRef = serde_json::from_value(value.clone()).ok()?;
+            if object.sha256.len() != 64 || !object.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return None;
+            }
+            object.sha256
+        };
+        let path = root.join(format!("{key}-{kind}.png"));
+        path.is_file().then_some(path)
+    }
     pub(super) async fn cosmetic_document(
         &self,
         route: &str,
@@ -195,7 +219,11 @@ impl DistributionClient {
 }
 
 impl crate::BackendState {
-    pub async fn load_home_presentation(&self, id: Option<InstanceID>) -> Result<HomePresentation, String> {
+    pub async fn load_home_presentation(
+        &self,
+        id: Option<InstanceID>,
+        cache_only: bool,
+    ) -> Result<HomePresentation, String> {
         let config = self.config.lock().get().distribution.clone();
         let include_tests = self.config.lock().get().channel.includes_test_profiles();
         let client = DistributionClient::new(&config).map_err(|e| e.to_string())?;
@@ -205,7 +233,11 @@ impl crate::BackendState {
         } else {
             "/v1/profiles"
         };
-        let catalog = client.cosmetic_document(route, &cache, 300).await.unwrap_or(Value::Null);
+        let catalog = if cache_only {
+            client.cached_cosmetic_document(route, &cache).unwrap_or(Value::Null)
+        } else {
+            client.cosmetic_document(route, &cache, 300).await.unwrap_or(Value::Null)
+        };
         let profiles = catalog.get("profiles").and_then(Value::as_array).cloned().unwrap_or_default();
         let root = id.and_then(|id| self.instance_state.read().instances.get(id).map(|i| i.root_path.clone()));
         let branch = root
@@ -235,7 +267,7 @@ impl crate::BackendState {
         if let Some(profile) = profile {
             if let Some(art) = profile.get("artwork") {
                 if let Some(value) = art.get("image") {
-                    out.artwork = client.home_image(value, &cache, "artwork").await;
+                    out.artwork = client.home_image_mode(value, &cache, "artwork", cache_only).await;
                 }
                 out.artwork_author = art.get("author").and_then(Value::as_str).map(str::to_owned);
                 out.glass = out
@@ -245,7 +277,7 @@ impl crate::BackendState {
                     .filter(|p| p.exists());
             }
             if let Some(logo) = profile.get("logo") {
-                out.logo = client.home_image(logo, &cache, "logo").await;
+                out.logo = client.home_image_mode(logo, &cache, "logo", cache_only).await;
             }
         }
         if let Some(id) = id {
@@ -256,7 +288,7 @@ impl crate::BackendState {
             if let Some((artwork, logo)) = overrides {
                 if let Some(path) = artwork {
                     if let Some(value) = cache_local_image(&path, &cache, true) {
-                        if let Some(path) = client.home_image(&value, &cache, "artwork").await {
+                        if let Some(path) = client.home_image_mode(&value, &cache, "artwork", cache_only).await {
                             out.artwork = Some(path);
                             out.artwork_author = None;
                         }
@@ -269,14 +301,19 @@ impl crate::BackendState {
                 }
                 if let Some(path) = logo {
                     if let Some(value) = cache_local_image(&path, &cache, false) {
-                        if let Some(path) = client.home_image(&value, &cache, "logo").await {
+                        if let Some(path) = client.home_image_mode(&value, &cache, "logo", cache_only).await {
                             out.logo = Some(path);
                         }
                     }
                 }
             }
         }
-        let feed = match client.news_snapshot(&self.directories.root_launcher_dir.join("news-state")).await {
+        let news_root = self.directories.root_launcher_dir.join("news-state");
+        let feed = match if cache_only {
+            client.cached_news_snapshot(&news_root)
+        } else {
+            client.news_snapshot(&news_root).await
+        } {
             Ok(v) => v,
             Err(_) => {
                 out.news_failed = true;
@@ -324,7 +361,7 @@ impl crate::BackendState {
                 .collect();
             for n in out.news.iter_mut().filter(|n| visible.contains(&n.id)) {
                 if let Some(raw) = items.iter().find(|v| v["id"].as_str() == Some(&n.id)) {
-                    n.image = client.home_image(&raw["image"], &cache, "news").await;
+                    n.image = client.home_image_mode(&raw["image"], &cache, "news", cache_only).await;
                 }
             }
         }
@@ -469,6 +506,9 @@ fn cache_local_image(path: &Path, root: &Path, artwork: bool) -> Option<Value> {
     let dir = root.join("sha256").join(&sha[..2]);
     fs::create_dir_all(&dir).ok()?;
     crate::fs::write_safe(&dir.join(&sha), &encoded).ok()?;
+    // Local overrides are immediately usable by cache-only startup reads.
+    let kind = if artwork { "artwork" } else { "logo" };
+    crate::fs::write_safe(&root.join(format!("{sha}-{kind}.png")), &encoded).ok()?;
     Some(serde_json::json!({"sha256":sha,"size":encoded.len(),"media_type":"image/png"}))
 }
 

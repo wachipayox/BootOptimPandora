@@ -565,7 +565,36 @@ pub(crate) fn paint(t: f64, bounds: Bounds<Pixels>, window: &mut Window) {
     p.render(t.clamp(0., 6.));
 }
 pub(crate) fn frame(t: f64) -> AnyElement {
-    canvas(move |bounds, _, _| bounds, move |bounds, _, window, _| paint(t, bounds, window))
-        .size_full()
-        .into_any_element()
+    frame_timed(t, None)
+}
+pub(crate) fn frame_timed(t: f64, first_paint_origin: Option<std::time::Instant>) -> AnyElement {
+    canvas(
+        move |bounds, _, _| bounds,
+        move |bounds, _, window, _| {
+            #[cfg(feature = "ui-capture")]
+            let started = std::time::Instant::now();
+            paint(t, bounds, window);
+            #[cfg(feature = "ui-capture")]
+            if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page.starts_with("startup-bench:")) {
+                log::info!(
+                    "startup-frame-cost pid={} t={} logical_width={} logical_height={} scale={} cpu_paint_ns={}",
+                    std::process::id(),
+                    t,
+                    bounds.size.width.as_f32(),
+                    bounds.size.height.as_f32(),
+                    window.scale_factor(),
+                    started.elapsed().as_nanos()
+                );
+            }
+            if let Some(origin) = first_paint_origin {
+                log::info!(
+                    "startup-first-paint pid={} native_window_to_paint_us={}",
+                    std::process::id(),
+                    origin.elapsed().as_micros()
+                );
+            }
+        },
+    )
+    .size_full()
+    .into_any_element()
 }

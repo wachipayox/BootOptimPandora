@@ -134,6 +134,8 @@ fn main() {
     };
 
     let launcher_dir = data_dir.join("WachilandLauncher");
+    let existing_install = launcher_dir.join("config.json").is_file() || launcher_dir.join("interface.json").is_file();
+    let allow_startup = !instance_command && cli.run_instance.is_none() && cli.run_instance_normal.is_none();
     _ = std::fs::create_dir_all(&launcher_dir);
     _ = std::env::set_current_dir(&launcher_dir);
 
@@ -313,6 +315,8 @@ fn main() {
         );
         frontend::start(
             launcher_dir.clone(),
+            existing_install,
+            allow_startup,
             panic_message,
             deadlock_message,
             backend_handle,

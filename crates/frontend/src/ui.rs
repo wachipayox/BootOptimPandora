@@ -261,6 +261,13 @@ impl LauncherPage {
 }
 
 impl LauncherUI {
+    pub(crate) fn startup_ready(&self, window: &mut Window, cx: &mut App) -> bool {
+        let page_ready = match &self.page {
+            LauncherPage::Home(page) => page.update(cx, |page, cx| page.startup_ready(window, cx)),
+            _ => true,
+        };
+        page_ready && crate::background::startup_ready(cx)
+    }
     pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let recent_instances = data
             .instances
@@ -558,11 +565,8 @@ impl Render for LauncherUI {
 impl LauncherUI {
     fn render_wachiland(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         #[cfg(feature = "ui-capture")]
-        if let Some(t) = std::env::var("WBOMBO_UI_CAPTURE_PAGE")
-            .ok()
-            .and_then(|p| p.strip_prefix("startup-frame:").and_then(|t| t.parse::<f64>().ok()))
-        {
-            return crate::startup::vector::frame(t);
+        if let Some(frame) = crate::startup::capture_frame(window) {
+            return frame;
         }
         #[cfg(feature = "ui-capture")]
         if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page == "backdrop-probe") {

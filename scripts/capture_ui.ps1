@@ -12,6 +12,7 @@ param(
     [switch]$InstanceScreens,
     [switch]$LauncherScreens,
     [switch]$LauncherUpdateScreens,
+    [switch]$StartupScreens,
     [string]$LauncherUpdateFixture,
     [string]$NewsFixture,
     [ValidateSet('advanced','version','expanded','editing')][string]$CaptureState,
@@ -336,6 +337,14 @@ try {
     if ($TestProfile -or $PortableDirectory) {
         $screens += @{ page = "instance:$InstanceName"; file = 'instance-detail.png'; label = 'Owned CLI instance detail' }
         if (-not $SkipUpdateCapture) { $screens += @{ page = "update:$InstanceName"; file = 'update-dialog.png'; label = 'Real inherited update check on owned CLI instance' } }
+    }
+    if ($StartupScreens) {
+        foreach ($time in @('0.15','0.42','0.68','0.95','1.15','1.45','1.70','2.10','2.75','3.25','3.75','4.18','4.42','4.78','5.15','6.0')) {
+            $screens += @{ page="startup-frame:$time"; file="startup-frame-$time.png"; label="Native vector frame at $time s" }
+        }
+        $screens += @{page='startup-splash';file='startup-splash.png';label='Native static startup poster'}
+        $screens += @{page='startup-intro:3.25';file='startup-intro.png';label='Intro with approved skip text'}
+        $screens += @{page='startup-transition:0.5';file='startup-transition.png';label='300 ms transition at its midpoint'}
     }
     if ($HomeScreens) {
         $screens += @{ page='home-menu'; file='home-menu.png'; label='Menú de la instancia seleccionada' }

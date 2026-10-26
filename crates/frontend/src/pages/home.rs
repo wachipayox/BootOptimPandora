@@ -24,6 +24,7 @@ pub struct HomePage {
     instance: Option<Entity<InstanceEntry>>,
     presentation: HomePresentation,
     loaded: bool,
+    startup_cached: bool,
     requested: bool,
     refreshed: Instant,
     menu: bool,
@@ -68,6 +69,7 @@ impl HomePage {
             instance,
             presentation: HomePresentation::default(),
             loaded: false,
+            startup_cached: std::env::var_os("WBOMBO_UI_CAPTURE_PAGE").is_none(),
             requested: false,
             refreshed: Instant::now(),
             menu: std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-menu"),
@@ -107,6 +109,7 @@ impl HomePage {
         let (send, receive) = tokio::sync::oneshot::channel();
         self.data.backend_handle.send(MessageToBackend::GetHomePresentation {
             id: self.instance.as_ref().map(|i| i.read(cx).id),
+            cache_only: self.startup_cached,
             channel: send,
         });
         cx.spawn_in(window, async move |this, cx| {
@@ -119,7 +122,14 @@ impl HomePage {
                 log::info!("home-ready pid={}", std::process::id());
                 this.loaded = true;
                 this.requested = false;
-                this.refreshed = Instant::now();
+                // The initial cache read never waits for network. Revalidate
+                // cosmetic data independently after the first local scene.
+                this.refreshed = if this.startup_cached {
+                    this.startup_cached = false;
+                    Instant::now() - Duration::from_secs(300)
+                } else {
+                    Instant::now()
+                };
                 cx.notify();
             });
         })
@@ -137,6 +147,27 @@ impl HomePage {
     }
     pub fn is_news(&self) -> bool {
         self.news_view
+    }
+    pub(crate) fn startup_ready(&self, window: &mut Window, cx: &mut App) -> bool {
+        let mut ready = self.loaded;
+        for source in [
+            picture(&self.presentation.artwork, "images/artwork-vanilla.png"),
+            picture(&self.presentation.logo, "images/logo-vanilla.png"),
+        ]
+        .into_iter()
+        .chain(
+            self.presentation
+                .news
+                .iter()
+                .take(4)
+                .filter_map(|n| n.image.as_ref())
+                .map(|p| ImageSource::Resource(Resource::Path(Arc::from(p.as_path())))),
+        ) {
+            if let ImageSource::Resource(resource) = source {
+                ready &= window.use_asset::<ImgResourceLoader>(&resource, cx).is_some();
+            }
+        }
+        ready
     }
     pub fn show_home(&mut self, cx: &mut Context<Self>) {
         self.news_view = false;
@@ -332,7 +363,7 @@ impl Page for HomePage {
 }
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.refreshed.elapsed() >= Duration::from_secs(300) {
+        if self.refreshed.elapsed() >= Duration::from_secs(300) && !crate::startup::is_active(cx) {
             self.refresh(window, cx);
         }
         if self.news_view {

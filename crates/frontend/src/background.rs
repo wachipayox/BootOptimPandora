@@ -153,6 +153,16 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
 pub fn glass(window: &mut Window, cx: &mut App) -> AnyElement {
     scene(window, cx, true)
 }
+pub(crate) fn startup_ready(cx: &App) -> bool {
+    let Some(cache) = cx.try_global::<BackdropCache>() else {
+        return false;
+    };
+    let source = &InterfaceConfig::get(cx).app_background;
+    matches!(source, AppBackground::Color(_))
+        || cache.image.as_ref().is_some_and(|image| &image.key.source == source)
+        || cache.failed.as_ref().is_some_and(|key| &key.source == source)
+}
+
 fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
     let size = window.viewport_size();
     let key = Key {

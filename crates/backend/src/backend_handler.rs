@@ -1758,10 +1758,14 @@ impl BackendState {
                     let _ = channel.send(backend.instance_profile_info(id));
                 });
             },
-            MessageToBackend::GetHomePresentation { id, channel } => {
+            MessageToBackend::GetHomePresentation {
+                id,
+                cache_only,
+                channel,
+            } => {
                 let backend = self.clone();
                 tokio::spawn(async move {
-                    let _ = channel.send(backend.load_home_presentation(id).await);
+                    let _ = channel.send(backend.load_home_presentation(id, cache_only).await);
                 });
             },
             MessageToBackend::GetGlobalProfiles { channel } => {

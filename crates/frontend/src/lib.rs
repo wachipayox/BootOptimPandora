@@ -58,6 +58,7 @@ pub mod windows_security_ui;
 #[include = "images/**/*.png"]
 #[include = "images/**/*.svg"]
 #[include = "fonts/**/*.ttf"]
+#[include = "splash-music/*.ogg"]
 pub struct Assets;
 
 impl AssetSource for Assets {
@@ -80,6 +81,8 @@ actions!([Quit, CloseWindow, OpenSettings, Forwards, Backwards, Confirm]);
 
 pub fn start(
     launcher_dir: PathBuf,
+    existing_install: bool,
+    allow_startup: bool,
     panic_message: Arc<RwLock<Option<String>>>,
     deadlock_message: Arc<RwLock<Option<String>>>,
     backend_handle: BackendHandle,
@@ -111,6 +114,7 @@ pub fn start(
             theme::init(cx);
             pages::news::init(cx);
             InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
+            startup::init(existing_install, allow_startup, cx);
 
             t::set_lang(&InterfaceConfig::get(cx).language);
 
@@ -267,7 +271,12 @@ fn close_all_windows(cx: &mut App) {
     }
 }
 
-pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: &mut App) -> AnyWindowHandle {
+pub fn open_main_window(
+    data: &DataEntities,
+    display_id: Option<DisplayId>,
+    cx: &mut App,
+    show_startup: bool,
+) -> AnyWindowHandle {
     let config = InterfaceConfig::get(cx);
     // 220 px sidebar plus a usable 740 px content area. Tabs may scroll;
     // native window controls always keep their full width.
@@ -316,6 +325,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 ..Default::default()
             },
             |window, cx| {
+                let opened = std::time::Instant::now();
                 let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").ok();
                 #[cfg(feature = "ui-capture")]
                 crate::capture::prepare_local_fixture(&data, cx);
@@ -442,7 +452,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     })
                     .detach();
 
-                    LauncherRoot::new(&data, window, cx)
+                    LauncherRoot::new(&data, window, cx, show_startup, opened)
                 });
 
                 // Closing the main window while instances optimize their launch asks first.
@@ -469,7 +479,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 let root = cx.new(|cx| {
                     let root = Root::new(launcher_root, window, cx);
                     #[cfg(feature = "ui-capture")]
-                    if capture_page.as_deref().is_some_and(|page| page.starts_with("startup-frame:")) {
+                    if capture_page.as_deref().is_some_and(|page| page.starts_with("startup-")) {
                         return root.bordered(false);
                     }
                     root

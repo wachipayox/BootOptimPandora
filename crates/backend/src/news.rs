@@ -79,6 +79,12 @@ static FETCH_GATES: LazyLock<parking_lot::Mutex<BTreeMap<PathBuf, Arc<tokio::syn
     LazyLock::new(|| parking_lot::Mutex::new(BTreeMap::new()));
 
 impl DistributionClient {
+    pub(super) fn cached_news_snapshot(&self, root: &Path) -> Result<NewsFeed, DistributionError> {
+        let key = hex::encode(Sha256::digest(self.base_url.as_str().as_bytes()));
+        let state: NewsState = serde_json::from_slice(&fs::read(root.join(format!("{key}.json")))?)
+            .map_err(|e| DistributionError::InvalidResponse(e.to_string()))?;
+        Ok(state.feed(false, &key))
+    }
     pub(super) async fn news_snapshot(&self, root: &Path) -> Result<NewsFeed, DistributionError> {
         fs::create_dir_all(root)?;
         let key = hex::encode(Sha256::digest(self.base_url.as_str().as_bytes()));

@@ -218,5 +218,19 @@ API token. The configuration E2E example reads `WBOMBO_DIST_URL` at runtime.
 About. The build workflows read the matching repository secret. When absent or
 not an HTTPS URL, that action is omitted. Keep invite values out of public source.
 
+Startup uses a native six-second GPUI vector intro on first installation and
+after a launcher version change. Normal visible launches show its final vector
+frame while local visual assets load, then fade into the interface over 300 ms.
+Preloading waits at most eight seconds and never waits for network requests.
+CLI launches and background operation bypass this presentation.
+
+Optional intro music is embedded from `assets/splash-music/*.ogg`. Tracks must
+be **Ogg Vorbis, stereo, 48 kHz**; Opus is unsupported. No tracks ship by default.
+Windows playback uses shared-mode WASAPI and respects the system/application
+mixer; Linux and macOS currently run the same vector intro silently. Selection
+avoids immediately repeating the last track when alternatives exist. Skipping
+with click or Esc fades music out over 150 ms. Missing/invalid audio never
+prevents the animation or interface from opening.
+
 UI capture instructions are in the [UI workflow](.claude/skills/ui/SKILL.md).
 Investigation decisions and evidence are indexed in [research records](docs/research/README.md).

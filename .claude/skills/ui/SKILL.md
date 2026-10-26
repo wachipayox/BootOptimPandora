@@ -99,3 +99,13 @@ the existing backend message. Clean up its exact owned path afterwards.
 `backdrop-probe -ResizeProbe` isolates the app surface and retains the first
 fresh GPU draw armed before each resize, instead of waiting for the backdrop
 worker; compare it with the settled frame to detect blank resize frames.
+
+All ordinary capture routes bypass startup presentation. `-StartupScreens`
+adds deterministic vector reference frames (`startup-frame:<seconds>`),
+`startup-splash`, `startup-intro:<seconds>` and `startup-transition:<fraction>`.
+The reference routes omit the native border for full-frame pixel comparison;
+transition captures compose the real interface and the final vector frame.
+`startup-bench:<seconds>` continuously renders a fixed frame and logs CPU time
+from native paint entry through path tessellation/scene submission, excluding
+GPU execution and Present. Capture both 1920×1080 and 3840×2160 physical pixels;
+the manifest records DPI and viewport size. Keep source/reference images private.

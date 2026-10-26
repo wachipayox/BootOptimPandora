@@ -338,6 +338,7 @@ pub enum MessageToBackend {
     },
     GetHomePresentation {
         id: Option<InstanceID>,
+        cache_only: bool,
         channel: tokio::sync::oneshot::Sender<Result<crate::home::HomePresentation, String>>,
     },
     GetGlobalProfiles {
