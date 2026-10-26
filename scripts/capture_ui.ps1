@@ -504,13 +504,13 @@ try {
             Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-focus.png')) $captureHandle $proc.Id
         }
         $newsLogPath = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
-        $errorsBeforeClose = @(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count
+        $errorsBeforeClose = @(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -CaseSensitive -ErrorAction SilentlyContinue).Count
         Close-CapturedProcess $proc
         if ($distributionCaptureActive) {
             if ($null -ne $distributionOriginalConfig) { [IO.File]::WriteAllBytes($distributionConfigPath, $distributionOriginalConfig) } else { Remove-Item -LiteralPath $distributionConfigPath -ErrorAction SilentlyContinue }
             $distributionCaptureActive = $false
         }
-        $captureDiagnostics += @{page=$screen.page;errorsBeforeClose=$errorsBeforeClose;errorsAfterClose=@(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -ErrorAction SilentlyContinue).Count}
+        $captureDiagnostics += @{page=$screen.page;errorsBeforeClose=$errorsBeforeClose;errorsAfterClose=@(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -CaseSensitive -ErrorAction SilentlyContinue).Count}
         Write-Output "CAPTURE_OK page=$($screen.page) file=$($screen.file)"
     }
     @{
