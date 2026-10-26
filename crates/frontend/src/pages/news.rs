@@ -836,7 +836,7 @@ impl NewsPage {
 impl Render for NewsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.article.is_some() {
-            return div()
+            return v_flex()
                 .relative()
                 .min_w_0()
                 .key_context("News")
@@ -845,20 +845,15 @@ impl Render for NewsPage {
                 .on_action(cx.listener(Self::leave_article))
                 .size_full()
                 .text_color(rgb(theme::INK))
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .w_full()
-                        .h(px(48.))
-                        .window_control_area(WindowControlArea::Drag),
-                )
+                .child(div().w_full().h(px(24.)).flex_shrink_0().window_control_area(WindowControlArea::Drag))
                 .child(
                     v_flex()
-                        .size_full()
+                        .w_full()
+                        .flex_1()
+                        .min_h_0()
                         .overflow_y_scrollbar()
-                        .p(px(24.))
+                        .px(px(24.))
+                        .pb(px(24.))
                         .child(self.article_view(window, cx)),
                 )
                 .child(window_controls(window, 24.))
