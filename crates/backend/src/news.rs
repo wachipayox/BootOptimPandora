@@ -340,6 +340,11 @@ mod tests {
         let cached = client.news_snapshot(&root).await.unwrap();
         assert_eq!(cached.cursor, "n1.opaque");
         assert_eq!(requests.load(Ordering::SeqCst), 1);
+        // Startup does not revalidate even after the process throttle is reset.
+        FETCH_GATES.lock().remove(&path);
+        let startup = client.cached_news_snapshot(&root).unwrap();
+        assert_eq!(startup.cursor, "n1.opaque");
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
         // Removing only the process gate simulates reopening the launcher with
         // the existing disk cache, without sleeping five minutes in a test.
         FETCH_GATES.lock().remove(&path);

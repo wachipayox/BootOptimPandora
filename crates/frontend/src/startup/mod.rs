@@ -96,6 +96,7 @@ impl Controller {
     pub(crate) fn layer(&mut self, ready: bool, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let now = Instant::now();
         let elapsed = now.duration_since(self.opened);
+        let first_paint_origin = self.first_frame.then_some(self.opened);
         if self.first_frame {
             self.first_frame = false;
         } else if self.clock.is_none() {
@@ -147,7 +148,6 @@ impl Controller {
         } else {
             animation_elapsed.as_secs_f64().min(6.)
         };
-        let first_paint_origin = self.clock.is_none().then_some(self.opened);
         let mut layer = div()
             .absolute()
             .inset_0()

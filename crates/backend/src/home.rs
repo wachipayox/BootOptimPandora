@@ -542,6 +542,39 @@ fn home_news_visible(
 #[cfg(test)]
 mod home_tests {
     use super::*;
+    #[tokio::test]
+    async fn startup_cosmetics_read_stale_or_missing_cache_without_contacting_server() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = DistributionClient {
+            client: Client::builder().no_proxy().build().unwrap(),
+            base_url: Url::parse(&format!("http://{address}")).unwrap(),
+            trusted_keys: BTreeMap::new(),
+            server_keys: Arc::new(tokio::sync::OnceCell::new()),
+        };
+        let root = std::env::temp_dir().join(format!("pandora-startup-cache-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let route = "/v1/profiles";
+        assert!(client.cached_cosmetic_document(route, &root).is_none());
+        let key = hex::encode(Sha256::digest(format!("{}{}", client.base_url, route).as_bytes()));
+        let value = serde_json::json!({"profiles":[]});
+        fs::write(
+            root.join(format!("{key}.json")),
+            serde_json::to_vec(&CachedDocument {
+                value: value.clone(),
+                etag: Some("old".into()),
+                fetched_at: 0,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(client.cached_cosmetic_document(route, &root), Some(value));
+        let image = serde_json::json!({"url":format!("https://{address}/missing.png")});
+        assert!(client.home_image_mode(&image, &root, "artwork", true).await.is_none());
+        assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn only_active_ancestors_and_general_not_daughters() {
         let lineage = ["profile_child".to_string(), "profile_parent".to_string()].into_iter().collect();

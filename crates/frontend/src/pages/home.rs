@@ -159,6 +159,7 @@ impl HomePage {
             self.presentation
                 .news
                 .iter()
+                .filter(|n| InterfaceConfig::get(cx).home_general_news || n.target_profile_id.is_some())
                 .take(4)
                 .filter_map(|n| n.image.as_ref())
                 .map(|p| ImageSource::Resource(Resource::Path(Arc::from(p.as_path())))),

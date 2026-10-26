@@ -209,7 +209,11 @@ mod wasapi {
                     let faded = fade_frame.is_some_and(|start| fade_gain(cursor / 2 - start) == 0.);
                     if source_left == 0 || faded {
                         // Drain queued frames before Stop; the last fade sample is zero.
-                        while self.client.GetCurrentPadding()? != 0 {
+                        let drain_deadline = Instant::now() + Duration::from_millis(500);
+                        while self.client.GetCurrentPadding()? != 0 && Instant::now() < drain_deadline {
+                            if matches!(commands.try_recv(), Ok(Command::Stop)) {
+                                break;
+                            }
                             std::thread::sleep(Duration::from_millis(2));
                         }
                         self.client.Stop()?;
