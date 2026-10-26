@@ -22,10 +22,11 @@ param(
     [switch]$HitTest,
     [string]$HitTestReferenceDirectory,
     [switch]$DragRegions,
+    [switch]$ResizeProbe,
     [string]$PortableDirectory
 )
 $ErrorActionPreference = 'Stop'
-if (($HitTest -or $DragRegions) -and -not $Framebuffer) { throw 'Hit-test diagnostics require -Framebuffer.' }
+if (($HitTest -or $DragRegions -or $ResizeProbe) -and -not $Framebuffer) { throw 'Native diagnostics require -Framebuffer.' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $outputPath = [IO.Path]::GetFullPath($Output)
 $null = New-Item -ItemType Directory -Force -Path $outputPath
@@ -80,6 +81,33 @@ Add-Type -AssemblyName System.Drawing
 $oldDpiContext = [CaptureWindow]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $captureMetadata = @()
 $captureDiagnostics = @()
+$scriptHashAtStart = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+function Save-FirstResizeFrames([string]$Stem, [IntPtr]$Handle) {
+    $samples=@()
+    foreach($dimensions in @(@(1100,740),@(960,600),@(1280,860),@(1000,700))) {
+        foreach($name in @('frame.png','failed')) {
+            $path=Join-Path $framebufferRoot $name
+            if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path}
+        }
+        $requestUtc=[DateTime]::UtcNow.ToString('o')
+        [IO.File]::WriteAllText((Join-Path $framebufferRoot 'request'),(@{resize=$dimensions}|ConvertTo-Json -Compress))
+        $deadline=(Get-Date).AddSeconds(20)
+        $frame=Join-Path $framebufferRoot 'frame.png'
+        while(-not(Test-Path -LiteralPath $frame) -and (Get-Date) -lt $deadline){
+            if(Test-Path -LiteralPath (Join-Path $framebufferRoot 'failed')){throw 'First-resize-frame capture failed.'}
+            Start-Sleep -Milliseconds 50
+        }
+        if(-not(Test-Path -LiteralPath $frame)){throw 'First-resize-frame capture timed out.'}
+        $name="$Stem-first-resize-$($dimensions[0])x$($dimensions[1])-gpu.png"
+        Copy-Item -LiteralPath $frame -Destination (Join-Path $outputPath $name)
+        $samples+=@{file=$name;logicalSize=$dimensions;requestUtc=$requestUtc;copiedUtc=[DateTime]::UtcNow.ToString('o');method='first fresh draw armed before GPUI resize; GPU copy before Present'}
+        # Give the old implementation time to prepare too. Each sample starts
+        # with an available previous surface, not another unfinished sample.
+        Start-Sleep -Seconds 2
+    }
+    $samples|ConvertTo-Json -Depth 5|Set-Content -Encoding utf8 (Join-Path $outputPath "$Stem-first-resize.json")
+}
 
 function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, [string]$RegionsPath) {
     [uint32]$owner=0
@@ -415,6 +443,9 @@ try {
             if($dialogOwner -ne $proc.Id -or ([CaptureWindow]::GetWindowLongPtr($captureHandle,-16).ToInt64() -band 0x40000) -ne 0){throw 'Standalone dialog HWND is not the active owned nonresizable window.'}
         }
         Save-Window (Join-Path $outputPath $screen.file) $captureHandle $proc.Id
+        if ($ResizeProbe -and -not $script:fixedCaptureWindow) {
+            Save-FirstResizeFrames ([IO.Path]::GetFileNameWithoutExtension($screen.file)) $captureHandle
+        }
         if ($screen.page.StartsWith('news-article')) {
             # Wheel packets target only the verified capture window. They never
             # move the pointer or send input to another foreground application.
@@ -470,6 +501,7 @@ try {
         executableSourceCommit = $ExecutableSourceCommit
         launcherUpdateFixtureSha256 = if ($LauncherUpdateFixture) { (Get-FileHash -LiteralPath $LauncherUpdateFixture -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
         captureScriptCommit = (git -C $repo rev-parse HEAD)
+        captureScriptSha256 = $scriptHashAtStart
         nativeHitTest = [bool]$HitTest
         hitTestRegionSource = if($HitTestReferenceDirectory){'candidate geometry reused for baseline HWND queries'}else{'painted native regions from this executable'}
         diagnosticDragColors = [bool]$DragRegions

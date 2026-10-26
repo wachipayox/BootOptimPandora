@@ -58,6 +58,11 @@ pub fn start(window: &mut Window, cx: &mut App) {
                 if !directory.join("request").is_file() {
                     continue;
                 }
+                let request = std::fs::read(directory.join("request")).unwrap_or_default();
+                let resize = serde_json::from_slice::<serde_json::Value>(&request).ok().and_then(|value| {
+                    let pair = value.get("resize")?.as_array()?;
+                    Some([pair.first()?.as_f64()? as f32, pair.get(1)?.as_f64()? as f32])
+                });
                 let _ = std::fs::remove_file(directory.join("request"));
                 // Copy a fresh framebuffer without replaying scene sprite IDs:
                 // animated images can retire those between frame callbacks.
@@ -67,6 +72,11 @@ pub fn start(window: &mut Window, cx: &mut App) {
                         if let Err(error) = window.request_framebuffer_capture() {
                             let _ = send.send(Err(error));
                             return;
+                        }
+                        // Arm before resize: retain the FIRST fresh draw, rather
+                        // than a settled frame after asynchronous preparation.
+                        if let Some([width, height]) = resize {
+                            window.resize(gpui::size(gpui::px(width), gpui::px(height)));
                         }
                         window.on_next_frame(move |window, _| {
                             // Frame callbacks run before drawing. The following

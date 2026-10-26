@@ -557,6 +557,10 @@ impl Render for LauncherUI {
 
 impl LauncherUI {
     fn render_wachiland(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        #[cfg(feature = "ui-capture")]
+        if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page == "backdrop-probe") {
+            return div().size_full().child(crate::background::surface(window, cx)).into_any_element();
+        }
         use crate::{
             component::design::{self, DesignButton},
             theme,
