@@ -91,6 +91,8 @@ struct Painter<'a> {
     state: State,
     origin: Point<Pixels>,
     scale: f64,
+    viewport: Bounds<Pixels>,
+    visible: [f64; 4],
 }
 impl Painter<'_> {
     fn identity(&mut self) {
@@ -370,15 +372,30 @@ impl Painter<'_> {
     }
     fn bg(&mut self, sc: Scheme) {
         self.identity();
-        self.rect(0., 0., 1920., 1080., sc.bg);
+        self.window.paint_quad(fill(self.viewport, rgb(sc.bg)));
     }
     fn debris(&mut self, t: f64, sc: Scheme, seed: u32, n: usize, amount: f64) {
+        if amount <= 0. {
+            return;
+        }
         self.identity();
         let mut r = Rng(seed);
         self.state.alpha = 0.07 * amount;
-        for _ in 0..3 {
-            let x = r.next() * 1920.;
-            self.line([x, 0.], [x - 620., 1080.], 1.5, sc.bits[0]);
+        let [left, top, right, bottom] = self.visible;
+        let intercepts = [r.next() * 1920., r.next() * 1920., r.next() * 1920.];
+        // Continue the diagonal lines beyond the source frame. The period
+        // includes their horizontal drift, so adjacent copies cannot alter
+        // the approved 1920x1080 composition.
+        let first = ((left + 620. * top / 1080. - 1920.) / 2540.).floor() as i32 - 1;
+        let last = ((right + 620. * bottom / 1080.) / 2540.).ceil() as i32 + 1;
+        for tile in first..=last {
+            for x in intercepts {
+                let a = x + tile as f64 * 2540. - 620. * top / 1080.;
+                let b = x + tile as f64 * 2540. - 620. * bottom / 1080.;
+                if a.max(b) >= left - 2. && a.min(b) <= right + 2. {
+                    self.line([a, top], [b, bottom], 1.5, sc.bits[0]);
+                }
+            }
         }
         self.state.alpha = amount;
         for _ in 0..n {
@@ -393,14 +410,30 @@ impl Painter<'_> {
             let x = (r.next() * 1920. + v * t).rem_euclid(1920.);
             let y = r.next() * 1080.;
             let c = sc.bits[if r.next() < 0.7 { 0 } else { 1 }];
-            self.rect(x, y, w, h, c);
+            for ix in ((left - x - w) / 2020.).floor() as i32..=((right - x) / 2020.).ceil() as i32 {
+                for iy in ((top - y - h) / 1090.).floor() as i32..=((bottom - y) / 1090.).ceil() as i32 {
+                    let (xx, yy) = (x + ix as f64 * 2020., y + iy as f64 * 1090.);
+                    if xx + w >= left && xx <= right && yy + h >= top && yy <= bottom {
+                        self.rect(xx, yy, w, h, c);
+                    }
+                }
+            }
         }
         self.state.alpha = 1.;
     }
-    fn band(&mut self, y0: f64, y1: f64, draw: impl FnOnce(&mut Self)) {
+    fn band(&mut self, y0: f64, y1: f64, color: u32, draw: impl FnOnce(&mut Self)) {
         let saved = self.state;
         self.identity();
-        self.clip(0., y0, 1920., y1 - y0);
+        let [left, top, right, bottom] = self.visible;
+        let y0 = if y0 == 0. { top.min(0.) } else { y0 };
+        let y1 = if y1 == 1080. { bottom.max(1080.) } else { y1 };
+        self.clip(left, y0, right - left, y1 - y0);
+        self.window.with_content_mask(
+            Some(ContentMask {
+                bounds: self.state.mask,
+            }),
+            |window| window.paint_quad(fill(self.state.mask, rgb(color))),
+        );
         draw(self);
         self.state = saved;
     }
@@ -435,18 +468,15 @@ impl Painter<'_> {
             self.bg(DARK);
             let u = seg(t, 0.8, 1.3);
             let (a, b) = if t >= 1.05 { (INV, DARK) } else { (DARK, INV) };
-            self.band(0., 352., |p| {
-                p.rect(0., 0., 1920., 352., a.bg);
+            self.band(0., 352., a.bg, |p| {
                 p.cam(2.2, x + (120. + u * 260.) * s, y + 130. * s);
                 p.assembly(t, a);
             });
-            self.band(364., 716., |p| {
-                p.rect(0., 364., 1920., 352., b.bg);
+            self.band(364., 716., b.bg, |p| {
                 p.cam(1.25, ring[0] + 200. - u * 400., ring[1]);
                 p.assembly(t, b);
             });
-            self.band(728., 1080., |p| {
-                p.rect(0., 728., 1920., 352., a.bg);
+            self.band(728., 1080., a.bg, |p| {
                 p.cam(2.2, ring[0] + 260. - u * 300., ring[1] + r * s * 1.1);
                 p.assembly(t, a);
             });
@@ -490,15 +520,14 @@ impl Painter<'_> {
             let cap = 300.;
             let ww = d::LETTERS_WIDTH * cap;
             self.bg(a);
-            self.band(0., 534., |p| {
-                p.rect(0., 0., 1920., 534., a.bg);
-                for i in -1..3 {
+            let copies = ((self.visible[2] - self.visible[0]) / (ww + 160.)).ceil() as i32 + 3;
+            self.band(0., 534., a.bg, |p| {
+                for i in -copies..copies {
                     p.word(-200. - u * 700. + i as f64 * (ww + 160.), 450., cap, a.face, false);
                 }
             });
-            self.band(546., 1080., |p| {
-                p.rect(0., 546., 1920., 534., b.bg);
-                for i in -1..3 {
+            self.band(546., 1080., b.bg, |p| {
+                for i in -copies..copies {
                     p.word(1700. + u * 700. - i as f64 * (ww + 160.), 960., cap, b.face, true);
                 }
             });
@@ -609,11 +638,15 @@ fn pieces() -> [Piece; 8] {
 pub(crate) fn paint(t: f64, bounds: Bounds<Pixels>, window: &mut Window) {
     window.paint_quad(fill(bounds, rgb(BG)));
     let scale = (bounds.size.width.as_f32() as f64 / 1920.).min(bounds.size.height.as_f32() as f64 / 1080.);
+    if !scale.is_finite() || scale <= 0. {
+        return;
+    }
     let origin = point(
         bounds.origin.x + px(((bounds.size.width.as_f32() as f64 - 1920. * scale) / 2.) as f32),
         bounds.origin.y + px(((bounds.size.height.as_f32() as f64 - 1080. * scale) / 2.) as f32),
     );
-    let mask = Bounds::new(origin, size(px((1920. * scale) as f32), px((1080. * scale) as f32)));
+    let left = (bounds.origin.x - origin.x).as_f32() as f64 / scale;
+    let top = (bounds.origin.y - origin.y).as_f32() as f64 / scale;
     let mut p = Painter {
         window,
         state: State {
@@ -622,17 +655,30 @@ pub(crate) fn paint(t: f64, bounds: Bounds<Pixels>, window: &mut Window) {
             tx: 0.,
             ty: 0.,
             alpha: 1.,
-            mask,
+            mask: bounds,
         },
         origin,
         scale,
+        viewport: bounds,
+        visible: [
+            left,
+            top,
+            left + bounds.size.width.as_f32() as f64 / scale,
+            top + bounds.size.height.as_f32() as f64 / scale,
+        ],
     };
     p.render(t.clamp(0., 6.));
 }
 pub(crate) fn frame(t: f64) -> AnyElement {
     frame_timed(t, None)
 }
-pub(crate) fn frame_timed(t: f64, first_paint_origin: Option<(std::time::Instant, std::time::Instant)>) -> AnyElement {
+pub(crate) struct FirstPaint {
+    pub native: std::time::Instant,
+    pub main: std::time::Instant,
+    pub ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub scheduled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+pub(crate) fn frame_timed(t: f64, first_paint_origin: Option<FirstPaint>) -> AnyElement {
     canvas(
         move |bounds, _, _| bounds,
         move |bounds, _, window, _| {
@@ -653,13 +699,17 @@ pub(crate) fn frame_timed(t: f64, first_paint_origin: Option<(std::time::Instant
                     started.elapsed().as_nanos(), started.duration_since(origin).as_nanos()
                 );
             }
-            if let Some((native, main)) = first_paint_origin {
+            if let Some(signal) = &first_paint_origin {
+                if !signal.scheduled.swap(true, std::sync::atomic::Ordering::AcqRel) {
                 let painted = std::time::Instant::now();
                 log::info!(
                     "startup-first-paint pid={} native_window_to_paint_us={} main_to_paint_us={}",
                     std::process::id(),
-                    painted.duration_since(native).as_micros(), painted.duration_since(main).as_micros()
+                    painted.duration_since(signal.native).as_micros(), painted.duration_since(signal.main).as_micros()
                 );
+                let ready = signal.ready.clone();
+                window.on_next_frame(move |_, _| ready.store(true, std::sync::atomic::Ordering::Release));
+                }
             }
         },
     )

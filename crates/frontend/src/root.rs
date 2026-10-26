@@ -201,6 +201,10 @@ impl Render for LauncherRoot {
         if startup_layer.is_none() {
             self.startup = None;
         }
+        if self.startup.is_some() {
+            let root = cx.entity().entity_id();
+            window.on_next_frame(move |_, cx| cx.notify(root));
+        }
         let startup_layer = startup_layer.map(|layer| {
             div()
                 .id("startup-presentation")

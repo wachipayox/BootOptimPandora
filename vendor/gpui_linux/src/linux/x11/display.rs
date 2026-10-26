@@ -9,6 +9,7 @@ pub(crate) struct X11Display {
     x_screen_index: usize,
     bounds: Bounds<Pixels>,
     uuid: Uuid,
+    scale_factor: f32,
 }
 
 impl X11Display {
@@ -24,6 +25,7 @@ impl X11Display {
             .with_context(|| format!("No screen found with index {x_screen_index}"))?;
         Ok(Self {
             x_screen_index,
+            scale_factor,
             bounds: Bounds {
                 origin: Default::default(),
                 size: Size {
@@ -37,6 +39,9 @@ impl X11Display {
 }
 
 impl PlatformDisplay for X11Display {
+    fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
     fn id(&self) -> DisplayId {
         DisplayId::new(self.x_screen_index as u64)
     }

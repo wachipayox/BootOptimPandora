@@ -324,6 +324,11 @@ pub trait Platform: 'static {
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
 pub trait PlatformDisplay: Debug {
+    /// Device pixels per logical pixel on this display, available before a
+    /// window is created so its initial client size can use physical pixels.
+    fn scale_factor(&self) -> f32 {
+        1.0
+    }
     /// Get the ID for this display
     fn id(&self) -> DisplayId;
 

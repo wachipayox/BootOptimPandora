@@ -6,6 +6,16 @@ pub(super) const PRELOAD_LIMIT: Duration = Duration::from_secs(8);
 pub(super) const TRANSITION: Duration = Duration::from_millis(300);
 pub(super) const AUDIO_FADE: Duration = Duration::from_millis(150);
 
+pub(super) fn initial_size(scale: f32, available: [f32; 2], minimum: [f32; 2]) -> [f32; 2] {
+    let scale = if scale.is_finite() && scale > 0. { scale } else { 1. };
+    let (mut width, mut height) = (1280. / scale, 720. / scale);
+    let grow = (minimum[0] / width).max(minimum[1] / height).max(1.);
+    width *= grow;
+    height *= grow;
+    let fit = (available[0] / width).min(available[1] / height).min(1.);
+    [(width * fit).max(minimum[0]), (height * fit).max(minimum[1])]
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum IntroKind {
     FirstInstall,
@@ -43,8 +53,15 @@ pub(super) fn choose_track<'a>(tracks: &'a [String], last: Option<&str>, random:
 
 #[cfg(test)]
 mod tests {
-    use super::{IntroKind, choose_track, intro_kind, may_reveal};
+    use super::{IntroKind, choose_track, initial_size, intro_kind, may_reveal};
     use std::time::Duration;
+    #[test]
+    fn recommended_client_size_uses_physical_pixels_and_keeps_the_existing_minimum() {
+        assert_eq!(initial_size(1., [1920., 1080.], [960., 600.]), [1280., 720.]);
+        let hidpi = initial_size(1.25, [2048., 1104.], [960., 600.]);
+        assert!((hidpi[0] - 1066.6667).abs() < 0.01 && (hidpi[1] - 600.).abs() < 0.01);
+        assert_eq!(initial_size(1., [960., 600.], [960., 600.]), [960., 600.]);
+    }
 
     #[test]
     fn only_new_install_and_changed_versions_have_intro() {

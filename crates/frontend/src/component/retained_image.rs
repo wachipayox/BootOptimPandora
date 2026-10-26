@@ -17,6 +17,7 @@ impl RetainedImage {
         source: Resource,
         fallback: &'static str,
         cover: bool,
+        owner: EntityId,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -51,7 +52,7 @@ impl RetainedImage {
         let mut layer = div().relative().size_full();
         let fit = || if cover { ObjectFit::Cover } else { ObjectFit::Contain };
         if let Some(previous) = &self.previous {
-            window.request_animation_frame();
+            window.on_next_frame(move |_, cx| cx.notify(owner));
             layer = layer.child(
                 div()
                     .absolute()

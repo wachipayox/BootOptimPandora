@@ -304,6 +304,15 @@ pub fn open_main_window(
     };
 
     let use_custom_titlebar = !config.use_os_titlebar;
+    let window_bounds = window_bounds.or_else(|| {
+        let display = display_id
+            .and_then(|id| cx.displays().into_iter().find(|display| display.id() == id))
+            .or_else(|| cx.primary_display())?;
+        Some(WindowBounds::Windowed(startup::recommended_bounds(
+            display.as_ref(),
+            [MIN_WIDTH, MIN_HEIGHT],
+        )))
+    });
     crate::root::set_should_render_custom_titlebar(use_custom_titlebar);
     let handle = cx
         .open_window(

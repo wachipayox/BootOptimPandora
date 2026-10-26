@@ -284,7 +284,7 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
         .into_any_element()
     };
     if let Some((previous, progress)) = transition.filter(|(_, progress)| *progress < 1.) {
-        window.request_animation_frame();
+        window.on_next_frame(|window, _| window.refresh());
         div()
             .absolute()
             .inset_0()

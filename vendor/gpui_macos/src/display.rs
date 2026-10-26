@@ -72,6 +72,16 @@ unsafe extern "C" {
 }
 
 impl PlatformDisplay for MacDisplay {
+    fn scale_factor(&self) -> f32 {
+        unsafe {
+            let screen = self.get_nsscreen();
+            if screen == nil {
+                return 1.0;
+            }
+            let scale: f64 = msg_send![screen, backingScaleFactor];
+            scale as f32
+        }
+    }
     fn id(&self) -> DisplayId {
         DisplayId::new(self.0 as u64)
     }

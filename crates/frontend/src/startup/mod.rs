@@ -7,6 +7,10 @@ pub(crate) mod vector;
 use crate::interface_config::InterfaceConfig;
 use gpui::{prelude::*, *};
 use policy::{INTRO, IntroKind, PRELOAD_LIMIT, TRANSITION, intro_kind, may_reveal};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Instant;
 
 struct Session {
@@ -28,6 +32,24 @@ pub(crate) fn init(existing_install: bool, allow_startup: bool, process_started:
 pub(crate) fn is_active(cx: &App) -> bool {
     cx.try_global::<Session>().is_some_and(|s| s.active)
 }
+pub(crate) fn recommended_bounds(display: &dyn PlatformDisplay, minimum: [f32; 2]) -> Bounds<Pixels> {
+    let visible = display.visible_bounds();
+    let [width, height] = policy::initial_size(
+        display.scale_factor(),
+        [
+            (visible.size.width.as_f32() - 32.).max(minimum[0]),
+            (visible.size.height.as_f32() - 32.).max(minimum[1]),
+        ],
+        minimum,
+    );
+    Bounds::new(
+        point(
+            visible.origin.x + px((visible.size.width.as_f32() - width).max(0.) / 2.),
+            visible.origin.y + px((visible.size.height.as_f32() - height).max(0.) / 2.),
+        ),
+        size(px(width), px(height)),
+    )
+}
 
 pub(crate) struct Controller {
     opened: Instant,
@@ -36,7 +58,8 @@ pub(crate) struct Controller {
     skipped: bool,
     ready_frames: u8,
     fade: Option<Instant>,
-    first_frame: bool,
+    poster_ready: Arc<AtomicBool>,
+    poster_scheduled: Arc<AtomicBool>,
     audio: Option<audio::Audio>,
     audio_requested: bool,
     process_started: Instant,
@@ -85,7 +108,8 @@ impl Controller {
             skipped: false,
             ready_frames: 0,
             fade: None,
-            first_frame: true,
+            poster_ready: Arc::new(AtomicBool::new(false)),
+            poster_scheduled: Arc::new(AtomicBool::new(false)),
             audio,
             audio_requested: false,
             process_started,
@@ -113,10 +137,14 @@ impl Controller {
                             .and_then(|value| value.parse::<u64>().ok())
                             .unwrap_or(0),
                     ));
-        let first_paint_origin = self.first_frame.then_some((self.opened, self.process_started));
-        if self.first_frame {
-            self.first_frame = false;
-        } else if self.clock.is_none() {
+        let poster_ready = self.poster_ready.load(Ordering::Acquire);
+        let first_paint_origin = (!poster_ready).then(|| vector::FirstPaint {
+            native: self.opened,
+            main: self.process_started,
+            ready: self.poster_ready.clone(),
+            scheduled: self.poster_scheduled.clone(),
+        });
+        if poster_ready && self.clock.is_none() {
             if let Some(audio) = &self.audio {
                 if !self.audio_requested {
                     audio.start();
@@ -149,6 +177,7 @@ impl Controller {
             }
         }
         if self.fade.is_none()
+            && (poster_ready || elapsed >= PRELOAD_LIMIT)
             && may_reveal(elapsed, animation_elapsed, self.ready_frames >= 2, self.kind, self.skipped)
         {
             self.fade = Some(now);
@@ -170,9 +199,9 @@ impl Controller {
                 .unwrap_or(0.);
         if opacity <= 0. {
             cx.global_mut::<Session>().active = false;
+            window.refresh();
             return None;
         }
-        window.request_animation_frame();
         let t = if self.kind == IntroKind::None || self.skipped || self.clock.is_none() {
             6.
         } else {
@@ -224,7 +253,7 @@ pub(crate) fn capture_frame(window: &mut Window) -> Option<AnyElement> {
     }
     let t = time.parse::<f64>().ok()?.clamp(0., 6.);
     if route == "startup-bench" {
-        window.request_animation_frame();
+        window.on_next_frame(|window, _| window.refresh());
     }
     let mut frame = div().relative().size_full().child(vector::frame(t));
     if route == "startup-intro" {

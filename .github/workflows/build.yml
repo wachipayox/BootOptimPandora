@@ -39,6 +39,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
+          key: ${{ hashFiles('vendor/**/.cargo-checksum.json') }}
           save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install needed packages on Linux
@@ -93,6 +94,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
+          key: ${{ hashFiles('vendor/**/.cargo-checksum.json') }}
           save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Run backend library tests on Windows

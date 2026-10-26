@@ -469,6 +469,7 @@ impl Render for HomePage {
             resource(&self.presentation.artwork, "images/artwork-vanilla.png"),
             "images/artwork-vanilla.png",
             true,
+            cx.entity().entity_id(),
             window,
             cx,
         );
@@ -476,6 +477,7 @@ impl Render for HomePage {
             resource(&self.presentation.logo, "images/logo-vanilla.png"),
             "images/logo-vanilla.png",
             false,
+            cx.entity().entity_id(),
             window,
             cx,
         );
