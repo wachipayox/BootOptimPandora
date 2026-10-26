@@ -109,3 +109,11 @@ transition captures compose the real interface and the final vector frame.
 from native paint entry through path tessellation/scene submission, excluding
 GPU execution and Present. Capture both 1920×1080 and 3840×2160 physical pixels;
 the manifest records DPI and viewport size. Keep source/reference images private.
+
+`startup-live` exercises normal version policy and preloading rather than a fixed
+frame. With `WBOMBO_UI_CAPTURE_STARTUP_FIRST_FRAME=1`, the framebuffer directory
+also receives `startup-first.png`, armed before the window factory returns.
+`WBOMBO_UI_CAPTURE_STARTUP_DELAY_MS` can hold visual readiness in that route to
+verify the eight-second cap; it does not affect ordinary builds. Startup timing
+logs distinguish Rust main entry, native window creation, first paint submission,
+visual readiness and reveal start. Paint submission is not GPU Present latency.

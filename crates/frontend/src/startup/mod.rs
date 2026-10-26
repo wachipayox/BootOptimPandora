@@ -103,6 +103,16 @@ impl Controller {
     pub(crate) fn layer(&mut self, ready: bool, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let now = Instant::now();
         let elapsed = now.duration_since(self.opened);
+        #[cfg(feature = "ui-capture")]
+        let ready = ready
+            && !(std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("startup-live")
+                && elapsed
+                    < std::time::Duration::from_millis(
+                        std::env::var("WBOMBO_UI_CAPTURE_STARTUP_DELAY_MS")
+                            .ok()
+                            .and_then(|value| value.parse::<u64>().ok())
+                            .unwrap_or(0),
+                    ));
         let first_paint_origin = self.first_frame.then_some((self.opened, self.process_started));
         if self.first_frame {
             self.first_frame = false;
