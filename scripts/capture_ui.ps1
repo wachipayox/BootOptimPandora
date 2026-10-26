@@ -18,6 +18,8 @@ param(
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
+    [int]$ViewportWidth = 1280,
+    [int]$ViewportHeight = 860,
     [switch]$Framebuffer,
     [switch]$HitTest,
     [string]$HitTestReferenceDirectory,
@@ -58,6 +60,9 @@ using System.Runtime.InteropServices;
 public static class CaptureWindow {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+  [StructLayout(LayoutKind.Sequential)] public struct MINMAXINFO { public POINT reserved, maxSize, maxPosition, minTrackSize, maxTrackSize; }
+  [DllImport("user32.dll", EntryPoint="SendMessageW")] private static extern IntPtr ReadMinMax(IntPtr hwnd, uint message, IntPtr wparam, ref MINMAXINFO info);
+  public static MINMAXINFO GetMinMax(IntPtr hwnd) { var info=new MINMAXINFO(); ReadMinMax(hwnd,0x24,IntPtr.Zero,ref info); return info; }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
@@ -122,6 +127,14 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
     $points=@()
     $boundaryProbes=@()
     $resizable=([CaptureWindow]::GetWindowLongPtr($Handle,-16).ToInt64() -band 0x40000) -ne 0
+    if($resizable) {
+        foreach($area in @('Some(Min)','Some(Max)','Some(Close)')) {
+            $control=@($regions|Where-Object area -eq $area)
+            if($control.Count -ne 1 -or $control[0].bounds.width -lt 31.9 -or $control[0].bounds.height -lt 31.9) {
+                throw "Window control is missing or clipped: $area"
+            }
+        }
+    }
     foreach($region in $regions) {
         $expected=switch($region.area) {'Some(Drag)' {2}; 'Some(Min)' {8}; 'Some(Max)' {9}; 'Some(Close)' {20}; 'None' {1}; default {throw 'Unknown capture region type'}}
         :probe foreach($point in $region.points) {
@@ -196,7 +209,7 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
         $scale = [CaptureWindow]::GetDpiForWindow($handle) / 96.0
         $frameWidth = ($rect.Right - $rect.Left) - ($client.Right - $client.Left)
         $frameHeight = ($rect.Bottom - $rect.Top) - ($client.Bottom - $client.Top)
-        [void][CaptureWindow]::MoveWindow($handle, 32, 32, [int](1280 * $scale + $frameWidth), [int](860 * $scale + $frameHeight), $true)
+        [void][CaptureWindow]::MoveWindow($handle, 32, 32, [int]($ViewportWidth * $scale + $frameWidth), [int]($ViewportHeight * $scale + $frameHeight), $true)
         Start-Sleep -Milliseconds 700
         [void][CaptureWindow]::GetWindowRect($handle, [ref]$rect)
     }
@@ -208,6 +221,7 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     if ($DesignViewport -and ($clientOrigin.X -lt 0 -or $clientOrigin.Y -lt 0)) { throw 'Design viewport is outside the visible desktop' }
     $width = $client.Right - $client.Left
     $height = $client.Bottom - $client.Top
+    $minMax=[CaptureWindow]::GetMinMax($handle)
     $minimumWidth=if($script:fixedCaptureWindow){400}else{480}
     $minimumHeight=if($script:fixedCaptureWindow){80}else{270}
     if ($width -lt $minimumWidth -or $height -lt $minimumHeight) { throw "Foreground window is not a Pandora window ($width x $height)" }
@@ -223,7 +237,7 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
             } finally { $graphics.ReleaseHdc($dc) }
         }
         $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
-        $script:captureMetadata += @{ file=[IO.Path]::GetFileName($Path); width=$width; height=$height; dpi=[CaptureWindow]::GetDpiForWindow($handle); method='desktop' }
+        $script:captureMetadata += @{ file=[IO.Path]::GetFileName($Path); width=$width; height=$height; dpi=[CaptureWindow]::GetDpiForWindow($handle); method='desktop'; nativeMinTrackPhysical=@($minMax.minTrackSize.X,$minMax.minTrackSize.Y) }
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
     if ($Framebuffer) {
         foreach ($name in @('frame.png', 'failed')) {
@@ -505,7 +519,7 @@ try {
         nativeHitTest = [bool]$HitTest
         hitTestRegionSource = if($HitTestReferenceDirectory){'candidate geometry reused for baseline HWND queries'}else{'painted native regions from this executable'}
         diagnosticDragColors = [bool]$DragRegions
-        viewport = if ($DesignViewport) { '1280 x 860 logical pixels' } else { 'maximized' }
+        viewport = if ($DesignViewport) { "$ViewportWidth x $ViewportHeight logical pixels" } else { 'maximized' }
         captures = $captureMetadata
         diagnostics = $captureDiagnostics
         dataDirectory = if ($ownsDirectory) { 'temporary portable directory; removed after capture' } else { 'caller-owned isolated portable directory' }
