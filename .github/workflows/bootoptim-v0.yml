@@ -1,6 +1,7 @@
 name: BootOptim v0 interposer
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - "agent151/bootoptim-launch-interposer-v0-20260913"
