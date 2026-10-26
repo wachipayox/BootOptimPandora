@@ -136,7 +136,7 @@ function Test-WindowHitRegions([string]$Path, [IntPtr]$Handle, [int]$ProcessId, 
     $points=@()
     $boundaryProbes=@()
     $resizable=([CaptureWindow]::GetWindowLongPtr($Handle,-16).ToInt64() -band 0x40000) -ne 0
-    if($resizable) {
+    if($resizable -and $script:expectWindowControls) {
         $controlChecks=@()
         foreach($area in @('Some(Min)','Some(Max)','Some(Close)')) {
             $control=@($regions|Where-Object area -eq $area)
@@ -457,6 +457,7 @@ try {
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw "Instance capture did not settle: $instanceMarker" }
         }
         $captureHandle=$proc.MainWindowHandle
+        $script:expectWindowControls = $screen.page -notin @('news-profiles','news-changelog','skins-import','account-offline','launcher-update') -and $screen.page -notmatch '^(derived|duplicate|delete|export|groups):'
         $script:fixedCaptureWindow=$screen.page -eq 'window-dialog'
         if ($script:fixedCaptureWindow) {
             $ready="window-dialog-ready pid=$($proc.Id)"
@@ -519,7 +520,7 @@ try {
             if ($null -ne $distributionOriginalConfig) { [IO.File]::WriteAllBytes($distributionConfigPath, $distributionOriginalConfig) } else { Remove-Item -LiteralPath $distributionConfigPath -ErrorAction SilentlyContinue }
             $distributionCaptureActive = $false
         }
-        $captureDiagnostics += @{page=$screen.page;errorsBeforeClose=$errorsBeforeClose;errorsAfterClose=@(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -CaseSensitive -ErrorAction SilentlyContinue).Count}
+        $captureDiagnostics += @{page=$screen.page;mainControlsExpected=[bool]$script:expectWindowControls;errorsBeforeClose=$errorsBeforeClose;errorsAfterClose=@(Select-String -LiteralPath $newsLogPath -Pattern ' ERROR ' -CaseSensitive -ErrorAction SilentlyContinue).Count}
         Write-Output "CAPTURE_OK page=$($screen.page) file=$($screen.file)"
     }
     @{

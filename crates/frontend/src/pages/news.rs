@@ -113,6 +113,22 @@ fn new_tag() -> Div {
 fn empty(text: &'static str) -> Div {
     div().w_full().py(px(48.)).text_center().text_color(rgb(theme::INK_MUTED)).child(text)
 }
+fn window_controls(window: &Window, inset: f32) -> Div {
+    use crate::component::generic_title_bar::WindowControl;
+    let controls = h_flex().absolute().top(px(8.)).right(px(inset)).flex_shrink_0();
+    if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
+        controls
+            .child(WindowControl::Minimize)
+            .child(if window.is_maximized() {
+                WindowControl::Restore
+            } else {
+                WindowControl::Maximize
+            })
+            .child(WindowControl::Close)
+    } else {
+        controls
+    }
+}
 fn cover_key(n: &NewsItem, kind: &str) -> String {
     format!("cover:{}:{}:{kind}", n.id, n.updated_at)
 }
@@ -821,6 +837,8 @@ impl Render for NewsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.article.is_some() {
             return div()
+                .relative()
+                .min_w_0()
                 .key_context("News")
                 .track_focus(&self.focus)
                 .on_action(cx.listener(Self::focus_search))
@@ -828,12 +846,22 @@ impl Render for NewsPage {
                 .size_full()
                 .text_color(rgb(theme::INK))
                 .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .h(px(48.))
+                        .window_control_area(WindowControlArea::Drag),
+                )
+                .child(
                     v_flex()
                         .size_full()
                         .overflow_y_scrollbar()
                         .p(px(24.))
                         .child(self.article_view(window, cx)),
                 )
+                .child(window_controls(window, 24.))
                 .into_any_element();
         }
         let items = self.filtered(cx, true);
@@ -869,6 +897,9 @@ impl Render for NewsPage {
             );
         }
         let mut header = v_flex()
+            .relative()
+            .w_full()
+            .window_control_area(WindowControlArea::Drag)
             .gap(px(0.))
             .h(px(64.))
             .flex_shrink_0()
@@ -891,7 +922,7 @@ impl Render for NewsPage {
                 },
             )));
         }
-        header = header.child(tabs);
+        header = header.child(tabs).child(window_controls(window, 28.));
         let filters = h_flex()
             .gap(px(12.))
             .child(
@@ -1201,6 +1232,7 @@ impl Render for NewsPage {
             }
         }
         div()
+            .min_w_0()
             .key_context("News")
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::focus_search))
