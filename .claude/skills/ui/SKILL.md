@@ -105,9 +105,9 @@ adds deterministic vector reference frames (`startup-frame:<seconds>`),
 `startup-splash`, `startup-intro:<seconds>` and `startup-transition:<fraction>`.
 The reference routes omit the native border for full-frame pixel comparison;
 transition captures compose the real interface and the final vector frame.
-`startup-bench:<seconds>` continuously renders a fixed frame and logs CPU time
+`startup-bench:<seconds>` continuously renders a fixed frame and logs wall time of the CPU stage
 from native paint entry through path tessellation/scene submission, excluding
-GPU execution and Present. Capture both 1920×1080 and 3840×2160 physical pixels;
+GPU execution and Present; this is not a consumed-CPU counter. Capture both 1920×1080 and 3840×2160 physical pixels;
 the manifest records DPI and viewport size. Keep source/reference images private.
 
 `startup-live` exercises normal version policy and preloading rather than a fixed
