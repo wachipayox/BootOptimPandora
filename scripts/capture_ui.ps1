@@ -334,6 +334,8 @@ $distributionCaptureActive = $false
 $distributionOriginalConfig = $null
 $distributionConfigPath = Join-Path $tempRoot "WachilandLauncher\config.json"
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
+$oldEnforceBounds = $env:WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS
+if ($SizingProbe) { $env:WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS='1' } else { Remove-Item Env:WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS -ErrorAction SilentlyContinue }
 $oldFramebufferDirectory = $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR
 if ($Framebuffer) { $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR = $framebufferRoot }
 $oldCaptureState = $env:WBOMBO_UI_CAPTURE_STATE
@@ -534,6 +536,21 @@ try {
                 $checks+=@{name=$case.name;requested=@($case.width,$case.height);client=@($width,$height);ratio=$ratio;reply=$reply;passed=$ok}
                 if (-not $ok) { throw "Native WM_SIZING failed: $($case.name), $width x $height, reply $reply" }
             }
+            [void][CaptureWindow]::SetWindowPos($captureHandle,[IntPtr]::Zero,0,0,[int](3200*$scale+$frameWidth),[int](1500*$scale+$frameHeight),0x16)
+            $deadline=(Get-Date).AddSeconds(10); $actual=New-Object CaptureWindow+RECT; $fixed=$false
+            while ((Get-Date) -lt $deadline) {
+                Start-Sleep -Milliseconds 200
+                if ([CaptureWindow]::GetClientRect($captureHandle,[ref]$actual)) {
+                    $w=$actual.Right-$actual.Left; $h=$actual.Bottom-$actual.Top
+                    if ($h -gt 0 -and $w -le $cap+2 -and $h -le $heightCap+2 -and $w/[double]$h -ge 1.598 -and $w/[double]$h -le 2.002) { $fixed=$true; break }
+                }
+            }
+            $checks+=@{name='programmatic-normal-resize';client=@($w,$h);passed=$fixed}
+            if (-not $fixed) { throw "Programmatic normal resize was not corrected: $w x $h" }
+            Start-Sleep -Milliseconds 800
+            $previousWidth=$w; $previousHeight=$h
+            [void][CaptureWindow]::GetClientRect($captureHandle,[ref]$actual)
+            if ([Math]::Abs(($actual.Right-$actual.Left)-$previousWidth) -gt 1 -or [Math]::Abs(($actual.Bottom-$actual.Top)-$previousHeight) -gt 1) { throw 'Corrected window size did not settle.' }
             [void][CaptureWindow]::ShowWindow($captureHandle,3); Start-Sleep -Milliseconds 300
             if (-not [CaptureWindow]::IsZoomed($captureHandle)) { throw 'The sizing probe could not maximize its owned window.' }
             $rect=New-Object CaptureWindow+RECT; $rect.Left=100; $rect.Top=100; $rect.Right=5100; $rect.Bottom=3100
@@ -631,6 +648,7 @@ try {
     }
     if ($null -ne $oldCaptureState) { $env:WBOMBO_UI_CAPTURE_STATE=$oldCaptureState } else { Remove-Item Env:WBOMBO_UI_CAPTURE_STATE -ErrorAction SilentlyContinue }
     if ($null -ne $oldPage) { $env:WBOMBO_UI_CAPTURE_PAGE = $oldPage } else { Remove-Item Env:WBOMBO_UI_CAPTURE_PAGE -ErrorAction SilentlyContinue }
+    if ($null -ne $oldEnforceBounds) { $env:WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS=$oldEnforceBounds } else { Remove-Item Env:WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS -ErrorAction SilentlyContinue }
     if ($createdInstance) { Invoke-CaptureCli @('--delete-instance', $InstanceName, '--confirm', $InstanceName) }
     if ($ownsDirectory) {
         $resolvedTempRoot = [IO.Path]::GetFullPath($tempRoot)

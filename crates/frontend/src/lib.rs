@@ -459,21 +459,6 @@ pub fn open_main_window(
                 }
                 let launcher_root = cx.new(|cx| {
                     cx.observe_window_bounds(window, move |_, window, cx| {
-                        #[cfg(not(target_os = "windows"))]
-                        if !window.is_maximized() && !window.is_fullscreen() {
-                            let current = window.viewport_size();
-                            let target = resize_constraints.constrain(
-                                current,
-                                window.scale_factor(),
-                                size(px(MIN_WIDTH), px(MIN_HEIGHT)),
-                            );
-                            if (current.width.as_f32() - target.width.as_f32()).abs() > 1.
-                                || (current.height.as_f32() - target.height.as_f32()).abs() > 1.
-                            {
-                                window.resize(target);
-                                return;
-                            }
-                        }
                         // On Windows the drawable viewport is not the placement rectangle used
                         // to reopen a borderless window. Persist GPUI's restore bounds so the
                         // invisible resize frame is not added again on each launch.
@@ -485,6 +470,26 @@ pub fn open_main_window(
                         };
                         #[cfg(not(target_os = "windows"))]
                         let restore_bounds = Bounds::new(window.bounds().origin, window.viewport_size());
+                        // Some platform tiling actions do not send a live sizing message.
+                        // Correct their resulting normal size, but leave maximization untouched.
+                        #[cfg(feature = "ui-capture")]
+                        let capture_override = std::env::var_os("WBOMBO_UI_CAPTURE_PAGE").is_some()
+                            && std::env::var_os("WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS").is_none();
+                        #[cfg(not(feature = "ui-capture"))]
+                        let capture_override = false;
+                        if !capture_override && !window.is_maximized() && !window.is_fullscreen() {
+                            let target = resize_constraints.constrain(
+                                restore_bounds.size,
+                                window.scale_factor(),
+                                size(px(MIN_WIDTH), px(MIN_HEIGHT)),
+                            );
+                            if (restore_bounds.size.width.as_f32() - target.width.as_f32()).abs() > 1.
+                                || (restore_bounds.size.height.as_f32() - target.height.as_f32()).abs() > 1.
+                            {
+                                window.resize(target);
+                                return;
+                            }
+                        }
                         let origin = restore_bounds.origin;
                         let size = restore_bounds.size;
                         let new_bounds = (
