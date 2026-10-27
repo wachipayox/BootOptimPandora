@@ -383,6 +383,12 @@ impl CreateInstanceModalState {
                 };
                 loaders = loaders.child(
                     design::chip(("loader", index), label, self.selected_loader == loader)
+                        .when(loader == Loader::Vanilla, |chip| {
+                            chip.child(
+                                img(ImageSource::Resource(Resource::Embedded("images/default_world.png".into())))
+                                    .size(px(18.)),
+                            )
+                        })
                         .when_some(icon, |chip, icon| chip.child(Icon::default().path(icon).size(px(18.))))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.selected_loader = loader;
