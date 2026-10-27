@@ -521,13 +521,14 @@ try {
             $frameHeight=($outer.Bottom-$outer.Top)-($client.Bottom-$client.Top)
             $dpi=[CaptureWindow]::GetDpiForWindow($captureHandle); $scale=$dpi/96.0
             $cap=[Math]::Max(960*$scale,1920+220*$scale)
+            $heightCap=[Math]::Max(600*$scale,1187.5)
             $checks=@()
-            foreach ($case in @(@{name='wide';width=3200;height=800;edge=2},@{name='tall';width=1200;height=1500;edge=6},@{name='valid';width=1600;height=900;edge=8})) {
+            foreach ($case in @(@{name='wide';width=[int](3200*$scale);height=[int](800*$scale);edge=2},@{name='tall';width=[int](960*$scale);height=[int](1500*$scale);edge=6},@{name='height-cap';width=[int]$cap;height=[int](1500*$scale);edge=8},@{name='valid';width=[int](960*$scale);height=[int](600*$scale);edge=8})) {
                 $rect=New-Object CaptureWindow+RECT; $rect.Left=100; $rect.Top=100
                 $rect.Right=$rect.Left+$case.width+$frameWidth; $rect.Bottom=$rect.Top+$case.height+$frameHeight
                 $reply=[CaptureWindow]::SendSizing($captureHandle,0x214,[IntPtr]$case.edge,[ref]$rect).ToInt64()
                 $width=$rect.Right-$rect.Left-$frameWidth; $height=$rect.Bottom-$rect.Top-$frameHeight; $ratio=$width/[double]$height
-                $ok=$reply -eq 1 -and $width -le ($cap+2) -and $ratio -ge 1.598 -and $ratio -le 2.002
+                $ok=$reply -eq 1 -and $width -le ($cap+2) -and $height -le ($heightCap+2) -and $ratio -ge 1.598 -and $ratio -le 2.002
                 if ($case.name -eq 'valid') { $ok=$ok -and [Math]::Abs($width-$case.width) -le 2 -and [Math]::Abs($height-$case.height) -le 2 }
                 $checks+=@{name=$case.name;requested=@($case.width,$case.height);client=@($width,$height);ratio=$ratio;reply=$reply;passed=$ok}
                 if (-not $ok) { throw "Native WM_SIZING failed: $($case.name), $width x $height, reply $reply" }
