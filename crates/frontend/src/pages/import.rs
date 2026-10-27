@@ -133,16 +133,8 @@ impl Render for ImportPage {
                                 OtherLauncher::ATLauncher => "images/brands/atlauncher.png",
                             };
                             Button::new(launcher.name())
-                                .aria_label(launcher.name())
-                                .child(
-                                    h_flex()
-                                        .gap(px(8.))
-                                        .items_center()
-                                        .child(
-                                            img(ImageSource::Resource(Resource::Embedded(icon.into()))).size(px(20.)),
-                                        )
-                                        .child(launcher.name()),
-                                )
+                                .label(launcher.name())
+                                .child(img(ImageSource::Resource(Resource::Embedded(icon.into()))).size(px(20.)))
                                 .ghost()
                                 .rounded(px(0.))
                                 .w_full()
