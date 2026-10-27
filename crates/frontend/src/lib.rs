@@ -95,6 +95,9 @@ pub fn start(
     if let Err(error) = theme::install_font_licenses(&launcher_dir) {
         log::warn!("Could not write bundled font licenses: {error}");
     }
+    if let Err(error) = theme::install_brand_licenses(&launcher_dir) {
+        log::warn!("Could not write bundled brand notices: {error}");
+    }
 
     gpui_platform::application()
         .with_http_client(http_client)

@@ -39,3 +39,21 @@ pub fn install_font_licenses(launcher_dir: &std::path::Path) -> std::io::Result<
     }
     Ok(())
 }
+
+/// Ship third-party artwork attribution and licences with standalone executables.
+pub fn install_brand_licenses(launcher_dir: &std::path::Path) -> std::io::Result<()> {
+    let directory = launcher_dir.join("licenses").join("brands");
+    std::fs::create_dir_all(&directory)?;
+    for (name, text) in [
+        ("SOURCES.txt", include_str!("../../../assets/icons/brands/SOURCES.txt")),
+        ("CC-BY-SA-4.0.txt", include_str!("../../../assets/icons/brands/CC-BY-SA-4.0.txt")),
+        ("CC0-1.0.txt", include_str!("../../../assets/icons/brands/CC0-1.0.txt")),
+        ("GPL-3.0.txt", include_str!("../../../assets/icons/brands/GPL-3.0.txt")),
+    ] {
+        let destination = directory.join(name);
+        if std::fs::read(&destination).ok().as_deref() != Some(text.as_bytes()) {
+            std::fs::write(destination, text)?;
+        }
+    }
+    Ok(())
+}
