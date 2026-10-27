@@ -416,8 +416,19 @@ pub fn open_main_window(
                 }
                 let launcher_root = cx.new(|cx| {
                     cx.observe_window_bounds(window, move |_, window, cx| {
-                        let origin = window.bounds().origin;
-                        let size = window.viewport_size();
+                        // On Windows the drawable viewport is not the placement rectangle used
+                        // to reopen a borderless window. Persist GPUI's restore bounds so the
+                        // invisible resize frame is not added again on each launch.
+                        #[cfg(target_os = "windows")]
+                        let restore_bounds = match window.window_bounds() {
+                            WindowBounds::Windowed(bounds)
+                            | WindowBounds::Maximized(bounds)
+                            | WindowBounds::Fullscreen(bounds) => bounds,
+                        };
+                        #[cfg(not(target_os = "windows"))]
+                        let restore_bounds = Bounds::new(window.bounds().origin, window.viewport_size());
+                        let origin = restore_bounds.origin;
+                        let size = restore_bounds.size;
                         let new_bounds = (
                             origin.x.to_f64() as f32,
                             origin.y.to_f64() as f32,
