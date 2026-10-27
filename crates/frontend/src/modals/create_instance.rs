@@ -60,6 +60,7 @@ pub(crate) struct CreateInstanceModalState {
     loader_version_dropdown: Entity<SelectState<VersionList>>,
     loader_versions_ready: bool,
     loader_versions_error: bool,
+    loader_versions_empty: bool,
     loader_subscription: Option<Subscription>,
     name_input_state: Entity<InputState>,
     selected_loader: Loader,
@@ -130,6 +131,7 @@ impl CreateInstanceModalState {
             loader_version_dropdown,
             loader_versions_ready: true,
             loader_versions_error: false,
+            loader_versions_empty: false,
             loader_subscription: None,
             name_input_state,
             selected_loader: Loader::Vanilla,
@@ -167,6 +169,7 @@ impl CreateInstanceModalState {
             Loader::Vanilla => {
                 self.loader_versions_ready = true;
                 self.loader_versions_error = false;
+                self.loader_versions_empty = false;
                 self.loader_subscription = None;
                 return;
             },
@@ -207,7 +210,8 @@ impl CreateInstanceModalState {
             },
             Loader::Vanilla => unreachable!(),
         };
-        self.loader_versions_ready = result.as_ref().is_some_and(Result::is_ok);
+        self.loader_versions_empty = result.as_ref().is_some_and(|r| r.as_ref().is_ok_and(Vec::is_empty));
+        self.loader_versions_ready = result.as_ref().is_some_and(|r| r.as_ref().is_ok_and(|v| !v.is_empty()));
         self.loader_versions_error = result.as_ref().is_some_and(Result::is_err);
         #[cfg(feature = "ui-capture")]
         if self.loaded_versions
@@ -235,6 +239,18 @@ impl CreateInstanceModalState {
             page.load_loader_versions(window, cx);
             cx.notify();
         }));
+    }
+
+    fn retry_loader_versions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use bridge::meta::MetadataRequest;
+        let request = match self.selected_loader {
+            Loader::Vanilla => return,
+            Loader::Fabric => MetadataRequest::FabricLoaderManifest,
+            Loader::Forge => MetadataRequest::ForgeMavenManifest,
+            Loader::NeoForge => MetadataRequest::NeoforgeMavenManifest,
+        };
+        FrontendMetadata::force_reload(&self.metadata, request, cx);
+        self.load_loader_versions(window, cx);
     }
 
     pub fn update_fallback_name(&mut self, window: &mut Window, cx: &mut App) {
@@ -304,7 +320,16 @@ impl CreateInstanceModalState {
 
             let mut to_select = None;
 
-            if let Some(last_selected) = dropdown.selected_value().cloned()
+            #[cfg(feature = "ui-capture")]
+            if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p.starts_with("add-local-")) {
+                let fixture_version = SharedString::from("1.21.1");
+                if versions.contains(&fixture_version) {
+                    to_select = Some(fixture_version);
+                }
+            }
+
+            if to_select.is_none()
+                && let Some(last_selected) = dropdown.selected_value().cloned()
                 && versions.contains(&last_selected)
             {
                 to_select = Some(last_selected);
@@ -448,7 +473,14 @@ impl CreateInstanceModalState {
                         .w_full()
                         .search_placeholder("Buscar..."),
                 ))
-                .when(self.loader_versions_error, |d| d.child("No se han podido cargar las versiones."))
+                .when(self.loader_versions_error, |d| {
+                    d.child("No se han podido cargar las versiones.").child(
+                        design::DesignButton::new("retry-loader-versions")
+                            .label("Reintentar")
+                            .on_click(cx.listener(|this, _, window, cx| this.retry_loader_versions(window, cx))),
+                    )
+                })
+                .when(self.loader_versions_empty, |d| d.child("No se han encontrado versiones compatibles."))
             })
             .child(
                 h_flex()
