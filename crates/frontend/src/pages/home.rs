@@ -50,6 +50,43 @@ fn picture(path: &Option<std::path::PathBuf>, fallback: &'static str) -> ImageSo
 fn shade(from: u32, to: u32) -> Background {
     linear_gradient(180., linear_color_stop(rgba(from), 0.), linear_color_stop(rgba(to), 1.)).into()
 }
+fn server_frame(content: impl IntoElement) -> Div {
+    design::notched_panel(0x060607cc)
+        .absolute()
+        .top(px(60.))
+        .right(px(18.))
+        .w(px(212.))
+        .child(
+            canvas(
+                |_, _, _| (),
+                |bounds, _, window, _| {
+                    let x = bounds.origin.x + px(0.5);
+                    let y = bounds.origin.y + px(0.5);
+                    let w = bounds.size.width - px(1.);
+                    let h = bounds.size.height - px(1.);
+                    let n = px(6.);
+                    let mut path = PathBuilder::stroke(px(1.));
+                    path.move_to(point(x + n, y));
+                    path.line_to(point(x + w - n, y));
+                    path.line_to(point(x + w, y + n));
+                    path.line_to(point(x + w, y + h - n));
+                    path.line_to(point(x + w - n, y + h));
+                    path.line_to(point(x + n, y + h));
+                    path.line_to(point(x, y + h - n));
+                    path.line_to(point(x, y + n));
+                    path.close();
+                    if let Ok(path) = path.build() {
+                        window.paint_path(path, rgba(0xffffff0b));
+                    }
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
+        .child(div().w_full().px(px(14.)).py(px(12.)).child(content))
+}
 pub fn add_instance(_data: &DataEntities, window: &mut Window, cx: &mut App) {
     root::switch_page(PageType::AddInstance, &[PageType::Instances], window, cx);
 }
@@ -228,24 +265,14 @@ impl HomePage {
         let i = self.instance.as_ref().unwrap().read(cx);
         let id = i.id;
         let name = i.name.clone();
-        let mut panel = design::notched_panel(0x060607cc)
-            .flex()
-            .flex_col()
-            .absolute()
-            .top(px(60.))
-            .right(px(18.))
-            .w(px(212.))
-            .px(px(14.))
-            .py(px(12.))
-            .gap(px(6.))
-            .child(
-                div()
-                    .font_family(theme::SANS)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(13.))
-                    .line_height(px(18.))
-                    .child("Jugadores conectados"),
-            );
+        let mut panel = div().flex().flex_col().gap(px(6.)).child(
+            div()
+                .font_family(theme::SANS)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(13.))
+                .line_height(px(18.))
+                .child("Jugadores conectados"),
+        );
         panel = panel.child(
             h_flex()
                 .justify_between()
@@ -324,58 +351,57 @@ impl HomePage {
                 },
             ));
         }
-        panel
-            .child(
-                DesignButton::new("quick-server")
-                    .notched()
-                    .aria_label("Entrar al servidor")
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap(px(8.))
-                            .child(div().text_size(px(12.)).child("▶"))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_size(px(12.))
-                                    .whitespace_nowrap()
-                                    .child("Entrar al servidor"),
-                            )
-                            .when_some(server.ping, |d, p| {
-                                d.child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .text_color(rgba(0x86d96f99))
-                                        .child(format!("{} ms", p.as_millis())),
-                                )
-                            }),
-                    )
-                    .paint(
-                        90.,
-                        [[0x86d96f1f; 2], [0x86d96f2e; 2], [0x86d96f1f; 2]],
-                        rgb(0x86d96f).into(),
-                        rgb(0x86d96f).into(),
-                    )
-                    .text_size(px(12.))
-                    .h(px(32.))
-                    .w_full()
-                    .on_click(move |_, w, c| {
-                        if data.accounts.read(c).selected_account.is_none() {
-                            root::open_home_accounts(c);
-                            return;
-                        }
-                        root::start_instance(
-                            id,
-                            name.clone(),
-                            Some(QuickPlayLaunch::Multiplayer(ip.to_string().into())),
-                            &data,
-                            w,
-                            c,
+        let panel = panel.child(
+            DesignButton::new("quick-server")
+                .notched()
+                .aria_label("Entrar al servidor")
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap(px(8.))
+                        .child(div().text_size(px(12.)).child("▶"))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(12.))
+                                .whitespace_nowrap()
+                                .child("Entrar al servidor"),
                         )
-                    }),
-            )
-            .into_any_element()
+                        .when_some(server.ping, |d, p| {
+                            d.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgba(0x86d96f99))
+                                    .child(format!("{} ms", p.as_millis())),
+                            )
+                        }),
+                )
+                .paint(
+                    90.,
+                    [[0x86d96f1f; 2], [0x86d96f2e; 2], [0x86d96f1f; 2]],
+                    rgb(0x86d96f).into(),
+                    rgb(0x86d96f).into(),
+                )
+                .text_size(px(12.))
+                .h(px(32.))
+                .w_full()
+                .on_click(move |_, w, c| {
+                    if data.accounts.read(c).selected_account.is_none() {
+                        root::open_home_accounts(c);
+                        return;
+                    }
+                    root::start_instance(
+                        id,
+                        name.clone(),
+                        Some(QuickPlayLaunch::Multiplayer(ip.to_string().into())),
+                        &data,
+                        w,
+                        c,
+                    )
+                }),
+        );
+        server_frame(panel).into_any_element()
     }
 }
 impl Page for HomePage {
@@ -522,27 +548,18 @@ impl Render for HomePage {
             .child(div().absolute().top_0().w_full().child(header))
             .when_some(server.as_ref(), |d, s| d.child(self.server_panel(s, cx)))
             .when(server_loading, |d| {
-                d.child(
-                    design::notched_panel(0x060607cc)
-                        .absolute()
-                        .top(px(60.))
-                        .right(px(18.))
-                        .w(px(212.))
-                        .px(px(14.))
-                        .py(px(12.))
+                d.child(server_frame(
+                    v_flex()
+                        .gap(px(6.))
                         .child(
-                            v_flex()
-                                .gap(px(6.))
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_size(px(13.))
-                                        .line_height(px(18.))
-                                        .child("Jugadores conectados"),
-                                )
-                                .child(div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child("CARGANDO")),
-                        ),
-                )
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_size(px(13.))
+                                .line_height(px(18.))
+                                .child("Jugadores conectados"),
+                        )
+                        .child(div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child("CARGANDO")),
+                ))
             })
             .when_some(
                 self.presentation.artwork_author.clone().filter(|_| self.presentation.artwork.is_some()),
