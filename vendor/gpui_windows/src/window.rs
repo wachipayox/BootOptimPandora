@@ -1310,7 +1310,8 @@ fn register_window_class(icon_handle: HICON) {
             lpszClassName: PCWSTR(WINDOW_CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,
             hInstance: get_module_handle().into(),
-            hbrBackground: unsafe { CreateSolidBrush(COLORREF(0x00000000)) },
+            // Match the startup poster while the first GPU frame is prepared.
+            hbrBackground: unsafe { CreateSolidBrush(COLORREF(0x000f0e0e)) },
             ..Default::default()
         };
         unsafe { RegisterClassW(&wc) };

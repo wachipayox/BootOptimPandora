@@ -45,6 +45,7 @@ pub mod root;
 pub mod settings;
 pub mod skin_renderer;
 pub mod skin_thumbnail_cache;
+mod startup;
 pub mod theme;
 mod theme_palette;
 pub mod ui;
@@ -57,6 +58,7 @@ pub mod windows_security_ui;
 #[include = "images/**/*.png"]
 #[include = "images/**/*.svg"]
 #[include = "fonts/**/*.ttf"]
+#[include = "splash-music/*.ogg"]
 pub struct Assets;
 
 impl AssetSource for Assets {
@@ -79,6 +81,9 @@ actions!([Quit, CloseWindow, OpenSettings, Forwards, Backwards, Confirm]);
 
 pub fn start(
     launcher_dir: PathBuf,
+    process_started: std::time::Instant,
+    existing_install: bool,
+    allow_startup: bool,
     panic_message: Arc<RwLock<Option<String>>>,
     deadlock_message: Arc<RwLock<Option<String>>>,
     backend_handle: BackendHandle,
@@ -110,6 +115,7 @@ pub fn start(
             theme::init(cx);
             pages::news::init(cx);
             InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
+            startup::init(existing_install, allow_startup, process_started, cx);
 
             t::set_lang(&InterfaceConfig::get(cx).language);
 
@@ -266,7 +272,12 @@ fn close_all_windows(cx: &mut App) {
     }
 }
 
-pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: &mut App) -> AnyWindowHandle {
+pub fn open_main_window(
+    data: &DataEntities,
+    display_id: Option<DisplayId>,
+    cx: &mut App,
+    show_startup: bool,
+) -> AnyWindowHandle {
     let config = InterfaceConfig::get(cx);
     // 220 px sidebar plus a usable 740 px content area. Tabs may scroll;
     // native window controls always keep their full width.
@@ -293,6 +304,15 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
     };
 
     let use_custom_titlebar = !config.use_os_titlebar;
+    let window_bounds = window_bounds.or_else(|| {
+        let display = display_id
+            .and_then(|id| cx.displays().into_iter().find(|display| display.id() == id))
+            .or_else(|| cx.primary_display())?;
+        Some(WindowBounds::Windowed(startup::recommended_bounds(
+            display.as_ref(),
+            [MIN_WIDTH, MIN_HEIGHT],
+        )))
+    });
     crate::root::set_should_render_custom_titlebar(use_custom_titlebar);
     let handle = cx
         .open_window(
@@ -315,6 +335,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 ..Default::default()
             },
             |window, cx| {
+                let opened = std::time::Instant::now();
                 let capture_page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").ok();
                 #[cfg(feature = "ui-capture")]
                 crate::capture::prepare_local_fixture(&data, cx);
@@ -441,7 +462,7 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     })
                     .detach();
 
-                    LauncherRoot::new(&data, window, cx)
+                    LauncherRoot::new(&data, window, cx, show_startup, opened)
                 });
 
                 // Closing the main window while instances optimize their launch asks first.
@@ -465,7 +486,17 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                 cx.set_global(LauncherRootGlobal {
                     root: launcher_root.clone(),
                 });
-                let root = cx.new(|cx| Root::new(launcher_root, window, cx));
+                let root = cx.new(|cx| {
+                    let root = Root::new(launcher_root, window, cx);
+                    #[cfg(feature = "ui-capture")]
+                    if capture_page
+                        .as_deref()
+                        .is_some_and(|page| page.starts_with("startup-") && page != "startup-live")
+                    {
+                        return root.bordered(false);
+                    }
+                    root
+                });
                 if let Some(page) = capture_page
                     .as_deref()
                     .filter(|page| matches!(*page, "add-instance" | "add-server" | "add-local" | "account-offline"))
@@ -599,7 +630,8 @@ pub fn open_main_window(data: &DataEntities, display_id: Option<DisplayId>, cx: 
                     window.on_next_frame(crate::capture::open_window_dialog);
                 }
                 #[cfg(feature = "ui-capture")]
-                if capture_page.is_some() && capture_page.as_deref() != Some("window-dialog") {
+                if capture_page.as_deref() != Some("window-dialog") {
+                    crate::capture::startup_first_frame(window, cx);
                     crate::capture::start(window, cx);
                 }
                 root

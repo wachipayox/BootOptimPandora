@@ -39,6 +39,8 @@ impl InstanceArtworkSection {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let (send, receive) = tokio::sync::oneshot::channel();
         self.backend.send(MessageToBackend::GetHomePresentation {
+            cache_only: false,
+            include_news: false,
             id: Some(self.instance.read(cx).id),
             channel: send,
         });

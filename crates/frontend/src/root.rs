@@ -36,10 +36,18 @@ pub struct LauncherRoot {
     pub ui: Entity<LauncherUI>,
     data: DataEntities,
     focus_handle: FocusHandle,
+    startup: Option<crate::startup::Controller>,
 }
 
 impl LauncherRoot {
-    pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        data: &DataEntities,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        show_startup: bool,
+        opened: std::time::Instant,
+    ) -> Self {
+        let startup = show_startup.then(|| crate::startup::Controller::new(opened, cx)).flatten();
         let launcher_ui = cx.new(|cx| LauncherUI::new(data, window, cx));
 
         let focus_handle = cx.focus_handle();
@@ -49,6 +57,7 @@ impl LauncherRoot {
             ui: launcher_ui,
             data: data.clone(),
             focus_handle,
+            startup,
         }
     }
 }
@@ -173,8 +182,51 @@ impl Render for LauncherRoot {
         let sheet_layer = Root::render_sheet_layer(window, cx);
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
+        let ready = self.startup.is_some() && self.ui.update(cx, |ui, cx| ui.startup_ready(window, cx));
+        let startup_layer = self.startup.as_mut().and_then(|startup| startup.layer(ready, window, cx));
+        #[cfg(feature = "ui-capture")]
+        let startup_layer = startup_layer.or_else(|| {
+            let page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").ok()?;
+            let progress = page.strip_prefix("startup-transition:")?.parse::<f32>().ok()?.clamp(0., 1.);
+            Some(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .opacity(1. - progress)
+                    .child(crate::startup::vector::frame(6.))
+                    .into_any_element(),
+            )
+        });
+        if startup_layer.is_none() {
+            self.startup = None;
+        }
+        if self.startup.is_some() {
+            let root = cx.entity().entity_id();
+            window.on_next_frame(move |_, cx| cx.notify(root));
+        }
+        let startup_layer = startup_layer.map(|layer| {
+            div()
+                .id("startup-presentation")
+                .absolute()
+                .inset_0()
+                .size_full()
+                .occlude()
+                .child(layer)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        if let Some(startup) = &mut this.startup {
+                            startup.skip();
+                        }
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
+        });
 
         v_flex()
+            .relative()
             .size_full()
             .child(
                 if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page.starts_with("components")) {
@@ -186,7 +238,17 @@ impl Render for LauncherRoot {
             .children(sheet_layer)
             .children(dialog_layer)
             .children(notification_layer)
+            .children(startup_layer)
             .track_focus(&self.focus_handle)
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if let Some(startup) = &mut this.startup {
+                    if event.keystroke.key == "escape" {
+                        startup.skip();
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                }
+            }))
             .on_action(|_: &CloseWindow, window, _| {
                 window.remove_window();
             })

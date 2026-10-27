@@ -1719,6 +1719,7 @@ impl PlatformWindow for WaylandWindow {
                 id: id.clone(),
                 name: display.name.clone(),
                 bounds: display.bounds.to_pixels(state.scale),
+                scale_factor: state.scale,
             }) as Rc<dyn PlatformDisplay>
         })
     }

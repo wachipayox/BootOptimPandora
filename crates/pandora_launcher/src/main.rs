@@ -101,6 +101,7 @@ struct Cli {
 pub mod panic;
 
 fn main() {
+    let process_started = std::time::Instant::now();
     let cli = Cli::parse();
     // Instance management never opens a window; the launcher process that runs it exits when it is done.
     let instance_command = cli_instance_command(&cli).is_some();
@@ -134,6 +135,8 @@ fn main() {
     };
 
     let launcher_dir = data_dir.join("WachilandLauncher");
+    let existing_install = launcher_dir.join("config.json").is_file() || launcher_dir.join("interface.json").is_file();
+    let allow_startup = !instance_command && cli.run_instance.is_none() && cli.run_instance_normal.is_none();
     _ = std::fs::create_dir_all(&launcher_dir);
     _ = std::env::set_current_dir(&launcher_dir);
 
@@ -313,6 +316,9 @@ fn main() {
         );
         frontend::start(
             launcher_dir.clone(),
+            process_started,
+            existing_install,
+            allow_startup,
             panic_message,
             deadlock_message,
             backend_handle,

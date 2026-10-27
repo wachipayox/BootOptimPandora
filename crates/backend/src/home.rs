@@ -13,6 +13,30 @@ struct CachedDocument {
     fetched_at: u64,
 }
 impl DistributionClient {
+    fn cached_cosmetic_document(&self, route: &str, root: &Path) -> Option<Value> {
+        let key = hex::encode(Sha256::digest(format!("{}{}", self.base_url, route).as_bytes()));
+        fs::read(root.join(format!("{key}.json")))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<CachedDocument>(&b).ok())
+            .map(|c| c.value)
+    }
+
+    async fn home_image_mode(&self, value: &Value, root: &Path, kind: &str, cache_only: bool) -> Option<PathBuf> {
+        if !cache_only {
+            return self.home_image(value, root, kind).await;
+        }
+        let key = if let Some(url) = value.get("url").and_then(Value::as_str) {
+            hex::encode(Sha256::digest(Url::parse(url).ok()?.as_str().as_bytes()))
+        } else {
+            let object: ManifestObjectRef = serde_json::from_value(value.clone()).ok()?;
+            if object.sha256.len() != 64 || !object.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return None;
+            }
+            object.sha256
+        };
+        let path = root.join(format!("{key}-{kind}.png"));
+        path.is_file().then_some(path)
+    }
     pub(super) async fn cosmetic_document(
         &self,
         route: &str,
@@ -195,7 +219,12 @@ impl DistributionClient {
 }
 
 impl crate::BackendState {
-    pub async fn load_home_presentation(&self, id: Option<InstanceID>) -> Result<HomePresentation, String> {
+    pub async fn load_home_presentation(
+        &self,
+        id: Option<InstanceID>,
+        cache_only: bool,
+        include_news: bool,
+    ) -> Result<HomePresentation, String> {
         let config = self.config.lock().get().distribution.clone();
         let include_tests = self.config.lock().get().channel.includes_test_profiles();
         let client = DistributionClient::new(&config).map_err(|e| e.to_string())?;
@@ -205,7 +234,11 @@ impl crate::BackendState {
         } else {
             "/v1/profiles"
         };
-        let catalog = client.cosmetic_document(route, &cache, 300).await.unwrap_or(Value::Null);
+        let catalog = if cache_only {
+            client.cached_cosmetic_document(route, &cache).unwrap_or(Value::Null)
+        } else {
+            client.cosmetic_document(route, &cache, 300).await.unwrap_or(Value::Null)
+        };
         let profiles = catalog.get("profiles").and_then(Value::as_array).cloned().unwrap_or_default();
         let root = id.and_then(|id| self.instance_state.read().instances.get(id).map(|i| i.root_path.clone()));
         let branch = root
@@ -235,7 +268,7 @@ impl crate::BackendState {
         if let Some(profile) = profile {
             if let Some(art) = profile.get("artwork") {
                 if let Some(value) = art.get("image") {
-                    out.artwork = client.home_image(value, &cache, "artwork").await;
+                    out.artwork = client.home_image_mode(value, &cache, "artwork", cache_only).await;
                 }
                 out.artwork_author = art.get("author").and_then(Value::as_str).map(str::to_owned);
                 out.glass = out
@@ -245,7 +278,7 @@ impl crate::BackendState {
                     .filter(|p| p.exists());
             }
             if let Some(logo) = profile.get("logo") {
-                out.logo = client.home_image(logo, &cache, "logo").await;
+                out.logo = client.home_image_mode(logo, &cache, "logo", cache_only).await;
             }
         }
         if let Some(id) = id {
@@ -256,7 +289,7 @@ impl crate::BackendState {
             if let Some((artwork, logo)) = overrides {
                 if let Some(path) = artwork {
                     if let Some(value) = cache_local_image(&path, &cache, true) {
-                        if let Some(path) = client.home_image(&value, &cache, "artwork").await {
+                        if let Some(path) = client.home_image_mode(&value, &cache, "artwork", cache_only).await {
                             out.artwork = Some(path);
                             out.artwork_author = None;
                         }
@@ -269,14 +302,22 @@ impl crate::BackendState {
                 }
                 if let Some(path) = logo {
                     if let Some(value) = cache_local_image(&path, &cache, false) {
-                        if let Some(path) = client.home_image(&value, &cache, "logo").await {
+                        if let Some(path) = client.home_image_mode(&value, &cache, "logo", cache_only).await {
                             out.logo = Some(path);
                         }
                     }
                 }
             }
         }
-        let feed = match client.news_snapshot(&self.directories.root_launcher_dir.join("news-state")).await {
+        if !include_news {
+            return Ok(out);
+        }
+        let news_root = self.directories.root_launcher_dir.join("news-state");
+        let feed = match if cache_only {
+            client.cached_news_snapshot(&news_root)
+        } else {
+            client.news_snapshot(&news_root).await
+        } {
             Ok(v) => v,
             Err(_) => {
                 out.news_failed = true;
@@ -324,7 +365,7 @@ impl crate::BackendState {
                 .collect();
             for n in out.news.iter_mut().filter(|n| visible.contains(&n.id)) {
                 if let Some(raw) = items.iter().find(|v| v["id"].as_str() == Some(&n.id)) {
-                    n.image = client.home_image(&raw["image"], &cache, "news").await;
+                    n.image = client.home_image_mode(&raw["image"], &cache, "news", cache_only).await;
                 }
             }
         }
@@ -448,6 +489,22 @@ fn cache_local_image(path: &Path, root: &Path, artwork: bool) -> Option<Value> {
     if bytes.len() > 16 * 1024 * 1024 {
         return None;
     }
+    // The input digest changes whenever the user's file changes. Reuse the
+    // previously normalized output instead of decoding and rewriting a large
+    // image on every launcher start.
+    let kind = if artwork { "artwork" } else { "logo" };
+    let input_hash = hex::encode(Sha256::digest(&bytes));
+    let index = root.join(format!("local-v1-{input_hash}-{kind}.json"));
+    if let Some(value) = fs::read(&index).ok().and_then(|data| serde_json::from_slice::<Value>(&data).ok()) {
+        if let Some(hash) = value.get("sha256").and_then(Value::as_str) {
+            if hash.len() == 64
+                && hash.bytes().all(|b| b.is_ascii_hexdigit())
+                && root.join(format!("{hash}-{kind}.png")).is_file()
+            {
+                return Some(value);
+            }
+        }
+    }
     let dimensions = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()
         .ok()?
@@ -469,7 +526,14 @@ fn cache_local_image(path: &Path, root: &Path, artwork: bool) -> Option<Value> {
     let dir = root.join("sha256").join(&sha[..2]);
     fs::create_dir_all(&dir).ok()?;
     crate::fs::write_safe(&dir.join(&sha), &encoded).ok()?;
-    Some(serde_json::json!({"sha256":sha,"size":encoded.len(),"media_type":"image/png"}))
+    // Local overrides are immediately usable by cache-only startup reads.
+    crate::fs::write_safe(&root.join(format!("{sha}-{kind}.png")), &encoded).ok()?;
+    let value = serde_json::json!({"sha256":sha,"size":encoded.len(),"media_type":"image/png"});
+    // Failure to persist the acceleration index must not hide a valid image.
+    if let Ok(data) = serde_json::to_vec(&value) {
+        let _ = crate::fs::write_safe(&index, &data);
+    }
+    Some(value)
 }
 
 fn home_lineage(profiles: &[Value], mut current: Option<String>) -> BTreeSet<String> {
@@ -502,6 +566,58 @@ fn home_news_visible(
 #[cfg(test)]
 mod home_tests {
     use super::*;
+    #[test]
+    fn local_cosmetic_cache_reuses_unchanged_files_and_recovers_missing_output() {
+        let root = std::env::temp_dir().join(format!("pandora-local-cosmetic-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let input = root.join("input.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 255])).save(&input).unwrap();
+        let first = cache_local_image(&input, &root, false).unwrap();
+        let hash = first["sha256"].as_str().unwrap();
+        let object = root.join("sha256").join(&hash[..2]).join(hash);
+        fs::remove_file(&object).unwrap();
+        assert_eq!(cache_local_image(&input, &root, false), Some(first.clone()));
+        assert!(!object.exists());
+        fs::remove_file(root.join(format!("{hash}-logo.png"))).unwrap();
+        assert_eq!(cache_local_image(&input, &root, false), Some(first.clone()));
+        assert!(object.is_file());
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([4, 5, 6, 255])).save(&input).unwrap();
+        assert_ne!(cache_local_image(&input, &root, false), Some(first));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn startup_cosmetics_read_stale_or_missing_cache_without_contacting_server() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = DistributionClient {
+            client: Client::builder().no_proxy().build().unwrap(),
+            base_url: Url::parse(&format!("http://{address}")).unwrap(),
+            trusted_keys: BTreeMap::new(),
+            server_keys: Arc::new(tokio::sync::OnceCell::new()),
+        };
+        let root = std::env::temp_dir().join(format!("pandora-startup-cache-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let route = "/v1/profiles";
+        assert!(client.cached_cosmetic_document(route, &root).is_none());
+        let key = hex::encode(Sha256::digest(format!("{}{}", client.base_url, route).as_bytes()));
+        let value = serde_json::json!({"profiles":[]});
+        fs::write(
+            root.join(format!("{key}.json")),
+            serde_json::to_vec(&CachedDocument {
+                value: value.clone(),
+                etag: Some("old".into()),
+                fetched_at: 0,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(client.cached_cosmetic_document(route, &root), Some(value));
+        let image = serde_json::json!({"url":format!("https://{address}/missing.png")});
+        assert!(client.home_image_mode(&image, &root, "artwork", true).await.is_none());
+        assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn only_active_ancestors_and_general_not_daughters() {
         let lineage = ["profile_child".to_string(), "profile_parent".to_string()].into_iter().collect();

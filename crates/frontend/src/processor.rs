@@ -155,7 +155,7 @@ impl Processor {
                     {
                         self.quit_coordinator.set_can_quit(false);
                         self.main_window_handle =
-                            Some(crate::open_main_window(&self.data, self.requested_display_id, cx));
+                            Some(crate::open_main_window(&self.data, self.requested_display_id, cx, false));
                         self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
                         self.process_messages_waiting_for_window(cx);
                     }
@@ -295,7 +295,7 @@ impl Processor {
                             })
                             .unwrap_or(false);
                     if !already_on_requested_display {
-                        let new_handle = crate::open_main_window(&self.data, self.requested_display_id, cx);
+                        let new_handle = crate::open_main_window(&self.data, self.requested_display_id, cx, true);
                         self.main_window_handle = Some(new_handle);
                         _ = handle.update(cx, |_, window, _| window.remove_window());
                         self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -315,7 +315,8 @@ impl Processor {
                     && !InterfaceConfig::get(cx).windows_defender_process_prompted
                     && command::defender_process_local_state() == command::DefenderProcessLocalState::NotManaged;
 
-                self.main_window_handle = Some(crate::open_main_window(&self.data, self.requested_display_id, cx));
+                self.main_window_handle =
+                    Some(crate::open_main_window(&self.data, self.requested_display_id, cx, true));
                 self.main_window_hidden.store(false, std::sync::atomic::Ordering::SeqCst);
                 self.process_messages_waiting_for_window(cx);
 

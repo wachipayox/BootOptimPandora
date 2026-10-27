@@ -51,6 +51,10 @@ pub struct InterfaceConfig {
         deserialize_with = "schema::try_deserialize"
     )]
     pub skipped_launcher_version: Option<String>,
+    #[serde(default)]
+    pub startup_seen_version: Option<String>,
+    #[serde(default)]
+    pub startup_last_music: Option<String>,
     #[serde(default = "schema::default_true")]
     pub home_general_news: bool,
     #[serde(default)]
@@ -321,6 +325,8 @@ impl Default for InterfaceConfig {
             main_page: Default::default(),
             home_instance: None,
             skipped_launcher_version: None,
+            startup_seen_version: None,
+            startup_last_music: None,
             home_general_news: true,
             home_read_news: Default::default(),
             news_marks: Default::default(),

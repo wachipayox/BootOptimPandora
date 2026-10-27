@@ -15,6 +15,7 @@ pub(crate) struct WaylandDisplay {
     pub id: ObjectId,
     pub name: Option<String>,
     pub bounds: Bounds<Pixels>,
+    pub scale_factor: f32,
 }
 
 impl Hash for WaylandDisplay {
@@ -24,6 +25,9 @@ impl Hash for WaylandDisplay {
 }
 
 impl PlatformDisplay for WaylandDisplay {
+    fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
     fn id(&self) -> DisplayId {
         DisplayId::new(self.id.protocol_id() as u64)
     }

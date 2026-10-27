@@ -23,6 +23,8 @@ struct BackdropCache {
     image: Option<PreparedBackdrop>,
     pending: Option<Key>,
     failed: Option<Key>,
+    fade_late: bool,
+    late_transition: Option<(Option<PreparedBackdrop>, std::time::Instant)>,
 }
 impl Global for BackdropCache {}
 
@@ -30,6 +32,8 @@ impl BackdropCache {
     fn request(&mut self, key: Key) -> Option<Key> {
         if self.key.as_ref().is_some_and(|previous| previous.source != key.source) {
             self.failed = None;
+            self.late_transition = None;
+            self.fade_late = false;
         }
         self.key = Some(key.clone());
         // Prepare each source once. Resizing only changes its paint transform:
@@ -49,11 +53,15 @@ impl BackdropCache {
         self.pending = None;
         if self.key.as_ref().is_some_and(|requested| requested.source == key.source) {
             if let Some(image) = image {
+                if self.fade_late {
+                    self.late_transition = Some((self.image.clone(), std::time::Instant::now()));
+                }
                 self.image = Some(image);
                 self.failed = None;
             } else {
                 self.failed = Some(key.clone());
             }
+            self.fade_late = false;
         }
     }
 }
@@ -72,6 +80,15 @@ pub fn surface(window: &mut Window, cx: &mut App) -> AnyElement {
     scene(window, cx, false)
 }
 fn prepare(key: &Key) -> Option<PreparedBackdrop> {
+    #[cfg(feature = "ui-capture")]
+    if std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() == Ok("startup-live") {
+        if let Some(delay) = std::env::var("WBOMBO_UI_CAPTURE_STARTUP_DELAY_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            std::thread::sleep(std::time::Duration::from_millis(delay.min(15_000)));
+        }
+    }
     let scene = match &key.source {
         AppBackground::Color(color) => image::RgbaImage::from_pixel(
             1,
@@ -131,10 +148,21 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
     };
     let (width, height) = scene.dimensions();
     let reference_scale = (1280. / width as f32).max(860. / height as f32);
-    let glass = crate::component::design::prepare_play_artwork(
-        &image::DynamicImage::ImageRgba8(scene.clone()),
-        14. / reference_scale,
-    );
+    // The default cafe image never changes. Its glass has been prepared with
+    // this same algorithm at build time, avoiding a large blur on every start.
+    let glass = if matches!(key.source, AppBackground::Cafe) {
+        Assets::get("images/cafe-glass.png")
+            .and_then(|asset| image::load_from_memory(&asset.data).ok())
+            .map(|image| image.to_rgba8())
+    } else {
+        None
+    }
+    .unwrap_or_else(|| {
+        crate::component::design::prepare_play_artwork(
+            &image::DynamicImage::ImageRgba8(scene.clone()),
+            14. / reference_scale,
+        )
+    });
     fn render_image(mut image: image::RgbaImage) -> Arc<RenderImage> {
         for pixel in image.pixels_mut() {
             pixel.0.swap(0, 2);
@@ -153,6 +181,21 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
 pub fn glass(window: &mut Window, cx: &mut App) -> AnyElement {
     scene(window, cx, true)
 }
+pub(crate) fn startup_ready(cx: &App) -> bool {
+    let Some(cache) = cx.try_global::<BackdropCache>() else {
+        return false;
+    };
+    let source = &InterfaceConfig::get(cx).app_background;
+    matches!(source, AppBackground::Color(_))
+        || cache.image.as_ref().is_some_and(|image| &image.key.source == source)
+        || cache.failed.as_ref().is_some_and(|key| &key.source == source)
+}
+
+pub(crate) fn fade_late_completion(cx: &mut App) {
+    let cache = cx.default_global::<BackdropCache>();
+    cache.fade_late = cache.pending.is_some();
+}
+
 fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
     let size = window.viewport_size();
     let key = Key {
@@ -189,7 +232,7 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
     }
     let state = cx.default_global::<BackdropCache>();
     let work = state.request(key.clone());
-    let image = state.image.as_ref().map(|prepared| {
+    let sample = |prepared: &PreparedBackdrop| {
         (
             if glass {
                 prepared.glass.clone()
@@ -199,7 +242,15 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
             prepared.width,
             prepared.height,
         )
-    });
+    };
+    let image = state.image.as_ref().map(sample);
+    let transition = state
+        .late_transition
+        .as_ref()
+        .map(|(previous, started)| (previous.as_ref().map(sample), (started.elapsed().as_secs_f32() / 0.3).min(1.)));
+    if transition.as_ref().is_some_and(|(_, progress)| *progress >= 1.) {
+        state.late_transition = None;
+    }
     if let Some(key) = work {
         let work_key = key.clone();
         let work = cx.background_executor().spawn(async move { prepare(&work_key) });
@@ -223,24 +274,38 @@ fn scene(window: &mut Window, cx: &mut App, glass: bool) -> AnyElement {
     } else {
         theme::BG
     };
-    canvas(
-        move |bounds, _, _| bounds,
-        move |bounds, _, window, _| {
-            if let Some((image, width, height)) = &image {
-                let full = cover_bounds(size, *width, *height);
-                window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                    let _ = window.paint_image(full, full, Default::default(), image.clone(), 0, false);
-                });
-            } else {
-                window.paint_quad(fill(bounds, rgb(fallback)));
-            }
-        },
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
-    .into_any_element()
+    let layer = move |image: Option<(Arc<RenderImage>, u32, u32)>| {
+        canvas(
+            move |bounds, _, _| bounds,
+            move |bounds, _, window, _| {
+                if let Some((image, width, height)) = &image {
+                    let full = cover_bounds(size, *width, *height);
+                    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                        let _ = window.paint_image(full, full, Default::default(), image.clone(), 0, false);
+                    });
+                } else {
+                    window.paint_quad(fill(bounds, rgb(fallback)));
+                }
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element()
+    };
+    if let Some((previous, progress)) = transition.filter(|(_, progress)| *progress < 1.) {
+        window.on_next_frame(|window, _| window.refresh());
+        div()
+            .absolute()
+            .inset_0()
+            .size_full()
+            .child(layer(previous))
+            .child(div().absolute().inset_0().size_full().opacity(progress).child(layer(image)))
+            .into_any_element()
+    } else {
+        layer(image)
+    }
 }
 
 fn cover_bounds(viewport: Size<Pixels>, width: u32, height: u32) -> Bounds<Pixels> {
@@ -271,6 +336,19 @@ mod tests {
     use super::{AppBackground, BackdropCache, Key, PreparedBackdrop, cover_bounds, saturated_color};
     use gpui::{RenderImage, px, size};
     use std::sync::Arc;
+
+    #[test]
+    fn embedded_cafe_glass_matches_the_runtime_preparation() {
+        use rust_embed::RustEmbed;
+        let source = crate::Assets::get("images/cafe-ambient.png").unwrap();
+        let scene = image::load_from_memory(&source.data).unwrap().to_rgba8();
+        let scale = (1280. / scene.width() as f32).max(860. / scene.height() as f32);
+        let expected =
+            crate::component::design::prepare_play_artwork(&image::DynamicImage::ImageRgba8(scene), 14. / scale);
+        let embedded = crate::Assets::get("images/cafe-glass.png").unwrap();
+        let actual = image::load_from_memory(&embedded.data).unwrap().to_rgba8();
+        assert_eq!(actual, expected);
+    }
 
     fn key() -> Key {
         Key {

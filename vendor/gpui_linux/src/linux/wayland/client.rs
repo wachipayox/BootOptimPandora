@@ -992,6 +992,7 @@ impl LinuxClient for WaylandClient {
                     id: id.clone(),
                     name: output.name.clone(),
                     bounds: output.bounds.to_pixels(output.scale as f32),
+                    scale_factor: output.scale as f32,
                 }) as Rc<dyn PlatformDisplay>
             })
             .collect()
@@ -1008,6 +1009,7 @@ impl LinuxClient for WaylandClient {
                         id: object_id.clone(),
                         name: output.name.clone(),
                         bounds: output.bounds.to_pixels(output.scale as f32),
+                        scale_factor: output.scale as f32,
                     }) as Rc<dyn PlatformDisplay>
                 })
             })

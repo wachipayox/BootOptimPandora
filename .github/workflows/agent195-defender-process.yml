@@ -36,6 +36,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
+          key: ${{ hashFiles('vendor/**/.cargo-checksum.json') }}
           shared-key: agent195-defender-process
 
       - name: Check focused formatting

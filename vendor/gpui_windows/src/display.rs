@@ -134,6 +134,9 @@ impl WindowsDisplay {
 }
 
 impl PlatformDisplay for WindowsDisplay {
+    fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
     fn id(&self) -> DisplayId {
         self.display_id
     }

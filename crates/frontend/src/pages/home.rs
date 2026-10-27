@@ -24,6 +24,10 @@ pub struct HomePage {
     instance: Option<Entity<InstanceEntry>>,
     presentation: HomePresentation,
     loaded: bool,
+    news_loaded: bool,
+    startup_cached: bool,
+    artwork_image: crate::component::retained_image::RetainedImage,
+    logo_image: crate::component::retained_image::RetainedImage,
     requested: bool,
     refreshed: Instant,
     menu: bool,
@@ -45,6 +49,43 @@ fn picture(path: &Option<std::path::PathBuf>, fallback: &'static str) -> ImageSo
 }
 fn shade(from: u32, to: u32) -> Background {
     linear_gradient(180., linear_color_stop(rgba(from), 0.), linear_color_stop(rgba(to), 1.)).into()
+}
+fn server_frame(content: impl IntoElement) -> Div {
+    design::notched_panel(0x060607cc)
+        .absolute()
+        .top(px(60.))
+        .right(px(18.))
+        .w(px(212.))
+        .child(
+            canvas(
+                |_, _, _| (),
+                |bounds, _, window, _| {
+                    let x = bounds.origin.x + px(0.5);
+                    let y = bounds.origin.y + px(0.5);
+                    let w = bounds.size.width - px(1.);
+                    let h = bounds.size.height - px(1.);
+                    let n = px(6.);
+                    let mut path = PathBuilder::stroke(px(1.));
+                    path.move_to(point(x + n, y));
+                    path.line_to(point(x + w - n, y));
+                    path.line_to(point(x + w, y + n));
+                    path.line_to(point(x + w, y + h - n));
+                    path.line_to(point(x + w - n, y + h));
+                    path.line_to(point(x + n, y + h));
+                    path.line_to(point(x, y + h - n));
+                    path.line_to(point(x, y + n));
+                    path.close();
+                    if let Ok(path) = path.build() {
+                        window.paint_path(path, rgba(0xffffff0b));
+                    }
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
+        .child(div().w_full().px(px(14.)).py(px(12.)).child(content))
 }
 pub fn add_instance(_data: &DataEntities, window: &mut Window, cx: &mut App) {
     root::switch_page(PageType::AddInstance, &[PageType::Instances], window, cx);
@@ -68,6 +109,10 @@ impl HomePage {
             instance,
             presentation: HomePresentation::default(),
             loaded: false,
+            news_loaded: false,
+            startup_cached: !std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page != "startup-live"),
+            artwork_image: Default::default(),
+            logo_image: Default::default(),
             requested: false,
             refreshed: Instant::now(),
             menu: std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-menu"),
@@ -104,9 +149,12 @@ impl HomePage {
             return;
         }
         self.requested = true;
+        let include_news = !self.startup_cached;
         let (send, receive) = tokio::sync::oneshot::channel();
         self.data.backend_handle.send(MessageToBackend::GetHomePresentation {
             id: self.instance.as_ref().map(|i| i.read(cx).id),
+            cache_only: self.startup_cached,
+            include_news,
             channel: send,
         });
         cx.spawn_in(window, async move |this, cx| {
@@ -118,8 +166,16 @@ impl HomePage {
                 });
                 log::info!("home-ready pid={}", std::process::id());
                 this.loaded = true;
+                this.news_loaded = include_news;
                 this.requested = false;
-                this.refreshed = Instant::now();
+                // The initial cache read never waits for network. Revalidate
+                // cosmetic data independently after the first local scene.
+                this.refreshed = if this.startup_cached {
+                    this.startup_cached = false;
+                    Instant::now() - Duration::from_secs(300)
+                } else {
+                    Instant::now()
+                };
                 cx.notify();
             });
         })
@@ -137,6 +193,20 @@ impl HomePage {
     }
     pub fn is_news(&self) -> bool {
         self.news_view
+    }
+    pub(crate) fn startup_ready(&self, window: &mut Window, cx: &mut App) -> bool {
+        let mut ready = self.loaded;
+        for source in [
+            picture(&self.presentation.artwork, "images/artwork-vanilla.png"),
+            picture(&self.presentation.logo, "images/logo-vanilla.png"),
+        ]
+        .into_iter()
+        {
+            if let ImageSource::Resource(resource) = source {
+                ready &= window.use_asset::<ImgResourceLoader>(&resource, cx).is_some();
+            }
+        }
+        ready
     }
     pub fn show_home(&mut self, cx: &mut Context<Self>) {
         self.news_view = false;
@@ -195,24 +265,14 @@ impl HomePage {
         let i = self.instance.as_ref().unwrap().read(cx);
         let id = i.id;
         let name = i.name.clone();
-        let mut panel = design::notched_panel(0x060607cc)
-            .flex()
-            .flex_col()
-            .absolute()
-            .top(px(60.))
-            .right(px(18.))
-            .w(px(212.))
-            .px(px(14.))
-            .py(px(12.))
-            .gap(px(6.))
-            .child(
-                div()
-                    .font_family(theme::SANS)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(13.))
-                    .line_height(px(18.))
-                    .child("Jugadores conectados"),
-            );
+        let mut panel = div().flex().flex_col().gap(px(6.)).child(
+            div()
+                .font_family(theme::SANS)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(13.))
+                .line_height(px(18.))
+                .child("Jugadores conectados"),
+        );
         panel = panel.child(
             h_flex()
                 .justify_between()
@@ -227,7 +287,9 @@ impl HomePage {
                         } else {
                             theme::INK_DISABLED
                         })))
-                        .child(if server.status.is_some() {
+                        .child(if server.pinging && server.status.is_none() {
+                            "CARGANDO"
+                        } else if server.status.is_some() {
                             "Servidor en línea"
                         } else {
                             "Servidor sin respuesta"
@@ -243,17 +305,38 @@ impl HomePage {
                 }),
         );
         if let Some(players) = online.filter(|p| !p.sample.is_empty()) {
-            panel = panel.child(h_flex().flex_wrap().gap(px(3.)).children(players.sample.iter().take(12).map(|p| {
-                img(picture(
-                    &if InterfaceConfig::get(cx).hide_skins {
-                        None
-                    } else {
-                        self.heads.get(p.id.as_ref()).cloned()
-                    },
-                    "images/default_head.png",
-                ))
-                .size(px(18.))
-            })));
+            let shown = players.sample.len().min(15);
+            let extra = players.online.saturating_sub(shown as i32);
+            panel = panel.child(
+                h_flex()
+                    .flex_wrap()
+                    .gap(px(3.))
+                    .pt(px(2.))
+                    .children(players.sample.iter().take(shown).map(|p| {
+                        img(picture(
+                            &if InterfaceConfig::get(cx).hide_skins {
+                                None
+                            } else {
+                                self.heads.get(p.id.as_ref()).cloned()
+                            },
+                            "images/default_head.png",
+                        ))
+                        .size(px(20.))
+                    }))
+                    .when(extra > 0, |d| {
+                        d.child(
+                            div()
+                                .size(px(20.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(rgba(0xffffff0a))
+                                .text_size(px(10.))
+                                .text_color(rgb(theme::INK_MUTED))
+                                .child(format!("+{extra}")),
+                        )
+                    }),
+            );
             panel = panel.child(div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child(
                 if InterfaceConfig::get(cx).hide_usernames {
                     String::new()
@@ -268,58 +351,57 @@ impl HomePage {
                 },
             ));
         }
-        panel
-            .child(
-                DesignButton::new("quick-server")
-                    .notched()
-                    .aria_label("Entrar al servidor")
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap(px(8.))
-                            .child(div().text_size(px(12.)).child("▶"))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_size(px(12.))
-                                    .whitespace_nowrap()
-                                    .child("Entrar al servidor"),
-                            )
-                            .when_some(server.ping, |d, p| {
-                                d.child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .text_color(rgba(0x86d96f99))
-                                        .child(format!("{} ms", p.as_millis())),
-                                )
-                            }),
-                    )
-                    .paint(
-                        90.,
-                        [[0x86d96f1f; 2], [0x86d96f2e; 2], [0x86d96f1f; 2]],
-                        rgb(0x86d96f).into(),
-                        rgb(0x86d96f).into(),
-                    )
-                    .text_size(px(12.))
-                    .h(px(32.))
-                    .w_full()
-                    .on_click(move |_, w, c| {
-                        if data.accounts.read(c).selected_account.is_none() {
-                            root::open_home_accounts(c);
-                            return;
-                        }
-                        root::start_instance(
-                            id,
-                            name.clone(),
-                            Some(QuickPlayLaunch::Multiplayer(ip.to_string().into())),
-                            &data,
-                            w,
-                            c,
+        let panel = panel.child(
+            DesignButton::new("quick-server")
+                .notched()
+                .aria_label("Entrar al servidor")
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap(px(8.))
+                        .child(div().text_size(px(12.)).child("▶"))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(12.))
+                                .whitespace_nowrap()
+                                .child("Entrar al servidor"),
                         )
-                    }),
-            )
-            .into_any_element()
+                        .when_some(server.ping, |d, p| {
+                            d.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgba(0x86d96f99))
+                                    .child(format!("{} ms", p.as_millis())),
+                            )
+                        }),
+                )
+                .paint(
+                    90.,
+                    [[0x86d96f1f; 2], [0x86d96f2e; 2], [0x86d96f1f; 2]],
+                    rgb(0x86d96f).into(),
+                    rgb(0x86d96f).into(),
+                )
+                .text_size(px(12.))
+                .h(px(32.))
+                .w_full()
+                .on_click(move |_, w, c| {
+                    if data.accounts.read(c).selected_account.is_none() {
+                        root::open_home_accounts(c);
+                        return;
+                    }
+                    root::start_instance(
+                        id,
+                        name.clone(),
+                        Some(QuickPlayLaunch::Multiplayer(ip.to_string().into())),
+                        &data,
+                        w,
+                        c,
+                    )
+                }),
+        );
+        server_frame(panel).into_any_element()
     }
 }
 impl Page for HomePage {
@@ -332,7 +414,9 @@ impl Page for HomePage {
 }
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.refreshed.elapsed() >= Duration::from_secs(300) {
+        if self.loaded && !self.news_loaded
+            || (self.refreshed.elapsed() >= Duration::from_secs(300) && !crate::startup::is_active(cx))
+        {
             self.refresh(window, cx);
         }
         if self.news_view {
@@ -353,6 +437,7 @@ impl Render for HomePage {
         }
         let instance = self.instance.as_ref().map(|i| i.read(cx).clone());
         let mut server = None;
+        let mut server_loading = false;
         if let Some(i) = &instance {
             i.servers_state.set_observed();
             if i.servers_state.should_load() {
@@ -361,6 +446,7 @@ impl Render for HomePage {
                     .send_with_serial(MessageToBackend::RequestLoadServers { id: i.id }, &self.server_serial);
             }
             server = i.servers.read(cx).as_ref().and_then(|s| s.first()).cloned();
+            server_loading = i.servers.read(cx).is_none();
         }
         if let Some(server) = &server {
             self.request_heads(server, window, cx);
@@ -419,17 +505,34 @@ impl Render for HomePage {
                     .child(WindowControl::Close),
             );
         }
+        let resource = |path: &Option<std::path::PathBuf>, fallback: &'static str| {
+            path.as_ref()
+                .map(|path| Resource::Path(Arc::from(path.as_path())))
+                .unwrap_or_else(|| Resource::Embedded(fallback.into()))
+        };
+        let artwork = self.artwork_image.render(
+            resource(&self.presentation.artwork, "images/artwork-vanilla.png"),
+            "images/artwork-vanilla.png",
+            true,
+            cx.entity().entity_id(),
+            window,
+            cx,
+        );
+        let logo = self.logo_image.render(
+            resource(&self.presentation.logo, "images/logo-vanilla.png"),
+            "images/logo-vanilla.png",
+            false,
+            cx.entity().entity_id(),
+            window,
+            cx,
+        );
         let hero = div()
             .relative()
             .h(px(440.))
             .w_full()
             .flex_shrink_0()
-            .child(
-                img(picture(&self.presentation.artwork, "images/artwork-vanilla.png"))
-                    .absolute()
-                    .size_full()
-                    .object_fit(ObjectFit::Cover),
-            )
+            .overflow_hidden()
+            .child(div().child(artwork).absolute().size_full())
             .child(div().absolute().bottom_0().w_full().h(relative(0.55)).bg(shade(0x06060700, 0x060607ff)))
             .child(
                 div()
@@ -440,15 +543,24 @@ impl Render for HomePage {
                     .pr(px(if instance.is_some() { 60. } else { 0. }))
                     .flex()
                     .justify_center()
-                    .child(
-                        img(picture(&self.presentation.logo, "images/logo-vanilla.png"))
-                            .w(px(370.))
-                            .h(px(70.))
-                            .object_fit(ObjectFit::Contain),
-                    ),
+                    .child(div().child(logo).w(px(370.)).h(px(70.))),
             )
             .child(div().absolute().top_0().w_full().child(header))
             .when_some(server.as_ref(), |d, s| d.child(self.server_panel(s, cx)))
+            .when(server_loading, |d| {
+                d.child(server_frame(
+                    v_flex()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_size(px(13.))
+                                .line_height(px(18.))
+                                .child("Jugadores conectados"),
+                        )
+                        .child(div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child("CARGANDO")),
+                ))
+            })
             .when_some(
                 self.presentation.artwork_author.clone().filter(|_| self.presentation.artwork.is_some()),
                 |d, a| {
@@ -655,7 +767,7 @@ impl Render for HomePage {
             .take(if self.news_view { usize::MAX } else { 4 })
             .cloned()
             .collect::<Vec<_>>();
-        let show_news = instance.is_some() || !news.is_empty();
+        let show_news = instance.is_some() || !news.is_empty() || !self.news_loaded;
         let mut news_section = v_flex().px(px(24.)).pt(px(18.)).gap(px(12.)).child(
             h_flex()
                 .h(px(24.))
@@ -684,7 +796,18 @@ impl Render for HomePage {
                         )),
                 ),
         );
-        if self.loaded && news.is_empty() {
+        if !self.news_loaded {
+            news_section = news_section.child(
+                div()
+                    .w_full()
+                    .py(px(24.))
+                    .text_center()
+                    .font_family(theme::DISPLAY)
+                    .text_size(px(11.))
+                    .text_color(rgb(theme::INK_MUTED))
+                    .child("CARGANDO"),
+            );
+        } else if news.is_empty() {
             news_section = news_section.child(div().py(px(24.)).text_color(rgb(theme::INK_MUTED)).child(
                 if self.presentation.news_failed {
                     "No se han podido cargar las noticias."

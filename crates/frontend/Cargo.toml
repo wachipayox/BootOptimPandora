@@ -7,6 +7,7 @@ edition.workspace = true
 ui-capture = ["gpui/native-capture", "gpui_platform/native-capture"]
 
 [dependencies]
+lewton = "0.10.2"
 t.workspace = true
 chrono.workspace = true
 ftree.workspace = true

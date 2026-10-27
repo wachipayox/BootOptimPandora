@@ -12,12 +12,14 @@ param(
     [switch]$InstanceScreens,
     [switch]$LauncherScreens,
     [switch]$LauncherUpdateScreens,
+    [switch]$StartupScreens,
     [string]$LauncherUpdateFixture,
     [string]$NewsFixture,
     [ValidateSet('advanced','version','expanded','editing')][string]$CaptureState,
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
+    [switch]$OversizedViewport,
     [int]$ViewportWidth = 1280,
     [int]$ViewportHeight = 860,
     [switch]$Framebuffer,
@@ -30,6 +32,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if (($HitTest -or $DragRegions -or $ResizeProbe) -and -not $Framebuffer) { throw 'Native diagnostics require -Framebuffer.' }
+if ($OversizedViewport -and (-not $Framebuffer -or -not $DesignViewport)) { throw 'Oversized viewport requires an explicit design viewport and native framebuffer evidence.' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $outputPath = [IO.Path]::GetFullPath($Output)
 $null = New-Item -ItemType Directory -Force -Path $outputPath
@@ -75,6 +78,7 @@ public static class CaptureWindow {
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int x, int y, int width, int height, bool repaint);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int width, int height, uint flags);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
@@ -222,11 +226,22 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
         $scale = [CaptureWindow]::GetDpiForWindow($handle) / 96.0
         $frameWidth = ($rect.Right - $rect.Left) - ($client.Right - $client.Left)
         $frameHeight = ($rect.Bottom - $rect.Top) - ($client.Bottom - $client.Top)
-        [void][CaptureWindow]::MoveWindow($handle, 32, 32, [int]($ViewportWidth * $scale + $frameWidth), [int]($ViewportHeight * $scale + $frameHeight), $true)
+        if ($OversizedViewport) {
+            # Only this verified owned HWND: omit WM_WINDOWPOSCHANGING so Windows
+            # does not clamp a diagnostic render target to the virtual desktop.
+            [void][CaptureWindow]::SetWindowPos($handle, [IntPtr]::Zero, 32, 32, [int]($ViewportWidth * $scale + $frameWidth), [int]($ViewportHeight * $scale + $frameHeight), 0x404)
+        } else {
+            [void][CaptureWindow]::MoveWindow($handle, 32, 32, [int]($ViewportWidth * $scale + $frameWidth), [int]($ViewportHeight * $scale + $frameHeight), $true)
+        }
         Start-Sleep -Milliseconds 700
         [void][CaptureWindow]::GetWindowRect($handle, [ref]$rect)
     }
     if ([CaptureWindow]::IsIconic($handle)) { [void][CaptureWindow]::ShowWindow($handle, 9); Start-Sleep -Milliseconds 500; [void][CaptureWindow]::GetWindowRect($handle, [ref]$rect) }
+    if ($env:WBOMBO_UI_CAPTURE_PAGE -like 'startup-bench:*') {
+        # Collect stable frames after the requested viewport has settled.
+        # Paint cost excludes logging; frame intervals include the normal loop.
+        Start-Sleep -Seconds 5
+    }
     # Capture the client area, excluding invisible DWM margins and desktop pixels.
     $client = New-Object CaptureWindow+RECT
     $clientOrigin = New-Object CaptureWindow+POINT
@@ -234,6 +249,10 @@ function Save-Window([string]$Path, [IntPtr]$handle, [int]$processId) {
     if ($DesignViewport -and ($clientOrigin.X -lt 0 -or $clientOrigin.Y -lt 0)) { throw 'Design viewport is outside the visible desktop' }
     $width = $client.Right - $client.Left
     $height = $client.Bottom - $client.Top
+    if ($OversizedViewport) {
+        $scale = [CaptureWindow]::GetDpiForWindow($handle) / 96.0
+        if ($width -ne [int]($ViewportWidth*$scale) -or $height -ne [int]($ViewportHeight*$scale)) { throw 'The oversized diagnostic framebuffer did not reach the requested dimensions.' }
+    }
     $minMax=[CaptureWindow]::GetMinMax($handle)
     $minimumWidth=if($script:fixedCaptureWindow){400}else{480}
     $minimumHeight=if($script:fixedCaptureWindow){80}else{270}
@@ -336,6 +355,14 @@ try {
     if ($TestProfile -or $PortableDirectory) {
         $screens += @{ page = "instance:$InstanceName"; file = 'instance-detail.png'; label = 'Owned CLI instance detail' }
         if (-not $SkipUpdateCapture) { $screens += @{ page = "update:$InstanceName"; file = 'update-dialog.png'; label = 'Real inherited update check on owned CLI instance' } }
+    }
+    if ($StartupScreens) {
+        foreach ($time in @('0.15','0.42','0.68','0.95','1.15','1.45','1.70','2.10','2.75','3.25','3.75','4.18','4.42','4.78','5.15','6.0')) {
+            $screens += @{ page="startup-frame:$time"; file="startup-frame-$time.png"; label="Native vector frame at $time s" }
+        }
+        $screens += @{page='startup-splash';file='startup-splash.png';label='Native static startup poster'}
+        $screens += @{page='startup-intro:3.25';file='startup-intro.png';label='Intro with approved skip text'}
+        $screens += @{page='startup-transition:0.5';file='startup-transition.png';label='300 ms transition at its midpoint'}
     }
     if ($HomeScreens) {
         $screens += @{ page='home-menu'; file='home-menu.png'; label='Menú de la instancia seleccionada' }
@@ -471,6 +498,9 @@ try {
             if($dialogOwner -ne $proc.Id -or ([CaptureWindow]::GetWindowLongPtr($captureHandle,-16).ToInt64() -band 0x40000) -ne 0){throw 'Standalone dialog HWND is not the active owned nonresizable window.'}
         }
         Save-Window (Join-Path $outputPath $screen.file) $captureHandle $proc.Id
+        if ($screen.page -like 'startup-bench:*' -or $screen.page -eq 'startup-live') {
+            Copy-Item -LiteralPath (Join-Path $tempRoot 'WachilandLauncher/launcher.log') -Destination (Join-Path $outputPath ($screen.file -replace '\.png$', '.log')) -Force
+        }
         if ($ResizeProbe -and -not $script:fixedCaptureWindow) {
             Save-FirstResizeFrames ([IO.Path]::GetFileNameWithoutExtension($screen.file)) $captureHandle
         }
@@ -531,6 +561,7 @@ try {
         captureScriptCommit = (git -C $repo rev-parse HEAD)
         captureScriptSha256 = $scriptHashAtStart
         nativeHitTest = [bool]$HitTest
+        oversizedDiagnosticViewport = [bool]$OversizedViewport
         hitTestPointOnly = [bool]$HitTestPointOnly
         hitTestRegionSource = if($HitTestReferenceDirectory){'candidate geometry reused for baseline HWND queries'}else{'painted native regions from this executable'}
         diagnosticDragColors = [bool]$DragRegions
