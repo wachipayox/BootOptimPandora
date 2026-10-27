@@ -550,7 +550,9 @@ impl Render for HomePage {
                 .map(|path| Resource::Path(Arc::from(path.as_path())))
                 .unwrap_or_else(|| Resource::Embedded(fallback.into()))
         };
-        self.prepare_artwork_blur(cx);
+        if window.viewport_size().width.as_f32() > 220. + 1920. / window.scale_factor() {
+            self.prepare_artwork_blur(cx);
+        }
         let artwork = self.artwork_image.render(
             resource(&self.presentation.artwork, "images/artwork-vanilla.png"),
             "images/artwork-vanilla.png",
@@ -573,6 +575,14 @@ impl Render for HomePage {
             .w_full()
             .flex_shrink_0()
             .overflow_hidden()
+            .when(self.artwork_blur.is_none(), |d| {
+                d.child(
+                    img(picture(&self.presentation.artwork, "images/artwork-vanilla.png"))
+                        .absolute()
+                        .size_full()
+                        .object_fit(ObjectFit::Cover),
+                )
+            })
             .when_some(self.artwork_blur.clone(), |d, image| {
                 d.child(img(image).absolute().size_full().object_fit(ObjectFit::Cover))
             })
