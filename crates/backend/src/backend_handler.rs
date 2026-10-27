@@ -1761,11 +1761,12 @@ impl BackendState {
             MessageToBackend::GetHomePresentation {
                 id,
                 cache_only,
+                include_news,
                 channel,
             } => {
                 let backend = self.clone();
                 tokio::spawn(async move {
-                    let _ = channel.send(backend.load_home_presentation(id, cache_only).await);
+                    let _ = channel.send(backend.load_home_presentation(id, cache_only, include_news).await);
                 });
             },
             MessageToBackend::GetGlobalProfiles { channel } => {

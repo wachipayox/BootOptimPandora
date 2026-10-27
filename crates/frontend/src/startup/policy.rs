@@ -8,7 +8,7 @@ pub(super) const AUDIO_FADE: Duration = Duration::from_millis(150);
 
 pub(super) fn initial_size(scale: f32, available: [f32; 2], minimum: [f32; 2]) -> [f32; 2] {
     let scale = if scale.is_finite() && scale > 0. { scale } else { 1. };
-    let (mut width, mut height) = (1280. / scale, 720. / scale);
+    let (mut width, mut height) = (1600. / scale, 900. / scale);
     let grow = (minimum[0] / width).max(minimum[1] / height).max(1.);
     width *= grow;
     height *= grow;
@@ -57,9 +57,9 @@ mod tests {
     use std::time::Duration;
     #[test]
     fn recommended_client_size_uses_physical_pixels_and_keeps_the_existing_minimum() {
-        assert_eq!(initial_size(1., [1920., 1080.], [960., 600.]), [1280., 720.]);
+        assert_eq!(initial_size(1., [1920., 1080.], [960., 600.]), [1600., 900.]);
         let hidpi = initial_size(1.25, [2048., 1104.], [960., 600.]);
-        assert!((hidpi[0] - 1066.6667).abs() < 0.01 && (hidpi[1] - 600.).abs() < 0.01);
+        assert_eq!(hidpi, [1280., 720.]);
         assert_eq!(initial_size(1., [960., 600.], [960., 600.]), [960., 600.]);
     }
 

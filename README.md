@@ -223,7 +223,7 @@ after a launcher version change. Normal visible launches show its final vector
 frame while local visual assets load, then fade into the interface over 300 ms.
 Preloading waits at most eight seconds and never waits for network requests.
 CLI launches and background operation bypass this presentation.
-The initial content size is 1280 × 720 physical pixels, fitted to the monitor
+The initial content size is 1600 × 900 physical pixels, fitted to the monitor
 and the 960 × 600 logical minimum; subsequent launches retain the saved size.
 The vector palette and decorative patterns continue across other aspect ratios.
 

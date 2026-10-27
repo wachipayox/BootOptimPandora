@@ -223,6 +223,7 @@ impl crate::BackendState {
         &self,
         id: Option<InstanceID>,
         cache_only: bool,
+        include_news: bool,
     ) -> Result<HomePresentation, String> {
         let config = self.config.lock().get().distribution.clone();
         let include_tests = self.config.lock().get().channel.includes_test_profiles();
@@ -307,6 +308,9 @@ impl crate::BackendState {
                     }
                 }
             }
+        }
+        if !include_news {
+            return Ok(out);
         }
         let news_root = self.directories.root_launcher_dir.join("news-state");
         let feed = match if cache_only {

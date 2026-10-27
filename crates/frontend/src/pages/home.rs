@@ -24,6 +24,7 @@ pub struct HomePage {
     instance: Option<Entity<InstanceEntry>>,
     presentation: HomePresentation,
     loaded: bool,
+    news_loaded: bool,
     startup_cached: bool,
     artwork_image: crate::component::retained_image::RetainedImage,
     logo_image: crate::component::retained_image::RetainedImage,
@@ -71,6 +72,7 @@ impl HomePage {
             instance,
             presentation: HomePresentation::default(),
             loaded: false,
+            news_loaded: false,
             startup_cached: !std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page != "startup-live"),
             artwork_image: Default::default(),
             logo_image: Default::default(),
@@ -110,10 +112,12 @@ impl HomePage {
             return;
         }
         self.requested = true;
+        let include_news = !self.startup_cached;
         let (send, receive) = tokio::sync::oneshot::channel();
         self.data.backend_handle.send(MessageToBackend::GetHomePresentation {
             id: self.instance.as_ref().map(|i| i.read(cx).id),
             cache_only: self.startup_cached,
+            include_news,
             channel: send,
         });
         cx.spawn_in(window, async move |this, cx| {
@@ -125,6 +129,7 @@ impl HomePage {
                 });
                 log::info!("home-ready pid={}", std::process::id());
                 this.loaded = true;
+                this.news_loaded = include_news;
                 this.requested = false;
                 // The initial cache read never waits for network. Revalidate
                 // cosmetic data independently after the first local scene.
@@ -153,26 +158,13 @@ impl HomePage {
         self.news_view
     }
     pub(crate) fn startup_ready(&self, window: &mut Window, cx: &mut App) -> bool {
-        // load_servers publishes the local servers.dat summary immediately;
-        // Server List Ping runs independently and must never gate startup.
-        let local_servers_ready =
-            self.instance.as_ref().is_none_or(|instance| instance.read(cx).servers.read(cx).is_some());
-        let mut ready = self.loaded && local_servers_ready;
-        let general = InterfaceConfig::get(cx).home_general_news;
+        let mut ready = self.loaded;
         for source in [
             picture(&self.presentation.artwork, "images/artwork-vanilla.png"),
             picture(&self.presentation.logo, "images/logo-vanilla.png"),
         ]
         .into_iter()
-        .chain(
-            self.presentation
-                .news
-                .iter()
-                .filter(|n| general || n.target_profile_id.is_some())
-                .take(4)
-                .filter_map(|n| n.image.as_ref())
-                .map(|p| ImageSource::Resource(Resource::Path(Arc::from(p.as_path())))),
-        ) {
+        {
             if let ImageSource::Resource(resource) = source {
                 ready &= window.use_asset::<ImgResourceLoader>(&resource, cx).is_some();
             }
@@ -268,7 +260,9 @@ impl HomePage {
                         } else {
                             theme::INK_DISABLED
                         })))
-                        .child(if server.status.is_some() {
+                        .child(if server.pinging && server.status.is_none() {
+                            "CARGANDO"
+                        } else if server.status.is_some() {
                             "Servidor en línea"
                         } else {
                             "Servidor sin respuesta"
@@ -284,17 +278,42 @@ impl HomePage {
                 }),
         );
         if let Some(players) = online.filter(|p| !p.sample.is_empty()) {
-            panel = panel.child(h_flex().flex_wrap().gap(px(3.)).children(players.sample.iter().take(12).map(|p| {
-                img(picture(
-                    &if InterfaceConfig::get(cx).hide_skins {
-                        None
-                    } else {
-                        self.heads.get(p.id.as_ref()).cloned()
-                    },
-                    "images/default_head.png",
-                ))
-                .size(px(18.))
-            })));
+            let extra = players.online.saturating_sub(7);
+            let shown = if players.online > 8 && players.sample.len() > 7 {
+                7
+            } else {
+                8
+            };
+            panel = panel.child(
+                h_flex()
+                    .flex_wrap()
+                    .gap(px(3.))
+                    .pt(px(2.))
+                    .children(players.sample.iter().take(shown).map(|p| {
+                        img(picture(
+                            &if InterfaceConfig::get(cx).hide_skins {
+                                None
+                            } else {
+                                self.heads.get(p.id.as_ref()).cloned()
+                            },
+                            "images/default_head.png",
+                        ))
+                        .size(px(20.))
+                    }))
+                    .when(shown == 7, |d| {
+                        d.child(
+                            div()
+                                .size(px(20.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(rgba(0xffffff0a))
+                                .text_size(px(10.))
+                                .text_color(rgb(theme::INK_MUTED))
+                                .child(format!("+{extra}")),
+                        )
+                    }),
+            );
             panel = panel.child(div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child(
                 if InterfaceConfig::get(cx).hide_usernames {
                     String::new()
@@ -373,7 +392,9 @@ impl Page for HomePage {
 }
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.refreshed.elapsed() >= Duration::from_secs(300) && !crate::startup::is_active(cx) {
+        if self.loaded && !self.news_loaded
+            || (self.refreshed.elapsed() >= Duration::from_secs(300) && !crate::startup::is_active(cx))
+        {
             self.refresh(window, cx);
         }
         if self.news_view {
@@ -394,6 +415,7 @@ impl Render for HomePage {
         }
         let instance = self.instance.as_ref().map(|i| i.read(cx).clone());
         let mut server = None;
+        let mut server_loading = false;
         if let Some(i) = &instance {
             i.servers_state.set_observed();
             if i.servers_state.should_load() {
@@ -402,6 +424,7 @@ impl Render for HomePage {
                     .send_with_serial(MessageToBackend::RequestLoadServers { id: i.id }, &self.server_serial);
             }
             server = i.servers.read(cx).as_ref().and_then(|s| s.first()).cloned();
+            server_loading = i.servers.read(cx).is_none();
         }
         if let Some(server) = &server {
             self.request_heads(server, window, cx);
@@ -486,6 +509,7 @@ impl Render for HomePage {
             .h(px(440.))
             .w_full()
             .flex_shrink_0()
+            .overflow_hidden()
             .child(div().child(artwork).absolute().size_full())
             .child(div().absolute().bottom_0().w_full().h(relative(0.55)).bg(shade(0x06060700, 0x060607ff)))
             .child(
@@ -501,6 +525,29 @@ impl Render for HomePage {
             )
             .child(div().absolute().top_0().w_full().child(header))
             .when_some(server.as_ref(), |d, s| d.child(self.server_panel(s, cx)))
+            .when(server_loading, |d| {
+                d.child(
+                    design::notched_panel(0x060607cc)
+                        .absolute()
+                        .top(px(60.))
+                        .right(px(18.))
+                        .w(px(212.))
+                        .px(px(14.))
+                        .py(px(12.))
+                        .child(
+                            v_flex()
+                                .gap(px(6.))
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_size(px(13.))
+                                        .line_height(px(18.))
+                                        .child("Jugadores conectados"),
+                                )
+                                .child(div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child("CARGANDO")),
+                        ),
+                )
+            })
             .when_some(
                 self.presentation.artwork_author.clone().filter(|_| self.presentation.artwork.is_some()),
                 |d, a| {
@@ -707,7 +754,7 @@ impl Render for HomePage {
             .take(if self.news_view { usize::MAX } else { 4 })
             .cloned()
             .collect::<Vec<_>>();
-        let show_news = instance.is_some() || !news.is_empty();
+        let show_news = instance.is_some() || !news.is_empty() || !self.news_loaded;
         let mut news_section = v_flex().px(px(24.)).pt(px(18.)).gap(px(12.)).child(
             h_flex()
                 .h(px(24.))
@@ -736,7 +783,9 @@ impl Render for HomePage {
                         )),
                 ),
         );
-        if self.loaded && news.is_empty() {
+        if !self.news_loaded {
+            news_section = news_section.child(div().py(px(24.)).text_color(rgb(theme::INK_MUTED)).child("CARGANDO"));
+        } else if news.is_empty() {
             news_section = news_section.child(div().py(px(24.)).text_color(rgb(theme::INK_MUTED)).child(
                 if self.presentation.news_failed {
                     "No se han podido cargar las noticias."
