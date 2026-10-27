@@ -126,15 +126,23 @@ impl Render for ImportPage {
                     .children({
                         OtherLauncher::iter().map(|launcher| {
                             let icon = match launcher {
-                                OtherLauncher::Prism => "icons/brands/prism.svg",
-                                OtherLauncher::CurseForge => "icons/brands/curseforge.svg",
-                                OtherLauncher::Modrinth => "icons/brands/modrinth.svg",
-                                OtherLauncher::MultiMC => "icons/brands/multimc.svg",
-                                OtherLauncher::ATLauncher => "icons/brands/atlauncher.svg",
+                                OtherLauncher::Prism => "images/brands/prism.png",
+                                OtherLauncher::CurseForge => "images/brands/curseforge.png",
+                                OtherLauncher::Modrinth => "images/brands/modrinth.png",
+                                OtherLauncher::MultiMC => "images/brands/multimc.png",
+                                OtherLauncher::ATLauncher => "images/brands/atlauncher.png",
                             };
                             Button::new(launcher.name())
-                                .label(launcher.name())
-                                .icon(gpui_component::Icon::default().path(icon))
+                                .aria_label(launcher.name())
+                                .child(
+                                    h_flex()
+                                        .gap(px(8.))
+                                        .items_center()
+                                        .child(
+                                            img(ImageSource::Resource(Resource::Embedded(icon.into()))).size(px(20.)),
+                                        )
+                                        .child(launcher.name()),
+                                )
                                 .ghost()
                                 .rounded(px(0.))
                                 .w_full()
