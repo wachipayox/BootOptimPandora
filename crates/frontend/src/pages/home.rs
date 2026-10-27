@@ -29,6 +29,7 @@ pub struct HomePage {
     artwork_image: crate::component::retained_image::RetainedImage,
     blur_source: Option<Option<std::path::PathBuf>>,
     artwork_blur: Option<Arc<RenderImage>>,
+    artwork_feathered: Option<Arc<RenderImage>>,
     blur_task: Option<Task<()>>,
     logo_image: crate::component::retained_image::RetainedImage,
     requested: bool,
@@ -117,6 +118,7 @@ impl HomePage {
             artwork_image: Default::default(),
             blur_source: None,
             artwork_blur: None,
+            artwork_feathered: None,
             blur_task: None,
             logo_image: Default::default(),
             requested: false,
@@ -157,6 +159,7 @@ impl HomePage {
         }
         self.blur_source = Some(source.clone());
         self.artwork_blur = None;
+        self.artwork_feathered = None;
         let expected = source.clone();
         let work = cx.background_executor().spawn(async move {
             let image = source.as_ref().and_then(|p| image::open(p).ok()).or_else(|| {
@@ -166,13 +169,28 @@ impl HomePage {
             for pixel in pixels.pixels_mut() {
                 pixel.0.swap(0, 2);
             }
-            Some(Arc::new(RenderImage::new([image::Frame::new(pixels)])))
+            let mut foreground = image.to_rgba8();
+            let width = foreground.width();
+            let feather = (width / 20).max(1);
+            for (x, _, pixel) in foreground.enumerate_pixels_mut() {
+                let distance = x.min(width - 1 - x);
+                let alpha = (distance as f32 / feather as f32).min(1.);
+                pixel.0[3] = (pixel.0[3] as f32 * alpha).round() as u8;
+                pixel.0.swap(0, 2);
+            }
+            Some((
+                Arc::new(RenderImage::new([image::Frame::new(pixels)])),
+                Arc::new(RenderImage::new([image::Frame::new(foreground)])),
+            ))
         });
         self.blur_task = Some(cx.spawn(async move |page, cx| {
             let image = work.await;
             _ = page.update(cx, |page, cx| {
                 if page.blur_source.as_ref() == Some(&expected) {
-                    page.artwork_blur = image;
+                    if let Some((background, foreground)) = image {
+                        page.artwork_blur = Some(background);
+                        page.artwork_feathered = Some(foreground);
+                    }
                     cx.notify();
                 }
             });
@@ -550,7 +568,8 @@ impl Render for HomePage {
                 .map(|path| Resource::Path(Arc::from(path.as_path())))
                 .unwrap_or_else(|| Resource::Embedded(fallback.into()))
         };
-        if window.viewport_size().width.as_f32() > 220. + 1920. / window.scale_factor() {
+        let wide_artwork = window.viewport_size().width.as_f32() > 220. + 1920. / window.scale_factor();
+        if wide_artwork {
             self.prepare_artwork_blur(cx);
         }
         let artwork = self.artwork_image.render(
@@ -561,6 +580,15 @@ impl Render for HomePage {
             window,
             cx,
         );
+        let artwork = if wide_artwork {
+            if let Some(foreground) = &self.artwork_feathered {
+                img(foreground.clone()).size_full().object_fit(ObjectFit::Cover).into_any_element()
+            } else {
+                artwork
+            }
+        } else {
+            artwork
+        };
         let logo = self.logo_image.render(
             resource(&self.presentation.logo, "images/logo-vanilla.png"),
             "images/logo-vanilla.png",
