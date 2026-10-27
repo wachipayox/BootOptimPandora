@@ -1119,7 +1119,7 @@ pub fn read_audio_packet_generic<S :Samples>(ident :&IdentHeader, setup :&SetupH
 				*v = (*v * lhs) + (prev * rhs);
 			}
 
-  			// and populate the future previous half
+			// and populate the future previous half
 			let future_prev_half = chan[right_win_start..right_win_end].into();
 
 			future_prev_halves.push(future_prev_half);
