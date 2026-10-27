@@ -682,6 +682,7 @@ impl Render for HomePage {
                 InstanceStatus::Running => {
                     play = PlayButton::new("home-play", "En marcha", None)
                         .title("Detener")
+                        .stop_icon()
                         .tint(0xb330305e)
                         .on_click(move |_, _, _| data.backend_handle.send(MessageToBackend::KillInstance { id }))
                 },
