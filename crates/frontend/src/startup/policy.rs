@@ -4,6 +4,9 @@ use std::time::Duration;
 pub(super) const INTRO: Duration = Duration::from_secs(6);
 pub(super) const PRELOAD_LIMIT: Duration = Duration::from_secs(8);
 pub(super) const TRANSITION: Duration = Duration::from_millis(300);
+// A normal launch should finish its fade within two seconds of the window
+// opening, even when a local asset is unusually slow or unavailable.
+pub(super) const NORMAL_PRELOAD_LIMIT: Duration = Duration::from_millis(1700);
 pub(super) const AUDIO_FADE: Duration = Duration::from_millis(150);
 
 pub(super) fn initial_size(scale: f32, available: [f32; 2], minimum: [f32; 2]) -> [f32; 2] {
@@ -26,6 +29,14 @@ pub(super) enum IntroKind {
     None,
 }
 
+pub(super) fn preload_limit(intro: IntroKind) -> Duration {
+    if intro == IntroKind::None {
+        NORMAL_PRELOAD_LIMIT
+    } else {
+        PRELOAD_LIMIT
+    }
+}
+
 pub(super) fn intro_kind(existing_install: bool, last_version: Option<&str>, current: &str) -> IntroKind {
     if last_version == Some(current) {
         IntroKind::None
@@ -43,7 +54,7 @@ pub(super) fn may_reveal(
     intro: IntroKind,
     skipped: bool,
 ) -> bool {
-    elapsed >= PRELOAD_LIMIT || (ready && (intro == IntroKind::None || skipped || animation_elapsed >= INTRO))
+    elapsed >= preload_limit(intro) || (ready && (intro == IntroKind::None || skipped || animation_elapsed >= INTRO))
 }
 
 /// Uniform selection over all eligible files, excluding the last track whenever
@@ -99,6 +110,8 @@ mod tests {
             false
         ));
         assert!(may_reveal(Duration::ZERO, Duration::ZERO, true, IntroKind::None, false));
+        assert!(!may_reveal(Duration::from_millis(1699), Duration::ZERO, false, IntroKind::None, false));
+        assert!(may_reveal(Duration::from_millis(1700), Duration::ZERO, false, IntroKind::None, false));
         assert!(may_reveal(Duration::from_secs(1), Duration::ZERO, true, IntroKind::Update, true));
         assert!(!may_reveal(Duration::from_secs(1), Duration::ZERO, false, IntroKind::Update, true));
         // A stalled audio/device/frame callback cannot extend the absolute cap.

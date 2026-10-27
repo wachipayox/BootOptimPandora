@@ -6,7 +6,7 @@ pub(crate) mod vector;
 
 use crate::interface_config::InterfaceConfig;
 use gpui::{prelude::*, *};
-use policy::{INTRO, IntroKind, PRELOAD_LIMIT, TRANSITION, intro_kind, may_reveal};
+use policy::{INTRO, IntroKind, TRANSITION, intro_kind, may_reveal, preload_limit};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -171,13 +171,14 @@ impl Controller {
             );
         }
         let animation_elapsed = self.clock.map(|clock| now.duration_since(clock)).unwrap_or_default();
-        if animation_elapsed >= INTRO || elapsed >= PRELOAD_LIMIT {
+        let limit = preload_limit(self.kind);
+        if animation_elapsed >= INTRO || elapsed >= limit {
             if let Some(audio) = &self.audio {
                 audio.fade();
             }
         }
         if self.fade.is_none()
-            && (poster_ready || elapsed >= PRELOAD_LIMIT)
+            && (poster_ready || elapsed >= limit)
             && may_reveal(elapsed, animation_elapsed, self.ready_frames >= 2, self.kind, self.skipped)
         {
             self.fade = Some(now);

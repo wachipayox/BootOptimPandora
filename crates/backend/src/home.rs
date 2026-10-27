@@ -489,6 +489,22 @@ fn cache_local_image(path: &Path, root: &Path, artwork: bool) -> Option<Value> {
     if bytes.len() > 16 * 1024 * 1024 {
         return None;
     }
+    // The input digest changes whenever the user's file changes. Reuse the
+    // previously normalized output instead of decoding and rewriting a large
+    // image on every launcher start.
+    let kind = if artwork { "artwork" } else { "logo" };
+    let input_hash = hex::encode(Sha256::digest(&bytes));
+    let index = root.join(format!("local-v1-{input_hash}-{kind}.json"));
+    if let Some(value) = fs::read(&index).ok().and_then(|data| serde_json::from_slice::<Value>(&data).ok()) {
+        if let Some(hash) = value.get("sha256").and_then(Value::as_str) {
+            if hash.len() == 64
+                && hash.bytes().all(|b| b.is_ascii_hexdigit())
+                && root.join(format!("{hash}-{kind}.png")).is_file()
+            {
+                return Some(value);
+            }
+        }
+    }
     let dimensions = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()
         .ok()?
@@ -511,9 +527,13 @@ fn cache_local_image(path: &Path, root: &Path, artwork: bool) -> Option<Value> {
     fs::create_dir_all(&dir).ok()?;
     crate::fs::write_safe(&dir.join(&sha), &encoded).ok()?;
     // Local overrides are immediately usable by cache-only startup reads.
-    let kind = if artwork { "artwork" } else { "logo" };
     crate::fs::write_safe(&root.join(format!("{sha}-{kind}.png")), &encoded).ok()?;
-    Some(serde_json::json!({"sha256":sha,"size":encoded.len(),"media_type":"image/png"}))
+    let value = serde_json::json!({"sha256":sha,"size":encoded.len(),"media_type":"image/png"});
+    // Failure to persist the acceleration index must not hide a valid image.
+    if let Ok(data) = serde_json::to_vec(&value) {
+        let _ = crate::fs::write_safe(&index, &data);
+    }
+    Some(value)
 }
 
 fn home_lineage(profiles: &[Value], mut current: Option<String>) -> BTreeSet<String> {
@@ -546,6 +566,25 @@ fn home_news_visible(
 #[cfg(test)]
 mod home_tests {
     use super::*;
+    #[test]
+    fn local_cosmetic_cache_reuses_unchanged_files_and_recovers_missing_output() {
+        let root = std::env::temp_dir().join(format!("pandora-local-cosmetic-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let input = root.join("input.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 255])).save(&input).unwrap();
+        let first = cache_local_image(&input, &root, false).unwrap();
+        let hash = first["sha256"].as_str().unwrap();
+        let object = root.join("sha256").join(&hash[..2]).join(hash);
+        fs::remove_file(&object).unwrap();
+        assert_eq!(cache_local_image(&input, &root, false), Some(first.clone()));
+        assert!(!object.exists());
+        fs::remove_file(root.join(format!("{hash}-logo.png"))).unwrap();
+        assert_eq!(cache_local_image(&input, &root, false), Some(first.clone()));
+        assert!(object.is_file());
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([4, 5, 6, 255])).save(&input).unwrap();
+        assert_ne!(cache_local_image(&input, &root, false), Some(first));
+        fs::remove_dir_all(root).unwrap();
+    }
     #[tokio::test]
     async fn startup_cosmetics_read_stale_or_missing_cache_without_contacting_server() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

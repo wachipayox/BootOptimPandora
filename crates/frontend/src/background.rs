@@ -148,10 +148,21 @@ fn prepare(key: &Key) -> Option<PreparedBackdrop> {
     };
     let (width, height) = scene.dimensions();
     let reference_scale = (1280. / width as f32).max(860. / height as f32);
-    let glass = crate::component::design::prepare_play_artwork(
-        &image::DynamicImage::ImageRgba8(scene.clone()),
-        14. / reference_scale,
-    );
+    // The default cafe image never changes. Its glass has been prepared with
+    // this same algorithm at build time, avoiding a large blur on every start.
+    let glass = if matches!(key.source, AppBackground::Cafe) {
+        Assets::get("images/cafe-glass.png")
+            .and_then(|asset| image::load_from_memory(&asset.data).ok())
+            .map(|image| image.to_rgba8())
+    } else {
+        None
+    }
+    .unwrap_or_else(|| {
+        crate::component::design::prepare_play_artwork(
+            &image::DynamicImage::ImageRgba8(scene.clone()),
+            14. / reference_scale,
+        )
+    });
     fn render_image(mut image: image::RgbaImage) -> Arc<RenderImage> {
         for pixel in image.pixels_mut() {
             pixel.0.swap(0, 2);
@@ -325,6 +336,19 @@ mod tests {
     use super::{AppBackground, BackdropCache, Key, PreparedBackdrop, cover_bounds, saturated_color};
     use gpui::{RenderImage, px, size};
     use std::sync::Arc;
+
+    #[test]
+    fn embedded_cafe_glass_matches_the_runtime_preparation() {
+        use rust_embed::RustEmbed;
+        let source = crate::Assets::get("images/cafe-ambient.png").unwrap();
+        let scene = image::load_from_memory(&source.data).unwrap().to_rgba8();
+        let scale = (1280. / scene.width() as f32).max(860. / scene.height() as f32);
+        let expected =
+            crate::component::design::prepare_play_artwork(&image::DynamicImage::ImageRgba8(scene), 14. / scale);
+        let embedded = crate::Assets::get("images/cafe-glass.png").unwrap();
+        let actual = image::load_from_memory(&embedded.data).unwrap().to_rgba8();
+        assert_eq!(actual, expected);
+    }
 
     fn key() -> Key {
         Key {
