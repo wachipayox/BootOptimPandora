@@ -1992,6 +1992,8 @@ pub struct ManualResizeConstraints {
     pub max_aspect: f32,
     /// Maximum width of the resizable content in physical pixels.
     pub max_content_width_physical: f32,
+    /// Maximum client height in physical pixels, subject to the minimum size.
+    pub max_height_physical: f32,
     /// Width of fixed chrome in logical pixels, added to the content cap.
     pub fixed_width_logical: f32,
 }
@@ -2001,10 +2003,13 @@ impl ManualResizeConstraints {
     pub fn constrain(&self, requested: Size<Pixels>, scale: f32, minimum: Size<Pixels>) -> Size<Pixels> {
         let scale = scale.max(0.01);
         let minimum_width = minimum.width.as_f32().max(minimum.height.as_f32() * self.min_aspect);
-        let maximum_width = (self.max_content_width_physical / scale + self.fixed_width_logical).max(minimum_width);
+        let max_height = (self.max_height_physical / scale).max(minimum.height.as_f32());
+        let maximum_width = (self.max_content_width_physical / scale + self.fixed_width_logical)
+            .min(max_height * self.max_aspect)
+            .max(minimum_width);
         let width = requested.width.as_f32().clamp(minimum_width, maximum_width);
         let min_height = minimum.height.as_f32().max(width / self.max_aspect);
-        let max_height = (width / self.min_aspect).max(min_height);
+        let max_height = (width / self.min_aspect).min(max_height).max(min_height);
         let height = requested.height.as_f32().clamp(min_height, max_height);
         size(px(width), px(height))
     }
@@ -2020,12 +2025,15 @@ mod manual_resize_tests {
             min_aspect: 1.6,
             max_aspect: 2.,
             max_content_width_physical: 1920.,
+            max_height_physical: 1187.5,
             fixed_width_logical: 220.,
         };
         let minimum = size(px(960.), px(600.));
         let too_wide = limits.constrain(size(px(3000.), px(600.)), 1.25, minimum);
         assert_eq!(too_wide.width, px(1756.));
         assert_eq!(too_wide.height, px(878.));
+        let tall_at_cap = limits.constrain(size(px(1756.), px(1200.)), 1.25, minimum);
+        assert_eq!(tall_at_cap, size(px(1756.), px(950.)));
         let too_tall = limits.constrain(size(px(960.), px(1200.)), 1., minimum);
         assert_eq!(too_tall, size(px(960.), px(600.)));
         let valid = size(px(1280.), px(720.));

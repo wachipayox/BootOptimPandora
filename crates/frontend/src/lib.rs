@@ -290,6 +290,8 @@ pub fn open_main_window(
         min_aspect: 1.6,
         max_aspect: 2.0,
         max_content_width_physical: 1920.,
+        // Home uses 64% of the viewport height for a 760px-high profile artwork.
+        max_height_physical: 760. / 0.64,
         fixed_width_logical: 220.,
     };
 
