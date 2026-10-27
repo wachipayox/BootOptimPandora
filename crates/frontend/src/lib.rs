@@ -401,6 +401,8 @@ pub fn open_main_window(
                         if matches!(
                             page,
                             "add-instance"
+                                | "add-profile-fixture"
+                                | "add-profile-tree"
                                 | "add-server"
                                 | "add-local"
                                 | "add-local-fabric"
@@ -525,6 +527,8 @@ pub fn open_main_window(
                         matches!(
                             *page,
                             "add-instance"
+                                | "add-profile-fixture"
+                                | "add-profile-tree"
                                 | "add-server"
                                 | "add-local"
                                 | "add-local-fabric"
@@ -538,7 +542,9 @@ pub fn open_main_window(
                     let capture_data = data.clone();
                     window.on_next_frame(move |window, cx| {
                         match page.as_str() {
-                            "add-instance" => crate::pages::home::add_instance(&capture_data, window, cx),
+                            "add-instance" | "add-profile-fixture" | "add-profile-tree" => {
+                                crate::pages::home::add_instance(&capture_data, window, cx)
+                            },
                             "add-server" | "add-local" | "add-local-fabric" | "add-local-forge"
                             | "add-local-neoforge" => {
                                 crate::root::switch_page(ui::PageType::AddInstance, &[], window, cx)

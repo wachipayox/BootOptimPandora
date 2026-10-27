@@ -45,6 +45,41 @@ impl AddInstancePage {
             import,
             task: None,
         };
+        #[cfg(feature = "ui-capture")]
+        if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "add-profile-fixture" || p == "add-profile-tree")
+        {
+            let make = |id: &str, parent: Option<&str>, name: &str| GlobalProfileSummary {
+                parent_profile_id: parent.map(str::to_owned),
+                description: String::new(),
+                minecraft: "1.21.1".into(),
+                loader: schema::loader::Loader::Fabric,
+                loader_version: "0.16.0".into(),
+                icon_path: std::env::var_os("WBOMBO_UI_CAPTURE_PROFILE_ICON").map(Into::into),
+                profile_id: id.into(),
+                name: name.into(),
+                latest_revision_id: "fixture".into(),
+                latest_sequence: 1,
+                latest_manifest_sha256: String::new(),
+                stable_revision_id: None,
+                stable_sequence: None,
+                stable_manifest_sha256: None,
+            };
+            let profiles = vec![
+                make("fixture-root", None, "Perfil A"),
+                make("fixture-child", Some("fixture-root"), "Perfil B"),
+            ];
+            if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "add-profile-tree") {
+                let backend = page.data.backend_handle.clone();
+                let tree = profiles.clone();
+                window.on_next_frame(move |window, cx| {
+                    open_global_profile_family("fixture-root".into(), tree, backend, window, cx)
+                });
+            }
+            page.profiles = Some(Ok(profiles));
+        } else {
+            page.load(cx);
+        }
+        #[cfg(not(feature = "ui-capture"))]
         page.load(cx);
         page
     }
