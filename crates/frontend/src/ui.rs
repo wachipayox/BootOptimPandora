@@ -25,6 +25,34 @@ use crate::{
     png_render_cache,
 };
 
+fn anonymous_pixel_avatar() -> impl IntoElement {
+    let pixels = [
+        "..........",
+        "...hhhh...",
+        "..hsssssh.",
+        "..sesess..",
+        "..ssssss..",
+        "...ssss...",
+        "..bbbbbb..",
+        ".bbbbbbbb.",
+        ".bbbbbbbb.",
+        "..........",
+    ];
+    let rows = pixels.into_iter().map(|row| {
+        h_flex().children(row.chars().map(|cell| {
+            let color = match cell {
+                'h' => 0x25546bff,
+                's' => 0x9adcefff,
+                'e' => 0x123c50ff,
+                'b' => 0x4098b9ff,
+                _ => 0x10212aff,
+            };
+            div().size(px(2.2)).bg(rgba(color))
+        }))
+    });
+    v_flex().size(px(26.)).p(px(1.)).border_1().border_color(rgba(0x5bcef580)).children(rows)
+}
+
 pub struct LauncherUI {
     data: DataEntities,
     page: LauncherPage,
@@ -744,23 +772,7 @@ impl LauncherUI {
                     .size(px(26.))
                     .into_any_element()
                 } else {
-                    div()
-                        .relative()
-                        .size(px(26.))
-                        .bg(rgba(0x5bcef51f))
-                        .border_1()
-                        .border_color(rgba(0x5bcef580))
-                        .child(div().absolute().left(px(9.)).top(px(4.)).size(px(6.)).bg(rgb(theme::ACCENT_TEXT)))
-                        .child(
-                            div()
-                                .absolute()
-                                .left(px(6.))
-                                .top(px(13.))
-                                .w(px(12.))
-                                .h(px(7.))
-                                .bg(rgb(theme::ACCENT_TEXT)),
-                        )
-                        .into_any_element()
+                    anonymous_pixel_avatar().into_any_element()
                 }
             });
         let saved_accounts = self.data.accounts.read(cx).accounts.clone();
