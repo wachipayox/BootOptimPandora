@@ -73,6 +73,7 @@ public static class CaptureWindow {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
@@ -533,6 +534,14 @@ try {
                 $checks+=@{name=$case.name;requested=@($case.width,$case.height);client=@($width,$height);ratio=$ratio;reply=$reply;passed=$ok}
                 if (-not $ok) { throw "Native WM_SIZING failed: $($case.name), $width x $height, reply $reply" }
             }
+            [void][CaptureWindow]::ShowWindow($captureHandle,3); Start-Sleep -Milliseconds 300
+            if (-not [CaptureWindow]::IsZoomed($captureHandle)) { throw 'The sizing probe could not maximize its owned window.' }
+            $rect=New-Object CaptureWindow+RECT; $rect.Left=100; $rect.Top=100; $rect.Right=5100; $rect.Bottom=3100
+            [void][CaptureWindow]::SendSizing($captureHandle,0x214,[IntPtr]8,[ref]$rect)
+            $maxUnrestricted=$rect.Right -eq 5100 -and $rect.Bottom -eq 3100
+            $checks+=@{name='maximized-unrestricted';passed=$maxUnrestricted;rectangle=@($rect.Left,$rect.Top,$rect.Right,$rect.Bottom)}
+            [void][CaptureWindow]::ShowWindow($captureHandle,9)
+            if (-not $maxUnrestricted) { throw 'The maximized window was constrained by the synthetic sizing probe.' }
             $checks | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $outputPath 'sizing-probe.json')
         }
         if ($screen.page -like 'startup-bench:*' -or $screen.page -eq 'startup-live') {
