@@ -516,7 +516,7 @@ impl Render for HomePage {
                 .map(|path| Resource::Path(Arc::from(path.as_path())))
                 .unwrap_or_else(|| Resource::Embedded(fallback.into()))
         };
-        let hero_height = (window.viewport_size().height.as_f32() * 0.64).clamp(320., 1000.);
+        let hero_height = (window.viewport_size().height.as_f32() * 0.64).max(320.);
         let artwork = self.artwork_image.render(
             resource(&self.presentation.artwork, "images/artwork-vanilla.png"),
             "images/artwork-vanilla.png",
