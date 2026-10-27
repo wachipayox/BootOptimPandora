@@ -107,22 +107,22 @@ impl ProfileFamilyModal {
                             .border_color(cx.theme().border),
                     );
                 }
-                row.child(
-                    Button::new(format!("expand-{id}"))
-                        .label(if has_children {
-                            if expanded { "▾" } else { "▸" }
-                        } else {
-                            "·"
-                        })
-                        .disabled(!has_children)
+                let toggle = if has_children {
+                    design::DesignButton::new(format!("expand-{id}"))
+                        .label(if expanded { "▾" } else { "▸" })
+                        .w(px(28.))
+                        .h(px(32.))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if !this.expanded.remove(&id) {
                                 this.expanded.insert(id.clone());
                             }
                             cx.notify();
-                        })),
-                )
-                .child(
+                        }))
+                        .into_any_element()
+                } else {
+                    div().w(px(28.)).flex_shrink_0().into_any_element()
+                };
+                row.child(toggle).child(
                     h_flex()
                         .id(format!("choose-profile-{}", profile.profile_id))
                         .flex_1()
@@ -131,6 +131,9 @@ impl ProfileFamilyModal {
                         .p_2()
                         .items_center()
                         .rounded(px(0.))
+                        .border_1()
+                        .border_color(rgba(0xffffff12))
+                        .bg(rgba(0xffffff06))
                         .cursor_pointer()
                         .hover(|s| s.bg(cx.theme().secondary))
                         .child(profile_icon(&profile, 36.0))
