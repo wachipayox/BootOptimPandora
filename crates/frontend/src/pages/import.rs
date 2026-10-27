@@ -125,8 +125,16 @@ impl Render for ImportPage {
                     .gap_2()
                     .children({
                         OtherLauncher::iter().map(|launcher| {
+                            let icon = match launcher {
+                                OtherLauncher::Prism => "icons/brands/prism.svg",
+                                OtherLauncher::CurseForge => "icons/brands/curseforge.svg",
+                                OtherLauncher::Modrinth => "icons/brands/modrinth.svg",
+                                OtherLauncher::MultiMC => "icons/brands/multimc.svg",
+                                OtherLauncher::ATLauncher => "icons/brands/atlauncher.svg",
+                            };
                             Button::new(launcher.name())
                                 .label(launcher.name())
+                                .icon(gpui_component::Icon::default().path(icon))
                                 .ghost()
                                 .rounded(px(0.))
                                 .w_full()

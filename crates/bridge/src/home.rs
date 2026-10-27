@@ -7,6 +7,7 @@ pub struct HomePresentation {
     pub mod_count: Option<usize>,
     pub recommended_memory_mib: Option<u32>,
     pub last_destination: Option<String>,
+    pub last_world_icon: Option<PathBuf>,
     pub artwork: Option<PathBuf>,
     pub artwork_author: Option<String>,
     pub logo: Option<PathBuf>,

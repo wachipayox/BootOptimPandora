@@ -258,8 +258,19 @@ impl crate::BackendState {
                 .get_mut(id)
                 .and_then(|i| i.stats.get().last_destination.clone())
         });
+        let last_world_icon = id.and_then(|id| {
+            self.instance_state.write().instances.get_mut(id).and_then(|instance| {
+                let folder = instance.stats.get().last_world_folder.clone()?;
+                if !crate::fs::is_single_component_path_str(&folder) {
+                    return None;
+                }
+                let icon = instance.saves_path.join(folder).join("icon.png");
+                icon.is_file().then_some(icon)
+            })
+        });
         let mut out = HomePresentation {
             last_destination,
+            last_world_icon,
             profile_id: profile_id.clone(),
             mod_count,
             recommended_memory_mib: id.map(|_| crate::launch::memory::recommendation().recommended_mib),

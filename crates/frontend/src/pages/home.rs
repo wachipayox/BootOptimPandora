@@ -27,6 +27,9 @@ pub struct HomePage {
     news_loaded: bool,
     startup_cached: bool,
     artwork_image: crate::component::retained_image::RetainedImage,
+    blur_source: Option<Option<std::path::PathBuf>>,
+    artwork_blur: Option<Arc<RenderImage>>,
+    blur_task: Option<Task<()>>,
     logo_image: crate::component::retained_image::RetainedImage,
     requested: bool,
     refreshed: Instant,
@@ -112,6 +115,9 @@ impl HomePage {
             news_loaded: false,
             startup_cached: !std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page != "startup-live"),
             artwork_image: Default::default(),
+            blur_source: None,
+            artwork_blur: None,
+            blur_task: None,
             logo_image: Default::default(),
             requested: false,
             refreshed: Instant::now(),
@@ -143,6 +149,34 @@ impl HomePage {
             }
         }));
         page
+    }
+    fn prepare_artwork_blur(&mut self, cx: &mut Context<Self>) {
+        let source = self.presentation.artwork.clone();
+        if self.blur_source.as_ref() == Some(&source) {
+            return;
+        }
+        self.blur_source = Some(source.clone());
+        self.artwork_blur = None;
+        let expected = source.clone();
+        let work = cx.background_executor().spawn(async move {
+            let image = source.as_ref().and_then(|p| image::open(p).ok()).or_else(|| {
+                crate::Assets::get("images/artwork-vanilla.png").and_then(|a| image::load_from_memory(&a.data).ok())
+            })?;
+            let mut pixels = image.thumbnail(480, 240).blur(14.).to_rgba8();
+            for pixel in pixels.pixels_mut() {
+                pixel.0.swap(0, 2);
+            }
+            Some(Arc::new(RenderImage::new([image::Frame::new(pixels)])))
+        });
+        self.blur_task = Some(cx.spawn(async move |page, cx| {
+            let image = work.await;
+            _ = page.update(cx, |page, cx| {
+                if page.blur_source.as_ref() == Some(&expected) {
+                    page.artwork_blur = image;
+                    cx.notify();
+                }
+            });
+        }));
     }
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.requested {
@@ -510,6 +544,7 @@ impl Render for HomePage {
                 .map(|path| Resource::Path(Arc::from(path.as_path())))
                 .unwrap_or_else(|| Resource::Embedded(fallback.into()))
         };
+        self.prepare_artwork_blur(cx);
         let artwork = self.artwork_image.render(
             resource(&self.presentation.artwork, "images/artwork-vanilla.png"),
             "images/artwork-vanilla.png",
@@ -532,7 +567,17 @@ impl Render for HomePage {
             .w_full()
             .flex_shrink_0()
             .overflow_hidden()
-            .child(div().child(artwork).absolute().size_full())
+            .when_some(self.artwork_blur.clone(), |d, image| {
+                d.child(img(image).absolute().size_full().object_fit(ObjectFit::Cover))
+            })
+            .child(
+                div()
+                    .absolute()
+                    .size_full()
+                    .flex()
+                    .justify_center()
+                    .child(div().w_full().max_w(px(1920. / window.scale_factor())).h_full().child(artwork)),
+            )
             .child(div().absolute().bottom_0().w_full().h(relative(0.55)).bg(shade(0x06060700, 0x060607ff)))
             .child(
                 div()
@@ -658,7 +703,7 @@ impl Render for HomePage {
             h_flex()
                 .w(px(300.))
                 .gap(px(12.))
-                .child(img(ImageSource::Resource(Resource::Embedded("images/default_world.png".into()))).size(px(44.)))
+                .child(img(picture(&self.presentation.last_world_icon, "images/default_world.png")).size(px(44.)))
                 .child(
                     v_flex()
                         .gap(px(3.))

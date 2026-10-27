@@ -1,0 +1,7 @@
+Third-party marks identify their respective projects and are not endorsements.
+Fabric and NeoForge marks: Prism Launcher resources, GPL-3.0, https://github.com/PrismLauncher/PrismLauncher/tree/develop/launcher/resources/multimc/scalable/instances
+Forge mark: MinecraftForge official repository, https://github.com/MinecraftForge/MinecraftForge/blob/1.20.x/docs/assets/Forge_logo.svg
+Prism mark: Prism Launcher resources; logo CC BY-SA 4.0, https://prismlauncher.org/
+ATLauncher mark: Prism Launcher resources, GPL-3.0, https://github.com/PrismLauncher/PrismLauncher/blob/develop/launcher/resources/multimc/scalable/atlauncher.svg
+MultiMC mark: MultiMC official repository, https://github.com/MultiMC/Launcher/blob/develop/branding/logo.svg
+CurseForge and Modrinth marks: Simple Icons, CC0-1.0, https://github.com/simple-icons/simple-icons

@@ -375,14 +375,21 @@ impl CreateInstanceModalState {
             .into_iter()
             .enumerate()
             {
-                loaders =
-                    loaders.child(design::chip(("loader", index), label, self.selected_loader == loader).on_click(
-                        cx.listener(move |this, _, window, cx| {
+                let icon = match loader {
+                    Loader::Vanilla => None,
+                    Loader::Fabric => Some("icons/brands/fabric.svg"),
+                    Loader::Forge => Some("icons/brands/forge.svg"),
+                    Loader::NeoForge => Some("icons/brands/neoforge.svg"),
+                };
+                loaders = loaders.child(
+                    design::chip(("loader", index), label, self.selected_loader == loader)
+                        .when_some(icon, |chip, icon| chip.child(Icon::default().path(icon).size(px(18.))))
+                        .on_click(cx.listener(move |this, _, window, cx| {
                             this.selected_loader = loader;
                             this.load_loader_versions(window, cx);
                             cx.notify();
-                        }),
-                    ));
+                        })),
+                );
             }
             loader_button_group = loaders.into_any_element();
         };
