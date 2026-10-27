@@ -6,7 +6,7 @@ pub(super) const PRELOAD_LIMIT: Duration = Duration::from_secs(8);
 pub(super) const TRANSITION: Duration = Duration::from_millis(300);
 // A normal launch should finish its fade within two seconds of the window
 // opening, even when a local asset is unusually slow or unavailable.
-pub(super) const NORMAL_PRELOAD_LIMIT: Duration = Duration::from_millis(1700);
+pub(super) const NORMAL_PRELOAD_LIMIT: Duration = Duration::from_millis(1600);
 pub(super) const AUDIO_FADE: Duration = Duration::from_millis(150);
 
 pub(super) fn initial_size(scale: f32, available: [f32; 2], minimum: [f32; 2]) -> [f32; 2] {
@@ -110,8 +110,8 @@ mod tests {
             false
         ));
         assert!(may_reveal(Duration::ZERO, Duration::ZERO, true, IntroKind::None, false));
-        assert!(!may_reveal(Duration::from_millis(1699), Duration::ZERO, false, IntroKind::None, false));
-        assert!(may_reveal(Duration::from_millis(1700), Duration::ZERO, false, IntroKind::None, false));
+        assert!(!may_reveal(Duration::from_millis(1599), Duration::ZERO, false, IntroKind::None, false));
+        assert!(may_reveal(Duration::from_millis(1600), Duration::ZERO, false, IntroKind::None, false));
         assert!(may_reveal(Duration::from_secs(1), Duration::ZERO, true, IntroKind::Update, true));
         assert!(!may_reveal(Duration::from_secs(1), Duration::ZERO, false, IntroKind::Update, true));
         // A stalled audio/device/frame callback cannot extend the absolute cap.

@@ -222,7 +222,7 @@ Startup uses a native six-second GPUI vector intro on first installation and
 after a launcher version change. Normal visible launches show its final vector
 frame while local visual assets load, then fade into the interface over 300 ms.
 Preloading never waits for network requests. During the intro it waits at most
-eight seconds; on a normal launch it begins the 300 ms fade within 1.7 seconds.
+eight seconds; on a normal launch it requests the 300 ms fade after at most 1.6 seconds.
 CLI launches and background operation bypass this presentation.
 The initial content size is 1600 × 900 physical pixels, fitted to the monitor
 and the 960 × 600 logical minimum; subsequent launches retain the saved size.
