@@ -1344,6 +1344,7 @@ impl Window {
             window_background,
             app_id,
             window_min_size,
+            manual_resize_constraints,
             window_decorations,
             #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(unused_variables))]
             icon,
@@ -1368,6 +1369,7 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
+                manual_resize_constraints,
                 app_id: app_id.clone(),
                 icon,
                 #[cfg(target_os = "macos")]

@@ -28,10 +28,11 @@ param(
     [string]$HitTestReferenceDirectory,
     [switch]$DragRegions,
     [switch]$ResizeProbe,
+    [switch]$SizingProbe,
     [string]$PortableDirectory
 )
 $ErrorActionPreference = 'Stop'
-if (($HitTest -or $DragRegions -or $ResizeProbe) -and -not $Framebuffer) { throw 'Native diagnostics require -Framebuffer.' }
+if (($HitTest -or $DragRegions -or $ResizeProbe -or $SizingProbe) -and -not $Framebuffer) { throw 'Native diagnostics require -Framebuffer.' }
 if ($OversizedViewport -and (-not $Framebuffer -or -not $DesignViewport)) { throw 'Oversized viewport requires an explicit design viewport and native framebuffer evidence.' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $outputPath = [IO.Path]::GetFullPath($Output)
@@ -66,6 +67,7 @@ public static class CaptureWindow {
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
   [StructLayout(LayoutKind.Sequential)] public struct MINMAXINFO { public POINT reserved, maxSize, maxPosition, minTrackSize, maxTrackSize; }
   [DllImport("user32.dll", EntryPoint="SendMessageW")] private static extern IntPtr ReadMinMax(IntPtr hwnd, uint message, IntPtr wparam, ref MINMAXINFO info);
+  [DllImport("user32.dll", EntryPoint="SendMessageW")] public static extern IntPtr SendSizing(IntPtr hwnd, uint message, IntPtr edge, ref RECT rect);
   public static MINMAXINFO GetMinMax(IntPtr hwnd) { var info=new MINMAXINFO(); ReadMinMax(hwnd,0x24,IntPtr.Zero,ref info); return info; }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -512,6 +514,26 @@ try {
             if($dialogOwner -ne $proc.Id -or ([CaptureWindow]::GetWindowLongPtr($captureHandle,-16).ToInt64() -band 0x40000) -ne 0){throw 'Standalone dialog HWND is not the active owned nonresizable window.'}
         }
         Save-Window (Join-Path $outputPath $screen.file) $captureHandle $proc.Id
+        if ($SizingProbe) {
+            $outer=New-Object CaptureWindow+RECT; $client=New-Object CaptureWindow+RECT
+            if (-not [CaptureWindow]::GetWindowRect($captureHandle,[ref]$outer) -or -not [CaptureWindow]::GetClientRect($captureHandle,[ref]$client)) { throw 'Cannot read sizing probe bounds.' }
+            $frameWidth=($outer.Right-$outer.Left)-($client.Right-$client.Left)
+            $frameHeight=($outer.Bottom-$outer.Top)-($client.Bottom-$client.Top)
+            $dpi=[CaptureWindow]::GetDpiForWindow($captureHandle); $scale=$dpi/96.0
+            $cap=[Math]::Max(960*$scale,1920+220*$scale)
+            $checks=@()
+            foreach ($case in @(@{name='wide';width=3200;height=800;edge=2},@{name='tall';width=1200;height=1500;edge=6},@{name='valid';width=1600;height=900;edge=8})) {
+                $rect=New-Object CaptureWindow+RECT; $rect.Left=100; $rect.Top=100
+                $rect.Right=$rect.Left+$case.width+$frameWidth; $rect.Bottom=$rect.Top+$case.height+$frameHeight
+                $reply=[CaptureWindow]::SendSizing($captureHandle,0x214,[IntPtr]$case.edge,[ref]$rect).ToInt64()
+                $width=$rect.Right-$rect.Left-$frameWidth; $height=$rect.Bottom-$rect.Top-$frameHeight; $ratio=$width/[double]$height
+                $ok=$reply -eq 1 -and $width -le ($cap+2) -and $ratio -ge 1.598 -and $ratio -le 2.002
+                if ($case.name -eq 'valid') { $ok=$ok -and [Math]::Abs($width-$case.width) -le 2 -and [Math]::Abs($height-$case.height) -le 2 }
+                $checks+=@{name=$case.name;requested=@($case.width,$case.height);client=@($width,$height);ratio=$ratio;reply=$reply;passed=$ok}
+                if (-not $ok) { throw "Native WM_SIZING failed: $($case.name), $width x $height, reply $reply" }
+            }
+            $checks | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $outputPath 'sizing-probe.json')
+        }
         if ($screen.page -like 'startup-bench:*' -or $screen.page -eq 'startup-live') {
             Copy-Item -LiteralPath (Join-Path $tempRoot 'WachilandLauncher/launcher.log') -Destination (Join-Path $outputPath ($screen.file -replace '\.png$', '.log')) -Force
         }

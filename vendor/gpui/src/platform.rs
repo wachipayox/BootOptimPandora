@@ -1902,6 +1902,9 @@ pub struct WindowOptions {
     /// Window minimum size
     pub window_min_size: Option<Size<Pixels>>,
 
+    /// Optional bounds for user resizing in the normal window state. Maximizing and fullscreen remain unrestricted.
+    pub manual_resize_constraints: Option<ManualResizeConstraints>,
+
     /// Whether to use client or server-side decorations on X11 and Wayland.
     /// The platform may ignore requests it cannot satisfy.
     pub window_decorations: Option<WindowDecorations>,
@@ -1974,8 +1977,62 @@ pub struct WindowParams {
 
     pub window_min_size: Option<Size<Pixels>>,
 
+    pub manual_resize_constraints: Option<ManualResizeConstraints>,
+
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
+}
+
+/// Bounds for the client area while the user resizes a normal window.
+#[derive(Debug, Clone, Copy)]
+pub struct ManualResizeConstraints {
+    /// Minimum width-to-height ratio for the client area.
+    pub min_aspect: f32,
+    /// Maximum width-to-height ratio for the client area.
+    pub max_aspect: f32,
+    /// Maximum width of the resizable content in physical pixels.
+    pub max_content_width_physical: f32,
+    /// Width of fixed chrome in logical pixels, added to the content cap.
+    pub fixed_width_logical: f32,
+}
+
+impl ManualResizeConstraints {
+    /// Clamp a requested client size, respecting a logical minimum and physical content width.
+    pub fn constrain(&self, requested: Size<Pixels>, scale: f32, minimum: Size<Pixels>) -> Size<Pixels> {
+        let scale = scale.max(0.01);
+        let minimum_width = minimum.width.as_f32().max(minimum.height.as_f32() * self.min_aspect);
+        let maximum_width = (self.max_content_width_physical / scale + self.fixed_width_logical).max(minimum_width);
+        let width = requested.width.as_f32().clamp(minimum_width, maximum_width);
+        let min_height = minimum.height.as_f32().max(width / self.max_aspect);
+        let max_height = (width / self.min_aspect).max(min_height);
+        let height = requested.height.as_f32().clamp(min_height, max_height);
+        size(px(width), px(height))
+    }
+}
+
+#[cfg(test)]
+mod manual_resize_tests {
+    use super::*;
+
+    #[test]
+    fn normal_window_keeps_aspect_minimum_and_physical_content_cap() {
+        let limits = ManualResizeConstraints {
+            min_aspect: 1.6,
+            max_aspect: 2.,
+            max_content_width_physical: 1920.,
+            fixed_width_logical: 220.,
+        };
+        let minimum = size(px(960.), px(600.));
+        let too_wide = limits.constrain(size(px(3000.), px(600.)), 1.25, minimum);
+        assert_eq!(too_wide.width, px(1756.));
+        assert_eq!(too_wide.height, px(878.));
+        let too_tall = limits.constrain(size(px(960.), px(1200.)), 1., minimum);
+        assert_eq!(too_tall, size(px(960.), px(600.)));
+        let valid = size(px(1280.), px(720.));
+        assert_eq!(limits.constrain(valid, 1.25, minimum), valid);
+        // Very high display scaling must never defeat the interface minimum.
+        assert_eq!(limits.constrain(size(px(2000.), px(1200.)), 4., minimum), minimum);
+    }
 }
 
 /// Represents the status of how a window should be opened.
@@ -2035,6 +2092,7 @@ impl Default for WindowOptions {
             icon: None,
             app_id: None,
             window_min_size: None,
+            manual_resize_constraints: None,
             window_decorations: None,
             tabbing_identifier: None,
         }

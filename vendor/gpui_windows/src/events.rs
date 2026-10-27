@@ -93,6 +93,7 @@ impl WindowsWindowInner {
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
             WM_GETMINMAXINFO => self.handle_get_min_max_info_msg(lparam),
+            WM_SIZING => self.handle_manual_sizing(wparam, lparam),
             WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => self.handle_size_move_loop(handle),
             WM_EXITSIZEMOVE | WM_EXITMENULOOP => self.handle_size_move_loop_exit(handle),
             WM_TIMER => self.handle_timer_msg(handle, wparam),
@@ -214,6 +215,37 @@ impl WindowsWindowInner {
                 min_size.height.scale(scale_factor).as_f32() as i32 + boarder_offset.height_offset.get();
         }
         Some(0)
+    }
+
+    fn handle_manual_sizing(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        let constraints = self.state.manual_resize_constraints?;
+        if self.state.is_maximized() || self.state.is_fullscreen() || lparam.0 == 0 {
+            return None;
+        }
+        let rect = unsafe { &mut *(lparam.0 as *mut RECT) };
+        let scale = self.state.scale_factor.get().max(0.01);
+        let border_width = self.state.border_offset.width_offset.get();
+        let border_height = self.state.border_offset.height_offset.get();
+        let requested = size(
+            px(((rect.right - rect.left - border_width).max(1) as f32) / scale),
+            px(((rect.bottom - rect.top - border_height).max(1) as f32) / scale),
+        );
+        let minimum = self.state.min_size.unwrap_or_else(|| size(px(1.), px(1.)));
+        let constrained = constraints.constrain(requested, scale, minimum);
+        let width = (constrained.width.as_f32() * scale).round() as i32 + border_width;
+        let height = (constrained.height.as_f32() * scale).round() as i32 + border_height;
+        // WMSZ_LEFT/TOPLEFT/BOTTOMLEFT preserve the right edge. Top edges preserve the bottom.
+        if matches!(wparam.0, 1 | 4 | 7) {
+            rect.left = rect.right - width;
+        } else {
+            rect.right = rect.left + width;
+        }
+        if matches!(wparam.0, 3 | 4 | 5) {
+            rect.top = rect.bottom - height;
+        } else {
+            rect.bottom = rect.top + height;
+        }
+        Some(1)
     }
 
     fn handle_size_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {

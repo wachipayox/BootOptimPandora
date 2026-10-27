@@ -286,6 +286,12 @@ pub fn open_main_window(
     // native window controls always keep their full width.
     const MIN_WIDTH: f32 = 960.;
     const MIN_HEIGHT: f32 = 600.;
+    let resize_constraints = ManualResizeConstraints {
+        min_aspect: 1.6,
+        max_aspect: 2.0,
+        max_content_width_physical: 1920.,
+        fixed_width_logical: 220.,
+    };
 
     // A display override should use that display's default placement, not coordinates saved for another screen.
     let window_bounds = if display_id.is_some() {
@@ -316,12 +322,31 @@ pub fn open_main_window(
             [MIN_WIDTH, MIN_HEIGHT],
         )))
     });
+    let display_scale = display_id
+        .and_then(|id| cx.displays().into_iter().find(|display| display.id() == id))
+        .or_else(|| cx.primary_display())
+        .map(|display| display.scale_factor())
+        .unwrap_or(1.);
+    let window_bounds = window_bounds.map(|state| {
+        let constrain = |bounds: Bounds<Pixels>| {
+            Bounds::new(
+                bounds.origin,
+                resize_constraints.constrain(bounds.size, display_scale, size(px(MIN_WIDTH), px(MIN_HEIGHT))),
+            )
+        };
+        match state {
+            WindowBounds::Windowed(bounds) => WindowBounds::Windowed(constrain(bounds)),
+            WindowBounds::Maximized(bounds) => WindowBounds::Maximized(constrain(bounds)),
+            WindowBounds::Fullscreen(bounds) => WindowBounds::Fullscreen(constrain(bounds)),
+        }
+    });
     crate::root::set_should_render_custom_titlebar(use_custom_titlebar);
     let handle = cx
         .open_window(
             WindowOptions {
                 app_id: Some("PandoraLauncher".into()),
                 window_min_size: Some(size(px(MIN_WIDTH), px(MIN_HEIGHT))),
+                manual_resize_constraints: Some(resize_constraints),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Wachiland Launcher".into()),
                     appears_transparent: use_custom_titlebar,
@@ -432,6 +457,21 @@ pub fn open_main_window(
                 }
                 let launcher_root = cx.new(|cx| {
                     cx.observe_window_bounds(window, move |_, window, cx| {
+                        #[cfg(not(target_os = "windows"))]
+                        if !window.is_maximized() && !window.is_fullscreen() {
+                            let current = window.viewport_size();
+                            let target = resize_constraints.constrain(
+                                current,
+                                window.scale_factor(),
+                                size(px(MIN_WIDTH), px(MIN_HEIGHT)),
+                            );
+                            if (current.width.as_f32() - target.width.as_f32()).abs() > 1.
+                                || (current.height.as_f32() - target.height.as_f32()).abs() > 1.
+                            {
+                                window.resize(target);
+                                return;
+                            }
+                        }
                         // On Windows the drawable viewport is not the placement rectangle used
                         // to reopen a borderless window. Persist GPUI's restore bounds so the
                         // invisible resize frame is not added again on each launch.

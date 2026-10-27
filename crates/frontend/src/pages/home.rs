@@ -27,10 +27,6 @@ pub struct HomePage {
     news_loaded: bool,
     startup_cached: bool,
     artwork_image: crate::component::retained_image::RetainedImage,
-    blur_source: Option<Option<std::path::PathBuf>>,
-    artwork_blur: Option<Arc<RenderImage>>,
-    artwork_feathered: Option<Arc<RenderImage>>,
-    blur_task: Option<Task<()>>,
     logo_image: crate::component::retained_image::RetainedImage,
     requested: bool,
     refreshed: Instant,
@@ -116,10 +112,6 @@ impl HomePage {
             news_loaded: false,
             startup_cached: !std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page != "startup-live"),
             artwork_image: Default::default(),
-            blur_source: None,
-            artwork_blur: None,
-            artwork_feathered: None,
-            blur_task: None,
             logo_image: Default::default(),
             requested: false,
             refreshed: Instant::now(),
@@ -151,53 +143,6 @@ impl HomePage {
             }
         }));
         page
-    }
-    fn prepare_artwork_blur(&mut self, cx: &mut Context<Self>) {
-        let source = self.presentation.artwork.clone();
-        if self.blur_source.as_ref() == Some(&source) {
-            return;
-        }
-        self.blur_source = Some(source.clone());
-        self.artwork_blur = None;
-        self.artwork_feathered = None;
-        let expected = source.clone();
-        let work = cx.background_executor().spawn(async move {
-            let image = source.as_ref().and_then(|p| image::open(p).ok()).or_else(|| {
-                crate::Assets::get("images/artwork-vanilla.png").and_then(|a| image::load_from_memory(&a.data).ok())
-            })?;
-            let mut pixels = image.thumbnail(480, 240).blur(14.).to_rgba8();
-            for pixel in pixels.pixels_mut() {
-                pixel.0.swap(0, 2);
-            }
-            let mut foreground = image.to_rgba8();
-            let width = foreground.width();
-            let height = foreground.height();
-            let feather_x = (width / 20).max(1);
-            let feather_y = (height / 20).max(1);
-            for (x, y, pixel) in foreground.enumerate_pixels_mut() {
-                let alpha_x = x.min(width - 1 - x) as f32 / feather_x as f32;
-                let alpha_y = y.min(height - 1 - y) as f32 / feather_y as f32;
-                let alpha = alpha_x.min(alpha_y).min(1.);
-                pixel.0[3] = (pixel.0[3] as f32 * alpha).round() as u8;
-                pixel.0.swap(0, 2);
-            }
-            Some((
-                Arc::new(RenderImage::new([image::Frame::new(pixels)])),
-                Arc::new(RenderImage::new([image::Frame::new(foreground)])),
-            ))
-        });
-        self.blur_task = Some(cx.spawn(async move |page, cx| {
-            let image = work.await;
-            _ = page.update(cx, |page, cx| {
-                if page.blur_source.as_ref() == Some(&expected) {
-                    if let Some((background, foreground)) = image {
-                        page.artwork_blur = Some(background);
-                        page.artwork_feathered = Some(foreground);
-                    }
-                    cx.notify();
-                }
-            });
-        }));
     }
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.requested {
@@ -572,16 +517,6 @@ impl Render for HomePage {
                 .unwrap_or_else(|| Resource::Embedded(fallback.into()))
         };
         let hero_height = (window.viewport_size().height.as_f32() * 0.64).clamp(320., 1000.);
-        let source_height = if self.presentation.artwork.is_some() {
-            760.
-        } else {
-            1125.
-        };
-        let needs_artwork_fill = window.viewport_size().width.as_f32() > 220. + 1920. / window.scale_factor()
-            || hero_height > source_height / window.scale_factor();
-        if needs_artwork_fill {
-            self.prepare_artwork_blur(cx);
-        }
         let artwork = self.artwork_image.render(
             resource(&self.presentation.artwork, "images/artwork-vanilla.png"),
             "images/artwork-vanilla.png",
@@ -590,15 +525,6 @@ impl Render for HomePage {
             window,
             cx,
         );
-        let artwork = if needs_artwork_fill {
-            if let Some(foreground) = &self.artwork_feathered {
-                img(foreground.clone()).size_full().object_fit(ObjectFit::Cover).into_any_element()
-            } else {
-                artwork
-            }
-        } else {
-            artwork
-        };
         let logo = self.logo_image.render(
             resource(&self.presentation.logo, "images/logo-vanilla.png"),
             "images/logo-vanilla.png",
@@ -613,27 +539,7 @@ impl Render for HomePage {
             .w_full()
             .flex_shrink_0()
             .overflow_hidden()
-            .when(self.artwork_blur.is_none(), |d| {
-                d.child(
-                    img(picture(&self.presentation.artwork, "images/artwork-vanilla.png"))
-                        .absolute()
-                        .size_full()
-                        .object_fit(ObjectFit::Cover),
-                )
-            })
-            .when_some(self.artwork_blur.clone(), |d, image| {
-                d.child(img(image).absolute().size_full().object_fit(ObjectFit::Cover))
-            })
-            .child(
-                div().absolute().size_full().flex().items_center().justify_center().child(
-                    div()
-                        .w_full()
-                        .max_w(px(1920. / window.scale_factor()))
-                        .h_full()
-                        .max_h(px(source_height / window.scale_factor()))
-                        .child(artwork),
-                ),
-            )
+            .child(div().absolute().size_full().child(artwork))
             .child(div().absolute().bottom_0().w_full().h(relative(0.55)).bg(shade(0x06060700, 0x060607ff)))
             .child(
                 div()

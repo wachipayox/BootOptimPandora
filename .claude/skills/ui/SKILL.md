@@ -101,6 +101,10 @@ the existing backend message. Clean up its exact owned path afterwards.
 `backdrop-probe -ResizeProbe` isolates the app surface and retains the first
 fresh GPU draw armed before each resize, instead of waiting for the backdrop
 worker; compare it with the settled frame to detect blank resize frames.
+`-SizingProbe -Framebuffer -DesignViewport` sends `WM_SIZING` with synthetic
+rectangles to the owned normal window and records the returned bounds; it does
+not drag the window or test maximizing by double click. Manual size constraints
+do not apply to maximized or fullscreen windows.
 
 All ordinary capture routes bypass startup presentation. `-StartupScreens`
 adds deterministic vector reference frames (`startup-frame:<seconds>`),
