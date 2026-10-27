@@ -8,6 +8,7 @@ pub(super) const TRANSITION: Duration = Duration::from_millis(300);
 // opening, even when a local asset is unusually slow or unavailable.
 pub(super) const NORMAL_PRELOAD_LIMIT: Duration = Duration::from_millis(1600);
 pub(super) const AUDIO_FADE: Duration = Duration::from_millis(150);
+pub(super) const AUDIO_TAIL: Duration = Duration::from_millis(400);
 
 pub(super) fn initial_size(scale: f32, available: [f32; 2], minimum: [f32; 2]) -> [f32; 2] {
     let scale = if scale.is_finite() && scale > 0. { scale } else { 1. };
@@ -35,6 +36,10 @@ pub(super) fn preload_limit(intro: IntroKind) -> Duration {
     } else {
         PRELOAD_LIMIT
     }
+}
+
+pub(super) fn audio_fade_due(animation_elapsed: Duration, elapsed: Duration, limit: Duration) -> bool {
+    animation_elapsed >= INTRO + AUDIO_TAIL - AUDIO_FADE || elapsed >= limit
 }
 
 pub(super) fn intro_kind(existing_install: bool, last_version: Option<&str>, current: &str) -> IntroKind {
@@ -67,7 +72,7 @@ pub(super) fn choose_track<'a>(tracks: &'a [String], last: Option<&str>, random:
 
 #[cfg(test)]
 mod tests {
-    use super::{IntroKind, choose_track, initial_size, intro_kind, may_reveal};
+    use super::{IntroKind, audio_fade_due, choose_track, initial_size, intro_kind, may_reveal};
     use std::time::Duration;
     #[test]
     fn recommended_client_size_uses_physical_pixels_and_keeps_the_existing_minimum() {
@@ -117,6 +122,14 @@ mod tests {
         // A stalled audio/device/frame callback cannot extend the absolute cap.
         assert!(may_reveal(Duration::from_secs(8), Duration::ZERO, true, IntroKind::Update, false));
         assert!(may_reveal(Duration::from_secs(8), Duration::ZERO, false, IntroKind::Update, false));
+    }
+
+    #[test]
+    fn intro_audio_tail_fades_after_the_video_but_respects_the_absolute_limit() {
+        let limit = Duration::from_secs(8);
+        assert!(!audio_fade_due(Duration::from_millis(6249), Duration::from_secs(6), limit));
+        assert!(audio_fade_due(Duration::from_millis(6250), Duration::from_secs(6), limit));
+        assert!(audio_fade_due(Duration::ZERO, limit, limit));
     }
 
     #[test]

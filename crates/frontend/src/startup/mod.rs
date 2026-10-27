@@ -6,7 +6,7 @@ pub(crate) mod vector;
 
 use crate::interface_config::InterfaceConfig;
 use gpui::{prelude::*, *};
-use policy::{INTRO, IntroKind, TRANSITION, intro_kind, may_reveal, preload_limit};
+use policy::{INTRO, IntroKind, TRANSITION, audio_fade_due, intro_kind, may_reveal, preload_limit};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -172,7 +172,7 @@ impl Controller {
         }
         let animation_elapsed = self.clock.map(|clock| now.duration_since(clock)).unwrap_or_default();
         let limit = preload_limit(self.kind);
-        if animation_elapsed >= INTRO || elapsed >= limit {
+        if audio_fade_due(animation_elapsed, elapsed, limit) {
             if let Some(audio) = &self.audio {
                 audio.fade();
             }
@@ -200,6 +200,15 @@ impl Controller {
                 .unwrap_or(0.);
         if opacity <= 0. {
             cx.global_mut::<Session>().active = false;
+            // The approved music has a short decay after the six-second
+            // animation. Keep its worker alive while the last fade drains.
+            if let Some(audio) = self.audio.take() {
+                cx.spawn(async move |cx| {
+                    cx.background_executor().timer(std::time::Duration::from_millis(300)).await;
+                    drop(audio);
+                })
+                .detach();
+            }
             window.refresh();
             return None;
         }
