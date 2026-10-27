@@ -228,12 +228,14 @@ The initial content size is 1600 × 900 physical pixels, fitted to the monitor
 and the 960 × 600 logical minimum; subsequent launches retain the saved size.
 The vector palette and decorative patterns continue across other aspect ratios.
 
-Optional intro music is embedded from `assets/splash-music/*.ogg`. Tracks must
-be **Ogg Vorbis, stereo, 48 kHz**; Opus is unsupported. No tracks ship by default.
+Intro music is embedded from `assets/splash-music/*.ogg`. Tracks must be
+**Ogg Vorbis, stereo, 48 kHz**; Opus is unsupported. The two bundled tracks
+were supplied by the project owner, who approved their public redistribution.
 Windows playback uses shared-mode WASAPI and respects the system/application
 mixer; Linux and macOS currently run the same vector intro silently. Selection
-avoids immediately repeating the last track when alternatives exist. Skipping
-with click or Esc fades music out over 150 ms. Missing/invalid audio never
+avoids immediately repeating the last track when alternatives exist. The
+ending can decay briefly over Home; skipping with click or Esc fades music out
+over 150 ms. Missing/invalid audio never
 prevents the animation or interface from opening.
 
 UI capture instructions are in the [UI workflow](.claude/skills/ui/SKILL.md).

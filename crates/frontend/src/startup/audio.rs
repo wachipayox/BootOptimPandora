@@ -182,6 +182,7 @@ mod wasapi {
                 let mut cursor = 0usize;
                 let mut fade_frame = None;
                 let mut started = false;
+                let mut playback_started = None;
                 loop {
                     while let Ok(command) = commands.try_recv() {
                         match command {
@@ -215,6 +216,7 @@ mod wasapi {
                         self.client.Start()?;
                         let start = Instant::now();
                         *clock.lock().unwrap() = Some(start);
+                        playback_started = Some(start);
                         started = true;
                         log::info!("startup-audio-start pid={} queued_frames={}", std::process::id(), frames);
                     }
@@ -229,6 +231,13 @@ mod wasapi {
                             std::thread::sleep(Duration::from_millis(2));
                         }
                         self.client.Stop()?;
+                        if let Some(start) = playback_started {
+                            log::info!(
+                                "startup-audio-finished pid={} playback_ms={}",
+                                std::process::id(),
+                                start.elapsed().as_millis()
+                            );
+                        }
                         return Ok(());
                     }
                     std::thread::sleep(Duration::from_millis(2));

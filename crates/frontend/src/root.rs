@@ -187,13 +187,21 @@ impl Render for LauncherRoot {
         #[cfg(feature = "ui-capture")]
         let startup_layer = startup_layer.or_else(|| {
             let page = std::env::var("WBOMBO_UI_CAPTURE_PAGE").ok()?;
-            let progress = page.strip_prefix("startup-transition:")?.parse::<f32>().ok()?.clamp(0., 1.);
+            let opacity = if let Some(progress) = page.strip_prefix("startup-transition:") {
+                1. - progress.parse::<f32>().ok()?.clamp(0., 1.)
+            } else {
+                page.strip_prefix("startup-dialog:")
+                    .or_else(|| page.strip_prefix("startup-dialog-before:"))?
+                    .parse::<f32>()
+                    .ok()?
+                    .clamp(0., 1.)
+            };
             Some(
                 div()
                     .absolute()
                     .inset_0()
                     .size_full()
-                    .opacity(1. - progress)
+                    .opacity(opacity)
                     .child(crate::startup::vector::frame(6.))
                     .into_any_element(),
             )
@@ -206,7 +214,7 @@ impl Render for LauncherRoot {
             window.on_next_frame(move |_, cx| cx.notify(root));
         }
         let startup_layer = startup_layer.map(|layer| {
-            div()
+            let overlay = div()
                 .id("startup-presentation")
                 .absolute()
                 .inset_0()
@@ -222,7 +230,15 @@ impl Render for LauncherRoot {
                         cx.stop_propagation();
                         cx.notify();
                     }),
-                )
+                );
+            // Dialogs, sheets and popovers use deferred drawing. A normal
+            // sibling painted last still ends up below them; put the splash
+            // above every deferred UI layer until its fade has completed.
+            #[cfg(feature = "ui-capture")]
+            if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page.starts_with("startup-dialog-before:")) {
+                return overlay.into_any_element();
+            }
+            deferred(overlay).with_priority(usize::MAX).into_any_element()
         });
 
         v_flex()
