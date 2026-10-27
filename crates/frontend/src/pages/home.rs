@@ -470,6 +470,12 @@ impl Render for HomePage {
             return div().size_full().child(self.news_page.clone().unwrap()).into_any_element();
         }
         let instance = self.instance.as_ref().map(|i| i.read(cx).clone());
+        #[cfg(feature = "ui-capture")]
+        if instance.is_some()
+            && std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-running" || p == "home-optimizing")
+        {
+            log::info!("home-fixture-ready pid={}", std::process::id());
+        }
         let mut server = None;
         let mut server_loading = false;
         if let Some(i) = &instance {
@@ -635,7 +641,14 @@ impl Render for HomePage {
             }
             let id = i.id;
             let name = i.name.clone();
-            let state = i.status;
+            #[allow(unused_mut)]
+            let mut state = i.status;
+            #[cfg(feature = "ui-capture")]
+            match std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() {
+                Ok("home-running") => state = InstanceStatus::Running,
+                Ok("home-optimizing") => state = InstanceStatus::Optimizing,
+                _ => {},
+            }
             match state {
                 InstanceStatus::Launching => {
                     play = PlayButton::new("home-play", "Abriendo Minecraft", None).title("Iniciando").disabled(true)

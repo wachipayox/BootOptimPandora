@@ -376,9 +376,9 @@ pub fn open_main_window(
                     }
                 }
                 match capture_page.as_deref() {
-                    Some("instances" | "home-menu" | "home-news" | "sidebar-scroll") => {
-                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances
-                    },
+                    Some(
+                        "instances" | "home-menu" | "home-news" | "home-running" | "home-optimizing" | "sidebar-scroll",
+                    ) => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances,
                     Some(name) if name.starts_with("news-") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
                     },
