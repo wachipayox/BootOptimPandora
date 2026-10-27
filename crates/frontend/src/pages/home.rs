@@ -797,7 +797,16 @@ impl Render for HomePage {
                 ),
         );
         if !self.news_loaded {
-            news_section = news_section.child(div().py(px(24.)).text_color(rgb(theme::INK_MUTED)).child("CARGANDO"));
+            news_section = news_section.child(
+                div()
+                    .w_full()
+                    .py(px(24.))
+                    .text_center()
+                    .font_family(theme::DISPLAY)
+                    .text_size(px(11.))
+                    .text_color(rgb(theme::INK_MUTED))
+                    .child("CARGANDO"),
+            );
         } else if news.is_empty() {
             news_section = news_section.child(div().py(px(24.)).text_color(rgb(theme::INK_MUTED)).child(
                 if self.presentation.news_failed {
