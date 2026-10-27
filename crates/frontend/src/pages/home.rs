@@ -171,10 +171,13 @@ impl HomePage {
             }
             let mut foreground = image.to_rgba8();
             let width = foreground.width();
-            let feather = (width / 20).max(1);
-            for (x, _, pixel) in foreground.enumerate_pixels_mut() {
-                let distance = x.min(width - 1 - x);
-                let alpha = (distance as f32 / feather as f32).min(1.);
+            let height = foreground.height();
+            let feather_x = (width / 20).max(1);
+            let feather_y = (height / 20).max(1);
+            for (x, y, pixel) in foreground.enumerate_pixels_mut() {
+                let alpha_x = x.min(width - 1 - x) as f32 / feather_x as f32;
+                let alpha_y = y.min(height - 1 - y) as f32 / feather_y as f32;
+                let alpha = alpha_x.min(alpha_y).min(1.);
                 pixel.0[3] = (pixel.0[3] as f32 * alpha).round() as u8;
                 pixel.0.swap(0, 2);
             }
@@ -568,8 +571,15 @@ impl Render for HomePage {
                 .map(|path| Resource::Path(Arc::from(path.as_path())))
                 .unwrap_or_else(|| Resource::Embedded(fallback.into()))
         };
-        let wide_artwork = window.viewport_size().width.as_f32() > 220. + 1920. / window.scale_factor();
-        if wide_artwork {
+        let hero_height = (window.viewport_size().height.as_f32() * 0.64).clamp(320., 1000.);
+        let source_height = if self.presentation.artwork.is_some() {
+            760.
+        } else {
+            1125.
+        };
+        let needs_artwork_fill = window.viewport_size().width.as_f32() > 220. + 1920. / window.scale_factor()
+            || hero_height > source_height / window.scale_factor();
+        if needs_artwork_fill {
             self.prepare_artwork_blur(cx);
         }
         let artwork = self.artwork_image.render(
@@ -580,7 +590,7 @@ impl Render for HomePage {
             window,
             cx,
         );
-        let artwork = if wide_artwork {
+        let artwork = if needs_artwork_fill {
             if let Some(foreground) = &self.artwork_feathered {
                 img(foreground.clone()).size_full().object_fit(ObjectFit::Cover).into_any_element()
             } else {
@@ -599,7 +609,7 @@ impl Render for HomePage {
         );
         let hero = div()
             .relative()
-            .h(px(440.))
+            .h(px(hero_height))
             .w_full()
             .flex_shrink_0()
             .overflow_hidden()
@@ -615,12 +625,14 @@ impl Render for HomePage {
                 d.child(img(image).absolute().size_full().object_fit(ObjectFit::Cover))
             })
             .child(
-                div()
-                    .absolute()
-                    .size_full()
-                    .flex()
-                    .justify_center()
-                    .child(div().w_full().max_w(px(1920. / window.scale_factor())).h_full().child(artwork)),
+                div().absolute().size_full().flex().items_center().justify_center().child(
+                    div()
+                        .w_full()
+                        .max_w(px(1920. / window.scale_factor()))
+                        .h_full()
+                        .max_h(px(source_height / window.scale_factor()))
+                        .child(artwork),
+                ),
             )
             .child(div().absolute().bottom_0().w_full().h(relative(0.55)).bg(shade(0x06060700, 0x060607ff)))
             .child(
