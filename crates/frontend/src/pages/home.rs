@@ -278,12 +278,8 @@ impl HomePage {
                 }),
         );
         if let Some(players) = online.filter(|p| !p.sample.is_empty()) {
-            let extra = players.online.saturating_sub(7);
-            let shown = if players.online > 8 && players.sample.len() > 7 {
-                7
-            } else {
-                8
-            };
+            let shown = players.sample.len().min(15);
+            let extra = players.online.saturating_sub(shown as i32);
             panel = panel.child(
                 h_flex()
                     .flex_wrap()
@@ -300,7 +296,7 @@ impl HomePage {
                         ))
                         .size(px(20.))
                     }))
-                    .when(shown == 7, |d| {
+                    .when(extra > 0, |d| {
                         d.child(
                             div()
                                 .size(px(20.))
