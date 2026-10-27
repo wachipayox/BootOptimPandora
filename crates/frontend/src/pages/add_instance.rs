@@ -33,7 +33,7 @@ impl AddInstancePage {
         });
         let import = cx.new(|cx| ImportPage::new(data, window, cx));
         let tab = match std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() {
-            Ok("add-local") => 1,
+            Ok("add-local" | "add-local-fabric" | "add-local-forge" | "add-local-neoforge") => 1,
             Ok("import") => 2,
             _ => 0,
         };

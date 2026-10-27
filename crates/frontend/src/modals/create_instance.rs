@@ -33,6 +33,25 @@ use crate::{
     png_render_cache,
 };
 
+fn forge_matches_minecraft(loader_version: &str, minecraft: &str) -> bool {
+    loader_version.split_once('-').is_some_and(|(version, _)| version == minecraft)
+}
+
+fn neoforge_matches_minecraft(loader_version: &str, minecraft: &str) -> bool {
+    let mut parts = VersionFragment::string_to_parts(minecraft);
+    if parts.first() == Some(&VersionFragment::String("25w14craftmine".into())) {
+        parts.insert(0, VersionFragment::Number(0));
+    } else {
+        if parts.len() < 3 {
+            parts.push(VersionFragment::Number(0));
+        }
+        if parts.first() == Some(&VersionFragment::Number(1)) {
+            parts.remove(0);
+        }
+    }
+    VersionFragment::string_to_parts(loader_version).starts_with(&parts)
+}
+
 pub(crate) struct CreateInstanceModalState {
     metadata: Entity<FrontendMetadata>,
     versions: Entity<FrontendMetadataState>,
@@ -128,6 +147,17 @@ impl CreateInstanceModalState {
 
         this.reload_version_dropdown(window, cx);
 
+        #[cfg(feature = "ui-capture")]
+        if let Some(loader) = match std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() {
+            Ok("add-local-fabric") => Some(Loader::Fabric),
+            Ok("add-local-forge") => Some(Loader::Forge),
+            Ok("add-local-neoforge") => Some(Loader::NeoForge),
+            _ => None,
+        } {
+            this.selected_loader = loader;
+            this.load_loader_versions(window, cx);
+        }
+
         this
     }
 
@@ -160,7 +190,7 @@ impl CreateInstanceModalState {
                 FrontendMetadataResult::Error(..) => Some(Err(())),
                 FrontendMetadataResult::Loaded(m) => Some(Ok(read(
                     m.0.iter()
-                        .filter(|v| v.split_once('-').is_some_and(|(mc, _)| mc == minecraft.as_str()))
+                        .filter(|v| forge_matches_minecraft(v, minecraft.as_str()))
                         .map(|v| v.as_str().into())
                         .collect(),
                 ))),
@@ -168,26 +198,24 @@ impl CreateInstanceModalState {
             Loader::NeoForge => match metadata.read(cx).result() {
                 FrontendMetadataResult::<NeoforgeMavenManifest>::Loading => None,
                 FrontendMetadataResult::Error(..) => Some(Err(())),
-                FrontendMetadataResult::Loaded(m) => {
-                    let mut parts = VersionFragment::string_to_parts(minecraft.as_str());
-                    if parts.len() < 3 {
-                        parts.push(VersionFragment::Number(0));
-                    }
-                    if parts.first() == Some(&VersionFragment::Number(1)) {
-                        parts.remove(0);
-                    }
-                    Some(Ok(read(
-                        m.0.iter()
-                            .filter(|v| VersionFragment::string_to_parts(v).starts_with(&parts))
-                            .map(|v| v.as_str().into())
-                            .collect(),
-                    )))
-                },
+                FrontendMetadataResult::Loaded(m) => Some(Ok(read(
+                    m.0.iter()
+                        .filter(|v| neoforge_matches_minecraft(v, minecraft.as_str()))
+                        .map(|v| v.as_str().into())
+                        .collect(),
+                ))),
             },
             Loader::Vanilla => unreachable!(),
         };
         self.loader_versions_ready = result.as_ref().is_some_and(Result::is_ok);
         self.loader_versions_error = result.as_ref().is_some_and(Result::is_err);
+        #[cfg(feature = "ui-capture")]
+        if self.loaded_versions
+            && self.loader_versions_ready
+            && std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p.starts_with("add-local-"))
+        {
+            log::info!("loader-versions-ready pid={}", std::process::id());
+        }
         if let Some(Ok(versions)) = result {
             let mut versions_with_latest = vec![SharedString::from("Última")];
             versions_with_latest.extend(versions);
@@ -508,6 +536,20 @@ impl CreateInstanceModalState {
                     ),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod loader_version_tests {
+    use super::{forge_matches_minecraft, neoforge_matches_minecraft};
+
+    #[test]
+    fn versions_are_filtered_by_exact_minecraft_version() {
+        assert!(forge_matches_minecraft("1.21.1-52.1.0", "1.21.1"));
+        assert!(!forge_matches_minecraft("1.21.10-60.0.0", "1.21.1"));
+        assert!(neoforge_matches_minecraft("21.1.200", "1.21.1"));
+        assert!(!neoforge_matches_minecraft("21.10.1", "1.21.1"));
+        assert!(neoforge_matches_minecraft("0.25w14craftmine.1", "25w14craftmine"));
     }
 }
 impl Render for CreateInstanceModalState {

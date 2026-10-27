@@ -397,7 +397,18 @@ pub fn open_main_window(
                     Some(page) if page == "appearance" || page.starts_with("launcher-") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::LauncherSettings;
                     },
-                    Some(page) if matches!(page, "add-instance" | "add-server" | "add-local" | "account-offline") => {
+                    Some(page)
+                        if matches!(
+                            page,
+                            "add-instance"
+                                | "add-server"
+                                | "add-local"
+                                | "add-local-fabric"
+                                | "add-local-forge"
+                                | "add-local-neoforge"
+                                | "account-offline"
+                        ) =>
+                    {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
                     },
                     Some(page) if page.starts_with("content-browser:agente-274-") => {
@@ -510,14 +521,26 @@ pub fn open_main_window(
                 });
                 if let Some(page) = capture_page
                     .as_deref()
-                    .filter(|page| matches!(*page, "add-instance" | "add-server" | "add-local" | "account-offline"))
+                    .filter(|page| {
+                        matches!(
+                            *page,
+                            "add-instance"
+                                | "add-server"
+                                | "add-local"
+                                | "add-local-fabric"
+                                | "add-local-forge"
+                                | "add-local-neoforge"
+                                | "account-offline"
+                        )
+                    })
                     .map(str::to_owned)
                 {
                     let capture_data = data.clone();
                     window.on_next_frame(move |window, cx| {
                         match page.as_str() {
                             "add-instance" => crate::pages::home::add_instance(&capture_data, window, cx),
-                            "add-server" | "add-local" => {
+                            "add-server" | "add-local" | "add-local-fabric" | "add-local-forge"
+                            | "add-local-neoforge" => {
                                 crate::root::switch_page(ui::PageType::AddInstance, &[], window, cx)
                             },
                             "account-offline" => crate::modals::accounts::open_offline_account(

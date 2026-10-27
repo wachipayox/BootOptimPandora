@@ -40,11 +40,11 @@ fn test_label(_cx: &App) -> impl IntoElement {
 
 pub(crate) fn profile_icon(profile: &GlobalProfileSummary, size: f32) -> AnyElement {
     match &profile.icon_path {
-        Some(path) => img(path.clone()).size(px(size)).flex_shrink_0().rounded_md().into_any_element(),
+        Some(path) => img(path.clone()).size(px(size)).flex_shrink_0().rounded(px(0.)).into_any_element(),
         None => img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))
             .size(px(size))
             .flex_shrink_0()
-            .rounded_md()
+            .rounded(px(0.))
             .into_any_element(),
     }
 }
@@ -130,7 +130,7 @@ impl ProfileFamilyModal {
                         .gap_3()
                         .p_2()
                         .items_center()
-                        .rounded_md()
+                        .rounded(px(0.))
                         .cursor_pointer()
                         .hover(|s| s.bg(cx.theme().secondary))
                         .child(profile_icon(&profile, 36.0))
@@ -167,8 +167,8 @@ impl ProfileFamilyModal {
                 )
             })
             .collect::<Vec<_>>();
-        dialog
-            .title("Perfil global")
+        design::dialog(dialog)
+            .title(design::dialog_title("Perfil global"))
             .width(px((window.viewport_size().width.as_f32() - 48.0).min(760.0)))
             .child(
                 v_flex().gap_3().child("Perfiles disponibles en el servidor.").child(

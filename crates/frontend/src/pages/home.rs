@@ -703,7 +703,7 @@ impl Render for HomePage {
             h_flex()
                 .w(px(300.))
                 .gap(px(12.))
-                .child(img(picture(&self.presentation.last_world_icon, "images/default_world.png")).size(px(44.)))
+                .child(img(picture(&self.presentation.last_world_icon, "images/home-world-default.png")).size(px(44.)))
                 .child(
                     v_flex()
                         .gap(px(3.))
