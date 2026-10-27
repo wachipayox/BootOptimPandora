@@ -608,11 +608,13 @@ impl Render for HomePage {
                         None,
                     )
                     .title("Iniciando")
+                    .tint(0x176daf60)
                     .progress(progress);
                 },
                 InstanceStatus::Running => {
                     play = PlayButton::new("home-play", "En marcha", None)
                         .title("Detener")
+                        .tint(0xb330305e)
                         .on_click(move |_, _, _| data.backend_handle.send(MessageToBackend::KillInstance { id }))
                 },
                 InstanceStatus::NotRunning => {
@@ -656,19 +658,7 @@ impl Render for HomePage {
             h_flex()
                 .w(px(300.))
                 .gap(px(12.))
-                .child(
-                    i.icon
-                        .clone()
-                        .map(|b| {
-                            crate::png_render_cache::render_with_transform(
-                                b,
-                                crate::png_render_cache::ImageTransformation::Resize { width: 44, height: 44 },
-                                cx,
-                            )
-                            .into_any_element()
-                        })
-                        .unwrap_or_else(|| div().size(px(44.)).into_any_element()),
-                )
+                .child(img(ImageSource::Resource(Resource::Embedded("images/default_world.png".into()))).size(px(44.)))
                 .child(
                     v_flex()
                         .gap(px(3.))

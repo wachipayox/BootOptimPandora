@@ -38,7 +38,7 @@ fn test_label(_cx: &App) -> impl IntoElement {
         .child("PRUEBA")
 }
 
-fn profile_icon(profile: &GlobalProfileSummary, size: f32) -> AnyElement {
+pub(crate) fn profile_icon(profile: &GlobalProfileSummary, size: f32) -> AnyElement {
     match &profile.icon_path {
         Some(path) => img(path.clone()).size(px(size)).flex_shrink_0().rounded_md().into_any_element(),
         None => img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))

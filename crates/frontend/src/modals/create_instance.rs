@@ -15,6 +15,8 @@ use gpui_component::{
     v_flex,
 };
 use schema::{
+    fabric_loader_manifest::FabricLoaderManifest,
+    forge::{ForgeMavenManifest, NeoforgeMavenManifest, VersionFragment},
     loader::Loader,
     version_manifest::{MinecraftVersionManifest, MinecraftVersionType},
 };
@@ -36,6 +38,10 @@ pub(crate) struct CreateInstanceModalState {
     versions: Entity<FrontendMetadataState>,
     backend_handle: BackendHandle,
     minecraft_version_dropdown: Entity<SelectState<VersionList>>,
+    loader_version_dropdown: Entity<SelectState<VersionList>>,
+    loader_versions_ready: bool,
+    loader_versions_error: bool,
+    loader_subscription: Option<Subscription>,
     name_input_state: Entity<InputState>,
     selected_loader: Loader,
     loaded_versions: bool,
@@ -63,10 +69,13 @@ impl CreateInstanceModalState {
 
         let minecraft_version_dropdown =
             cx.new(|cx| SelectState::new(VersionList::default(), None, window, cx).searchable(true));
+        let loader_version_dropdown =
+            cx.new(|cx| SelectState::new(VersionList::default(), None, window, cx).searchable(true));
 
         let _version_selected_subscription =
             cx.observe_in(&minecraft_version_dropdown, window, |this, _, window, cx| {
                 this.update_fallback_name(window, cx);
+                this.load_loader_versions(window, cx);
             });
 
         let name_input_state = cx.new(|cx| InputState::new(window, cx).placeholder("Nueva instancia"));
@@ -99,6 +108,10 @@ impl CreateInstanceModalState {
             versions,
             backend_handle,
             minecraft_version_dropdown,
+            loader_version_dropdown,
+            loader_versions_ready: true,
+            loader_versions_error: false,
+            loader_subscription: None,
             name_input_state,
             selected_loader: Loader::Vanilla,
             loaded_versions: false,
@@ -116,6 +129,84 @@ impl CreateInstanceModalState {
         this.reload_version_dropdown(window, cx);
 
         this
+    }
+
+    fn load_loader_versions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use bridge::meta::MetadataRequest;
+        let request = match self.selected_loader {
+            Loader::Vanilla => {
+                self.loader_versions_ready = true;
+                self.loader_versions_error = false;
+                self.loader_subscription = None;
+                return;
+            },
+            Loader::Fabric => MetadataRequest::FabricLoaderManifest,
+            Loader::Forge => MetadataRequest::ForgeMavenManifest,
+            Loader::NeoForge => MetadataRequest::NeoforgeMavenManifest,
+        };
+        let metadata = FrontendMetadata::request(&self.metadata, request, cx);
+        let minecraft = self.minecraft_version_dropdown.read(cx).selected_value().cloned().unwrap_or_default();
+        let read = |values: Vec<SharedString>| values;
+        let result = match self.selected_loader {
+            Loader::Fabric => match metadata.read(cx).result() {
+                FrontendMetadataResult::<FabricLoaderManifest>::Loading => None,
+                FrontendMetadataResult::Error(..) => Some(Err(())),
+                FrontendMetadataResult::Loaded(m) => {
+                    Some(Ok(read(m.0.iter().map(|v| v.version.as_str().into()).collect())))
+                },
+            },
+            Loader::Forge => match metadata.read(cx).result() {
+                FrontendMetadataResult::<ForgeMavenManifest>::Loading => None,
+                FrontendMetadataResult::Error(..) => Some(Err(())),
+                FrontendMetadataResult::Loaded(m) => Some(Ok(read(
+                    m.0.iter()
+                        .filter(|v| v.split_once('-').is_some_and(|(mc, _)| mc == minecraft.as_str()))
+                        .map(|v| v.as_str().into())
+                        .collect(),
+                ))),
+            },
+            Loader::NeoForge => match metadata.read(cx).result() {
+                FrontendMetadataResult::<NeoforgeMavenManifest>::Loading => None,
+                FrontendMetadataResult::Error(..) => Some(Err(())),
+                FrontendMetadataResult::Loaded(m) => {
+                    let mut parts = VersionFragment::string_to_parts(minecraft.as_str());
+                    if parts.len() < 3 {
+                        parts.push(VersionFragment::Number(0));
+                    }
+                    if parts.first() == Some(&VersionFragment::Number(1)) {
+                        parts.remove(0);
+                    }
+                    Some(Ok(read(
+                        m.0.iter()
+                            .filter(|v| VersionFragment::string_to_parts(v).starts_with(&parts))
+                            .map(|v| v.as_str().into())
+                            .collect(),
+                    )))
+                },
+            },
+            Loader::Vanilla => unreachable!(),
+        };
+        self.loader_versions_ready = result.as_ref().is_some_and(Result::is_ok);
+        self.loader_versions_error = result.as_ref().is_some_and(Result::is_err);
+        if let Some(Ok(versions)) = result {
+            let mut versions_with_latest = vec![SharedString::from("Última")];
+            versions_with_latest.extend(versions);
+            self.loader_version_dropdown.update(cx, |dropdown, cx| {
+                dropdown.set_items(
+                    VersionList {
+                        versions: versions_with_latest.clone(),
+                        matched_versions: versions_with_latest,
+                    },
+                    window,
+                    cx,
+                );
+                dropdown.set_selected_value(&SharedString::from("Última"), window, cx);
+            });
+        }
+        self.loader_subscription = Some(cx.observe_in(&metadata, window, |page, _, window, cx| {
+            page.load_loader_versions(window, cx);
+            cx.notify();
+        }));
     }
 
     pub fn update_fallback_name(&mut self, window: &mut Window, cx: &mut App) {
@@ -286,8 +377,9 @@ impl CreateInstanceModalState {
             {
                 loaders =
                     loaders.child(design::chip(("loader", index), label, self.selected_loader == loader).on_click(
-                        cx.listener(move |this, _, _, cx| {
+                        cx.listener(move |this, _, window, cx| {
                             this.selected_loader = loader;
+                            this.load_loader_versions(window, cx);
                             cx.notify();
                         }),
                     ));
@@ -307,6 +399,16 @@ impl CreateInstanceModalState {
                 v_flex().gap_2().child(version_dropdown).child(show_snapshots_button),
             ))
             .child(crate::labelled("Cargador", loader_button_group))
+            .when(self.selected_loader != Loader::Vanilla, |d| {
+                d.child(crate::labelled(
+                    "Versión del cargador",
+                    Select::new(&self.loader_version_dropdown)
+                        .disabled(!self.loader_versions_ready)
+                        .w_full()
+                        .search_placeholder("Buscar..."),
+                ))
+                .when(self.loader_versions_error, |d| d.child("No se han podido cargar las versiones."))
+            })
             .child(
                 h_flex()
                     .gap_2()
@@ -363,7 +465,7 @@ impl CreateInstanceModalState {
                     )
                     .child(
                         design::action_button("create-new-instance", "Crear", design::ButtonAction::Primary)
-                            .disabled(self.name_invalid || !self.loaded_versions)
+                            .disabled(self.name_invalid || !self.loaded_versions || !self.loader_versions_ready)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if this.name_invalid {
                                     return;
@@ -380,6 +482,12 @@ impl CreateInstanceModalState {
                                     name: name.as_str().into(),
                                     version: version.as_str().into(),
                                     loader: this.selected_loader,
+                                    loader_version: this
+                                        .loader_version_dropdown
+                                        .read(cx)
+                                        .selected_value()
+                                        .filter(|v| this.selected_loader != Loader::Vanilla && v.as_str() != "Última")
+                                        .map(|v| v.as_str().into()),
                                     icon: this.icon.clone(),
                                 });
                                 window.close_dialog(cx);

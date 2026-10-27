@@ -942,7 +942,9 @@ impl Render for InstanceOverwritesSubpage {
                 .flex_1()
                 .items_center()
                 .justify_center()
-                .child(gpui_component::skeleton::Skeleton::new().w(px(260.)).h(px(44.)))
+                .gap(px(12.))
+                .child(gpui_component::spinner::Spinner::new())
+                .child(div().text_color(rgb(crate::theme::INK_MUTED)).child("Cargando…"))
                 .into_any_element(),
             Some(Err(error)) => v_flex()
                 .flex_1()

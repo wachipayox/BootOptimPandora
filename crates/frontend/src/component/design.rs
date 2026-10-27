@@ -480,6 +480,7 @@ pub struct PlayButton {
     add_instance: bool,
     artwork: Option<ImageSource>,
     disabled: bool,
+    tint: Option<u32>,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
 }
 impl PlayButton {
@@ -492,11 +493,16 @@ impl PlayButton {
             add_instance: false,
             artwork,
             disabled: false,
+            tint: None,
             on_click: None,
         }
     }
     pub fn title(mut self, title: impl Into<SharedString>) -> Self {
         self.title = title.into();
+        self
+    }
+    pub fn tint(mut self, color: u32) -> Self {
+        self.tint = Some(color);
         self
     }
     pub fn progress(mut self, amount: f32) -> Self {
@@ -544,6 +550,9 @@ impl RenderOnce for PlayButton {
                     .when_some(self.artwork, |d, image| {
                         d.child(img(image).absolute().size_full().object_fit(ObjectFit::Cover))
                     })
+            })
+            .when_some(self.tint.filter(|_| !disabled), |d, tint| {
+                d.child(div().absolute().size_full().bg(rgba(tint)))
             })
             .child(
                 DesignButton::new(self.id)

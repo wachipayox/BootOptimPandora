@@ -26,6 +26,7 @@ pub fn prepare_local_fixture(data: &crate::entity::DataEntities, cx: &App) {
         name: name.as_str().into(),
         version: "1.21.1".into(),
         loader: schema::loader::Loader::Vanilla,
+        loader_version: None,
         icon: None,
     });
     log::info!("capture-local-fixture-requested pid={}", std::process::id());

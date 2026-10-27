@@ -744,7 +744,23 @@ impl LauncherUI {
                     .size(px(26.))
                     .into_any_element()
                 } else {
-                    gpui_component::Icon::new(PandoraIcon::CircleUser).size(px(26.)).into_any_element()
+                    div()
+                        .relative()
+                        .size(px(26.))
+                        .bg(rgba(0x5bcef51f))
+                        .border_1()
+                        .border_color(rgba(0x5bcef580))
+                        .child(div().absolute().left(px(9.)).top(px(4.)).size(px(6.)).bg(rgb(theme::ACCENT_TEXT)))
+                        .child(
+                            div()
+                                .absolute()
+                                .left(px(6.))
+                                .top(px(13.))
+                                .w(px(12.))
+                                .h(px(7.))
+                                .bg(rgb(theme::ACCENT_TEXT)),
+                        )
+                        .into_any_element()
                 }
             });
         let saved_accounts = self.data.accounts.read(cx).accounts.clone();

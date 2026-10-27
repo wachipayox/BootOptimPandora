@@ -265,11 +265,14 @@ impl BackendState {
                 name,
                 version,
                 loader,
+                loader_version,
                 icon,
             } => {
                 let backend = self.clone();
                 self.spawn_launcher_task(async move {
-                    backend.create_instance(&name, &version, loader, icon).await;
+                    backend
+                        .create_instance(&name, &version, loader, loader_version.as_ref().map(|v| v.as_str()), icon)
+                        .await;
                 });
             },
             MessageToBackend::DeleteInstance { id } => {

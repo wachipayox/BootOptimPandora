@@ -105,6 +105,7 @@ pub enum MessageToBackend {
         name: Ustr,
         version: Ustr,
         loader: Loader,
+        loader_version: Option<Ustr>,
         icon: Option<EmbeddedOrRaw>,
     },
     DeleteInstance {
