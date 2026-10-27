@@ -13,7 +13,10 @@ pub(super) fn initial_size(scale: f32, available: [f32; 2], minimum: [f32; 2]) -
     width *= grow;
     height *= grow;
     let fit = (available[0] / width).min(available[1] / height).min(1.);
-    [(width * fit).max(minimum[0]), (height * fit).max(minimum[1])]
+    [
+        (width * fit).min(available[0]).max(minimum[0]),
+        (height * fit).min(available[1]).max(minimum[1]),
+    ]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
