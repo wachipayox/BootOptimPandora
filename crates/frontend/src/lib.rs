@@ -613,7 +613,11 @@ pub fn open_main_window(
                     window.on_next_frame(move |window, cx| crate::modals::skin_import::open(backend, window, cx));
                 }
                 #[cfg(windows)]
-                if capture_page.as_deref() == Some("launcher-defender-dialog") {
+                if capture_page.as_deref() == Some("launcher-defender-dialog")
+                    || capture_page.as_deref().is_some_and(|page| {
+                        page.starts_with("startup-dialog:") || page.starts_with("startup-dialog-before:")
+                    })
+                {
                     window.on_next_frame(crate::modals::windows_security::open);
                 }
                 if capture_page.as_deref() == Some("components-dialog") {

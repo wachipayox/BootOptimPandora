@@ -103,6 +103,9 @@ worker; compare it with the settled frame to detect blank resize frames.
 All ordinary capture routes bypass startup presentation. `-StartupScreens`
 adds deterministic vector reference frames (`startup-frame:<seconds>`),
 `startup-splash`, `startup-intro:<seconds>` and `startup-transition:<fraction>`.
+On Windows, `startup-dialog:<opacity>` opens the real Defender dialog under the
+startup layer; `startup-dialog-before:<opacity>` reproduces its former stacking
+for paired diagnostic captures. Use 1, 0.5 and 0 to inspect the fade.
 The reference routes omit the native border for full-frame pixel comparison;
 transition captures compose the real interface and the final vector frame.
 `startup-bench:<seconds>` continuously renders a fixed frame and logs wall time of the CPU stage
