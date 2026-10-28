@@ -398,6 +398,9 @@ impl HomePage {
             target.status = current.status.clone();
             target.ping = current.ping;
             target.pinging = current.pinging;
+            if target.png_icon.is_none() {
+                target.png_icon = current.png_icon.clone();
+            }
         }
         let interval = if target.pinging {
             Duration::from_millis(500)
@@ -424,6 +427,7 @@ impl HomePage {
                                 current.pinging = response.pinging;
                                 current.status = response.status;
                                 current.ping = response.ping;
+                                current.png_icon = response.png_icon;
                             }
                             this.selected_server_pending = false;
                             cx.notify();

@@ -718,6 +718,15 @@ impl Instance {
                     crate::server_list_pinger::PingResult::Pinging => server.pinging = true,
                     crate::server_list_pinger::PingResult::Loaded { status, ping } => {
                         server.pinging = false;
+                        if server.png_icon.is_none() {
+                            server.png_icon = status
+                                .favicon
+                                .as_deref()
+                                .and_then(|icon| icon.strip_prefix("data:image/png;base64,"))
+                                .filter(|icon| icon.len() <= 128 * 1024)
+                                .and_then(|icon| base64::engine::general_purpose::STANDARD.decode(icon).ok())
+                                .map(UniqueBytes::from);
+                        }
                         server.status = Some(status);
                         server.ping = ping;
                     },
