@@ -2,7 +2,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use bridge::instance::InstanceID;
 use gpui::{prelude::*, *};
-use gpui_component::{h_flex, scroll::ScrollableElement, v_flex};
+use gpui_component::{WindowExt, h_flex, scroll::ScrollableElement, v_flex};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -24,34 +24,6 @@ use crate::{
     },
     png_render_cache,
 };
-
-fn anonymous_pixel_avatar() -> impl IntoElement {
-    let pixels = [
-        "..........",
-        "...hhhh...",
-        "..hsssssh.",
-        "..sesess..",
-        "..ssssss..",
-        "...ssss...",
-        "..bbbbbb..",
-        ".bbbbbbbb.",
-        ".bbbbbbbb.",
-        "..........",
-    ];
-    let rows = pixels.into_iter().map(|row| {
-        h_flex().children(row.chars().map(|cell| {
-            let color = match cell {
-                'h' => 0x25546bff,
-                's' => 0x9adcefff,
-                'e' => 0x123c50ff,
-                'b' => 0x4098b9ff,
-                _ => 0x10212aff,
-            };
-            div().size(px(2.2)).bg(rgba(color))
-        }))
-    });
-    v_flex().size(px(26.)).p(px(1.)).border_1().border_color(rgba(0x5bcef580)).children(rows)
-}
 
 pub struct LauncherUI {
     data: DataEntities,
@@ -693,6 +665,7 @@ impl LauncherUI {
             ("home", "Inicio", PageType::Instances),
             ("skin", "Aspecto", PageType::Skins),
             ("news", "Noticias", PageType::Instances),
+            ("settings", "Ajustes", PageType::LauncherSettings),
         ] {
             footer = footer.child(
                 DesignButton::new(id)
@@ -707,6 +680,7 @@ impl LauncherUI {
                                 gpui_component::Icon::new(match id {
                                     "home" => PandoraIcon::HomeHouse,
                                     "skin" => PandoraIcon::HomeHanger,
+                                    "settings" => PandoraIcon::Settings,
                                     _ => PandoraIcon::HomeNews,
                                 })
                                 .size(px(16.)),
@@ -727,6 +701,8 @@ impl LauncherUI {
                             && matches!(InterfaceConfig::get(cx).main_page, PageType::Instances)
                             && !news_active)
                             || (id == "skin" && matches!(InterfaceConfig::get(cx).main_page, PageType::Skins))
+                            || (id == "settings"
+                                && matches!(InterfaceConfig::get(cx).main_page, PageType::LauncherSettings))
                             || (id == "news" && news_active),
                         |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)),
                     )
@@ -776,23 +752,24 @@ impl LauncherUI {
                     .size(px(26.))
                     .into_any_element()
                 } else {
-                    anonymous_pixel_avatar().into_any_element()
+                    img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into())))
+                        .size(px(26.))
+                        .into_any_element()
                 }
             });
         let saved_accounts = self.data.accounts.read(cx).accounts.clone();
         footer = footer.child(
-            h_flex()
-                .border_t_1()
-                .border_color(rgba(0xffffff0b))
-                .pt(px(8.))
-                .gap(px(4.))
-                .child(
-                    DesignButton::new("home-account")
-                        .aria_label(account_name.clone())
-                        .flex_1()
-                        .h(px(47.))
-                        .child(
-                            h_flex().gap(px(8.)).child(head).child(
+            h_flex().border_t_1().border_color(rgba(0xffffff0b)).pt(px(8.)).gap(px(4.)).child(
+                DesignButton::new("home-account")
+                    .aria_label(account_name.clone())
+                    .flex_1()
+                    .h(px(47.))
+                    .child(
+                        h_flex()
+                            .gap(px(8.))
+                            .child(if self.home_account_menu { "▾" } else { "▴" })
+                            .child(head)
+                            .child(
                                 v_flex().items_start().child(account_name).child(
                                     div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(
                                         selected_account
@@ -802,20 +779,12 @@ impl LauncherUI {
                                     ),
                                 ),
                             ),
-                        )
-                        .on_click(cx.listener(|this, _, _, c| {
-                            this.home_account_menu = !this.home_account_menu;
-                            c.notify();
-                        })),
-                )
-                .child(
-                    DesignButton::new("home-settings")
-                        .aria_label("Ajustes del launcher")
-                        .child(gpui_component::Icon::new(PandoraIcon::Settings).size(px(16.)))
-                        .w(px(32.))
-                        .px_0()
-                        .on_click(cx.listener(|this, _, w, c| this.switch_page(PageType::LauncherSettings, &[], w, c))),
-                ),
+                    )
+                    .on_click(cx.listener(|this, _, _, c| {
+                        this.home_account_menu = !this.home_account_menu;
+                        c.notify();
+                    })),
+            ),
         );
         let sidebar = v_flex()
             .window_control_area(WindowControlArea::Drag)
@@ -877,29 +846,118 @@ impl LauncherUI {
             )
             .child(div().flex_1().min_h_0().overflow_y_scrollbar().child(instances))
             .child(footer);
-        let mut account_menu = design::notched_panel(0x0a0a0cf2)
+        let mut account_menu = div()
+            .bg(rgba(0x0a0a0cf2))
+            .occlude()
             .flex()
             .flex_col()
             .absolute()
             .left(px(10.))
             .bottom(px(64.))
-            .w(px(240.))
+            .w(px(200.))
             .p(px(6.));
         for (ix, account) in saved_accounts.iter().enumerate() {
             let uuid = account.uuid;
             let active = selected_account.as_ref().is_some_and(|a| a.uuid == uuid);
             let name = account.username(InterfaceConfig::get(cx).hide_usernames);
+            let account_head = account
+                .head
+                .clone()
+                .filter(|_| !hide_skins)
+                .map(|head| {
+                    png_render_cache::render_with_transform(
+                        head,
+                        png_render_cache::ImageTransformation::Resize { width: 26, height: 26 },
+                        cx,
+                    )
+                    .into_any_element()
+                })
+                .unwrap_or_else(|| {
+                    img(ImageSource::Resource(Resource::Embedded(
+                        if hide_skins {
+                            "images/hidden_head.png"
+                        } else {
+                            "images/default_head.png"
+                        }
+                        .into(),
+                    )))
+                    .size(px(26.))
+                    .into_any_element()
+                });
+            let confirm_name = name.clone();
             account_menu = account_menu.child(
-                DesignButton::new(("account-choice", ix))
-                    .label_left(format!("{name}{}", if active { "  ✓" } else { "" }))
+                h_flex()
                     .w_full()
-                    .justify_start()
-                    .when(active, |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)))
-                    .on_click(cx.listener(move |this, _, _, c| {
-                        this.data.backend_handle.send(bridge::message::MessageToBackend::SelectAccount { uuid });
-                        this.home_account_menu = false;
-                        c.notify();
-                    })),
+                    .child(
+                        DesignButton::new(("account-choice", ix))
+                            .aria_label(name.clone())
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(42.))
+                            .justify_start()
+                            .px_0()
+                            .when(active, |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)))
+                            .child(h_flex().gap(px(8.)).child(account_head).child(div().overflow_hidden().child(name)))
+                            .on_click(cx.listener(move |this, _, _, c| {
+                                this.data
+                                    .backend_handle
+                                    .send(bridge::message::MessageToBackend::SelectAccount { uuid });
+                                this.home_account_menu = false;
+                                c.notify();
+                            })),
+                    )
+                    .child(
+                        DesignButton::new(("account-logout", ix))
+                            .aria_label("Cerrar sesión")
+                            .w(px(32.))
+                            .h(px(42.))
+                            .px_0()
+                            .text_color(rgb(theme::DANGER))
+                            .child(gpui_component::Icon::new(PandoraIcon::Close).size(px(16.)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.home_account_menu = false;
+                                let backend = this.data.backend_handle.clone();
+                                let name = confirm_name.clone();
+                                window.open_dialog(cx, move |dialog, _, _| {
+                                    let backend = backend.clone();
+                                    design::dialog(dialog)
+                                        .title(design::dialog_title("Cerrar sesión"))
+                                        .child(format!("¿Quieres cerrar sesión de {name}?"))
+                                        .footer(
+                                            h_flex()
+                                                .gap(px(8.))
+                                                .justify_end()
+                                                .child(
+                                                    design::action_button(
+                                                        "cancel-logout",
+                                                        "Cancelar",
+                                                        design::ButtonAction::Secondary,
+                                                    )
+                                                    .on_click(|_, window, cx| window.close_dialog(cx)),
+                                                )
+                                                .child(
+                                                    design::action_button(
+                                                        "confirm-logout",
+                                                        "Cerrar sesión",
+                                                        design::ButtonAction::Danger,
+                                                    )
+                                                    .on_click(
+                                                        move |_, window, cx| {
+                                                            backend.send(
+                                                                bridge::message::MessageToBackend::DeleteAccount {
+                                                                    uuid,
+                                                                },
+                                                            );
+                                                            window.close_dialog(cx);
+                                                        },
+                                                    ),
+                                                ),
+                                        )
+                                });
+                                cx.notify();
+                            })),
+                    ),
             );
         }
         account_menu = account_menu
@@ -921,23 +979,6 @@ impl LauncherUI {
                         crate::modals::accounts::open_offline_account(this.data.backend_handle.clone(), w, c);
                     })),
             );
-        if let Some(account) = selected_account {
-            let uuid = account.uuid;
-            account_menu = account_menu.child(
-                DesignButton::new("logout-home")
-                    .label_left(format!(
-                        "Cerrar sesión en {}",
-                        account.username(InterfaceConfig::get(cx).hide_usernames)
-                    ))
-                    .w_full()
-                    .text_color(rgb(theme::DANGER))
-                    .on_click(cx.listener(move |this, _, _, c| {
-                        this.home_account_menu = false;
-                        this.data.backend_handle.send(bridge::message::MessageToBackend::DeleteAccount { uuid });
-                        c.notify();
-                    })),
-            );
-        }
         h_flex()
             .size_full()
             .relative()
