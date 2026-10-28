@@ -12,6 +12,7 @@ use std::{
 };
 
 use rand::RngCore;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -1022,17 +1023,35 @@ impl PersistentProfileLayout {
         ensure_plain_directory(&self.staging_dir(tx))?;
         ensure_plain_directory(&self.backup_dir(tx))?;
 
+        // Prepare and validate parent directories serially. Each job writes a distinct
+        // staged file; the live tree and journal remain untouched until all jobs finish.
+        let mut staging_jobs = Vec::new();
         for operation in operations {
             if matches!(operation.kind, JournalOpKind::Install | JournalOpKind::Replace) {
-                let desired_entry = desired.get(&operation.path).ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?;
-                let staged_path = self.staging_live_path(tx, &operation.path)?;
-                if let Some(bytes) = &desired_entry.staged_bytes {
-                    write_new_synced(&staged_path, bytes)?;
-                    verify_hash(&staged_path, desired_entry.target_sha256())?;
-                } else {
-                    stage_source(&desired_entry.source, &staged_path, desired_entry.target_sha256())?;
-                }
+                let entry = desired.get(&operation.path).ok_or(ProfileLayoutFlowError::AmbiguousTransaction)?;
+                let path = self.staging_live_path(tx, &operation.path)?;
+                create_plain_parent(&path)?;
+                staging_jobs.push((entry, path));
             }
+        }
+        let stage = |(entry, path): &(&CanonicalDesired, PathBuf)| -> Result<(), ProfileLayoutFlowError> {
+            if let Some(bytes) = &entry.staged_bytes {
+                write_new_synced(path, bytes)?;
+                verify_hash(path, entry.target_sha256())
+            } else {
+                stage_source(&entry.source, path, entry.target_sha256())
+            }
+        };
+        // A small dedicated pool bounds concurrent disk I/O; if workers cannot be
+        // created, preserve the previous serial behavior rather than failing install.
+        let workers = std::thread::available_parallelism().map_or(1, |count| count.get().min(4));
+        if workers > 1 && staging_jobs.len() > 1 {
+            match rayon::ThreadPoolBuilder::new().num_threads(workers).build() {
+                Ok(pool) => pool.install(|| staging_jobs.par_iter().try_for_each(stage))?,
+                Err(_) => staging_jobs.iter().try_for_each(stage)?,
+            }
+        } else {
+            staging_jobs.iter().try_for_each(stage)?;
         }
 
         let target_bytes = serde_json::to_vec_pretty(target)?;
@@ -2046,6 +2065,27 @@ mod tests {
     impl Drop for TestRoot {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn staged_batch_rejects_bad_source_before_publication_and_can_retry() {
+        let root = TestRoot::new("staged-batch");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let files: Vec<_> = (0..12).map(|i| root.source(&format!("batch-{i}.jar"), b"expected")).collect();
+        fs::write(&files[5].source, b"corrupt").unwrap();
+        assert!(layout.prepare_only_for_test(&files).is_err());
+        assert!(!layout.journal_path().exists());
+        for entry in &files {
+            assert!(!root.0.join(".minecraft").join(&entry.path).exists());
+        }
+        fs::write(&files[5].source, b"expected").unwrap();
+        assert!(matches!(layout.reconcile(&files).unwrap(), ReconcileOutcome::Ready { .. }));
+        drop(layout);
+        let reopened = PersistentProfileLayout::open(&root.0).unwrap();
+        assert_eq!(reopened.status().generation, Some(1));
+        for entry in &files {
+            assert_eq!(fs::read(root.0.join(".minecraft").join(&entry.path)).unwrap(), b"expected");
         }
     }
 
