@@ -80,7 +80,9 @@ impl RetainedImage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::RetainedImage;
+    use gpui::{RenderImage, Resource};
+    use std::sync::Arc;
 
     #[test]
     fn pending_replacement_retains_previous_across_view_recreation() {
