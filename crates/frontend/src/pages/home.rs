@@ -14,7 +14,7 @@ use bridge::{
     serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{Disableable, h_flex, scroll::ScrollableElement, v_flex};
+use gpui_component::{Disableable, WindowExt, h_flex, input::InputState, scroll::ScrollableElement, v_flex};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -46,6 +46,9 @@ pub struct HomePage {
     article: Option<String>,
     heads: std::collections::BTreeMap<String, std::path::PathBuf>,
     head_ids: Vec<String>,
+    selected_server: Option<InstanceServerSummary>,
+    selected_server_pending: bool,
+    selected_server_checked: Option<Instant>,
     timer: Option<Task<()>>,
     server_serial: AtomicOptionSerial,
 }
@@ -60,42 +63,151 @@ fn picture(path: &Option<std::path::PathBuf>, fallback: &'static str) -> ImageSo
 fn shade(from: u32, to: u32) -> Background {
     linear_gradient(180., linear_color_stop(rgba(from), 0.), linear_color_stop(rgba(to), 1.)).into()
 }
+
+fn configure_home_server(instance: &InstanceEntry, data: &DataEntities, window: &mut Window, cx: &mut App) {
+    use schema::instance::HomeServerSelection;
+    let initial = instance.configuration.home_server.clone();
+    let servers = instance.servers.read(cx).clone().unwrap_or_default();
+    let initial_mode = match &initial {
+        None => 0,
+        Some(HomeServerSelection::Instance { .. }) => 1,
+        Some(HomeServerSelection::Custom { .. }) => 2,
+    };
+    let initial_index = match &initial {
+        Some(HomeServerSelection::Instance { address }) => servers.iter().position(|s| s.ip.as_ref() == address),
+        _ => None,
+    };
+    let (initial_name, initial_address) = match &initial {
+        Some(HomeServerSelection::Custom { name, address }) => (name.clone(), address.clone()),
+        _ => (String::new(), String::new()),
+    };
+    let mode = cx.new(|_| initial_mode);
+    let chosen = cx.new(|_| initial_index);
+    let name = cx.new(|cx| InputState::new(window, cx).default_value(initial_name));
+    let address = cx.new(|cx| InputState::new(window, cx).default_value(initial_address));
+    let id = instance.id;
+    let backend = data.backend_handle.clone();
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let current_mode = *mode.read(cx);
+        let current_choice = *chosen.read(cx);
+        let entered_name = name.read(cx).value();
+        let entered_address = address.read(cx).value();
+        let mut modes = v_flex().gap(px(6.));
+        for (index, label) in [
+            "Detectar primer servidor de la instancia",
+            "Elegir servidor de la instancia",
+            "Servidor personalizado",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mode = mode.clone();
+            modes = modes.child(design::chip(("home-server-mode", index), label, current_mode == index).on_click(
+                move |_, _, cx| {
+                    mode.update(cx, |value, cx| {
+                        *value = index;
+                        cx.notify();
+                    })
+                },
+            ));
+        }
+        let mut choices = v_flex().gap(px(4.));
+        for (index, server) in servers.iter().enumerate() {
+            let chosen = chosen.clone();
+            choices = choices.child(
+                design::chip(
+                    ("home-server-choice", index),
+                    SharedString::from(server.name.clone()),
+                    current_choice == Some(index),
+                )
+                .on_click(move |_, _, cx| {
+                    chosen.update(cx, |value, cx| {
+                        *value = Some(index);
+                        cx.notify();
+                    })
+                }),
+            );
+        }
+        let valid = current_mode == 0
+            || (current_mode == 1 && current_choice.is_some_and(|i| i < servers.len()))
+            || (current_mode == 2 && !entered_name.trim().is_empty() && !entered_address.trim().is_empty());
+        let selection = match current_mode {
+            1 => current_choice.and_then(|i| servers.get(i)).map(|s| HomeServerSelection::Instance {
+                address: s.ip.to_string(),
+            }),
+            2 => Some(HomeServerSelection::Custom {
+                name: entered_name.trim().to_owned(),
+                address: entered_address.trim().to_owned(),
+            }),
+            _ => None,
+        };
+        let backend = backend.clone();
+        design::dialog(dialog)
+            .title(design::dialog_title("Server"))
+            .child(v_flex().gap(px(12.)).child(modes).when(current_mode == 1, |d| d.child(choices)).when(
+                current_mode == 2,
+                |d| {
+                    d.child(crate::labelled("Nombre", design::text_field(&name)))
+                        .child(crate::labelled("Dirección", design::text_field(&address)))
+                },
+            ))
+            .footer(
+                h_flex()
+                    .gap(px(8.))
+                    .justify_end()
+                    .child(
+                        design::action_button("home-server-cancel", "Cancelar", design::ButtonAction::Secondary)
+                            .on_click(|_, w, c| w.close_dialog(c)),
+                    )
+                    .child(
+                        design::action_button("home-server-save", "Guardar", design::ButtonAction::Primary)
+                            .disabled(!valid)
+                            .on_click(move |_, w, c| {
+                                backend.send(MessageToBackend::SetHomeServer {
+                                    id,
+                                    selection: selection.clone(),
+                                });
+                                w.close_dialog(c);
+                            }),
+                    ),
+            )
+    });
+}
 fn server_frame(content: impl IntoElement) -> Div {
-    design::notched_panel(0x060607cc)
+    div()
         .absolute()
         .top(px(60.))
         .right(px(18.))
-        .w(px(212.))
-        .child(
-            canvas(
-                |_, _, _| (),
-                |bounds, _, window, _| {
-                    let x = bounds.origin.x + px(0.5);
-                    let y = bounds.origin.y + px(0.5);
-                    let w = bounds.size.width - px(1.);
-                    let h = bounds.size.height - px(1.);
-                    let n = px(6.);
-                    let mut path = PathBuilder::stroke(px(1.));
-                    path.move_to(point(x + n, y));
-                    path.line_to(point(x + w - n, y));
-                    path.line_to(point(x + w, y + n));
-                    path.line_to(point(x + w, y + h - n));
-                    path.line_to(point(x + w - n, y + h));
-                    path.line_to(point(x + n, y + h));
-                    path.line_to(point(x, y + h - n));
-                    path.line_to(point(x, y + n));
-                    path.close();
-                    if let Ok(path) = path.build() {
-                        window.paint_path(path, rgba(0xffffff0b));
-                    }
-                },
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full(),
-        )
-        .child(div().w_full().px(px(14.)).py(px(12.)).child(content))
+        .w(relative(0.2))
+        .bg(rgba(0x060607cc))
+        .border_1()
+        .border_color(rgba(0xffffff20))
+        .px(px(10.))
+        .py(px(8.))
+        .child(content)
+}
+fn home_server_marquee(id: &'static str, characters: usize, available: f32, content: impl IntoElement) -> Div {
+    let distance = (characters as f32 * 8. - available).max(0.);
+    let line = div().absolute().top_0().left_0().whitespace_nowrap().child(content);
+    let line = if distance > 0. {
+        let seconds = (distance / 24. + 2.).clamp(3., 30.);
+        line.with_animation(id, Animation::new(Duration::from_secs_f32(seconds)).repeat(), move |line, t| {
+            let progress = if t < 0.15 {
+                0.
+            } else if t < 0.65 {
+                (t - 0.15) / 0.5
+            } else if t < 0.8 {
+                1.
+            } else {
+                (1. - t) / 0.2
+            };
+            line.left(px(-distance * progress))
+        })
+        .into_any_element()
+    } else {
+        line.into_any_element()
+    };
+    div().relative().w_full().h(px(18.)).overflow_hidden().child(line)
 }
 pub fn add_instance(_data: &DataEntities, window: &mut Window, cx: &mut App) {
     root::switch_page(PageType::AddInstance, &[PageType::Instances], window, cx);
@@ -137,6 +249,9 @@ impl HomePage {
             article: None,
             heads: Default::default(),
             head_ids: Vec::new(),
+            selected_server: None,
+            selected_server_pending: false,
+            selected_server_checked: None,
             timer: None,
             server_serial: AtomicOptionSerial::default(),
         };
@@ -268,6 +383,60 @@ impl HomePage {
         })
         .detach();
     }
+    fn request_selected_server(
+        &mut self,
+        mut target: InstanceServerSummary,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> InstanceServerSummary {
+        let changed = self.selected_server.as_ref().is_none_or(|server| server.ip != target.ip);
+        if changed {
+            self.selected_server = Some(target.clone());
+            self.selected_server_pending = false;
+            self.selected_server_checked = None;
+        } else if let Some(current) = &self.selected_server {
+            target.status = current.status.clone();
+            target.ping = current.ping;
+            target.pinging = current.pinging;
+        }
+        let interval = if target.pinging {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_secs(30)
+        };
+        if !self.selected_server_pending && self.selected_server_checked.is_none_or(|time| time.elapsed() >= interval) {
+            self.selected_server_pending = true;
+            self.selected_server_checked = Some(Instant::now());
+            target.pinging = target.status.is_none();
+            let address = target.ip.clone();
+            let (send, receive) = tokio::sync::oneshot::channel();
+            if let Some(instance) = &self.instance {
+                self.data.backend_handle.send(MessageToBackend::GetHomeServerStatus {
+                    id: instance.read(cx).id,
+                    address: address.clone(),
+                    channel: send,
+                });
+                cx.spawn_in(window, async move |this, cx| {
+                    let response = receive.await.ok().flatten();
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(current) = this.selected_server.as_mut().filter(|s| s.ip == address) {
+                            if let Some(response) = response {
+                                current.pinging = response.pinging;
+                                current.status = response.status;
+                                current.ping = response.ping;
+                            }
+                            this.selected_server_pending = false;
+                            cx.notify();
+                        }
+                    });
+                    cx.background_executor().timer(Duration::from_millis(550)).await;
+                    let _ = this.update(cx, |_, cx| cx.notify());
+                })
+                .detach();
+            }
+        }
+        target
+    }
     fn open_tab(&self, tab: InstanceSubpageType, window: &mut Window, cx: &mut App) {
         if let Some(i) = &self.instance {
             let name = i.read(cx).name.clone();
@@ -275,35 +444,81 @@ impl HomePage {
             root::switch_page(PageType::InstancePage { name }, &[PageType::Instances], window, cx);
         }
     }
-    fn server_panel(&self, server: &InstanceServerSummary, cx: &mut Context<Self>) -> AnyElement {
+    fn server_panel(&self, server: &InstanceServerSummary, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let online = server.status.as_ref().and_then(|s| s.players.as_ref());
         let ip = server.ip.clone();
         let data = self.data.clone();
         let i = self.instance.as_ref().unwrap().read(cx);
         let id = i.id;
         let name = i.name.clone();
-        let mut panel = div().flex().flex_col().gap(px(6.)).child(
+        let instance = self.instance.as_ref().unwrap().clone();
+        let settings_data = self.data.clone();
+        let text_width = ((window.viewport_size().width.as_f32() - 220.) * 0.2 - 20.).max(1.);
+        let mut panel = v_flex().gap(px(5.)).child(
+            h_flex()
+                .justify_between()
+                .items_center()
+                .child(div().font_family("Minecraft Default").text_size(px(14.)).child("Server"))
+                .child(
+                    DesignButton::new("home-server-settings")
+                        .aria_label("Server")
+                        .w(px(26.))
+                        .h(px(26.))
+                        .px_0()
+                        .child(gpui_component::Icon::new(crate::icon::PandoraIcon::Settings).size(px(14.)))
+                        .on_click(move |_, window, cx| {
+                            let instance = instance.read(cx).clone();
+                            configure_home_server(&instance, &settings_data, window, cx);
+                        }),
+                ),
+        );
+        let server_name = server.name.clone();
+        let icon = server.png_icon.clone().map(|bytes| {
+            crate::png_render_cache::render_with_transform(
+                bytes,
+                crate::png_render_cache::ImageTransformation::Resize { width: 32, height: 32 },
+                cx,
+            )
+        });
+        let detail_width = (text_width - if icon.is_some() { 40. } else { 0. }).max(1.);
+        let mut details = v_flex().flex_1().min_w_0().child(home_server_marquee(
+            "server-name",
+            server_name.chars().count(),
+            detail_width,
             div()
-                .font_family(theme::SANS)
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_size(px(13.))
-                .line_height(px(18.))
-                .child("Jugadores conectados"),
+                .font_family("Minecraft Default")
+                .text_size(px(15.))
+                .text_color(rgb(theme::INK))
+                .child(SharedString::from(server_name)),
+        ));
+        if let Some(status) = &server.status {
+            details = details.child(home_server_marquee(
+                "server-motd",
+                status.description.content.chars().count(),
+                detail_width,
+                div()
+                    .font_family("Minecraft Default")
+                    .text_size(px(13.))
+                    .child(crate::component::create_styled_text(&status.description, false)),
+            ));
+        }
+        panel = panel.child(
+            h_flex()
+                .gap(px(6.))
+                .items_center()
+                .when_some(icon, |d, icon| d.child(icon.size(px(32.))))
+                .child(details),
         );
         panel = panel.child(
             h_flex()
                 .justify_between()
-                .text_size(px(12.))
-                .line_height(px(20.))
-                .text_color(rgb(theme::INK_MUTED))
+                .items_center()
+                .gap(px(4.))
                 .child(
-                    h_flex()
-                        .gap(px(6.))
-                        .child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(rgb(if server.status.is_some() {
-                            theme::SUCCESS
-                        } else {
-                            theme::INK_DISABLED
-                        })))
+                    div()
+                        .font_family("Minecraft Default")
+                        .text_size(px(12.))
+                        .text_color(rgb(theme::INK_MUTED))
                         .child(if server.pinging && server.status.is_none() {
                             "CARGANDO"
                         } else if server.status.is_some() {
@@ -312,113 +527,82 @@ impl HomePage {
                             "Servidor sin respuesta"
                         }),
                 )
-                .when_some(online, |d, p| {
+                .when_some(online, |d, players| {
                     d.child(
                         div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(rgb(theme::INK))
-                            .child(format!("{} / {}", p.online, p.max)),
+                            .font_family("Minecraft Default")
+                            .text_size(px(12.))
+                            .child(format!("{} / {}", players.online, players.max)),
                     )
                 }),
         );
         if let Some(players) = online.filter(|p| !p.sample.is_empty()) {
-            let shown = players.sample.len().min(15);
-            let extra = players.online.saturating_sub(shown as i32);
-            panel = panel.child(
-                h_flex()
-                    .flex_wrap()
-                    .gap(px(3.))
-                    .pt(px(2.))
-                    .children(players.sample.iter().take(shown).map(|p| {
-                        img(picture(
-                            &if InterfaceConfig::get(cx).hide_skins {
-                                None
-                            } else {
-                                self.heads.get(p.id.as_ref()).cloned()
-                            },
-                            "images/default_head.png",
-                        ))
-                        .size(px(20.))
-                    }))
-                    .when(extra > 0, |d| {
-                        d.child(
-                            div()
-                                .size(px(20.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .bg(rgba(0xffffff0a))
-                                .text_size(px(10.))
-                                .text_color(rgb(theme::INK_MUTED))
-                                .child(format!("+{extra}")),
-                        )
-                    }),
-            );
-            panel = panel.child(div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child(
-                if InterfaceConfig::get(cx).hide_usernames {
-                    String::new()
-                } else {
-                    let names = players.sample.iter().take(3).map(|p| p.name.as_ref()).collect::<Vec<_>>().join(", ");
-                    let remaining = players.online.saturating_sub(players.sample.len().min(3) as i32);
-                    if remaining > 0 {
-                        format!("{names} y {remaining} más")
-                    } else {
-                        names
-                    }
-                },
+            let hide_names = InterfaceConfig::get(cx).hide_usernames;
+            let hide_skins = InterfaceConfig::get(cx).hide_skins;
+            panel = panel.child(h_flex().flex_wrap().gap(px(3.)).children(
+                players.sample.iter().take(12).enumerate().map(|(ix, player)| {
+                    let player_name = SharedString::from(player.name.clone());
+                    let head = img(picture(
+                        &if hide_skins {
+                            None
+                        } else {
+                            self.heads.get(player.id.as_ref()).cloned()
+                        },
+                        "images/default_head.png",
+                    ))
+                    .size(px(20.));
+                    div().id(("home-server-player", ix)).child(head).when(!hide_names, |d| {
+                        d.tooltip(move |window, cx| {
+                            let player_name = player_name.clone();
+                            gpui_component::tooltip::Tooltip::element(move |_, _| {
+                                div()
+                                    .bg(rgb(0x100010))
+                                    .border_2()
+                                    .border_color(rgb(0x5000a0))
+                                    .px(px(6.))
+                                    .py(px(3.))
+                                    .font_family("Minecraft Default")
+                                    .text_size(px(13.))
+                                    .text_color(rgb(0xffffff))
+                                    .child(player_name.clone())
+                            })
+                            .build(window, cx)
+                        })
+                    })
+                }),
             ));
         }
-        let panel = panel.child(
-            DesignButton::new("quick-server")
-                .notched()
-                .aria_label("Entrar al servidor")
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap(px(8.))
-                        .child(div().text_size(px(12.)).child("▶"))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_size(px(12.))
-                                .whitespace_nowrap()
-                                .child("Entrar al servidor"),
-                        )
-                        .when_some(server.ping, |d, p| {
-                            d.child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgba(0x86d96f99))
-                                    .child(format!("{} ms", p.as_millis())),
-                            )
-                        }),
+        let join = DesignButton::new("quick-server")
+            .aria_label("Entrar al servidor")
+            .w_full()
+            .h(px(30.))
+            .px_0()
+            .border_2()
+            .border_color(rgb(0x111111))
+            .bg(rgb(0x666666))
+            .hover(|d| d.bg(rgb(0x777777)))
+            .child(
+                div()
+                    .font_family("Minecraft Default")
+                    .text_size(px(12.))
+                    .text_color(rgb(0xffffff))
+                    .child("Entrar al servidor"),
+            )
+            .on_click(move |_, w, c| {
+                if data.accounts.read(c).selected_account.is_none() {
+                    root::open_home_accounts(c);
+                    return;
+                }
+                root::start_instance(
+                    id,
+                    name.clone(),
+                    Some(QuickPlayLaunch::Multiplayer(ip.to_string().into())),
+                    &data,
+                    w,
+                    c,
                 )
-                .paint(
-                    90.,
-                    [[0x86d96f1f; 2], [0x86d96f2e; 2], [0x86d96f1f; 2]],
-                    rgb(0x86d96f).into(),
-                    rgb(0x86d96f).into(),
-                )
-                .text_size(px(12.))
-                .h(px(32.))
-                .w_full()
-                .on_click(move |_, w, c| {
-                    if data.accounts.read(c).selected_account.is_none() {
-                        root::open_home_accounts(c);
-                        return;
-                    }
-                    root::start_instance(
-                        id,
-                        name.clone(),
-                        Some(QuickPlayLaunch::Multiplayer(ip.to_string().into())),
-                        &data,
-                        w,
-                        c,
-                    )
-                }),
-        );
-        server_frame(panel).into_any_element()
+            });
+        server_frame(panel.child(join)).into_any_element()
     }
 }
 impl Page for HomePage {
@@ -470,6 +654,29 @@ impl Render for HomePage {
             }
             server = i.servers.read(cx).as_ref().and_then(|s| s.first()).cloned();
             server_loading = i.servers.read(cx).is_none();
+        }
+        if let Some(i) = &instance {
+            use schema::instance::HomeServerSelection;
+            let target = match &i.configuration.home_server {
+                Some(HomeServerSelection::Instance { address }) => i
+                    .servers
+                    .read(cx)
+                    .as_ref()
+                    .and_then(|servers| servers.iter().find(|s| s.ip.as_ref() == address).cloned()),
+                Some(HomeServerSelection::Custom { name, address }) => Some(InstanceServerSummary {
+                    name: name.clone().into(),
+                    ip: address.clone().into(),
+                    png_icon: None,
+                    pinging: true,
+                    status: None,
+                    ping: None,
+                }),
+                None => None,
+            };
+            if i.configuration.home_server.is_some() {
+                server = target.map(|target| self.request_selected_server(target, window, cx));
+                server_loading = false;
+            }
         }
         if let Some(server) = &server {
             self.request_heads(server, window, cx);
@@ -575,7 +782,7 @@ impl Render for HomePage {
                     .justify_center()
                     .child(div().child(logo).w(px(370.)).h(px(70.))),
             )
-            .when_some(server.as_ref(), |d, s| d.child(self.server_panel(s, cx)))
+            .when_some(server.as_ref(), |d, s| d.child(self.server_panel(s, window, cx)))
             .when(server_loading, |d| {
                 d.child(server_frame(
                     v_flex()

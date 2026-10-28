@@ -1758,6 +1758,7 @@ impl BackendState {
             MessageToBackend::SetHomeServer { id, selection } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|config| config.home_server = selection);
+                    self.send.send(instance.create_modify_message());
                 }
             },
             MessageToBackend::GetProfileChangelog {
