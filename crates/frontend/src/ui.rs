@@ -840,6 +840,8 @@ impl LauncherUI {
                             .child(
                                 div()
                                     .id("launcher-logo-home")
+                                    .flex()
+                                    .items_center()
                                     .aria_label("Inicio")
                                     .track_focus(&logo_focus)
                                     .tab_index(0)
