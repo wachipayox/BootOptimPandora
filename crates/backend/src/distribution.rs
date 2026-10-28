@@ -19,7 +19,7 @@ use crate::profile_branch::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bridge::modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType};
-use futures::{StreamExt, stream};
+use futures::{StreamExt, stream::FuturesUnordered};
 use reqwest::{Certificate, Client, Url};
 use schema::backend_config::DistributionConfig;
 use schema::ignored_profile_paths::IgnoredProfilePaths;
@@ -1121,7 +1121,7 @@ impl DistributionClient {
         cache_root: &Path,
         progress: Option<(&ModalAction, &ProgressTracker)>,
     ) -> Result<BTreeMap<String, PathBuf>, DistributionError> {
-        let downloads = stream::iter(objects_to_fetch.into_iter().map(|(digest, (object, path))| async move {
+        let mut jobs = objects_to_fetch.into_iter().map(|(digest, (object, path))| async move {
             let result = if let Some((modal_action, overall)) = progress {
                 if let Some(cached) = verified_cache_path(&object, cache_root)? {
                     overall.add_count(progress_units(object.size));
@@ -1146,13 +1146,33 @@ impl DistributionClient {
                 self.fetch_verified_object(&object, cache_root).await
             };
             result.map(|source| (digest, source))
-        }))
-        .buffer_unordered(MAX_CONCURRENT_PROFILE_DOWNLOADS)
-        .collect::<Vec<Result<_, DistributionError>>>()
-        .await;
-        // Finish all in-flight requests even after an error so their temporary files are
-        // cleaned up by the existing verified-object path before reporting failure.
-        downloads.into_iter().collect()
+        });
+        let mut active = FuturesUnordered::new();
+        for job in jobs.by_ref().take(MAX_CONCURRENT_PROFILE_DOWNLOADS) {
+            active.push(job);
+        }
+        let mut sources = BTreeMap::new();
+        let mut first_error = None;
+        while let Some(result) = active.next().await {
+            match result {
+                Ok((digest, source)) => {
+                    sources.insert(digest, source);
+                },
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {},
+            }
+            // Do not start new downloads after an error, but drain the existing ones
+            // so their normal temporary-file cleanup still runs.
+            if first_error.is_none()
+                && let Some(job) = jobs.next()
+            {
+                active.push(job);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(sources),
+        }
     }
 
     async fn fetch_verified_icon(
