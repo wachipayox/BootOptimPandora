@@ -19,6 +19,15 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+// The Home view is recreated while navigating; retain decoded visuals across
+// views so an unresolved selection never flashes the Vanilla fallback.
+#[derive(Default)]
+struct HomeVisualCache {
+    artwork: crate::component::retained_image::RetainedImage,
+    logo: crate::component::retained_image::RetainedImage,
+}
+impl Global for HomeVisualCache {}
+
 pub struct HomePage {
     data: DataEntities,
     instance: Option<Entity<InstanceEntry>>,
@@ -104,6 +113,10 @@ impl HomePage {
             let servers = i.read(cx).servers.clone();
             cx.observe(&servers, |_, _, cx| cx.notify()).detach();
         }
+        let (artwork_image, logo_image) = {
+            let cache = cx.default_global::<HomeVisualCache>();
+            (cache.artwork.clone(), cache.logo.clone())
+        };
         let mut page = Self {
             data: data.clone(),
             instance,
@@ -111,8 +124,8 @@ impl HomePage {
             loaded: false,
             news_loaded: false,
             startup_cached: !std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page != "startup-live"),
-            artwork_image: Default::default(),
-            logo_image: Default::default(),
+            artwork_image,
+            logo_image,
             requested: false,
             refreshed: Instant::now(),
             menu: std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-menu"),
@@ -518,7 +531,7 @@ impl Render for HomePage {
         };
         let hero_height = (window.viewport_size().height.as_f32() * 0.64).max(320.);
         let artwork = self.artwork_image.render(
-            resource(&self.presentation.artwork, "images/artwork-vanilla.png"),
+            self.loaded.then(|| resource(&self.presentation.artwork, "images/artwork-vanilla.png")),
             "images/artwork-vanilla.png",
             true,
             cx.entity().entity_id(),
@@ -526,13 +539,18 @@ impl Render for HomePage {
             cx,
         );
         let logo = self.logo_image.render(
-            resource(&self.presentation.logo, "images/logo-vanilla.png"),
+            self.loaded.then(|| resource(&self.presentation.logo, "images/logo-vanilla.png")),
             "images/logo-vanilla.png",
             false,
             cx.entity().entity_id(),
             window,
             cx,
         );
+        {
+            let cache = cx.default_global::<HomeVisualCache>();
+            cache.artwork = self.artwork_image.clone();
+            cache.logo = self.logo_image.clone();
+        }
         let hero = div()
             .relative()
             .h(px(hero_height))
@@ -585,7 +603,8 @@ impl Render for HomePage {
         let data = self.data.clone();
         let mut play = PlayButton::new("home-play", if instance.is_some() { "Al día" } else { "" }, None);
         if let Some(i) = &instance {
-            if i.status == InstanceStatus::Running
+            if self.loaded
+                && i.status == InstanceStatus::Running
                 && InterfaceConfig::get(cx).last_played_artwork != self.presentation.artwork
             {
                 let config = InterfaceConfig::get_mut(cx);
