@@ -2038,7 +2038,15 @@ mod trusted_release_key_tests {
             trusted_keys: BTreeMap::new(),
             server_keys: Arc::new(tokio::sync::OnceCell::new()),
         };
-        let result = client.fetch_distinct_objects(objects.clone(), &root, None).await.unwrap();
+        let modal = ModalAction::default();
+        let overall = modal.push_tracker("fixture".into());
+        let expected_bytes = objects.values().map(|(object, _)| object.size as usize).sum::<usize>();
+        overall.set_total(expected_bytes);
+        let result = client
+            .fetch_distinct_objects(objects.clone(), &root, Some((&modal, &overall)))
+            .await
+            .unwrap();
+        assert_eq!(overall.get(), (expected_bytes, expected_bytes));
         server.join().unwrap();
         assert_eq!(result.len(), 8);
         assert_eq!(requests.load(Ordering::SeqCst), 8);
