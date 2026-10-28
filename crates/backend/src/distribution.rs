@@ -2021,6 +2021,41 @@ mod trusted_release_key_tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[tokio::test]
+    async fn concurrent_object_download_rejects_corruption_and_cleans_temporary_file() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            socket.read(&mut request).unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nevil")
+                .unwrap();
+        });
+        let digest = hex::encode(Sha256::digest(b"good"));
+        let object = ManifestObjectRef {
+            sha256: digest.clone(),
+            size: 4,
+            media_type: String::new(),
+        };
+        let root = std::env::temp_dir().join(format!("pandora-corrupt-object-{}", uuid::Uuid::new_v4()));
+        let client = DistributionClient {
+            client: Client::new(),
+            base_url: Url::parse(&format!("http://{address}/")).unwrap(),
+            trusted_keys: BTreeMap::new(),
+            server_keys: Arc::new(tokio::sync::OnceCell::new()),
+        };
+        let result = client
+            .fetch_distinct_objects(BTreeMap::from([(digest.clone(), (object, "fixture".into()))]), &root, None)
+            .await;
+        server.join().unwrap();
+        assert!(matches!(result, Err(DistributionError::InvalidObject(_))));
+        let cache = root.join("sha256").join(&digest[..2]);
+        assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn encoded_key(byte: u8) -> String {
         URL_SAFE_NO_PAD.encode([byte; 32])
     }
