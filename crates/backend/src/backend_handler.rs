@@ -1727,6 +1727,34 @@ impl BackendState {
                     instance.mark_servers_dirty(self, true);
                 }
             },
+            MessageToBackend::GetHomeServerStatus { id, address, channel } => {
+                let version = self
+                    .instance_state
+                    .write()
+                    .instances
+                    .get_mut(id)
+                    .map(|instance| instance.configuration.get().minecraft_version);
+                let result = version.map(|version| {
+                    let mut summary = bridge::instance::InstanceServerSummary {
+                        name: "".into(),
+                        ip: address.clone(),
+                        png_icon: None,
+                        pinging: false,
+                        status: None,
+                        ping: None,
+                    };
+                    match crate::server_list_pinger::ServerListPinger::load_status(self, address, version, id) {
+                        crate::server_list_pinger::PingResult::Pinging => summary.pinging = true,
+                        crate::server_list_pinger::PingResult::Loaded { status, ping } => {
+                            summary.status = Some(status);
+                            summary.ping = ping;
+                        },
+                        crate::server_list_pinger::PingResult::Error => {},
+                    }
+                    summary
+                });
+                let _ = channel.send(result);
+            },
             MessageToBackend::GetProfileChangelog {
                 profile_id,
                 query,

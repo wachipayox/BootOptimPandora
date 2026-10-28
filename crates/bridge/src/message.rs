@@ -317,6 +317,11 @@ pub enum MessageToBackend {
     RefreshHomeServer {
         id: InstanceID,
     },
+    GetHomeServerStatus {
+        id: InstanceID,
+        address: Arc<str>,
+        channel: tokio::sync::oneshot::Sender<Option<crate::instance::InstanceServerSummary>>,
+    },
     GetProfileChangelog {
         profile_id: String,
         query: schema::changelog::ChangelogQuery,
