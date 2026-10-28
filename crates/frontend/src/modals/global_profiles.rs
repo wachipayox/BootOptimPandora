@@ -38,13 +38,13 @@ fn test_label(_cx: &App) -> impl IntoElement {
         .child("PRUEBA")
 }
 
-fn profile_icon(profile: &GlobalProfileSummary, size: f32) -> AnyElement {
+pub(crate) fn profile_icon(profile: &GlobalProfileSummary, size: f32) -> AnyElement {
     match &profile.icon_path {
-        Some(path) => img(path.clone()).size(px(size)).flex_shrink_0().rounded_md().into_any_element(),
+        Some(path) => img(path.clone()).size(px(size)).flex_shrink_0().rounded(px(0.)).into_any_element(),
         None => img(ImageSource::Resource(Resource::Embedded("images/default_mod.png".into())))
             .size(px(size))
             .flex_shrink_0()
-            .rounded_md()
+            .rounded(px(0.))
             .into_any_element(),
     }
 }
@@ -107,22 +107,22 @@ impl ProfileFamilyModal {
                             .border_color(cx.theme().border),
                     );
                 }
-                row.child(
-                    Button::new(format!("expand-{id}"))
-                        .label(if has_children {
-                            if expanded { "▾" } else { "▸" }
-                        } else {
-                            "·"
-                        })
-                        .disabled(!has_children)
+                let toggle = if has_children {
+                    design::DesignButton::new(format!("expand-{id}"))
+                        .label(if expanded { "▾" } else { "▸" })
+                        .w(px(28.))
+                        .h(px(32.))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if !this.expanded.remove(&id) {
                                 this.expanded.insert(id.clone());
                             }
                             cx.notify();
-                        })),
-                )
-                .child(
+                        }))
+                        .into_any_element()
+                } else {
+                    div().w(px(28.)).flex_shrink_0().into_any_element()
+                };
+                row.child(toggle).child(
                     h_flex()
                         .id(format!("choose-profile-{}", profile.profile_id))
                         .flex_1()
@@ -130,7 +130,10 @@ impl ProfileFamilyModal {
                         .gap_3()
                         .p_2()
                         .items_center()
-                        .rounded_md()
+                        .rounded(px(0.))
+                        .border_1()
+                        .border_color(rgba(0xffffff12))
+                        .bg(rgba(0xffffff06))
                         .cursor_pointer()
                         .hover(|s| s.bg(cx.theme().secondary))
                         .child(profile_icon(&profile, 36.0))
@@ -167,8 +170,8 @@ impl ProfileFamilyModal {
                 )
             })
             .collect::<Vec<_>>();
-        dialog
-            .title("Perfil global")
+        design::dialog(dialog)
+            .title(design::dialog_title("Perfil global"))
             .width(px((window.viewport_size().width.as_f32() - 48.0).min(760.0)))
             .child(
                 v_flex().gap_3().child("Perfiles disponibles en el servidor.").child(

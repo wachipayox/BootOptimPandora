@@ -436,6 +436,12 @@ impl Render for HomePage {
             return div().size_full().child(self.news_page.clone().unwrap()).into_any_element();
         }
         let instance = self.instance.as_ref().map(|i| i.read(cx).clone());
+        #[cfg(feature = "ui-capture")]
+        if instance.is_some()
+            && std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-running" || p == "home-optimizing")
+        {
+            log::info!("home-fixture-ready pid={}", std::process::id());
+        }
         let mut server = None;
         let mut server_loading = false;
         if let Some(i) = &instance {
@@ -510,6 +516,7 @@ impl Render for HomePage {
                 .map(|path| Resource::Path(Arc::from(path.as_path())))
                 .unwrap_or_else(|| Resource::Embedded(fallback.into()))
         };
+        let hero_height = (window.viewport_size().height.as_f32() * 0.64).max(320.);
         let artwork = self.artwork_image.render(
             resource(&self.presentation.artwork, "images/artwork-vanilla.png"),
             "images/artwork-vanilla.png",
@@ -528,11 +535,11 @@ impl Render for HomePage {
         );
         let hero = div()
             .relative()
-            .h(px(440.))
+            .h(px(hero_height))
             .w_full()
             .flex_shrink_0()
             .overflow_hidden()
-            .child(div().child(artwork).absolute().size_full())
+            .child(div().absolute().size_full().child(artwork))
             .child(div().absolute().bottom_0().w_full().h(relative(0.55)).bg(shade(0x06060700, 0x060607ff)))
             .child(
                 div()
@@ -590,7 +597,14 @@ impl Render for HomePage {
             }
             let id = i.id;
             let name = i.name.clone();
-            let state = i.status;
+            #[allow(unused_mut)]
+            let mut state = i.status;
+            #[cfg(feature = "ui-capture")]
+            match std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() {
+                Ok("home-running") => state = InstanceStatus::Running,
+                Ok("home-optimizing") => state = InstanceStatus::Optimizing,
+                _ => {},
+            }
             match state {
                 InstanceStatus::Launching => {
                     play = PlayButton::new("home-play", "Abriendo Minecraft", None).title("Iniciando").disabled(true)
@@ -608,11 +622,14 @@ impl Render for HomePage {
                         None,
                     )
                     .title("Iniciando")
+                    .tint(0x176daf60)
                     .progress(progress);
                 },
                 InstanceStatus::Running => {
                     play = PlayButton::new("home-play", "En marcha", None)
                         .title("Detener")
+                        .stop_icon()
+                        .tint(0xb330305e)
                         .on_click(move |_, _, _| data.backend_handle.send(MessageToBackend::KillInstance { id }))
                 },
                 InstanceStatus::NotRunning => {
@@ -656,19 +673,7 @@ impl Render for HomePage {
             h_flex()
                 .w(px(300.))
                 .gap(px(12.))
-                .child(
-                    i.icon
-                        .clone()
-                        .map(|b| {
-                            crate::png_render_cache::render_with_transform(
-                                b,
-                                crate::png_render_cache::ImageTransformation::Resize { width: 44, height: 44 },
-                                cx,
-                            )
-                            .into_any_element()
-                        })
-                        .unwrap_or_else(|| div().size(px(44.)).into_any_element()),
-                )
+                .child(img(picture(&self.presentation.last_world_icon, "images/home-world-default.png")).size(px(44.)))
                 .child(
                     v_flex()
                         .gap(px(3.))

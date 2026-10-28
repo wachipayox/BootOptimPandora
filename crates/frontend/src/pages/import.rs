@@ -125,8 +125,16 @@ impl Render for ImportPage {
                     .gap_2()
                     .children({
                         OtherLauncher::iter().map(|launcher| {
+                            let icon = match launcher {
+                                OtherLauncher::Prism => "images/brands/prism.png",
+                                OtherLauncher::CurseForge => "images/brands/curseforge.png",
+                                OtherLauncher::Modrinth => "images/brands/modrinth.png",
+                                OtherLauncher::MultiMC => "images/brands/multimc.png",
+                                OtherLauncher::ATLauncher => "images/brands/atlauncher.png",
+                            };
                             Button::new(launcher.name())
                                 .label(launcher.name())
+                                .child(img(ImageSource::Resource(Resource::Embedded(icon.into()))).size(px(20.)))
                                 .ghost()
                                 .rounded(px(0.))
                                 .w_full()

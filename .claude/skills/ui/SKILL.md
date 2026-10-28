@@ -47,6 +47,8 @@ For the owned instance routes, `-CaptureState advanced|version|expanded|editing`
 
 Launcher capture routes: `launcher-general`, `launcher-appearance`, `launcher-network`, `launcher-distribution`, `launcher-ignored`, `launcher-windows`, `skins-url`, `skins-copy`, `account-offline`, `add-instance`, `add-server`, `add-local`, and `content-browser:agente-274-…`. `-LauncherScreens` collects them along with the existing skins/accounts/import/sync routes. Dialog routes open the real native dialog without confirming any action. Capture Distribution settings with a temporary portable directory explicitly configured with `https://example.invalid` so endpoint values and credentials never enter the evidence.
 
+With `ui-capture`, `add-local-fabric`, `add-local-forge`, and `add-local-neoforge` select Minecraft 1.21.1 and wait for loader metadata before capture. `add-profile-fixture` and `add-profile-tree` use synthetic catalog entries; `WBOMBO_UI_CAPTURE_PROFILE_ICON` optionally supplies a local cosmetic icon. `home-running` and `home-optimizing` present synthetic states for an owned instance without launching Minecraft. They do not verify an actual game or installer.
+
 Launcher review also supports `launcher-about`, `skins-import`,
 `launcher-defender-dialog`, and `delete:agente-274-…`, `export:…`, `groups:…`.
 These routes open native views without confirming deletion, imports or Defender
@@ -99,6 +101,10 @@ the existing backend message. Clean up its exact owned path afterwards.
 `backdrop-probe -ResizeProbe` isolates the app surface and retains the first
 fresh GPU draw armed before each resize, instead of waiting for the backdrop
 worker; compare it with the settled frame to detect blank resize frames.
+`-SizingProbe -Framebuffer -DesignViewport` sends `WM_SIZING` with synthetic
+rectangles to the owned normal window and records the returned bounds; it does
+not drag the window or test maximizing by double click. Manual size constraints
+do not apply to maximized or fullscreen windows.
 
 All ordinary capture routes bypass startup presentation. `-StartupScreens`
 adds deterministic vector reference frames (`startup-frame:<seconds>`),

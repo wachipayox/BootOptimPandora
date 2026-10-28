@@ -28,10 +28,11 @@ param(
     [string]$HitTestReferenceDirectory,
     [switch]$DragRegions,
     [switch]$ResizeProbe,
+    [switch]$SizingProbe,
     [string]$PortableDirectory
 )
 $ErrorActionPreference = 'Stop'
-if (($HitTest -or $DragRegions -or $ResizeProbe) -and -not $Framebuffer) { throw 'Native diagnostics require -Framebuffer.' }
+if (($HitTest -or $DragRegions -or $ResizeProbe -or $SizingProbe) -and -not $Framebuffer) { throw 'Native diagnostics require -Framebuffer.' }
 if ($OversizedViewport -and (-not $Framebuffer -or -not $DesignViewport)) { throw 'Oversized viewport requires an explicit design viewport and native framebuffer evidence.' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $outputPath = [IO.Path]::GetFullPath($Output)
@@ -66,11 +67,13 @@ public static class CaptureWindow {
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
   [StructLayout(LayoutKind.Sequential)] public struct MINMAXINFO { public POINT reserved, maxSize, maxPosition, minTrackSize, maxTrackSize; }
   [DllImport("user32.dll", EntryPoint="SendMessageW")] private static extern IntPtr ReadMinMax(IntPtr hwnd, uint message, IntPtr wparam, ref MINMAXINFO info);
+  [DllImport("user32.dll", EntryPoint="SendMessageW")] public static extern IntPtr SendSizing(IntPtr hwnd, uint message, IntPtr edge, ref RECT rect);
   public static MINMAXINFO GetMinMax(IntPtr hwnd) { var info=new MINMAXINFO(); ReadMinMax(hwnd,0x24,IntPtr.Zero,ref info); return info; }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
@@ -331,6 +334,8 @@ $distributionCaptureActive = $false
 $distributionOriginalConfig = $null
 $distributionConfigPath = Join-Path $tempRoot "WachilandLauncher\config.json"
 $oldPage = $env:WBOMBO_UI_CAPTURE_PAGE
+$oldEnforceBounds = $env:WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS
+if ($SizingProbe) { $env:WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS='1' } else { Remove-Item Env:WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS -ErrorAction SilentlyContinue }
 $oldFramebufferDirectory = $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR
 if ($Framebuffer) { $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR = $framebufferRoot }
 $oldCaptureState = $env:WBOMBO_UI_CAPTURE_STATE
@@ -415,6 +420,20 @@ try {
             $proc.Refresh()
         }
         if ($proc.HasExited) { throw "Pandora exited for $($screen.page), code $($proc.ExitCode); see capture-window.err in the isolated portable directory" }
+        if ($screen.page.StartsWith('add-local-')) {
+            $ready = "loader-versions-ready pid=$($proc.Id)"
+            $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { if ($proc.HasExited) { throw 'Capture process exited before loader versions loaded' }; Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Loader version metadata did not load before capture.' }
+        }
+        if ($screen.page -in @('home-running','home-optimizing')) {
+            $ready = "home-fixture-ready pid=$($proc.Id)"
+            $log = Join-Path $tempRoot 'WachilandLauncher\launcher.log'
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline -and -not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { if ($proc.HasExited) { throw 'Capture process exited before the owned Home fixture loaded' }; Start-Sleep -Milliseconds 300 }
+            if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw 'Owned Home fixture did not load before capture.' }
+        }
         if ($proc.MainWindowHandle -eq 0) { throw "Pandora did not open for $($screen.page)" }
         [void][CaptureWindow]::ShowWindow($proc.MainWindowHandle, 3)
         [void][CaptureWindow]::SetForegroundWindow($proc.MainWindowHandle)
@@ -498,6 +517,50 @@ try {
             if($dialogOwner -ne $proc.Id -or ([CaptureWindow]::GetWindowLongPtr($captureHandle,-16).ToInt64() -band 0x40000) -ne 0){throw 'Standalone dialog HWND is not the active owned nonresizable window.'}
         }
         Save-Window (Join-Path $outputPath $screen.file) $captureHandle $proc.Id
+        if ($SizingProbe) {
+            $outer=New-Object CaptureWindow+RECT; $client=New-Object CaptureWindow+RECT
+            if (-not [CaptureWindow]::GetWindowRect($captureHandle,[ref]$outer) -or -not [CaptureWindow]::GetClientRect($captureHandle,[ref]$client)) { throw 'Cannot read sizing probe bounds.' }
+            $frameWidth=($outer.Right-$outer.Left)-($client.Right-$client.Left)
+            $frameHeight=($outer.Bottom-$outer.Top)-($client.Bottom-$client.Top)
+            $dpi=[CaptureWindow]::GetDpiForWindow($captureHandle); $scale=$dpi/96.0
+            $cap=[Math]::Max(960*$scale,1920+220*$scale)
+            $heightCap=[Math]::Max(600*$scale,1187.5)
+            $checks=@()
+            foreach ($case in @(@{name='wide';width=[int](3200*$scale);height=[int](800*$scale);edge=2},@{name='tall';width=[int](960*$scale);height=[int](1500*$scale);edge=6},@{name='height-cap';width=[int]$cap;height=[int](1500*$scale);edge=8},@{name='valid';width=[int](960*$scale);height=[int](600*$scale);edge=8})) {
+                $rect=New-Object CaptureWindow+RECT; $rect.Left=100; $rect.Top=100
+                $rect.Right=$rect.Left+$case.width+$frameWidth; $rect.Bottom=$rect.Top+$case.height+$frameHeight
+                $reply=[CaptureWindow]::SendSizing($captureHandle,0x214,[IntPtr]$case.edge,[ref]$rect).ToInt64()
+                $width=$rect.Right-$rect.Left-$frameWidth; $height=$rect.Bottom-$rect.Top-$frameHeight; $ratio=$width/[double]$height
+                $ok=$reply -eq 1 -and $width -le ($cap+2) -and $height -le ($heightCap+2) -and $ratio -ge 1.598 -and $ratio -le 2.002
+                if ($case.name -eq 'valid') { $ok=$ok -and [Math]::Abs($width-$case.width) -le 2 -and [Math]::Abs($height-$case.height) -le 2 }
+                $checks+=@{name=$case.name;requested=@($case.width,$case.height);client=@($width,$height);ratio=$ratio;reply=$reply;passed=$ok}
+                if (-not $ok) { throw "Native WM_SIZING failed: $($case.name), $width x $height, reply $reply" }
+            }
+            [void][CaptureWindow]::SetWindowPos($captureHandle,[IntPtr]::Zero,0,0,[int](3200*$scale+$frameWidth),[int](1500*$scale+$frameHeight),0x16)
+            $deadline=(Get-Date).AddSeconds(10); $actual=New-Object CaptureWindow+RECT; $fixed=$false
+            while ((Get-Date) -lt $deadline) {
+                Start-Sleep -Milliseconds 200
+                if ([CaptureWindow]::GetClientRect($captureHandle,[ref]$actual)) {
+                    $w=$actual.Right-$actual.Left; $h=$actual.Bottom-$actual.Top
+                    if ($h -gt 0 -and $w -le $cap+2 -and $h -le $heightCap+2 -and $w/[double]$h -ge 1.598 -and $w/[double]$h -le 2.002) { $fixed=$true; break }
+                }
+            }
+            $checks+=@{name='programmatic-normal-resize';client=@($w,$h);passed=$fixed}
+            if (-not $fixed) { throw "Programmatic normal resize was not corrected: $w x $h" }
+            Start-Sleep -Milliseconds 800
+            $previousWidth=$w; $previousHeight=$h
+            [void][CaptureWindow]::GetClientRect($captureHandle,[ref]$actual)
+            if ([Math]::Abs(($actual.Right-$actual.Left)-$previousWidth) -gt 1 -or [Math]::Abs(($actual.Bottom-$actual.Top)-$previousHeight) -gt 1) { throw 'Corrected window size did not settle.' }
+            [void][CaptureWindow]::ShowWindow($captureHandle,3); Start-Sleep -Milliseconds 300
+            if (-not [CaptureWindow]::IsZoomed($captureHandle)) { throw 'The sizing probe could not maximize its owned window.' }
+            $rect=New-Object CaptureWindow+RECT; $rect.Left=100; $rect.Top=100; $rect.Right=5100; $rect.Bottom=3100
+            [void][CaptureWindow]::SendSizing($captureHandle,0x214,[IntPtr]8,[ref]$rect)
+            $maxUnrestricted=$rect.Right -eq 5100 -and $rect.Bottom -eq 3100
+            $checks+=@{name='maximized-unrestricted';passed=$maxUnrestricted;rectangle=@($rect.Left,$rect.Top,$rect.Right,$rect.Bottom)}
+            [void][CaptureWindow]::ShowWindow($captureHandle,9)
+            if (-not $maxUnrestricted) { throw 'The maximized window was constrained by the synthetic sizing probe.' }
+            $checks | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $outputPath 'sizing-probe.json')
+        }
         if ($screen.page -like 'startup-bench:*' -or $screen.page -eq 'startup-live') {
             Copy-Item -LiteralPath (Join-Path $tempRoot 'WachilandLauncher/launcher.log') -Destination (Join-Path $outputPath ($screen.file -replace '\.png$', '.log')) -Force
         }
@@ -536,7 +599,7 @@ try {
                 Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
             }
         }
-        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page -in @('skins','skins-url','skins-copy','skins-import','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news','window-dialog') -or $screen.page -match '^(instance-|derived:|duplicate:|update:|delete:|export:|groups:)') {
+        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page.StartsWith('add-local-') -or $screen.page.StartsWith('add-profile-') -or $screen.page -in @('skins','skins-url','skins-copy','skins-import','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news','window-dialog') -or $screen.page -match '^(instance-|derived:|duplicate:|update:|delete:|export:|groups:)') {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
             if (-not [CaptureWindow]::PostMessage($captureHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
@@ -585,6 +648,7 @@ try {
     }
     if ($null -ne $oldCaptureState) { $env:WBOMBO_UI_CAPTURE_STATE=$oldCaptureState } else { Remove-Item Env:WBOMBO_UI_CAPTURE_STATE -ErrorAction SilentlyContinue }
     if ($null -ne $oldPage) { $env:WBOMBO_UI_CAPTURE_PAGE = $oldPage } else { Remove-Item Env:WBOMBO_UI_CAPTURE_PAGE -ErrorAction SilentlyContinue }
+    if ($null -ne $oldEnforceBounds) { $env:WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS=$oldEnforceBounds } else { Remove-Item Env:WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS -ErrorAction SilentlyContinue }
     if ($createdInstance) { Invoke-CaptureCli @('--delete-instance', $InstanceName, '--confirm', $InstanceName) }
     if ($ownsDirectory) {
         $resolvedTempRoot = [IO.Path]::GetFullPath($tempRoot)

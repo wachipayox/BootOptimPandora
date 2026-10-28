@@ -1,0 +1,9 @@
+Third-party marks identify their respective projects and are not endorsements.
+Fabric and NeoForge marks: Prism Launcher resources, GPL-3.0, https://github.com/PrismLauncher/PrismLauncher/tree/develop/launcher/resources/multimc/scalable/instances
+Forge mark: MinecraftForge official repository, https://github.com/MinecraftForge/MinecraftForge/blob/1.20.x/docs/assets/Forge_logo.svg
+Prism mark: Prism Launcher resources; logo CC BY-SA 4.0, https://prismlauncher.org/
+ATLauncher mark: Prism Launcher resources, GPL-3.0, https://github.com/PrismLauncher/PrismLauncher/blob/develop/launcher/resources/multimc/scalable/atlauncher.svg
+MultiMC mark: MultiMC official repository, https://github.com/MultiMC/Launcher/blob/develop/branding/logo.svg
+CurseForge and Modrinth marks: Simple Icons, CC0-1.0, https://github.com/simple-icons/simple-icons
+The PNG files under assets/images/brands are colour renderings of these SVGs. Forge uses the anvil from the original mark, cropped and recoloured white for contrast; the unchanged original is forge-original.svg. CurseForge and Modrinth PNGs use their respective brand colours.
+vanilla.svg is an original pixel-art grass tile drawn for this launcher; its PNG is a colour rendering of that SVG.

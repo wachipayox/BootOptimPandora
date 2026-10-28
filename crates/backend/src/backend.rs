@@ -1905,9 +1905,10 @@ impl BackendState {
         name: &str,
         version: &str,
         loader: Loader,
+        loader_version: Option<&str>,
         icon: Option<EmbeddedOrRaw>,
     ) -> Option<PathBuf> {
-        self.create_instance_impl(name, version, loader, icon, true, None)
+        self.create_instance_impl(name, version, loader, icon, true, loader_version)
             .await
             .map(|(path, _)| path)
     }

@@ -119,6 +119,8 @@ pub struct InstanceStats {
     pub last_session_secs: u64,
     #[serde(default)]
     pub last_destination: Option<String>,
+    #[serde(default)]
+    pub last_world_folder: Option<String>,
 }
 
 #[derive(Debug)]

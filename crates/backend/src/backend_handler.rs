@@ -265,11 +265,14 @@ impl BackendState {
                 name,
                 version,
                 loader,
+                loader_version,
                 icon,
             } => {
                 let backend = self.clone();
                 self.spawn_launcher_task(async move {
-                    backend.create_instance(&name, &version, loader, icon).await;
+                    backend
+                        .create_instance(&name, &version, loader, loader_version.as_ref().map(|v| v.as_str()), icon)
+                        .await;
                 });
             },
             MessageToBackend::DeleteInstance { id } => {
@@ -2941,6 +2944,14 @@ impl BackendState {
             })
         });
 
+        let last_world_folder = match quick_play.as_ref() {
+            Some(QuickPlayLaunch::Singleplayer(path)) => std::path::Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| crate::fs::is_single_component_path_str(name))
+                .map(str::to_owned),
+            _ => None,
+        };
         let last_destination = quick_play.as_ref().map(|quick| match quick {
             QuickPlayLaunch::Singleplayer(path) => std::path::Path::new(path)
                 .file_name()
@@ -3006,7 +3017,10 @@ impl BackendState {
                     if let Some(reason) = aot_retry_reason {
                         instance.aot_retry_probe = Some((child.process.id(), Instant::now(), reason));
                     }
-                    instance.stats.modify(|stats| stats.last_destination = last_destination.clone());
+                    instance.stats.modify(|stats| {
+                        stats.last_destination = last_destination.clone();
+                        stats.last_world_folder = last_world_folder.clone();
+                    });
                     instance.processes.push(child.process);
                     instance.update_session();
                     self.quit_coordinator.set_can_quit(false);

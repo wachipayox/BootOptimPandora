@@ -478,8 +478,10 @@ pub struct PlayButton {
     status: SharedString,
     title: SharedString,
     add_instance: bool,
+    stop: bool,
     artwork: Option<ImageSource>,
     disabled: bool,
+    tint: Option<u32>,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
 }
 impl PlayButton {
@@ -490,13 +492,23 @@ impl PlayButton {
             status: status.into(),
             title: "Jugar".into(),
             add_instance: false,
+            stop: false,
             artwork,
             disabled: false,
+            tint: None,
             on_click: None,
         }
     }
     pub fn title(mut self, title: impl Into<SharedString>) -> Self {
         self.title = title.into();
+        self
+    }
+    pub fn tint(mut self, color: u32) -> Self {
+        self.tint = Some(color);
+        self
+    }
+    pub fn stop_icon(mut self) -> Self {
+        self.stop = true;
         self
     }
     pub fn progress(mut self, amount: f32) -> Self {
@@ -545,6 +557,9 @@ impl RenderOnce for PlayButton {
                         d.child(img(image).absolute().size_full().object_fit(ObjectFit::Cover))
                     })
             })
+            .when_some(self.tint.filter(|_| !disabled), |d, tint| {
+                d.child(div().absolute().size_full().bg(rgba(tint)))
+            })
             .child(
                 DesignButton::new(self.id)
                     .ghost()
@@ -583,13 +598,15 @@ impl RenderOnce for PlayButton {
                             } else {
                                 rgb(theme::ON_PLAY)
                             })
-                            .child(
-                                div()
-                                    .size(px(18.))
-                                    .text_size(px(18.))
-                                    .line_height(px(18.))
-                                    .child(if self.add_instance { "+" } else { "▶" }),
-                            )
+                            .child(div().size(px(18.)).text_size(px(18.)).line_height(px(18.)).child(
+                                if self.add_instance {
+                                    "+"
+                                } else if self.stop {
+                                    "■"
+                                } else {
+                                    "▶"
+                                },
+                            ))
                             .child(
                                 v_flex()
                                     .items_start()

@@ -95,6 +95,9 @@ pub fn start(
     if let Err(error) = theme::install_font_licenses(&launcher_dir) {
         log::warn!("Could not write bundled font licenses: {error}");
     }
+    if let Err(error) = theme::install_brand_licenses(&launcher_dir) {
+        log::warn!("Could not write bundled brand notices: {error}");
+    }
 
     gpui_platform::application()
         .with_http_client(http_client)
@@ -283,6 +286,14 @@ pub fn open_main_window(
     // native window controls always keep their full width.
     const MIN_WIDTH: f32 = 960.;
     const MIN_HEIGHT: f32 = 600.;
+    let resize_constraints = ManualResizeConstraints {
+        min_aspect: 1.6,
+        max_aspect: 2.0,
+        max_content_width_physical: 1920.,
+        // Home uses 64% of the viewport height for a 760px-high profile artwork.
+        max_height_physical: 760. / 0.64,
+        fixed_width_logical: 220.,
+    };
 
     // A display override should use that display's default placement, not coordinates saved for another screen.
     let window_bounds = if display_id.is_some() {
@@ -313,12 +324,31 @@ pub fn open_main_window(
             [MIN_WIDTH, MIN_HEIGHT],
         )))
     });
+    let display_scale = display_id
+        .and_then(|id| cx.displays().into_iter().find(|display| display.id() == id))
+        .or_else(|| cx.primary_display())
+        .map(|display| display.scale_factor())
+        .unwrap_or(1.);
+    let window_bounds = window_bounds.map(|state| {
+        let constrain = |bounds: Bounds<Pixels>| {
+            Bounds::new(
+                bounds.origin,
+                resize_constraints.constrain(bounds.size, display_scale, size(px(MIN_WIDTH), px(MIN_HEIGHT))),
+            )
+        };
+        match state {
+            WindowBounds::Windowed(bounds) => WindowBounds::Windowed(constrain(bounds)),
+            WindowBounds::Maximized(bounds) => WindowBounds::Maximized(constrain(bounds)),
+            WindowBounds::Fullscreen(bounds) => WindowBounds::Fullscreen(constrain(bounds)),
+        }
+    });
     crate::root::set_should_render_custom_titlebar(use_custom_titlebar);
     let handle = cx
         .open_window(
             WindowOptions {
                 app_id: Some("PandoraLauncher".into()),
                 window_min_size: Some(size(px(MIN_WIDTH), px(MIN_HEIGHT))),
+                manual_resize_constraints: Some(resize_constraints),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Wachiland Launcher".into()),
                     appears_transparent: use_custom_titlebar,
@@ -376,9 +406,9 @@ pub fn open_main_window(
                     }
                 }
                 match capture_page.as_deref() {
-                    Some("instances" | "home-menu" | "home-news" | "sidebar-scroll") => {
-                        InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances
-                    },
+                    Some(
+                        "instances" | "home-menu" | "home-news" | "home-running" | "home-optimizing" | "sidebar-scroll",
+                    ) => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances,
                     Some(name) if name.starts_with("news-") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
                     },
@@ -397,7 +427,20 @@ pub fn open_main_window(
                     Some(page) if page == "appearance" || page.starts_with("launcher-") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::LauncherSettings;
                     },
-                    Some(page) if matches!(page, "add-instance" | "add-server" | "add-local" | "account-offline") => {
+                    Some(page)
+                        if matches!(
+                            page,
+                            "add-instance"
+                                | "add-profile-fixture"
+                                | "add-profile-tree"
+                                | "add-server"
+                                | "add-local"
+                                | "add-local-fabric"
+                                | "add-local-forge"
+                                | "add-local-neoforge"
+                                | "account-offline"
+                        ) =>
+                    {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
                     },
                     Some(page) if page.starts_with("content-browser:agente-274-") => {
@@ -427,6 +470,26 @@ pub fn open_main_window(
                         };
                         #[cfg(not(target_os = "windows"))]
                         let restore_bounds = Bounds::new(window.bounds().origin, window.viewport_size());
+                        // Some platform tiling actions do not send a live sizing message.
+                        // Correct their resulting normal size, but leave maximization untouched.
+                        #[cfg(feature = "ui-capture")]
+                        let capture_override = std::env::var_os("WBOMBO_UI_CAPTURE_PAGE").is_some()
+                            && std::env::var_os("WBOMBO_UI_CAPTURE_ENFORCE_NORMAL_BOUNDS").is_none();
+                        #[cfg(not(feature = "ui-capture"))]
+                        let capture_override = false;
+                        if !capture_override && !window.is_maximized() && !window.is_fullscreen() {
+                            let target = resize_constraints.constrain(
+                                restore_bounds.size,
+                                window.scale_factor(),
+                                size(px(MIN_WIDTH), px(MIN_HEIGHT)),
+                            );
+                            if (restore_bounds.size.width.as_f32() - target.width.as_f32()).abs() > 1.
+                                || (restore_bounds.size.height.as_f32() - target.height.as_f32()).abs() > 1.
+                            {
+                                window.resize(target);
+                                return;
+                            }
+                        }
                         let origin = restore_bounds.origin;
                         let size = restore_bounds.size;
                         let new_bounds = (
@@ -510,14 +573,30 @@ pub fn open_main_window(
                 });
                 if let Some(page) = capture_page
                     .as_deref()
-                    .filter(|page| matches!(*page, "add-instance" | "add-server" | "add-local" | "account-offline"))
+                    .filter(|page| {
+                        matches!(
+                            *page,
+                            "add-instance"
+                                | "add-profile-fixture"
+                                | "add-profile-tree"
+                                | "add-server"
+                                | "add-local"
+                                | "add-local-fabric"
+                                | "add-local-forge"
+                                | "add-local-neoforge"
+                                | "account-offline"
+                        )
+                    })
                     .map(str::to_owned)
                 {
                     let capture_data = data.clone();
                     window.on_next_frame(move |window, cx| {
                         match page.as_str() {
-                            "add-instance" => crate::pages::home::add_instance(&capture_data, window, cx),
-                            "add-server" | "add-local" => {
+                            "add-instance" | "add-profile-fixture" | "add-profile-tree" => {
+                                crate::pages::home::add_instance(&capture_data, window, cx)
+                            },
+                            "add-server" | "add-local" | "add-local-fabric" | "add-local-forge"
+                            | "add-local-neoforge" => {
                                 crate::root::switch_page(ui::PageType::AddInstance, &[], window, cx)
                             },
                             "account-offline" => crate::modals::accounts::open_offline_account(

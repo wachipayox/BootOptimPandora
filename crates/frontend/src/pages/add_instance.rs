@@ -3,7 +3,7 @@ use crate::{
     entity::DataEntities,
     modals::{
         create_instance::CreateInstanceModalState,
-        global_profiles::{ProfileDetailsModal, create_profile_form},
+        global_profiles::{family_roots, open_global_profile_family, profile_icon},
     },
     pages::{import::ImportPage, page::Page},
     theme,
@@ -16,8 +16,6 @@ pub struct AddInstancePage {
     data: DataEntities,
     tab: usize,
     profiles: Option<Result<Vec<GlobalProfileSummary>, String>>,
-    selected: Option<String>,
-    global_form: Option<Entity<ProfileDetailsModal>>,
     local: Entity<CreateInstanceModalState>,
     import: Entity<ImportPage>,
     task: Option<Task<()>>,
@@ -35,7 +33,7 @@ impl AddInstancePage {
         });
         let import = cx.new(|cx| ImportPage::new(data, window, cx));
         let tab = match std::env::var("WBOMBO_UI_CAPTURE_PAGE").as_deref() {
-            Ok("add-local") => 1,
+            Ok("add-local" | "add-local-fabric" | "add-local-forge" | "add-local-neoforge") => 1,
             Ok("import") => 2,
             _ => 0,
         };
@@ -43,12 +41,45 @@ impl AddInstancePage {
             data: data.clone(),
             tab,
             profiles: None,
-            selected: None,
-            global_form: None,
             local,
             import,
             task: None,
         };
+        #[cfg(feature = "ui-capture")]
+        if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "add-profile-fixture" || p == "add-profile-tree")
+        {
+            let make = |id: &str, parent: Option<&str>, name: &str| GlobalProfileSummary {
+                parent_profile_id: parent.map(str::to_owned),
+                description: String::new(),
+                minecraft: "1.21.1".into(),
+                loader: schema::loader::Loader::Fabric,
+                loader_version: "0.16.0".into(),
+                icon_path: std::env::var_os("WBOMBO_UI_CAPTURE_PROFILE_ICON").map(Into::into),
+                profile_id: id.into(),
+                name: name.into(),
+                latest_revision_id: "fixture".into(),
+                latest_sequence: 1,
+                latest_manifest_sha256: String::new(),
+                stable_revision_id: None,
+                stable_sequence: None,
+                stable_manifest_sha256: None,
+            };
+            let profiles = vec![
+                make("fixture-root", None, "Perfil A"),
+                make("fixture-child", Some("fixture-root"), "Perfil B"),
+            ];
+            if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "add-profile-tree") {
+                let backend = page.data.backend_handle.clone();
+                let tree = profiles.clone();
+                window.on_next_frame(move |window, cx| {
+                    open_global_profile_family("fixture-root".into(), tree, backend, window, cx)
+                });
+            }
+            page.profiles = Some(Ok(profiles));
+        } else {
+            page.load(cx);
+        }
+        #[cfg(not(feature = "ui-capture"))]
         page.load(cx);
         page
     }
@@ -123,9 +154,8 @@ impl Render for AddInstancePage {
                     },
                     Some(Ok(profiles)) => {
                         let mut rows = v_flex().w_full().gap(px(8.));
-                        for profile in profiles {
-                            let selected = self.selected.as_ref() == Some(&profile.profile_id);
-                            let profile = profile.clone();
+                        for profile in family_roots(profiles) {
+                            let family = profiles.clone();
                             let mut title = h_flex().w_full().gap(px(12.)).child(profile.name.clone());
                             if bridge::profile_family::is_test_profile(&profile.profile_id) {
                                 title = title.child(
@@ -140,34 +170,38 @@ impl Render for AddInstancePage {
                             }
                             rows = rows.child(
                                 design::DesignButton::new(profile.profile_id.clone())
-                                    .toggled(selected)
                                     .w_full()
                                     .h(px(54.))
-                                    .child(v_flex().w_full().items_start().gap(px(4.)).child(title).child(
-                                        div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child(format!(
-                                            "{} {} · rev. {}",
-                                            profile.loader.pretty_name(),
-                                            profile.minecraft,
-                                            profile.stable_sequence.unwrap_or(profile.latest_sequence)
-                                        )),
-                                    ))
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .gap(px(12.))
+                                            .items_center()
+                                            .child(profile_icon(&profile, 36.))
+                                            .child(v_flex().w_full().items_start().gap(px(4.)).child(title).child(
+                                                div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child(
+                                                    format!(
+                                                        "{} {} · rev. {}",
+                                                        profile.loader.pretty_name(),
+                                                        profile.minecraft,
+                                                        profile.stable_sequence.unwrap_or(profile.latest_sequence)
+                                                    ),
+                                                ),
+                                            )),
+                                    )
                                     .on_click(cx.listener(move |page, _, window, cx| {
-                                        page.selected = Some(profile.profile_id.clone());
-                                        page.global_form = Some(create_profile_form(
-                                            profile.clone(),
+                                        open_global_profile_family(
+                                            profile.profile_id.clone(),
+                                            family.clone(),
                                             page.data.backend_handle.clone(),
                                             window,
                                             cx,
-                                        ));
-                                        cx.notify();
+                                        );
                                     })),
                             );
                         }
                         content = content.child(rows);
                     },
-                }
-                if let Some(form) = &self.global_form {
-                    content = content.child(form.clone());
                 }
                 content.into_any_element()
             },
