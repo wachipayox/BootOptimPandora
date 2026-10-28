@@ -33,6 +33,7 @@ pub struct HomePage {
     instance: Option<Entity<InstanceEntry>>,
     presentation: HomePresentation,
     loaded: bool,
+    visual_resolved: bool,
     news_loaded: bool,
     startup_cached: bool,
     artwork_image: crate::component::retained_image::RetainedImage,
@@ -122,6 +123,7 @@ impl HomePage {
             instance,
             presentation: HomePresentation::default(),
             loaded: false,
+            visual_resolved: false,
             news_loaded: false,
             startup_cached: !std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page != "startup-live"),
             artwork_image,
@@ -173,7 +175,9 @@ impl HomePage {
         cx.spawn_in(window, async move |this, cx| {
             let result = receive.await;
             let _ = this.update(cx, |this, cx| {
-                this.presentation = result.ok().and_then(Result::ok).unwrap_or_else(|| HomePresentation {
+                let presentation = result.ok().and_then(Result::ok);
+                this.visual_resolved = presentation.is_some();
+                this.presentation = presentation.unwrap_or_else(|| HomePresentation {
                     news_failed: true,
                     ..Default::default()
                 });
@@ -531,7 +535,8 @@ impl Render for HomePage {
         };
         let hero_height = (window.viewport_size().height.as_f32() * 0.64).max(320.);
         let artwork = self.artwork_image.render(
-            self.loaded.then(|| resource(&self.presentation.artwork, "images/artwork-vanilla.png")),
+            self.visual_resolved
+                .then(|| resource(&self.presentation.artwork, "images/artwork-vanilla.png")),
             "images/artwork-vanilla.png",
             true,
             cx.entity().entity_id(),
@@ -539,7 +544,7 @@ impl Render for HomePage {
             cx,
         );
         let logo = self.logo_image.render(
-            self.loaded.then(|| resource(&self.presentation.logo, "images/logo-vanilla.png")),
+            self.visual_resolved.then(|| resource(&self.presentation.logo, "images/logo-vanilla.png")),
             "images/logo-vanilla.png",
             false,
             cx.entity().entity_id(),
@@ -603,7 +608,7 @@ impl Render for HomePage {
         let data = self.data.clone();
         let mut play = PlayButton::new("home-play", if instance.is_some() { "Al día" } else { "" }, None);
         if let Some(i) = &instance {
-            if self.loaded
+            if self.visual_resolved
                 && i.status == InstanceStatus::Running
                 && InterfaceConfig::get(cx).last_played_artwork != self.presentation.artwork
             {
