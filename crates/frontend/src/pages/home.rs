@@ -703,6 +703,75 @@ impl Render for HomePage {
             h_flex().w(px(300.))
         };
         let hours = instance.as_ref().map(|i| i.playtime.total_secs / 3600).unwrap_or(0);
+        let menu = if self.menu {
+            let mut menu = design::notched_panel(0x0a0a0cf2)
+                .flex()
+                .flex_col()
+                .absolute()
+                .bottom(px(60.))
+                .right_0()
+                .w(px(235.))
+                .p(px(6.));
+            for (ix, label) in [
+                "Abrir carpeta de la instancia",
+                "Jugar sin actualizar",
+                "Ver registros",
+                "Reparar archivos del juego",
+                "Crear acceso directo",
+                "Ajustes de la instancia",
+                "Detener el juego",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                menu = menu.child(
+                    DesignButton::new(("home-menu", ix))
+                        .label_left(label)
+                        .h(px(30.))
+                        .text_size(px(13.))
+                        .font_weight(FontWeight::NORMAL)
+                        .justify_start()
+                        .w_full()
+                        .disabled(if ix == 6 {
+                            instance.as_ref().is_none_or(|i| i.status != InstanceStatus::Running)
+                        } else if [1, 3].contains(&ix) {
+                            instance.as_ref().is_none_or(|i| i.status != InstanceStatus::NotRunning)
+                        } else {
+                            false
+                        })
+                        .on_click(cx.listener(move |this, _, w, c| {
+                            this.menu = false;
+                            if let Some(i) = &this.instance {
+                                let i = i.read(c);
+                                let id = i.id;
+                                match ix {
+                                    0 => crate::open_folder(&i.dot_minecraft_folder.clone(), w, c),
+                                    1 => {
+                                        if this.data.accounts.read(c).selected_account.is_none() {
+                                            root::open_home_accounts(c);
+                                        } else {
+                                            root::start_instance_without_update(id, i.name.clone(), &this.data, w, c);
+                                        }
+                                    },
+                                    3 => root::repair_game_files(id, &this.data.backend_handle, w, c),
+                                    4 => create_shortcut(id, i.name.clone(), this.data.backend_handle.clone(), c),
+                                    2 => this.open_tab(InstanceSubpageType::Logs, w, c),
+                                    5 => this.open_tab(InstanceSubpageType::Settings, w, c),
+                                    6 => this.data.backend_handle.send(MessageToBackend::KillInstance { id }),
+                                    _ => this.open_tab(InstanceSubpageType::Settings, w, c),
+                                }
+                            }
+                            c.notify();
+                        })),
+                );
+            }
+            Some(menu.on_mouse_down_out(cx.listener(|this, _, _, c| {
+                this.menu = false;
+                c.notify();
+            })))
+        } else {
+            None
+        };
         let game_bar =
             h_flex()
                 .h(px(84.))
@@ -714,21 +783,26 @@ impl Render for HomePage {
                 .child(left)
                 .child(h_flex().gap(px(16.)).child(play).when(instance.is_some(), |d| {
                     d.child(
-                        DesignButton::new("home-more")
-                            .notched()
-                            .paint(
-                                0.,
-                                [[0xffffff0a; 2], [0xffffff14; 2], [0xffffff08; 2]],
-                                rgb(theme::INK_MUTED).into(),
-                                rgb(theme::INK).into(),
+                        div()
+                            .relative()
+                            .child(
+                                DesignButton::new("home-more")
+                                    .notched()
+                                    .paint(
+                                        0.,
+                                        [[0xffffff0a; 2], [0xffffff14; 2], [0xffffff08; 2]],
+                                        rgb(theme::INK_MUTED).into(),
+                                        rgb(theme::INK).into(),
+                                    )
+                                    .label("⋯")
+                                    .w(px(44.))
+                                    .h(px(52.))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.menu = !this.menu;
+                                        cx.notify();
+                                    })),
                             )
-                            .label("⋯")
-                            .w(px(44.))
-                            .h(px(52.))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.menu = !this.menu;
-                                cx.notify();
-                            })),
+                            .when_some(menu, |d, menu| d.child(menu)),
                     )
                 }))
                 .child(h_flex().w(px(300.)).justify_end().gap(px(14.)).when_some(instance.as_ref(), |d, i| {
@@ -876,7 +950,7 @@ impl Render for HomePage {
                     .into_any_element()
             }),
         ));
-        let mut content = v_flex()
+        let content = v_flex()
             .relative()
             .size_full()
             .min_w_0()
@@ -884,73 +958,7 @@ impl Render for HomePage {
             .child(hero)
             .child(game_bar)
             .when(show_news, |d| d.child(news_section));
-        if self.menu {
-            let mut menu = design::notched_panel(0x0a0a0cf2)
-                .flex()
-                .flex_col()
-                .absolute()
-                .top(px(235.))
-                .left(relative(0.42))
-                .w(px(235.))
-                .p(px(6.));
-            for (ix, label) in [
-                "Abrir carpeta de la instancia",
-                "Jugar sin actualizar",
-                "Ver registros",
-                "Reparar archivos del juego",
-                "Crear acceso directo",
-                "Ajustes de la instancia",
-                "Detener el juego",
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                menu = menu.child(
-                    DesignButton::new(("home-menu", ix))
-                        .label_left(label)
-                        .h(px(30.))
-                        .text_size(px(13.))
-                        .font_weight(FontWeight::NORMAL)
-                        .justify_start()
-                        .w_full()
-                        .disabled(if ix == 6 {
-                            instance.as_ref().is_none_or(|i| i.status != InstanceStatus::Running)
-                        } else if [1, 3].contains(&ix) {
-                            instance.as_ref().is_none_or(|i| i.status != InstanceStatus::NotRunning)
-                        } else {
-                            false
-                        })
-                        .on_click(cx.listener(move |this, _, w, c| {
-                            this.menu = false;
-                            if let Some(i) = &this.instance {
-                                let i = i.read(c);
-                                let id = i.id;
-                                match ix {
-                                    0 => crate::open_folder(&i.dot_minecraft_folder.clone(), w, c),
-                                    1 => {
-                                        if this.data.accounts.read(c).selected_account.is_none() {
-                                            root::open_home_accounts(c);
-                                        } else {
-                                            root::start_instance_without_update(id, i.name.clone(), &this.data, w, c);
-                                        }
-                                    },
-                                    3 => root::repair_game_files(id, &this.data.backend_handle, w, c),
-                                    4 => create_shortcut(id, i.name.clone(), this.data.backend_handle.clone(), c),
-                                    2 => this.open_tab(InstanceSubpageType::Logs, w, c),
-                                    5 => this.open_tab(InstanceSubpageType::Settings, w, c),
-                                    6 => this.data.backend_handle.send(MessageToBackend::KillInstance { id }),
-                                    _ => this.open_tab(InstanceSubpageType::Settings, w, c),
-                                }
-                            }
-                            c.notify();
-                        })),
-                );
-            }
-            content = content.child(menu.on_mouse_down_out(cx.listener(|this, _, _, c| {
-                this.menu = false;
-                c.notify();
-            })));
-        }
+
         div().size_full().relative().text_color(rgb(theme::INK)).child(content).into_any_element()
     }
 }
