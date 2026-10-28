@@ -8,6 +8,7 @@ use std::{
     fs,
     io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use rand::RngCore;
@@ -1014,6 +1015,7 @@ impl PersistentProfileLayout {
         operations: &[JournalOperation],
         desired: &BTreeMap<String, CanonicalDesired>,
     ) -> Result<(), ProfileLayoutFlowError> {
+        let started = Instant::now();
         if self.journal_path().exists() {
             return Err(ProfileLayoutFlowError::AmbiguousTransaction);
         }
@@ -1051,10 +1053,16 @@ impl PersistentProfileLayout {
             operations: operations.to_vec(),
         };
         write_new_synced(&self.journal_path(), &serde_json::to_vec_pretty(&journal)?)?;
+        log::info!(
+            "[PROFILE-INSTALL] transaction_prepare_ms={} operations={}",
+            started.elapsed().as_millis(),
+            operations.len()
+        );
         Ok(())
     }
 
     fn publish_transaction(&mut self, tx: Uuid) -> Result<(), ProfileLayoutFlowError> {
+        let started = Instant::now();
         let journal = self.read_journal()?;
         self.validate_journal(&journal)?;
         if journal.transaction_id != tx {
@@ -1072,6 +1080,11 @@ impl PersistentProfileLayout {
         self.commit_manifest(&journal)?;
         verify_target_live(self, &journal)?;
         self.cleanup_committed(&journal)?;
+        log::info!(
+            "[PROFILE-INSTALL] transaction_publish_ms={} operations={}",
+            started.elapsed().as_millis(),
+            journal.operations.len()
+        );
         Ok(())
     }
 
