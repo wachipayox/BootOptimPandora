@@ -492,14 +492,26 @@ impl HomePage {
                 .child(SharedString::from(server_name)),
         ));
         if let Some(status) = &server.status {
+            let motd = schema::text_component::FlatTextComponent {
+                content: status.description.content.replace(['\r', '\n'], " "),
+                runs: status
+                    .description
+                    .runs
+                    .iter()
+                    .map(|run| schema::text_component::TextComponentRun {
+                        range: run.range.clone(),
+                        style: run.style.clone(),
+                    })
+                    .collect(),
+            };
             details = details.child(home_server_marquee(
                 "server-motd",
-                status.description.content.chars().count(),
+                motd.content.chars().count(),
                 detail_width,
                 div()
                     .font_family("Minecraft Default")
                     .text_size(px(13.))
-                    .child(crate::component::create_styled_text(&status.description, false)),
+                    .child(crate::component::create_styled_text(&motd, false)),
             ));
         }
         panel = panel.child(
@@ -792,7 +804,7 @@ impl Render for HomePage {
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_size(px(13.))
                                 .line_height(px(18.))
-                                .child("Jugadores conectados"),
+                                .child("Server"),
                         )
                         .child(div().text_size(px(11.)).text_color(rgb(theme::INK_MUTED)).child("CARGANDO")),
                 ))
