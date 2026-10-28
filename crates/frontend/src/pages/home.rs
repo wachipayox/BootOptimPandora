@@ -448,6 +448,26 @@ impl HomePage {
             root::switch_page(PageType::InstancePage { name }, &[PageType::Instances], window, cx);
         }
     }
+    fn server_header(&self) -> Div {
+        let instance = self.instance.as_ref().unwrap().clone();
+        let data = self.data.clone();
+        h_flex()
+            .justify_between()
+            .items_center()
+            .child(div().font_family("Minecraft Default").text_size(px(14.)).child("Server"))
+            .child(
+                DesignButton::new("home-server-settings")
+                    .aria_label("Server")
+                    .w(px(26.))
+                    .h(px(26.))
+                    .px_0()
+                    .child(gpui_component::Icon::new(crate::icon::PandoraIcon::Settings).size(px(14.)))
+                    .on_click(move |_, window, cx| {
+                        let instance = instance.read(cx).clone();
+                        configure_home_server(&instance, &data, window, cx);
+                    }),
+            )
+    }
     fn server_panel(&self, server: &InstanceServerSummary, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let online = server.status.as_ref().and_then(|s| s.players.as_ref());
         let ip = server.ip.clone();
@@ -455,27 +475,8 @@ impl HomePage {
         let i = self.instance.as_ref().unwrap().read(cx);
         let id = i.id;
         let name = i.name.clone();
-        let instance = self.instance.as_ref().unwrap().clone();
-        let settings_data = self.data.clone();
         let text_width = ((window.viewport_size().width.as_f32() - 220.) * 0.2 - 20.).max(1.);
-        let mut panel = v_flex().gap(px(5.)).child(
-            h_flex()
-                .justify_between()
-                .items_center()
-                .child(div().font_family("Minecraft Default").text_size(px(14.)).child("Server"))
-                .child(
-                    DesignButton::new("home-server-settings")
-                        .aria_label("Server")
-                        .w(px(26.))
-                        .h(px(26.))
-                        .px_0()
-                        .child(gpui_component::Icon::new(crate::icon::PandoraIcon::Settings).size(px(14.)))
-                        .on_click(move |_, window, cx| {
-                            let instance = instance.read(cx).clone();
-                            configure_home_server(&instance, &settings_data, window, cx);
-                        }),
-                ),
-        );
+        let mut panel = v_flex().gap(px(5.)).child(self.server_header());
         let server_name = server.name.clone();
         let icon = server.png_icon.clone().map(|bytes| {
             crate::png_render_cache::render_with_transform(
@@ -661,6 +662,7 @@ impl Render for HomePage {
         }
         let mut server = None;
         let mut server_loading = false;
+        let mut selected_server_missing = false;
         if let Some(i) = &instance {
             i.servers_state.set_observed();
             if i.servers_state.should_load() {
@@ -690,8 +692,12 @@ impl Render for HomePage {
                 None => None,
             };
             if i.configuration.home_server.is_some() {
+                selected_server_missing =
+                    matches!(&i.configuration.home_server, Some(HomeServerSelection::Instance { .. }))
+                        && i.servers.read(cx).is_some()
+                        && target.is_none();
                 server = target.map(|target| self.request_selected_server(target, window, cx));
-                server_loading = false;
+                server_loading = i.servers.read(cx).is_none() && server.is_none();
             }
         }
         if let Some(server) = &server {
@@ -799,6 +805,7 @@ impl Render for HomePage {
                     .child(div().child(logo).w(px(370.)).h(px(70.))),
             )
             .when_some(server.as_ref(), |d, s| d.child(self.server_panel(s, window, cx)))
+            .when(selected_server_missing, |d| d.child(server_frame(self.server_header())))
             .when(server_loading, |d| {
                 d.child(server_frame(
                     v_flex()
