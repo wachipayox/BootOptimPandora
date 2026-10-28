@@ -1059,6 +1059,7 @@ impl PersistentProfileLayout {
                         .map(|(index, (entry, _))| (*entry, scratch.join(index.to_string())))
                         .collect();
                     pool.install(|| parallel_jobs.par_iter().try_for_each(stage))?;
+                    let mut parents_to_sync = BTreeMap::<PathBuf, PathBuf>::new();
                     for ((_, temporary), (_, destination)) in parallel_jobs.iter().zip(&staging_jobs) {
                         match fs::symlink_metadata(destination) {
                             Ok(_) => return Err(ProfileLayoutFlowError::AmbiguousTransaction),
@@ -1066,6 +1067,12 @@ impl PersistentProfileLayout {
                             Err(error) => return Err(error.into()),
                         }
                         fs::rename(temporary, destination)?;
+                        if let Some(parent) = destination.parent() {
+                            parents_to_sync.entry(parent.to_path_buf()).or_insert_with(|| destination.clone());
+                        }
+                    }
+                    // Flush each changed directory once rather than once per file.
+                    for destination in parents_to_sync.values() {
                         sync_parent(destination)?;
                     }
                 },
