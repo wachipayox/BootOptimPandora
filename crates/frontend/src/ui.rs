@@ -847,6 +847,7 @@ impl LauncherUI {
             .child(div().flex_1().min_h_0().overflow_y_scrollbar().child(instances))
             .child(footer);
         let mut account_menu = div()
+            .id("home-account-menu")
             .bg(rgba(0x0a0a0cf2))
             .occlude()
             .flex()
@@ -855,6 +856,8 @@ impl LauncherUI {
             .left(px(10.))
             .bottom(px(64.))
             .w(px(200.))
+            .max_h(relative(0.7))
+            .overflow_y_scrollbar()
             .p(px(6.));
         for (ix, account) in saved_accounts.iter().enumerate() {
             let uuid = account.uuid;
