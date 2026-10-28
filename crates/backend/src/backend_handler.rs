@@ -1755,6 +1755,11 @@ impl BackendState {
                 });
                 let _ = channel.send(result);
             },
+            MessageToBackend::SetHomeServer { id, selection } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|config| config.home_server = selection);
+                }
+            },
             MessageToBackend::GetProfileChangelog {
                 profile_id,
                 query,
