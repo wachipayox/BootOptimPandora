@@ -575,7 +575,6 @@ impl Render for HomePage {
                     .justify_center()
                     .child(div().child(logo).w(px(370.)).h(px(70.))),
             )
-            .child(div().absolute().top_0().w_full().child(header))
             .when_some(server.as_ref(), |d, s| d.child(self.server_panel(s, cx)))
             .when(server_loading, |d| {
                 d.child(server_frame(
@@ -983,7 +982,13 @@ impl Render for HomePage {
             .child(game_bar)
             .when(show_news, |d| d.child(news_section));
 
-        div().size_full().relative().text_color(rgb(theme::INK)).child(content).into_any_element()
+        div()
+            .size_full()
+            .relative()
+            .text_color(rgb(theme::INK))
+            .child(content)
+            .child(div().absolute().top_0().w_full().child(header))
+            .into_any_element()
     }
 }
 
