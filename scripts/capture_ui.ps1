@@ -8,6 +8,7 @@ param(
     [string]$InstanceName = 'agente-274-ui',
     [switch]$Components,
     [switch]$HomeScreens,
+    [switch]$HomeScrollProbe,
     [switch]$NewsScreens,
     [switch]$InstanceScreens,
     [switch]$LauncherScreens,
@@ -517,6 +518,22 @@ try {
             if($dialogOwner -ne $proc.Id -or ([CaptureWindow]::GetWindowLongPtr($captureHandle,-16).ToInt64() -band 0x40000) -ne 0){throw 'Standalone dialog HWND is not the active owned nonresizable window.'}
         }
         Save-Window (Join-Path $outputPath $screen.file) $captureHandle $proc.Id
+        if ($HomeScrollProbe -and $screen.page -eq 'instances') {
+            # Send the wheel only to this verified owned window, as for the
+            # existing article and instance scroll captures below.
+            $homeClient = New-Object CaptureWindow+RECT
+            $homeOrigin = New-Object CaptureWindow+POINT
+            if (-not [CaptureWindow]::GetClientRect($captureHandle,[ref]$homeClient) -or
+                -not [CaptureWindow]::ClientToScreen($captureHandle,[ref]$homeOrigin)) { throw 'Cannot read Home scroll bounds' }
+            $homeX = $homeOrigin.X + [int]($homeClient.Right * 0.7)
+            $homeY = $homeOrigin.Y + [int]($homeClient.Bottom * 0.7)
+            $homePoint = [IntPtr](([int64]$homeY -shl 16) -bor ([int64]$homeX -band 0xffff))
+            for ($wheel = 0; $wheel -lt 8; $wheel++) {
+                if (-not [CaptureWindow]::PostMessage($captureHandle,0x20a,[IntPtr](-7864320),$homePoint)) { throw 'Cannot scroll the Home capture window' }
+            }
+            Start-Sleep -Milliseconds 500
+            Save-Window (Join-Path $outputPath 'instances-scrolled.png') $captureHandle $proc.Id
+        }
         if ($SizingProbe) {
             $outer=New-Object CaptureWindow+RECT; $client=New-Object CaptureWindow+RECT
             if (-not [CaptureWindow]::GetWindowRect($captureHandle,[ref]$outer) -or -not [CaptureWindow]::GetClientRect($captureHandle,[ref]$client)) { throw 'Cannot read sizing probe bounds.' }
