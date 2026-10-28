@@ -834,12 +834,25 @@ impl LauncherUI {
                             .items_center()
                             .justify_between()
                             .child(
-                                img(ImageSource::Resource(Resource::Embedded(
-                                    "images/wachiland-launcher-ancho.svg".into(),
-                                )))
-                                .w(px(140.))
-                                .h(px(40.))
-                                .object_fit(ObjectFit::Contain),
+                                DesignButton::new("launcher-logo-home")
+                                    .aria_label("Inicio")
+                                    .w(px(140.))
+                                    .h(px(40.))
+                                    .px_0()
+                                    .child(
+                                        img(ImageSource::Resource(Resource::Embedded(
+                                            "images/wachiland-launcher-ancho.svg".into(),
+                                        )))
+                                        .w(px(140.))
+                                        .h(px(40.))
+                                        .object_fit(ObjectFit::Contain),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.switch_page(PageType::Instances, &[], window, cx);
+                                        if let LauncherPage::Home(home) = &this.page {
+                                            home.update(cx, |page, cx| page.show_home(cx));
+                                        }
+                                    })),
                             )
                             .when(crate::launcher_updates::available(cx), |row| {
                                 row.child(crate::launcher_updates::indicator(cx))
