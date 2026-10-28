@@ -10,7 +10,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::profile_branch::{
@@ -1645,6 +1645,8 @@ impl crate::BackendState {
         save_group_target: Option<bridge::message::GlobalProfileSaveGroupTarget>,
         created_by_cli: bool,
     ) -> Result<(), String> {
+        let install_started = Instant::now();
+        let mut phase_started = Instant::now();
         progress.set_title("Preparing modpack assets".into());
         progress.set_count(0);
         progress.set_total(1);
@@ -1655,6 +1657,8 @@ impl crate::BackendState {
             .resolve_profile_with_progress(profile_id, revision, &cache_root, modal_action, progress)
             .await
             .map_err(|error| error.to_string())?;
+        log::info!("[PROFILE-INSTALL] resolve_and_download_ms={}", phase_started.elapsed().as_millis());
+        phase_started = Instant::now();
         progress.set_title("Applying modpack files".into());
         // The profile's presentation is unversioned and can have a newer icon than the selected
         // immutable revision. Use the current verified catalog icon, matching the carousel.
@@ -1670,6 +1674,8 @@ impl crate::BackendState {
         };
         validate_game_identity(&resolved.minecraft_version, &resolved.loader_version)?;
 
+        log::info!("[PROFILE-INSTALL] catalog_and_icon_ms={}", phase_started.elapsed().as_millis());
+        phase_started = Instant::now();
         let Some((root, libraries_ready)) = self
             .create_global_instance_sanitized(
                 name,
@@ -1682,6 +1688,8 @@ impl crate::BackendState {
             return Err("Wachiland Launcher could not create the local instance".to_owned());
         };
 
+        log::info!("[PROFILE-INSTALL] create_and_provision_ms={}", phase_started.elapsed().as_millis());
+        phase_started = Instant::now();
         // A newly provisioned instance may not have been launched yet, so Pandora has not
         // necessarily created its .minecraft directory. The profile layout reconciler applies
         // files relative to that directory and expects it to exist before it starts its transaction.
@@ -1743,6 +1751,7 @@ impl crate::BackendState {
             );
         }
 
+        log::info!("[PROFILE-INSTALL] profile_reconcile_ms={}", phase_started.elapsed().as_millis());
         let generation = crate::library_install_state::incomplete_generation(&root, "content-install-in-progress")
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "Global profile game-files state changed before publication".to_owned())?;
@@ -1764,6 +1773,7 @@ impl crate::BackendState {
                 ));
             }
         }
+        log::info!("[PROFILE-INSTALL] total_ms={}", install_started.elapsed().as_millis());
         Ok(())
     }
 
