@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// A Home server choice stored with the instance; `None` means automatic detection.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum HomeServerSelection {
     Instance {
         address: String,
@@ -23,6 +23,14 @@ pub enum HomeServerSelection {
         name: String,
         address: String,
     },
+}
+impl std::fmt::Debug for HomeServerSelection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Instance { .. } => formatter.write_str("Instance { address: <redacted> }"),
+            Self::Custom { .. } => formatter.write_str("Custom { name: <redacted>, address: <redacted> }"),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -550,6 +558,9 @@ mod memory_recommendation_tests {
         });
         let restored: InstanceConfiguration = serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
         assert_eq!(restored.home_server, config.home_server);
+        let diagnostic = format!("{:?}", config.home_server);
+        assert!(!diagnostic.contains("example.invalid"));
+        assert!(!diagnostic.contains("test"));
     }
     #[test]
     fn sixteen_gib_matches_the_design_and_small_machines_keep_os_headroom() {

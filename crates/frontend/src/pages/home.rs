@@ -592,10 +592,9 @@ impl HomePage {
         let join = DesignButton::new("quick-server")
             .aria_label("Entrar al servidor")
             .w_full()
-            .h(px(30.))
+            .h(px(24.))
             .px_0()
-            .border_2()
-            .border_color(rgb(0x111111))
+            .border_0()
             .bg(rgb(0x666666))
             .hover(|d| d.bg(rgb(0x777777)))
             .child(
@@ -619,7 +618,14 @@ impl HomePage {
                     c,
                 )
             });
-        server_frame(panel.child(join)).into_any_element()
+        let beveled_join = div().w_full().bg(rgb(0x101010)).p(px(2.)).child(
+            div()
+                .bg(rgb(0xaaaaaa))
+                .pt(px(2.))
+                .pl(px(2.))
+                .child(div().bg(rgb(0x333333)).pb(px(2.)).pr(px(2.)).child(join)),
+        );
+        server_frame(panel.child(beveled_join)).into_any_element()
     }
 }
 impl Page for HomePage {
