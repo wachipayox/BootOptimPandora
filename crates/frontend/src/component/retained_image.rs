@@ -39,8 +39,16 @@ impl RetainedImage {
                     .use_asset::<ImgResourceLoader>(&fallback_resource, cx)
                     .and_then(|result| result.ok())
                     .map(|image| (fallback_resource, image)),
+                None if self.current.is_none() => window
+                    .use_asset::<ImgResourceLoader>(&fallback_resource, cx)
+                    .and_then(|result| result.ok())
+                    .map(|image| (fallback_resource, image)),
                 None => None,
             },
+            None if self.current.is_none() => window
+                .use_asset::<ImgResourceLoader>(&fallback_resource, cx)
+                .and_then(|result| result.ok())
+                .map(|image| (fallback_resource, image)),
             None => None,
         };
         self.accept_ready(next);
