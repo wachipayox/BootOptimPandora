@@ -1023,8 +1023,8 @@ impl PersistentProfileLayout {
         ensure_plain_directory(&self.staging_dir(tx))?;
         ensure_plain_directory(&self.backup_dir(tx))?;
 
-        // Prepare and validate parent directories serially. Each job writes a distinct
-        // staged file; the live tree and journal remain untouched until all jobs finish.
+        // Prepare and validate parent directories serially. The live tree and
+        // journal remain untouched until all staged files are verified.
         let mut staging_jobs = Vec::new();
         for operation in operations {
             if matches!(operation.kind, JournalOpKind::Install | JournalOpKind::Replace) {
@@ -1047,7 +1047,28 @@ impl PersistentProfileLayout {
         let workers = std::thread::available_parallelism().map_or(1, |count| count.get().min(4));
         if workers > 1 && staging_jobs.len() > 1 {
             match rayon::ThreadPoolBuilder::new().num_threads(workers).build() {
-                Ok(pool) => pool.install(|| staging_jobs.par_iter().try_for_each(stage))?,
+                Ok(pool) => {
+                    // Use unique numeric temporary names: two manifest paths can alias
+                    // on the host filesystem even when their strings differ. Only after
+                    // all workers finish do we move files to canonical paths in order.
+                    let scratch = self.staging_dir(tx).join("parallel-inputs");
+                    ensure_plain_directory(&scratch)?;
+                    let parallel_jobs: Vec<_> = staging_jobs
+                        .iter()
+                        .enumerate()
+                        .map(|(index, (entry, _))| (*entry, scratch.join(index.to_string())))
+                        .collect();
+                    pool.install(|| parallel_jobs.par_iter().try_for_each(stage))?;
+                    for ((_, temporary), (_, destination)) in parallel_jobs.iter().zip(&staging_jobs) {
+                        match fs::symlink_metadata(destination) {
+                            Ok(_) => return Err(ProfileLayoutFlowError::AmbiguousTransaction),
+                            Err(error) if error.kind() == ErrorKind::NotFound => {},
+                            Err(error) => return Err(error.into()),
+                        }
+                        fs::rename(temporary, destination)?;
+                        sync_parent(destination)?;
+                    }
+                },
                 Err(_) => staging_jobs.iter().try_for_each(stage)?,
             }
         } else {
@@ -2087,6 +2108,18 @@ mod tests {
         for entry in &files {
             assert_eq!(fs::read(root.0.join(".minecraft").join(&entry.path)).unwrap(), b"expected");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staged_batch_rejects_case_alias_without_publishing() {
+        let root = TestRoot::new("staged-case-alias");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let upper = root.source("Alias.jar", b"same");
+        let lower = root.source("alias.jar", b"same");
+        assert!(layout.prepare_only_for_test(&[upper, lower]).is_err());
+        assert!(!layout.journal_path().exists());
+        assert_eq!(fs::read_dir(root.0.join(".minecraft/mods")).unwrap().count(), 0);
     }
 
     #[test]
