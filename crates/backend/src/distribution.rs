@@ -19,6 +19,7 @@ use crate::profile_branch::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bridge::modal_action::{ModalAction, ProgressTracker, ProgressTrackerFinishType};
+use futures::{StreamExt, stream};
 use reqwest::{Certificate, Client, Url};
 use schema::backend_config::DistributionConfig;
 use schema::ignored_profile_paths::IgnoredProfilePaths;
@@ -29,6 +30,7 @@ use thiserror::Error;
 
 const MAX_JSON_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OBJECT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_CONCURRENT_PROFILE_DOWNLOADS: usize = 4;
 
 #[path = "launcher_releases.rs"]
 mod launcher_releases;
@@ -1028,9 +1030,11 @@ impl DistributionClient {
             }
         }
 
-        let mut counted_digests = BTreeSet::new();
-        let mut entries_with_sources = Vec::with_capacity(files.len());
-        for (_, mut entry) in files {
+        // Deduplicate signed content objects before starting concurrent requests. Multiple
+        // paths may refer to the same digest, but may not disagree about its size.
+        let mut objects_to_fetch = BTreeMap::<String, (ManifestObjectRef, String)>::new();
+        let mut entries_with_digests = Vec::with_capacity(files.len());
+        for (_, entry) in files {
             let has_config_settings = config_settings.iter().any(|((path, _), _)| path == &entry.path);
             if ignored_paths.contains(&entry.path)
                 || skip_paths.contains(&entry.path)
@@ -1041,7 +1045,7 @@ impl DistributionClient {
                             && existing.policy == entry.metadata.policy
                     }))
             {
-                entries_with_sources.push(entry);
+                entries_with_digests.push((entry, None));
                 continue;
             }
             let object = object_refs
@@ -1054,42 +1058,29 @@ impl DistributionClient {
                     DistributionError::InvalidResponse("effective entry has no signed object reference".into())
                 })?;
             if metadata_only {
-                entries_with_sources.push(entry);
+                entries_with_digests.push((entry, None));
                 continue;
             }
-            if let Some((modal_action, overall)) = progress {
-                let first_reference = counted_digests.insert(object.sha256.clone());
-                if let Some(cached) = verified_cache_path(object, cache_root)? {
-                    if first_reference {
-                        overall.add_count(progress_units(object.size));
-                    }
-                    entry.source = cached;
-                } else {
-                    let file_progress = modal_action.push_sub_tracker(entry.path.as_str().into());
-                    file_progress.set_total(progress_units(object.size));
-                    let aggregate_progress = first_reference.then_some(overall);
-                    match self
-                        .fetch_verified_object_with_progress(
-                            object,
-                            cache_root,
-                            Some(&file_progress),
-                            aggregate_progress,
-                        )
-                        .await
-                    {
-                        Ok(source) => {
-                            file_progress.set_count(progress_units(object.size));
-                            file_progress.set_finished(ProgressTrackerFinishType::Normal);
-                            entry.source = source;
-                        },
-                        Err(error) => {
-                            file_progress.set_finished(ProgressTrackerFinishType::Error);
-                            return Err(error);
-                        },
-                    }
+            if let Some((existing, _)) = objects_to_fetch.get(&object.sha256) {
+                if existing.size != object.size {
+                    return Err(DistributionError::InvalidResponse(
+                        "manifest assigns different sizes to the same object".into(),
+                    ));
                 }
             } else {
-                entry.source = self.fetch_verified_object(object, cache_root).await?;
+                objects_to_fetch.insert(object.sha256.clone(), ((*object).clone(), entry.path.clone()));
+            }
+            entries_with_digests.push((entry, Some(object.sha256.clone())));
+        }
+
+        let sources = self.fetch_distinct_objects(objects_to_fetch, cache_root, progress).await?;
+        let mut entries_with_sources = Vec::with_capacity(entries_with_digests.len());
+        for (mut entry, digest) in entries_with_digests {
+            if let Some(digest) = digest {
+                entry.source = sources
+                    .get(&digest)
+                    .ok_or_else(|| DistributionError::InvalidResponse("verified object source is missing".into()))?
+                    .clone();
             }
             entries_with_sources.push(entry);
         }
@@ -1122,6 +1113,46 @@ impl DistributionClient {
             config_settings: config_settings.into_values().collect(),
             jvm_options,
         })
+    }
+
+    async fn fetch_distinct_objects(
+        &self,
+        objects_to_fetch: BTreeMap<String, (ManifestObjectRef, String)>,
+        cache_root: &Path,
+        progress: Option<(&ModalAction, &ProgressTracker)>,
+    ) -> Result<BTreeMap<String, PathBuf>, DistributionError> {
+        let downloads = stream::iter(objects_to_fetch.into_iter().map(|(digest, (object, path))| async move {
+            let result = if let Some((modal_action, overall)) = progress {
+                if let Some(cached) = verified_cache_path(&object, cache_root)? {
+                    overall.add_count(progress_units(object.size));
+                    Ok(cached)
+                } else {
+                    let file_progress = modal_action.push_sub_tracker(path.into());
+                    file_progress.set_total(progress_units(object.size));
+                    let result = self
+                        .fetch_verified_object_with_progress(&object, cache_root, Some(&file_progress), Some(overall))
+                        .await;
+                    if result.is_ok() {
+                        file_progress.set_count(progress_units(object.size));
+                    }
+                    file_progress.set_finished(if result.is_ok() {
+                        ProgressTrackerFinishType::Normal
+                    } else {
+                        ProgressTrackerFinishType::Error
+                    });
+                    result
+                }
+            } else {
+                self.fetch_verified_object(&object, cache_root).await
+            };
+            result.map(|source| (digest, source))
+        }))
+        .buffer_unordered(MAX_CONCURRENT_PROFILE_DOWNLOADS)
+        .collect::<Vec<Result<_, DistributionError>>>()
+        .await;
+        // Finish all in-flight requests even after an error so their temporary files are
+        // cleaned up by the existing verified-object path before reporting failure.
+        downloads.into_iter().collect()
     }
 
     async fn fetch_verified_icon(
@@ -1907,6 +1938,88 @@ fn validate_game_identity(minecraft: &str, loader_version: &str) -> Result<(), S
 #[cfg(test)]
 mod trusted_release_key_tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn object_downloads_are_bounded_verified_and_cached() {
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(AtomicUsize::new(0));
+        let mut objects = BTreeMap::new();
+        let mut bodies = BTreeMap::new();
+        for index in 0..8 {
+            let bytes = format!("fixture-{index}").into_bytes();
+            let digest = hex::encode(Sha256::digest(&bytes));
+            objects.insert(
+                digest.clone(),
+                (
+                    ManifestObjectRef {
+                        sha256: digest.clone(),
+                        size: bytes.len() as u64,
+                        media_type: String::new(),
+                    },
+                    format!("file-{index}"),
+                ),
+            );
+            bodies.insert(digest, bytes);
+        }
+        let server_active = active.clone();
+        let server_peak = peak.clone();
+        let server_requests = requests.clone();
+        let server = thread::spawn(move || {
+            let bodies = Arc::new(bodies);
+            let mut workers = Vec::new();
+            for _ in 0..8 {
+                let (mut socket, _) = listener.accept().unwrap();
+                let bodies = bodies.clone();
+                let active = server_active.clone();
+                let peak = server_peak.clone();
+                let requests = server_requests.clone();
+                workers.push(thread::spawn(move || {
+                    let mut request = [0u8; 4096];
+                    let n = socket.read(&mut request).unwrap();
+                    let line = String::from_utf8_lossy(&request[..n]);
+                    let path = line.split_whitespace().nth(1).unwrap();
+                    let digest = path.rsplit('/').next().unwrap();
+                    let body = bodies.get(digest).unwrap();
+                    requests.fetch_add(1, Ordering::SeqCst);
+                    let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(count, Ordering::SeqCst);
+                    thread::sleep(Duration::from_millis(100));
+                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len())
+                        .unwrap();
+                    socket.write_all(body).unwrap();
+                    active.fetch_sub(1, Ordering::SeqCst);
+                }));
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        });
+        let root = std::env::temp_dir().join(format!("pandora-profile-download-{}", uuid::Uuid::new_v4()));
+        let client = DistributionClient {
+            client: Client::new(),
+            base_url: Url::parse(&format!("http://{address}/")).unwrap(),
+            trusted_keys: BTreeMap::new(),
+            server_keys: Arc::new(tokio::sync::OnceCell::new()),
+        };
+        let result = client.fetch_distinct_objects(objects.clone(), &root, None).await.unwrap();
+        server.join().unwrap();
+        assert_eq!(result.len(), 8);
+        assert_eq!(requests.load(Ordering::SeqCst), 8);
+        assert!((2..=MAX_CONCURRENT_PROFILE_DOWNLOADS).contains(&peak.load(Ordering::SeqCst)));
+        for (digest, path) in &result {
+            assert_eq!(hex::encode(Sha256::digest(fs::read(path).unwrap())), *digest);
+        }
+        // The server is now gone: success demonstrates that verified cached objects are reused.
+        assert_eq!(client.fetch_distinct_objects(objects, &root, None).await.unwrap(), result);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn encoded_key(byte: u8) -> String {
         URL_SAFE_NO_PAD.encode([byte; 32])
