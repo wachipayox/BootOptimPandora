@@ -850,6 +850,8 @@ impl LauncherUI {
                                         DesignButton::new("launcher-logo-home")
                                             .aria_label("Inicio")
                                             .absolute()
+                                            .top_0()
+                                            .left_0()
                                             .size_full()
                                             .px_0()
                                             .on_click(cx.listener(|this, _, window, cx| {
