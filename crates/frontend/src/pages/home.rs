@@ -544,17 +544,25 @@ impl HomePage {
                 .items_center()
                 .gap(px(4.))
                 .child(
-                    div()
-                        .font_family("Minecraft Default")
-                        .text_size(px(12.))
-                        .text_color(rgb(theme::INK_MUTED))
-                        .child(if server.pinging && server.status.is_none() {
-                            "CARGANDO"
-                        } else if server.status.is_some() {
-                            "Servidor en línea"
-                        } else {
-                            "Servidor sin respuesta"
-                        }),
+                    h_flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .when(server.status.is_none() && !server.pinging, |d| {
+                            d.child(div().size(px(5.)).flex_shrink_0().bg(rgb(theme::INK_DISABLED)))
+                        })
+                        .child(
+                            div()
+                                .font_family("Minecraft Default")
+                                .text_size(px(12.))
+                                .text_color(rgb(theme::INK_MUTED))
+                                .child(if server.pinging && server.status.is_none() {
+                                    "CARGANDO"
+                                } else if server.status.is_some() {
+                                    "Servidor en línea"
+                                } else {
+                                    "Servidor sin respuesta"
+                                }),
+                        ),
                 )
                 .when_some(online, |d, players| {
                     d.child(
