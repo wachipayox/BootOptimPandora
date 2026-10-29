@@ -13,8 +13,34 @@ use crate::{
     modrinth::ModrinthVersionType,
 };
 
+/// A Home server choice stored with the instance; `None` means automatic detection.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub enum HomeServerSelection {
+    Instance {
+        address: String,
+    },
+    Custom {
+        name: String,
+        address: String,
+    },
+}
+impl std::fmt::Debug for HomeServerSelection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Instance { .. } => formatter.write_str("Instance { address: <redacted> }"),
+            Self::Custom { .. } => formatter.write_str("Custom { name: <redacted>, address: <redacted> }"),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InstanceConfiguration {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub home_server: Option<HomeServerSelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_artwork: Option<std::path::PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -116,6 +142,7 @@ impl InstanceConfiguration {
     pub fn new(minecraft_version: Ustr, loader: Loader) -> Self {
         Self {
             home_artwork: None,
+            home_server: None,
             home_logo: None,
             minecraft_version,
             loader,
@@ -518,6 +545,23 @@ impl MemoryRecommendation {
 #[cfg(test)]
 mod memory_recommendation_tests {
     use super::*;
+    #[test]
+    fn home_server_choice_round_trips_and_old_configuration_defaults_to_auto() {
+        let mut config = InstanceConfiguration::new("1.21.1".into(), Loader::Vanilla);
+        let old = serde_json::to_value(&config).unwrap();
+        assert!(old.get("home_server").is_none());
+        let restored: InstanceConfiguration = serde_json::from_value(old).unwrap();
+        assert_eq!(restored.home_server, None);
+        config.home_server = Some(HomeServerSelection::Custom {
+            name: "test".into(),
+            address: "example.invalid".into(),
+        });
+        let restored: InstanceConfiguration = serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
+        assert_eq!(restored.home_server, config.home_server);
+        let diagnostic = format!("{:?}", config.home_server);
+        assert!(!diagnostic.contains("example.invalid"));
+        assert!(!diagnostic.contains("test"));
+    }
     #[test]
     fn sixteen_gib_matches_the_design_and_small_machines_keep_os_headroom() {
         let m = MemoryRecommendation::for_total_mib(Some(16 * 1024));

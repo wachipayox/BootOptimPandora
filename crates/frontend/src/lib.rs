@@ -407,7 +407,13 @@ pub fn open_main_window(
                 }
                 match capture_page.as_deref() {
                     Some(
-                        "instances" | "home-menu" | "home-news" | "home-running" | "home-optimizing" | "sidebar-scroll",
+                        "instances"
+                        | "home-menu"
+                        | "home-news"
+                        | "home-running"
+                        | "home-optimizing"
+                        | "sidebar-scroll"
+                        | "home-server-settings",
                     ) => InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances,
                     Some(name) if name.starts_with("news-") => {
                         InterfaceConfig::get_mut(cx).main_page = ui::PageType::Instances;
@@ -718,6 +724,13 @@ pub fn open_main_window(
                 }
                 if capture_page.as_deref() == Some("accounts") {
                     window.on_next_frame(|_, cx| crate::root::open_home_accounts(cx));
+                }
+                #[cfg(feature = "ui-capture")]
+                if capture_page.as_deref() == Some("home-server-settings") {
+                    let data = data.clone();
+                    window.on_next_frame(move |window, cx| {
+                        crate::pages::home::capture_server_settings(&data, window, cx)
+                    });
                 }
                 #[cfg(feature = "ui-capture")]
                 if capture_page.as_deref() == Some("window-dialog") {

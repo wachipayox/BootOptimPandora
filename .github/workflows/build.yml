@@ -79,6 +79,7 @@ jobs:
         run: |
           cargo test --release -p frontend --lib background::tests --frozen --target ${{ matrix.platform.target }}
           cargo test --release -p frontend --lib startup:: --frozen --target ${{ matrix.platform.target }}
+          cargo test --release -p frontend --lib server_marquee_tests --frozen --target ${{ matrix.platform.target }}
 
       - name: Test signed launcher updates and local replacement on Unix
         if: matrix.platform.os_name != 'Windows-x86_64'

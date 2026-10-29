@@ -7,6 +7,7 @@ use std::{
 };
 
 use auth::{credentials::AccountCredentials, models::MinecraftAccessToken, secret::PlatformSecretStorage};
+use base64::Engine;
 use bridge::{
     install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget},
     instance::{ContentFolder, ContentSummary, ContentType, InstanceID, InstanceStatus},
@@ -1725,6 +1726,47 @@ impl BackendState {
             MessageToBackend::RefreshHomeServer { id } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.mark_servers_dirty(self, true);
+                }
+            },
+            MessageToBackend::GetHomeServerStatus { id, address, channel } => {
+                let version = self
+                    .instance_state
+                    .write()
+                    .instances
+                    .get_mut(id)
+                    .map(|instance| instance.configuration.get().minecraft_version);
+                let result = version.map(|version| {
+                    let mut summary = bridge::instance::InstanceServerSummary {
+                        name: "".into(),
+                        ip: address.clone(),
+                        png_icon: None,
+                        pinging: false,
+                        status: None,
+                        ping: None,
+                    };
+                    match crate::server_list_pinger::ServerListPinger::load_status(self, address, version, id) {
+                        crate::server_list_pinger::PingResult::Pinging => summary.pinging = true,
+                        crate::server_list_pinger::PingResult::Loaded { status, ping } => {
+                            summary.png_icon = status
+                                .favicon
+                                .as_deref()
+                                .and_then(|icon| icon.strip_prefix("data:image/png;base64,"))
+                                .filter(|icon| icon.len() <= 128 * 1024)
+                                .and_then(|icon| base64::engine::general_purpose::STANDARD.decode(icon).ok())
+                                .map(schema::unique_bytes::UniqueBytes::from);
+                            summary.status = Some(status);
+                            summary.ping = ping;
+                        },
+                        crate::server_list_pinger::PingResult::Error => {},
+                    }
+                    summary
+                });
+                let _ = channel.send(result);
+            },
+            MessageToBackend::SetHomeServer { id, selection } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|config| config.home_server = selection);
+                    self.send.send(instance.create_modify_message());
                 }
             },
             MessageToBackend::GetProfileChangelog {
