@@ -1053,11 +1053,11 @@ fn account_add_row(label: &'static str, microsoft: bool) -> Div {
     if microsoft {
         for (x, y, color) in [
             (0., 0., 0xf25022),
-            (13., 0., 0x7fba00),
-            (0., 13., 0x00a4ef),
-            (13., 13., 0xffb900),
+            (11., 0., 0x7fba00),
+            (0., 11., 0x00a4ef),
+            (11., 11., 0xffb900),
         ] {
-            icon = icon.child(div().absolute().left(px(x)).top(px(y)).size(px(11.)).bg(rgb(color)));
+            icon = icon.child(div().absolute().left(px(x)).top(px(y)).size(px(9.)).bg(rgb(color)));
         }
     } else {
         icon =
@@ -1068,10 +1068,10 @@ fn account_add_row(label: &'static str, microsoft: bool) -> Div {
             .absolute()
             .right_0()
             .bottom_0()
-            .size(px(12.))
+            .size(px(10.))
             .bg(rgb(0x0a0a0c))
-            .child(div().absolute().left(px(2.)).top(px(5.)).w(px(8.)).h(px(2.)).bg(rgb(crate::theme::INK)))
-            .child(div().absolute().left(px(5.)).top(px(2.)).w(px(2.)).h(px(8.)).bg(rgb(crate::theme::INK))),
+            .child(div().absolute().left(px(2.)).top(px(4.)).w(px(6.)).h(px(2.)).bg(rgb(crate::theme::INK)))
+            .child(div().absolute().left(px(4.)).top(px(2.)).w(px(2.)).h(px(6.)).bg(rgb(crate::theme::INK))),
     );
     h_flex().w_full().gap(px(8.)).child(icon).child(
         div()
