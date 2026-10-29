@@ -3,6 +3,9 @@ name = "backend"
 version.workspace = true
 edition.workspace = true
 
+[features]
+ui-capture = []
+
 [dependencies]
 auth.workspace = true
 tokio.workspace = true
