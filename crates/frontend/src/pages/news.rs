@@ -743,6 +743,12 @@ impl NewsPage {
             .h(px(24.))
             .px_0()
             .text_color(rgb(if saved { theme::ACCENT_TEXT } else { theme::INK_MUTED }))
+            .paint(
+                0.,
+                [[0, 0]; 3],
+                rgb(if saved { theme::ACCENT_TEXT } else { theme::INK_MUTED }).into(),
+                rgb(if saved { theme::ACCENT_TEXT } else { theme::INK_MUTED }).into(),
+            )
             .child(
                 gpui_component::Icon::new(if saved {
                     crate::icon::PandoraIcon::NewsBookmarkFilled
