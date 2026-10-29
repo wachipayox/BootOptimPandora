@@ -595,8 +595,12 @@ impl HomePage {
             .h(px(24.))
             .px_0()
             .border_0()
-            .bg(rgb(0x666666))
-            .hover(|d| d.bg(rgb(0x777777)))
+            .paint(
+                0.,
+                [[0x666666ff; 2], [0x777777ff; 2], [0x555555ff; 2]],
+                rgb(0xffffff).into(),
+                rgb(0xffffff).into(),
+            )
             .child(
                 div()
                     .font_family("Minecraft Default")
