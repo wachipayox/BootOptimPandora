@@ -5,6 +5,12 @@ use gpui::{prelude::*, *};
 use gpui_component::{h_flex, v_flex};
 use std::{path::PathBuf, sync::Arc};
 
+#[derive(Clone, Copy, PartialEq)]
+enum ImageKind {
+    Artwork,
+    Logo,
+}
+
 pub struct InstanceArtworkSection {
     instance: Entity<InstanceEntry>,
     backend: BackendHandle,
@@ -68,14 +74,22 @@ impl InstanceArtworkSection {
         })
         .detach();
     }
-    fn save(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
+    fn save(&mut self, kind: ImageKind, path: Option<PathBuf>, cx: &mut Context<Self>) {
         self.pending = true;
         self.error = false;
         let (send, receive) = tokio::sync::oneshot::channel();
-        self.backend.send(MessageToBackend::SetInstanceHomeArtwork {
-            id: self.instance.read(cx).id,
-            path,
-            channel: send,
+        let id = self.instance.read(cx).id;
+        self.backend.send(match kind {
+            ImageKind::Artwork => MessageToBackend::SetInstanceHomeArtwork {
+                id,
+                path,
+                channel: send,
+            },
+            ImageKind::Logo => MessageToBackend::SetInstanceHomeLogo {
+                id,
+                path,
+                channel: send,
+            },
         });
         cx.spawn(async move |this, cx| {
             let success = matches!(receive.await, Ok(Ok(())));
@@ -91,26 +105,50 @@ impl InstanceArtworkSection {
         .detach();
     }
 }
-impl Render for InstanceArtworkSection {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl InstanceArtworkSection {
+    fn image_column(&self, kind: ImageKind, cx: &Context<Self>) -> AnyElement {
         use gpui_component::Disableable;
-        let own = self.instance.read(cx).configuration.home_artwork.clone();
-        let image = self
-            .presentation
-            .artwork
+        let configuration = &self.instance.read(cx).configuration;
+        let (title, own, path, fallback) = match kind {
+            ImageKind::Artwork => (
+                "Artwork",
+                &configuration.home_artwork,
+                &self.presentation.artwork,
+                "images/artwork-vanilla.png",
+            ),
+            ImageKind::Logo => ("Logo", &configuration.home_logo, &self.presentation.logo, "images/logo-vanilla.png"),
+        };
+        let image = path
             .as_ref()
             .map(|p| ImageSource::Resource(Resource::Path(Arc::from(p.as_path()))))
-            .unwrap_or_else(|| ImageSource::Resource(Resource::Embedded("images/artwork-vanilla.png".into())));
+            .unwrap_or_else(|| ImageSource::Resource(Resource::Embedded(fallback.into())));
         let origin = if own.is_some() {
             "De esta instancia".to_owned()
-        } else if self.presentation.artwork.is_some() {
+        } else if path.is_some() {
             self.profile_name.as_ref().map(|n| format!("Del perfil {n}")).unwrap_or_default()
         } else {
             "Vanilla".to_owned()
         };
         v_flex()
+            .flex_1()
+            .min_w(px(200.))
+            .max_w(px(240.))
             .gap(px(12.))
-            .child(img(image).w(px(240.)).h(px(135.)).object_fit(ObjectFit::Cover))
+            .child(
+                div()
+                    .font_family(theme::DISPLAY)
+                    .font_weight(FontWeight::BOLD)
+                    .text_size(px(20.))
+                    .line_height(px(24.))
+                    .child(title),
+            )
+            .child(div().relative().w_full().aspect_ratio(16. / 9.).child(
+                img(image).absolute().size_full().object_fit(if kind == ImageKind::Artwork {
+                    ObjectFit::Cover
+                } else {
+                    ObjectFit::Contain
+                }),
+            ))
             .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(origin))
             .when_some(
                 own.as_ref().and_then(|p| p.file_name()).map(|p| p.to_string_lossy().into_owned()),
@@ -120,39 +158,67 @@ impl Render for InstanceArtworkSection {
                 h_flex()
                     .gap(px(8.))
                     .child(
-                        design::DesignButton::new("choose-artwork")
-                            .label("Elegir imagen…")
-                            .disabled(self.pending)
-                            .on_click(cx.listener(|_this, _, _, cx| {
-                                let selected = cx.prompt_for_paths(PathPromptOptions {
-                                    files: true,
-                                    directories: false,
-                                    multiple: false,
-                                    prompt: Some("Elegir imagen…".into()),
-                                });
-                                cx.spawn(async move |this, cx| match selected.await {
-                                    Ok(Ok(Some(paths))) => {
-                                        if let Some(path) = paths.into_iter().next() {
-                                            let _ = this.update(cx, |this, cx| this.save(Some(path), cx));
-                                        }
-                                    },
-                                    Ok(Ok(None)) => {},
-                                    _ => {
-                                        let _ = this.update(cx, |this, cx| {
-                                            this.error = true;
-                                            cx.notify();
-                                        });
-                                    },
-                                })
-                                .detach();
-                            })),
+                        design::DesignButton::new(if kind == ImageKind::Artwork {
+                            "choose-artwork"
+                        } else {
+                            "choose-logo"
+                        })
+                        .label("Elegir imagen…")
+                        .disabled(self.pending)
+                        .on_click(cx.listener(move |_this, _, _, cx| {
+                            let selected = cx.prompt_for_paths(PathPromptOptions {
+                                files: true,
+                                directories: false,
+                                multiple: false,
+                                prompt: Some("Elegir imagen…".into()),
+                            });
+                            cx.spawn(async move |this, cx| match selected.await {
+                                Ok(Ok(Some(paths))) => {
+                                    if let Some(path) = paths.into_iter().next() {
+                                        let _ = this.update(cx, |this, cx| this.save(kind, Some(path), cx));
+                                    }
+                                },
+                                Ok(Ok(None)) => {},
+                                _ => {
+                                    let _ = this.update(cx, |this, cx| {
+                                        this.error = true;
+                                        cx.notify();
+                                    });
+                                },
+                            })
+                            .detach();
+                        })),
                     )
                     .child(
-                        design::DesignButton::new("reset-artwork")
-                            .label("Restablecer")
-                            .disabled(self.pending || own.is_none())
-                            .on_click(cx.listener(|this, _, _, cx| this.save(None, cx))),
+                        design::DesignButton::new(if kind == ImageKind::Artwork {
+                            "reset-artwork"
+                        } else {
+                            "reset-logo"
+                        })
+                        .label("Restablecer")
+                        .disabled(self.pending || own.is_none())
+                        .on_click(cx.listener(move |this, _, _, cx| this.save(kind, None, cx))),
                     ),
+            )
+            .into_any_element()
+    }
+}
+impl Render for InstanceArtworkSection {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .w_full()
+            .gap(px(12.))
+            .px(px(18.))
+            .py(px(16.))
+            .bg(rgb(theme::PANEL))
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_start()
+                    .flex_wrap()
+                    .gap(px(16.))
+                    .child(self.image_column(ImageKind::Artwork, cx))
+                    .child(self.image_column(ImageKind::Logo, cx)),
             )
             .when(self.error, |d| {
                 d.child(

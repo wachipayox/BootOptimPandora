@@ -590,7 +590,13 @@ impl BackendState {
             MessageToBackend::SetInstanceHomeArtwork { id, path, channel } => {
                 let backend = self.clone();
                 self.spawn_launcher_task_blocking(move || {
-                    let _ = channel.send(backend.set_instance_home_artwork(id, path.as_deref()));
+                    let _ = channel.send(backend.set_instance_home_image(id, path.as_deref(), true));
+                });
+            },
+            MessageToBackend::SetInstanceHomeLogo { id, path, channel } => {
+                let backend = self.clone();
+                self.spawn_launcher_task_blocking(move || {
+                    let _ = channel.send(backend.set_instance_home_image(id, path.as_deref(), false));
                 });
             },
             MessageToBackend::SetInstanceIcon { id, icon } => {

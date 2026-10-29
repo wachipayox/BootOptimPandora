@@ -466,14 +466,19 @@ async fn bounded_get(client: &Client, url: &str, max: usize) -> Option<Vec<u8>> 
 impl crate::BackendState {
     /// Validate and normalize outside the UI thread. Keep a launcher-owned copy
     /// so moving the selected source does not break the instance presentation.
-    pub(crate) fn set_instance_home_artwork(&self, id: InstanceID, path: Option<&Path>) -> Result<(), String> {
+    pub(crate) fn set_instance_home_image(
+        &self,
+        id: InstanceID,
+        path: Option<&Path>,
+        artwork: bool,
+    ) -> Result<(), String> {
         let error = || "No se ha podido abrir la imagen.".to_owned();
         let root = self.instance_state.read().instances.get(id).ok_or_else(error)?.root_path.clone();
         let stored = if let Some(path) = path {
             let cache = self.directories.root_launcher_dir.join("home-presentation");
-            let value = cache_local_image(path, &cache, true).ok_or_else(error)?;
+            let value = cache_local_image(path, &cache, artwork).ok_or_else(error)?;
             let sha = value["sha256"].as_str().ok_or_else(error)?;
-            let directory = root.join("launcher-artwork");
+            let directory = root.join(if artwork { "launcher-artwork" } else { "launcher-logo" });
             fs::create_dir_all(&directory).map_err(|_| error())?;
             let name = path.file_stem().ok_or_else(error)?;
             let mut target = directory.join(name);
@@ -486,7 +491,13 @@ impl crate::BackendState {
         };
         let mut state = self.instance_state.write();
         let instance = state.instances.get_mut(id).ok_or_else(error)?;
-        instance.configuration.modify(|configuration| configuration.home_artwork = stored);
+        instance.configuration.modify(|configuration| {
+            if artwork {
+                configuration.home_artwork = stored;
+            } else {
+                configuration.home_logo = stored;
+            }
+        });
         self.send.send(instance.create_modify_message());
         Ok(())
     }
