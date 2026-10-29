@@ -324,10 +324,16 @@ impl crate::BackendState {
             return Ok(out);
         }
         let news_root = self.directories.root_launcher_dir.join("news-state");
-        let feed = match if cache_only {
-            client.cached_news_snapshot(&news_root)
+        #[cfg(feature = "ui-capture")]
+        let capture_news = std::env::var_os("WBOMBO_UI_CAPTURE_NEWS").is_some();
+        #[cfg(not(feature = "ui-capture"))]
+        let capture_news = false;
+        let feed = match if capture_news {
+            self.load_news_feed().await
+        } else if cache_only {
+            client.cached_news_snapshot(&news_root).map_err(|e| e.to_string())
         } else {
-            client.news_snapshot(&news_root).await
+            client.news_snapshot(&news_root).await.map_err(|e| e.to_string())
         } {
             Ok(v) => v,
             Err(_) => {
