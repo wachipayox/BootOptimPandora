@@ -27,6 +27,21 @@ struct HomeVisualCache {
     logo: crate::component::retained_image::RetainedImage,
 }
 impl Global for HomeVisualCache {}
+struct ServerPlayerTooltip(SharedString);
+impl Render for ServerPlayerTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .bg(rgb(0x100010))
+            .border_2()
+            .border_color(rgb(0x5000a0))
+            .px(px(6.))
+            .py(px(3.))
+            .font_family("Minecraft Default")
+            .text_size(px(13.))
+            .text_color(rgb(0xffffff))
+            .child(self.0.clone())
+    }
+}
 
 pub struct HomePage {
     data: DataEntities,
@@ -202,18 +217,20 @@ fn home_server_marquee(id: &'static str, characters: usize, available: f32, cont
     let distance = (characters as f32 * 8. - available).max(0.);
     let line = div().absolute().top_0().left_0().whitespace_nowrap().child(content);
     let line = if distance > 0. {
-        let seconds = (distance / 24. + 2.).clamp(3., 30.);
+        let old_seconds = (distance / 24. + 2.).clamp(3., 30.);
+        let speed = distance / (old_seconds * 0.5);
+        let width = characters as f32 * 8.;
+        let gap = 20.;
+        let travel = width + available + gap;
+        let seconds = travel / speed.max(1.);
         line.with_animation(id, Animation::new(Duration::from_secs_f32(seconds)).repeat(), move |line, t| {
-            let progress = if t < 0.15 {
-                0.
-            } else if t < 0.65 {
-                (t - 0.15) / 0.5
-            } else if t < 0.8 {
-                1.
+            let offset = travel * t;
+            let x = if offset <= width {
+                -offset
             } else {
-                (1. - t) / 0.2
+                available + gap - (offset - width)
             };
-            line.left(px(-distance * progress))
+            line.left(px(x))
         })
         .into_any_element()
     } else {
@@ -588,24 +605,15 @@ impl HomePage {
                         "images/default_head.png",
                     ))
                     .size(px(20.));
-                    div().id(("home-server-player", ix)).child(head).when(!hide_names, |d| {
-                        d.tooltip(move |window, cx| {
-                            let player_name = player_name.clone();
-                            gpui_component::tooltip::Tooltip::element(move |_, _| {
-                                div()
-                                    .bg(rgb(0x100010))
-                                    .border_2()
-                                    .border_color(rgb(0x5000a0))
-                                    .px(px(6.))
-                                    .py(px(3.))
-                                    .font_family("Minecraft Default")
-                                    .text_size(px(13.))
-                                    .text_color(rgb(0xffffff))
-                                    .child(player_name.clone())
+                    div().id(("home-server-player", ix)).child(head).tooltip_show_delay(Duration::ZERO).when(
+                        !hide_names,
+                        |d| {
+                            d.tooltip(move |window, cx| {
+                                let _ = window;
+                                cx.new(|_| ServerPlayerTooltip(player_name.clone())).into()
                             })
-                            .build(window, cx)
-                        })
-                    })
+                        },
+                    )
                 }),
             ));
         }
