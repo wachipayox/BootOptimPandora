@@ -813,7 +813,7 @@ impl Render for InstanceSettingsSubpage {
             .flex_1()
             .min_w_0()
             .gap(px(16.))
-            .child(settings_panel("Artwork").child(self.artwork_section.clone()))
+            .child(self.artwork_section.clone())
             .child(actions);
         v_flex()
             .id("instance-settings-scroll")
@@ -845,77 +845,98 @@ impl InstanceSettingsSubpage {
         let theme_radius = cx.theme().radius;
 
         let icon_element: Option<AnyElement> = self.icon.clone().map(|icon| match icon {
-            EmbeddedOrRaw::Embedded(path) => Icon::default().path(path).size_8().min_w_8().min_h_8().into_any_element(),
+            EmbeddedOrRaw::Embedded(path) => {
+                Icon::default().path(path).size(px(64.)).min_w(px(64.)).min_h(px(64.)).into_any_element()
+            },
             EmbeddedOrRaw::Raw(data) => {
                 let radius = theme_radius;
-                let transform = png_render_cache::ImageTransformation::Resize { width: 32, height: 32 };
+                let transform = png_render_cache::ImageTransformation::Resize { width: 64, height: 64 };
                 png_render_cache::render_with_transform(data, transform, cx)
                     .rounded(radius)
-                    .size_8()
-                    .min_w_8()
-                    .min_h_8()
+                    .size(px(64.))
+                    .min_w(px(64.))
+                    .min_h(px(64.))
                     .into_any_element()
             },
         });
 
-        let mut basic_content = v_flex()
-            .gap_4()
-            .w_full()
-            .child(crate::labelled(
-                "Nombre",
-                h_flex()
-                    .gap_2()
-                    .child(crate::component::design::text_field(&self.new_name_input_state))
-                    .when(self.new_name_change_state != NewNameChangeState::NoChange, |this| {
-                        if self.new_name_change_state == NewNameChangeState::InvalidName {
-                            this.child("El nombre no es válido o ya existe.")
-                        } else {
-                            this.child(DesignButton::new("setname").label("Actualizar").on_click({
-                                let instance = self.instance.clone();
-                                let backend_handle = self.backend_handle.clone();
-                                let new_name = self.new_name_input_state.read(cx).value();
-                                move |_, _, cx| {
-                                    let instance = instance.read(cx);
-                                    let id = instance.id;
-                                    backend_handle.send(MessageToBackend::RenameInstance {
-                                        id,
-                                        name: new_name.as_str().into(),
-                                    });
-                                }
-                            }))
-                        }
-                    }),
-            ))
-            .child({
-                let mut row = h_flex().gap_2().child(
-                    DesignButton::new("icon")
-                        .child(Icon::new(crate::icon::PandoraIcon::Plus).size(px(14.)))
-                        .label("Cambiar icono")
-                        .on_click({
-                            let entity = cx.entity();
-                            move |_, window, cx| {
-                                let entity = entity.clone();
-                                crate::modals::select_icon::open_select_icon(
-                                    Box::new(move |icon, cx| {
-                                        cx.update_entity(&entity, |this, _| {
-                                            this.icon = Some(icon.clone());
-                                            this.backend_handle.send(MessageToBackend::SetInstanceIcon {
-                                                id: this.instance_id,
-                                                icon: Some(icon),
-                                            });
-                                        });
-                                    }),
-                                    window,
-                                    cx,
-                                );
+        let name_field = crate::labelled(
+            "Nombre",
+            h_flex()
+                .gap_2()
+                .child(crate::component::design::text_field(&self.new_name_input_state))
+                .when(self.new_name_change_state != NewNameChangeState::NoChange, |this| {
+                    if self.new_name_change_state == NewNameChangeState::InvalidName {
+                        this.child("El nombre no es válido o ya existe.")
+                    } else {
+                        this.child(DesignButton::new("setname").label("Actualizar").on_click({
+                            let instance = self.instance.clone();
+                            let backend_handle = self.backend_handle.clone();
+                            let new_name = self.new_name_input_state.read(cx).value();
+                            move |_, _, cx| {
+                                let instance = instance.read(cx);
+                                let id = instance.id;
+                                backend_handle.send(MessageToBackend::RenameInstance {
+                                    id,
+                                    name: new_name.as_str().into(),
+                                });
                             }
+                        }))
+                    }
+                }),
+        );
+        let icon_group: SharedString = "instance-edit-icon".into();
+        let icon_button = DesignButton::new("icon")
+            .aria_label("Cambiar icono")
+            .tooltip("Cambiar icono")
+            .group(icon_group.clone())
+            .relative()
+            .w(px(64.))
+            .h(px(64.))
+            .flex_shrink_0()
+            .p_0()
+            .child(
+                icon_element.unwrap_or_else(|| Icon::default().path("icons/box.svg").size(px(64.)).into_any_element()),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .invisible()
+                    .group_hover(icon_group, |style| style.visible())
+                    .bg(rgba(0x00000066))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(Icon::new(PandoraIcon::Pencil).size(px(24.)).text_color(rgb(theme::INK))),
+            )
+            .on_click({
+                let entity = cx.entity();
+                move |_, window, cx| {
+                    let entity = entity.clone();
+                    crate::modals::select_icon::open_select_icon(
+                        Box::new(move |icon, cx| {
+                            cx.update_entity(&entity, |this, _| {
+                                this.icon = Some(icon.clone());
+                                this.backend_handle.send(MessageToBackend::SetInstanceIcon {
+                                    id: this.instance_id,
+                                    icon: Some(icon),
+                                });
+                            });
                         }),
-                );
-                if let Some(el) = icon_element {
-                    row = row.child(el);
+                        window,
+                        cx,
+                    );
                 }
-                row
             });
+        let mut basic_content = v_flex().gap_4().w_full().child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .gap(px(16.))
+                .child(icon_button)
+                .child(div().flex_1().min_w_0().child(name_field)),
+        );
 
         let mut version_content = v_flex().gap_2();
 
@@ -991,59 +1012,80 @@ impl InstanceSettingsSubpage {
                 ),
             )
             .when(self.editing_version, |d| d.child(version_content));
-        basic_content = basic_content.child(crate::labelled("Versión", version_row)).when(
-            !self
-                .profile_info
-                .as_ref()
-                .is_some_and(|i| i.global_profile_id.is_some() || i.local_parent_name.is_some()),
-            |d| {
-                d.child(crate::labelled(
-                    "Cuenta para esta instancia",
-                    h_flex().gap_2().child(
-                        Select::new(&self.account_items)
-                            .placeholder("La activa")
-                            .bg(rgb(theme::PANEL_SUNKEN))
-                            .h(px(36.))
-                            .text_size(px(13.))
-                            .search_placeholder("Buscar...")
-                            .cleanable(true),
-                    ),
-                ))
-            },
+        basic_content = basic_content
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_start()
+                    .gap(px(12.))
+                    .child(div().w(px(140.)).h(px(28.)).flex_shrink_0().flex().items_center().child("Versión"))
+                    .child(div().flex_1().min_w_0().child(version_row)),
+            )
+            .when(
+                !self
+                    .profile_info
+                    .as_ref()
+                    .is_some_and(|i| i.global_profile_id.is_some() || i.local_parent_name.is_some()),
+                |d| {
+                    d.child(crate::labelled(
+                        "Cuenta para esta instancia",
+                        h_flex().gap_2().child(
+                            Select::new(&self.account_items)
+                                .placeholder("La activa")
+                                .bg(rgb(theme::PANEL_SUNKEN))
+                                .h(px(36.))
+                                .text_size(px(13.))
+                                .search_placeholder("Buscar...")
+                                .cleanable(true),
+                        ),
+                    ))
+                },
+            );
+
+        basic_content = basic_content.child(
+            h_flex()
+                .w_full()
+                .gap(px(12.))
+                .items_center()
+                .child(div().w(px(140.)).flex_shrink_0().child("Carpeta de la instancia"))
+                .child(
+                    DesignButton::new("relocate")
+                        .flex_1()
+                        .min_w_0()
+                        .px_0()
+                        .justify_start()
+                        .child(self.instance_root_label.clone())
+                        .on_click({
+                            let instance = self.instance.clone();
+                            let backend_handle = self.backend_handle.clone();
+                            move |_: &ClickEvent, _, cx| {
+                                let instance = instance.read(cx);
+                                let id = instance.id;
+
+                                let receiver = cx.prompt_for_paths(PathPromptOptions {
+                                    files: false,
+                                    directories: true,
+                                    multiple: false,
+                                    prompt: Some("Selecciona una carpeta vacía".into()),
+                                });
+                                let backend_handle = backend_handle.clone();
+                                cx.spawn(async move |_| {
+                                    let Ok(Ok(Some(mut paths))) = receiver.await else {
+                                        return;
+                                    };
+                                    if paths.is_empty() {
+                                        return;
+                                    }
+                                    backend_handle.send(MessageToBackend::RelocateInstance {
+                                        id,
+                                        path: paths.swap_remove(0),
+                                    });
+                                })
+                                .detach();
+                            }
+                        }),
+                ),
         );
-
-        basic_content = basic_content.child(crate::labelled(
-            "Carpeta de la instancia",
-            DesignButton::new("relocate").child(self.instance_root_label.clone()).on_click({
-                let instance = self.instance.clone();
-                let backend_handle = self.backend_handle.clone();
-                move |_: &ClickEvent, _, cx| {
-                    let instance = instance.read(cx);
-                    let id = instance.id;
-
-                    let receiver = cx.prompt_for_paths(PathPromptOptions {
-                        files: false,
-                        directories: true,
-                        multiple: false,
-                        prompt: Some("Selecciona una carpeta vacía".into()),
-                    });
-                    let backend_handle = backend_handle.clone();
-                    cx.spawn(async move |_| {
-                        let Ok(Ok(Some(mut paths))) = receiver.await else {
-                            return;
-                        };
-                        if paths.is_empty() {
-                            return;
-                        }
-                        backend_handle.send(MessageToBackend::RelocateInstance {
-                            id,
-                            path: paths.swap_remove(0),
-                        });
-                    })
-                    .detach();
-                }
-            }),
-        ));
         basic_content.into_any_element()
     }
 
