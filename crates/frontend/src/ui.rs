@@ -758,34 +758,40 @@ impl LauncherUI {
                 }
             });
         let saved_accounts = self.data.accounts.read(cx).accounts.clone();
-        footer = footer.child(
-            h_flex().border_t_1().border_color(rgba(0xffffff0b)).pt(px(8.)).gap(px(4.)).child(
-                DesignButton::new("home-account")
-                    .aria_label(account_name.clone())
-                    .flex_1()
-                    .h(px(47.))
+        let account_trigger = DesignButton::new("home-account")
+            .aria_label(account_name.clone())
+            .w_full()
+            .h(px(47.))
+            .flex_shrink_0()
+            .justify_start()
+            .px(px(6.))
+            .border_l_2()
+            .border_color(rgba(0xffffff00))
+            .child(
+                h_flex()
+                    .gap(px(8.))
+                    .child(div().w(px(12.)).flex_shrink_0().text_center().child(if self.home_account_menu {
+                        "▾"
+                    } else {
+                        "▴"
+                    }))
+                    .child(head)
                     .child(
-                        h_flex()
-                            .gap(px(8.))
-                            .child(if self.home_account_menu { "▾" } else { "▴" })
-                            .child(head)
-                            .child(
-                                v_flex().items_start().child(account_name).child(
-                                    div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(
-                                        selected_account
-                                            .as_ref()
-                                            .map(|a| if a.offline { "Sin conexión" } else { "Microsoft" })
-                                            .unwrap_or("Añadir cuenta"),
-                                    ),
-                                ),
+                        v_flex().items_start().child(account_name).child(
+                            div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(
+                                selected_account
+                                    .as_ref()
+                                    .map(|a| if a.offline { "Sin conexión" } else { "Microsoft" })
+                                    .unwrap_or("Añadir cuenta"),
                             ),
-                    )
-                    .on_click(cx.listener(|this, _, _, c| {
-                        this.home_account_menu = !this.home_account_menu;
-                        c.notify();
-                    })),
-            ),
-        );
+                        ),
+                    ),
+            )
+            .on_click(cx.listener(|this, _, _, c| {
+                this.home_account_menu = !this.home_account_menu;
+                c.notify();
+            }));
+        footer = footer.child(div().border_t_1().border_color(rgba(0xffffff0b)).pt(px(8.)).child(div().h(px(47.))));
         let sidebar = v_flex()
             .window_control_area(WindowControlArea::Drag)
             .w(px(220.))
@@ -852,7 +858,7 @@ impl LauncherUI {
             .flex_col()
             .size_full()
             .overflow_y_scrollbar()
-            .p(px(6.));
+            .px(px(6.));
         for (ix, account) in saved_accounts.iter().enumerate() {
             let uuid = account.uuid;
             let active = selected_account.as_ref().is_some_and(|a| a.uuid == uuid);
@@ -893,7 +899,13 @@ impl LauncherUI {
                             .h(px(42.))
                             .justify_start()
                             .px_0()
-                            .when(active, |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)))
+                            .pl(px(20.))
+                            .border_l_2()
+                            .border_color(if active {
+                                rgb(theme::ACCENT_TEXT)
+                            } else {
+                                rgba(0xffffff00)
+                            })
                             .child(h_flex().gap(px(8.)).child(account_head).child(div().overflow_hidden().child(name)))
                             .on_click(cx.listener(move |this, _, _, c| {
                                 this.data
@@ -960,8 +972,15 @@ impl LauncherUI {
         account_menu = account_menu
             .child(
                 DesignButton::new("add-microsoft-home")
-                    .label_left("Añadir cuenta de Microsoft")
+                    .aria_label("Añadir cuenta de Microsoft")
                     .w_full()
+                    .h(px(42.))
+                    .justify_start()
+                    .px_0()
+                    .pl(px(20.))
+                    .border_l_2()
+                    .border_color(rgba(0xffffff00))
+                    .child(account_add_row("Añadir cuenta de Microsoft", true))
                     .on_click(cx.listener(|this, _, w, c| {
                         this.home_account_menu = false;
                         crate::root::start_new_account_login(&this.data.backend_handle, w, c);
@@ -969,8 +988,15 @@ impl LauncherUI {
             )
             .child(
                 DesignButton::new("add-offline-home")
-                    .label_left("Añadir cuenta sin conexión")
+                    .aria_label("Añadir cuenta sin conexión")
                     .w_full()
+                    .h(px(42.))
+                    .justify_start()
+                    .px_0()
+                    .pl(px(20.))
+                    .border_l_2()
+                    .border_color(rgba(0xffffff00))
+                    .child(account_add_row("Añadir cuenta sin conexión", false))
                     .on_click(cx.listener(|this, _, w, c| {
                         this.home_account_menu = false;
                         crate::modals::accounts::open_offline_account(this.data.backend_handle.clone(), w, c);
@@ -984,29 +1010,71 @@ impl LauncherUI {
             .child(crate::background::surface(window, cx))
             .child(sidebar)
             .child(div().flex_1().min_w_0().h_full().child(self.page.clone().render(self, window, cx)))
-            .when(self.home_account_menu, |d| {
-                // Keep positioning outside Scrollable: its wrapper only carries sizing styles.
-                let height =
-                    (saved_accounts.len() as f32 * 42. + 76.).min(window.viewport_size().height.as_f32() * 0.7);
-                d.child(
-                    div()
-                        .id("home-account-menu-overlay")
-                        .absolute()
-                        .left(px(10.))
-                        .bottom(px(64.))
-                        .w(px(200.))
-                        .h(px(height))
-                        .bg(rgba(0x0a0a0cf2))
-                        .occlude()
-                        .child(account_menu)
-                        .on_mouse_down_out(cx.listener(|this, _, _, c| {
-                            this.home_account_menu = false;
-                            c.notify();
-                        })),
-                )
-            })
+            .child(
+                // One hitbox owns the menu and its trigger: the outside handler must
+                // not close on mouse-down before the trigger toggles on click.
+                div()
+                    .id("home-account-menu-overlay")
+                    .absolute()
+                    .left(px(10.))
+                    .bottom(px(12.))
+                    .w(px(200.))
+                    .h(px(47.
+                        + if self.home_account_menu {
+                            ((saved_accounts.len() + 2) as f32 * 42.).min(window.viewport_size().height.as_f32() * 0.7)
+                        } else {
+                            0.
+                        }))
+                    .flex()
+                    .flex_col()
+                    .occlude()
+                    .when(self.home_account_menu, |d| {
+                        d.bg(rgb(0x0a0a0c)).child(div().flex_1().min_h_0().child(account_menu)).on_mouse_down_out(
+                            cx.listener(|this, _, _, c| {
+                                this.home_account_menu = false;
+                                c.notify();
+                            }),
+                        )
+                    })
+                    .child(account_trigger),
+            )
             .into_any_element()
     }
+}
+
+fn account_add_row(label: &'static str, microsoft: bool) -> Div {
+    let mut icon = div().relative().size(px(26.)).flex_shrink_0();
+    if microsoft {
+        for (x, y, color) in [
+            (0., 0., 0xf25022),
+            (13., 0., 0x7fba00),
+            (0., 13., 0x00a4ef),
+            (13., 13., 0xffb900),
+        ] {
+            icon = icon.child(div().absolute().left(px(x)).top(px(y)).size(px(11.)).bg(rgb(color)));
+        }
+    } else {
+        icon =
+            icon.child(img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into()))).size(px(26.)));
+    }
+    icon = icon.child(
+        div()
+            .absolute()
+            .right_0()
+            .bottom_0()
+            .size(px(12.))
+            .bg(rgb(0x0a0a0c))
+            .text_size(px(14.))
+            .line_height(px(12.))
+            .text_center()
+            .text_color(rgb(crate::theme::INK))
+            .child("+"),
+    );
+    h_flex()
+        .w_full()
+        .gap(px(8.))
+        .child(icon)
+        .child(div().flex_1().min_w_0().text_size(px(13.)).line_height(px(16.)).child(label))
 }
 
 pub(crate) fn browser_sources(data: &DataEntities, install_for: Option<InstanceID>, modrinth: bool, cx: &App) -> Div {
