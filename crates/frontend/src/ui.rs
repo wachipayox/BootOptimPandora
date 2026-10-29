@@ -1064,11 +1064,8 @@ fn account_add_row(label: &'static str, microsoft: bool) -> Div {
             .bottom_0()
             .size(px(12.))
             .bg(rgb(0x0a0a0c))
-            .text_size(px(14.))
-            .line_height(px(12.))
-            .text_center()
-            .text_color(rgb(crate::theme::INK))
-            .child("+"),
+            .child(div().absolute().left(px(2.)).top(px(5.)).w(px(8.)).h(px(2.)).bg(rgb(crate::theme::INK)))
+            .child(div().absolute().left(px(5.)).top(px(2.)).w(px(2.)).h(px(8.)).bg(rgb(crate::theme::INK))),
     );
     h_flex()
         .w_full()
