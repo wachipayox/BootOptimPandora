@@ -736,6 +736,31 @@ impl NewsPage {
         let item = &article.item;
         let saved = self.marks(cx).is_some_and(|s| s.saved.contains(&item.id));
         let id = item.id.clone();
+        let save_button = DesignButton::new("save-news")
+            .aria_label("Guardar")
+            .tooltip("Guardar")
+            .w(px(28.))
+            .h(px(24.))
+            .px_0()
+            .text_color(rgb(if saved { theme::ACCENT_TEXT } else { theme::INK_MUTED }))
+            .child(
+                gpui_component::Icon::new(if saved {
+                    crate::icon::PandoraIcon::NewsBookmarkFilled
+                } else {
+                    crate::icon::PandoraIcon::NewsBookmark
+                })
+                .size(px(20.)),
+            )
+            .disabled(!self.feed.items.iter().any(|n| n.id == item.id))
+            .on_click(cx.listener(move |this, _, w, c| {
+                InterfaceConfig::get_mut(c)
+                    .news_marks
+                    .entry(this.feed.origin_key.clone())
+                    .or_default()
+                    .toggle_saved(&id);
+                w.refresh();
+                c.notify();
+            }));
         let mut reader = v_flex()
             .w(px(680.))
             .mx_auto()
@@ -763,7 +788,8 @@ impl NewsPage {
                         date(&item.published_at, &self.feed.server_time),
                         item.author,
                         (item.body.split_whitespace().count().div_ceil(200)).max(1)
-                    ))),
+                    )))
+                    .child(save_button),
             )
             .child(
                 div()
@@ -829,22 +855,7 @@ impl NewsPage {
                     }),
             );
         }
-        reader = reader.child(
-            DesignButton::new("save-news")
-                .label("Guardar")
-                .w(px(110.))
-                .disabled(!self.feed.items.iter().any(|n| n.id == item.id))
-                .when(saved, |d| d.bg(rgba(0x5bcef51f)).text_color(rgb(theme::ACCENT_TEXT)))
-                .on_click(cx.listener(move |this, _, w, c| {
-                    InterfaceConfig::get_mut(c)
-                        .news_marks
-                        .entry(this.feed.origin_key.clone())
-                        .or_default()
-                        .toggle_saved(&id);
-                    w.refresh();
-                    c.notify();
-                })),
-        );
+
         v_flex()
             .w_full()
             .gap(px(24.))
