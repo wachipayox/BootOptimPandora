@@ -930,7 +930,7 @@ impl LauncherUI {
                                 .h(px(42.))
                                 .px_0()
                                 .text_color(rgb(theme::DANGER))
-                                .child(gpui_component::Icon::new(PandoraIcon::Close).size(px(16.)))
+                                .child(gpui_component::Icon::new(PandoraIcon::LogOut).size(px(16.)))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     cx.stop_propagation();
                                     this.home_account_menu = false;
