@@ -481,6 +481,7 @@ impl NewsPage {
             .read
             .insert(item.id.clone());
         let media = self.media.clone();
+        let body_media = self.media.clone();
         let extensions = MarkdownExtensions::default()
             .commonmark()
             .block_parser(|node, context| {
@@ -494,9 +495,34 @@ impl NewsPage {
                             .text(format!("https://www.youtube.com/watch?v={id}"))
                             .markdown(context.node_source(node)?.to_owned()),
                     )
+                } else if let [Block::Image { alt, src, size, align }] = doc.blocks.as_slice() {
+                    Some(MarkdownNode::new(
+                        "news-body-image",
+                        (alt.clone(), src.clone(), size.clone(), align.clone()),
+                    ))
                 } else {
                     None
                 }
+            })
+            .block_renderer("news-body-image", move |node, _, _| {
+                let (alt, src, size, align) =
+                    node.data::<(String, String, String, String)>().cloned().unwrap_or_default();
+                let path = body_media.lock().ok().and_then(|m| m.get(&src).cloned());
+                div().w_full().flex().when(align == "center", |d| d.justify_center()).child(
+                    div()
+                        .w_full()
+                        .when(size != "full", |d| {
+                            d.max_w(px(match size.as_str() {
+                                "small" => 180.,
+                                "large" => 480.,
+                                _ => 300.,
+                            }))
+                        })
+                        .when_some(path.clone(), |d, path| {
+                            d.child(img(path).w_full().h_auto().object_fit(ObjectFit::Contain))
+                        })
+                        .when(path.is_none(), |d| d.child(alt)),
+                )
             })
             .block_renderer("news-youtube", move |node, _, _| {
                 let id = node.data::<String>().cloned().unwrap_or_default();
