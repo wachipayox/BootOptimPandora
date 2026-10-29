@@ -7,6 +7,7 @@ pub struct NewsCard {
     pub width: f32,
     pub image: Option<AnyElement>,
     pub category: String,
+    pub category_emphasis: bool,
     pub title: String,
     pub summary: String,
     pub date: String,
@@ -35,7 +36,7 @@ impl NewsCard {
                         .top_0()
                         .w_full()
                         .h(px(15.))
-                        .bg(rgba(0xffffff1f))
+                        .bg(rgba(0x80808080))
                         .text_center()
                         .font_family(theme::DISPLAY)
                         .text_size(px(9.))
@@ -55,15 +56,21 @@ impl NewsCard {
                             .w_full()
                             .gap(px(8.))
                             .child(
-                                div()
+                                h_flex()
                                     .min_w_0()
-                                    .truncate()
+                                    .gap(px(4.))
                                     .text_size(px(11.))
-                                    .text_color(rgb(theme::ACCENT_TEXT))
-                                    .bg(rgba(0xffffff0a))
-                                    .px(px(6.))
                                     .py(px(2.))
-                                    .child(self.category),
+                                    .text_color(rgb(if self.category_emphasis {
+                                        theme::ACCENT_TEXT
+                                    } else {
+                                        theme::INK_MUTED
+                                    }))
+                                    .when(self.category_emphasis, |d| {
+                                        d.child(div().size(px(5.)).flex_shrink_0().bg(rgb(theme::ACCENT_TEXT)))
+                                    })
+                                    .when(!self.category_emphasis, |d| d.bg(rgba(0xffffff0a)).px(px(6.)))
+                                    .child(div().min_w_0().truncate().child(self.category)),
                             )
                             .child(div().flex_1())
                             .when(self.unread, |d| {

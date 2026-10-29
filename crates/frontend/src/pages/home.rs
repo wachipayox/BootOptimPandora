@@ -1294,6 +1294,7 @@ impl Render for HomePage {
                     width: 244.,
                     image,
                     category: n.category.clone(),
+                    category_emphasis: n.target_profile_id.is_some(),
                     title: n.title.clone(),
                     summary: self.news_previews.get(&n.id).cloned().unwrap_or_default(),
                     date: relative_date(&n.published_at),
