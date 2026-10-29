@@ -191,6 +191,7 @@ impl InstanceSettingsSubpage {
         });
         cx.observe_in(&data.accounts, window, |page, accounts, window, cx| {
             page.update_account_list(accounts, window, cx);
+            cx.notify();
         })
         .detach();
         cx.subscribe(&account_items, Self::on_account_selected).detach();
@@ -616,7 +617,7 @@ impl InstanceSettingsSubpage {
         &mut self,
         _state: Entity<SelectState<NamedDropdown<Uuid>>>,
         event: &SelectEvent<NamedDropdown<Uuid>>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let SelectEvent::Confirm(value) = event;
 
@@ -624,6 +625,7 @@ impl InstanceSettingsSubpage {
             id: self.instance_id,
             account: value.clone(),
         });
+        cx.notify();
     }
 
     pub fn on_loader_selected(
@@ -838,6 +840,51 @@ fn settings_panel(title: &'static str) -> Div {
 }
 
 impl InstanceSettingsSubpage {
+    fn render_account_selector(&self, cx: &mut Context<Self>) -> AnyElement {
+        let accounts = self.data.accounts.read(cx);
+        let uuid = self.account_items.read(cx).selected_value().copied().or(accounts.selected_account_uuid);
+        let hide_skins = InterfaceConfig::get(cx).hide_skins;
+        let head = uuid
+            .and_then(|id| accounts.accounts.iter().find(|account| account.uuid == id))
+            .filter(|_| !hide_skins)
+            .and_then(|account| account.head.clone());
+        let head = head
+            .map(|bytes| {
+                png_render_cache::render_with_transform(
+                    bytes,
+                    png_render_cache::ImageTransformation::Resize { width: 32, height: 32 },
+                    cx,
+                )
+                .into_any_element()
+            })
+            .unwrap_or_else(|| {
+                img(ImageSource::Resource(Resource::Embedded(
+                    if hide_skins {
+                        "images/hidden_head.png"
+                    } else {
+                        "images/default_head.png"
+                    }
+                    .into(),
+                )))
+                .size(px(32.))
+                .into_any_element()
+            });
+        crate::labelled(
+            "Cuenta para esta instancia",
+            h_flex().w_full().gap(px(8.)).child(head).child(
+                Select::new(&self.account_items)
+                    .placeholder("La activa")
+                    .appearance(false)
+                    .h(px(44.))
+                    .text_size(px(16.))
+                    .search_placeholder("Buscar...")
+                    .cleanable(true)
+                    .flex_1()
+                    .min_w_0(),
+            ),
+        )
+        .into_any_element()
+    }
     // Keep these sections in separate render frames and erase their concrete
     // builder types before composing them. This prevents the large settings
     // tree from exhausting the Windows UI thread's limited stack.
@@ -1021,26 +1068,7 @@ impl InstanceSettingsSubpage {
                     .child(div().w(px(140.)).h(px(28.)).flex_shrink_0().flex().items_center().child("Versión"))
                     .child(div().flex_1().min_w_0().child(version_row)),
             )
-            .when(
-                !self
-                    .profile_info
-                    .as_ref()
-                    .is_some_and(|i| i.global_profile_id.is_some() || i.local_parent_name.is_some()),
-                |d| {
-                    d.child(crate::labelled(
-                        "Cuenta para esta instancia",
-                        h_flex().gap_2().child(
-                            Select::new(&self.account_items)
-                                .placeholder("La activa")
-                                .bg(rgb(theme::PANEL_SUNKEN))
-                                .h(px(36.))
-                                .text_size(px(13.))
-                                .search_placeholder("Buscar...")
-                                .cleanable(true),
-                        ),
-                    ))
-                },
-            );
+            .child(self.render_account_selector(cx));
 
         basic_content = basic_content.child(
             h_flex()
@@ -1084,7 +1112,13 @@ impl InstanceSettingsSubpage {
                                 .detach();
                             }
                         }),
-                ),
+                )
+                .child(DesignButton::new("open-instance-minecraft").label("Abrir").h(px(28.)).on_click({
+                    let instance = self.instance.clone();
+                    move |_, window, cx| {
+                        crate::open_folder(&instance.read(cx).dot_minecraft_folder.clone(), window, cx);
+                    }
+                })),
         );
         basic_content.into_any_element()
     }
@@ -1188,11 +1222,13 @@ impl InstanceSettingsSubpage {
                             },
                         )),
                     ))
-                    .child(
-                        Textarea::new(&self.jvm_flags_input_state)
-                            .bg(rgb(theme::PANEL_SUNKEN))
-                            .disabled(!jvm_flags_enabled),
-                    ),
+                    .when(jvm_flags_enabled || !self.jvm_flags_input_state.read(cx).value().is_empty(), |d| {
+                        d.child(
+                            Textarea::new(&self.jvm_flags_input_state)
+                                .bg(rgb(theme::PANEL_SUNKEN))
+                                .disabled(!jvm_flags_enabled),
+                        )
+                    }),
             )
             .child(
                 v_flex()
@@ -1211,10 +1247,15 @@ impl InstanceSettingsSubpage {
                             },
                         )),
                     ))
-                    .child(
-                        Textarea::new(&self.wrapper_command_input_state)
-                            .bg(rgb(theme::PANEL_SUNKEN))
-                            .disabled(!wrapper_command_enabled),
+                    .when(
+                        wrapper_command_enabled || !self.wrapper_command_input_state.read(cx).value().is_empty(),
+                        |d| {
+                            d.child(
+                                Textarea::new(&self.wrapper_command_input_state)
+                                    .bg(rgb(theme::PANEL_SUNKEN))
+                                    .disabled(!wrapper_command_enabled),
+                            )
+                        },
                     ),
             )
             .child(
@@ -1533,16 +1574,6 @@ impl InstanceSettingsSubpage {
                     }
                 }),
         );
-        inherited = inherited.child(crate::labelled(
-            "Cuenta para esta instancia",
-            Select::new(&self.account_items)
-                .placeholder("La activa")
-                .bg(rgb(theme::PANEL_SUNKEN))
-                .h(px(36.))
-                .text_size(px(13.))
-                .search_placeholder("Buscar...")
-                .cleanable(true),
-        ));
         let has_parent = self
             .profile_info
             .as_ref()
