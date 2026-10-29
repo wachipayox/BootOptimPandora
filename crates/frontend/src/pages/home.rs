@@ -1235,11 +1235,16 @@ impl Render for HomePage {
                 .child(
                     h_flex()
                         .gap(px(18.))
-                        .child(design::chip("home-general", "General", general).h(px(24.)).on_click(|_, w, c| {
-                            let conf = InterfaceConfig::get_mut(c);
-                            conf.home_general_news = !conf.home_general_news;
-                            w.refresh();
-                        }))
+                        .child(
+                            design::chip("home-general", "General", general)
+                                .h(px(24.))
+                                .disabled(instance.is_none())
+                                .on_click(|_, w, c| {
+                                    let conf = InterfaceConfig::get_mut(c);
+                                    conf.home_general_news = !conf.home_general_news;
+                                    w.refresh();
+                                }),
+                        )
                         .child(DesignButton::new("home-all-news").label("Ver todas →").h(px(24.)).px_0().on_click(
                             cx.listener(|this, _, _, c| {
                                 this.news_view = true;
