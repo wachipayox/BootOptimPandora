@@ -64,6 +64,7 @@ pub struct HomePage {
     loaded: bool,
     visual_resolved: bool,
     news_loaded: bool,
+    news_previews: std::collections::BTreeMap<String, String>,
     startup_cached: bool,
     artwork_image: crate::component::retained_image::RetainedImage,
     logo_image: crate::component::retained_image::RetainedImage,
@@ -320,6 +321,7 @@ impl HomePage {
             loaded: false,
             visual_resolved: false,
             news_loaded: false,
+            news_previews: Default::default(),
             startup_cached: !std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|page| page != "startup-live"),
             artwork_image,
             logo_image,
@@ -381,6 +383,12 @@ impl HomePage {
                     news_failed: true,
                     ..Default::default()
                 });
+                this.news_previews = this
+                    .presentation
+                    .news
+                    .iter()
+                    .map(|n| (n.id.clone(), super::news::preview(&n.body)))
+                    .collect();
                 log::info!("home-ready pid={}", std::process::id());
                 this.loaded = true;
                 this.news_loaded = include_news;
@@ -1198,12 +1206,18 @@ impl Render for HomePage {
                             }),
                     )
                 }));
-        let general = InterfaceConfig::get(cx).home_general_news;
+        let general = instance.is_none() || InterfaceConfig::get(cx).home_general_news;
         let news = self
             .presentation
             .news
             .iter()
-            .filter(|n| general || n.target_profile_id.is_some())
+            .filter(|n| {
+                if instance.is_none() {
+                    n.target_profile_id.is_none()
+                } else {
+                    general || n.target_profile_id.is_some()
+                }
+            })
             .take(if self.news_view { usize::MAX } else { 4 })
             .cloned()
             .collect::<Vec<_>>();
@@ -1221,11 +1235,16 @@ impl Render for HomePage {
                 .child(
                     h_flex()
                         .gap(px(18.))
-                        .child(design::chip("home-general", "General", general).h(px(24.)).on_click(|_, w, c| {
-                            let conf = InterfaceConfig::get_mut(c);
-                            conf.home_general_news = !conf.home_general_news;
-                            w.refresh();
-                        }))
+                        .child(
+                            design::chip("home-general", "General", general)
+                                .h(px(24.))
+                                .disabled(instance.is_none())
+                                .on_click(|_, w, c| {
+                                    let conf = InterfaceConfig::get_mut(c);
+                                    conf.home_general_news = !conf.home_general_news;
+                                    w.refresh();
+                                }),
+                        )
                         .child(DesignButton::new("home-all-news").label("Ver todas →").h(px(24.)).px_0().on_click(
                             cx.listener(|this, _, _, c| {
                                 this.news_view = true;
@@ -1251,57 +1270,45 @@ impl Render for HomePage {
             news_section = news_section.child(div().py(px(24.)).text_color(rgb(theme::INK_MUTED)).child(
                 if self.presentation.news_failed {
                     "No se han podido cargar las noticias."
+                } else if instance.is_none() {
+                    "No hay noticias recientes."
                 } else {
                     "No hay noticias de esta instancia."
                 },
             ));
         }
-        news_section = news_section.child(h_flex().items_start().gap(px(12.)).children(
+        news_section = news_section.child(h_flex().flex_wrap().items_start().gap(px(12.)).children(
             news.into_iter().enumerate().map(|(ix, n)| {
                 let image = n.image.as_ref().map(|p| {
                     img(ImageSource::Resource(Resource::Path(Arc::from(p.as_path()))))
-                        .w_full()
+                        .w(px(242.))
                         .h(px(137.))
                         .object_fit(ObjectFit::Cover)
                         .into_any_element()
                 });
-                design::notched_panel(0x111114ff)
-                    .flex()
-                    .flex_col()
-                    .id(("home-news", ix))
+                let unread = InterfaceConfig::get(cx)
+                    .news_marks
+                    .get(&self.presentation.news_origin_key)
+                    .is_none_or(|marks| !marks.read.contains(&n.id));
+                let card = crate::component::news_card::NewsCard {
+                    width: 244.,
+                    image,
+                    category: n.category.clone(),
+                    category_emphasis: n.target_profile_id.is_some(),
+                    title: n.title.clone(),
+                    summary: self.news_previews.get(&n.id).cloned().unwrap_or_default(),
+                    date: relative_date(&n.published_at),
+                    pinned: n.pinned,
+                    unread,
+                }
+                .render();
+                DesignButton::new(("home-news", ix))
+                    .aria_label(n.title.clone())
                     .w(px(244.))
-                    .flex_shrink_0()
-                    .min_w_0()
-                    .relative()
-                    .when_some(image, |d, image| d.child(image))
-                    .when(n.pinned, |d| {
-                        d.child(
-                            div()
-                                .when(n.image.is_some(), |d| d.absolute().top_0())
-                                .w_full()
-                                .h(px(15.))
-                                .bg(rgba(0x80808080))
-                                .text_center()
-                                .font_family(theme::DISPLAY)
-                                .text_size(px(9.))
-                                .child("FIJADA"),
-                        )
-                    })
-                    .child(
-                        v_flex()
-                            .p(px(11.))
-                            .gap(px(3.))
-                            .child(
-                                div().text_size(px(11.)).text_color(rgb(theme::ACCENT_TEXT)).child(n.category.clone()),
-                            )
-                            .child(div().text_size(px(13.)).line_height(px(18.)).line_clamp(2).child(n.title.clone()))
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(theme::INK_DISABLED))
-                                    .child(relative_date(&n.published_at)),
-                            ),
-                    )
+                    .h_auto()
+                    .p_0()
+                    .paint(0., [[0, 0]; 3], rgb(theme::INK).into(), rgb(theme::INK).into())
+                    .child(div().w_full().whitespace_normal().text_left().child(card))
                     .on_click(cx.listener(move |this, _, _, c| {
                         this.news_view = true;
                         this.article = Some(n.id.clone());

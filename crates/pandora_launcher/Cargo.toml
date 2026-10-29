@@ -5,7 +5,7 @@ edition.workspace = true
 build = "build.rs"
 
 [features]
-ui-capture = ["frontend/ui-capture"]
+ui-capture = ["frontend/ui-capture", "backend/ui-capture"]
 
 [dependencies]
 frontend.workspace = true

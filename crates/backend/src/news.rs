@@ -197,7 +197,9 @@ impl crate::BackendState {
     pub async fn load_news_feed(&self) -> Result<NewsFeed, String> {
         // Explicit local input for the existing UI capture tool. Cosmetic only:
         // it cannot supply catalogs, manifests, installation objects or launch authority.
-        if std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p == "home-news" || p.starts_with("news-")) {
+        if std::env::var("WBOMBO_UI_CAPTURE_PAGE")
+            .is_ok_and(|p| p == "instances" || p == "home-news" || p.starts_with("news-"))
+        {
             if let Some(path) = std::env::var_os("WBOMBO_UI_CAPTURE_NEWS") {
                 let bytes = fs::read(path).map_err(|_| "Cannot read news capture fixture".to_owned())?;
                 if bytes.len() > 140 * 1024 * 1024 {
