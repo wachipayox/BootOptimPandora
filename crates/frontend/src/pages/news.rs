@@ -651,7 +651,9 @@ impl NewsPage {
     }
     pub(crate) fn nav_forwards(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(item) = self.article_history.forward(self.article.as_ref().map(|a| &a.item)) else {
-            return false;
+            // Opening/closing an article starts a local branch. A stale global
+            // Forward destination must not jump out of that branch.
+            return self.article.is_some() || !self.article_history.back.is_empty();
         };
         self.restore_article(item, window, cx);
         true

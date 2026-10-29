@@ -477,7 +477,7 @@ impl HomePage {
             return self
                 .news_page
                 .as_ref()
-                .is_some_and(|page| page.update(cx, |p, c| p.nav_forwards(window, c)));
+                .map_or(self.article.is_some(), |page| page.update(cx, |p, c| p.nav_forwards(window, c)));
         }
         if self.news_forward_to_article {
             self.news_view = true;
