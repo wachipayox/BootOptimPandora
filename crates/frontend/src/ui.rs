@@ -604,6 +604,10 @@ impl LauncherUI {
             component::design::{self, DesignButton},
             theme,
         };
+        let logo_focus = window
+            .use_keyed_state("launcher-logo-focus", cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
         let selected = InterfaceConfig::get(cx).home_instance.clone();
         let mut instances = v_flex()
             .gap(px(4.))
@@ -834,12 +838,37 @@ impl LauncherUI {
                             .items_center()
                             .justify_between()
                             .child(
-                                img(ImageSource::Resource(Resource::Embedded(
-                                    "images/wachiland-launcher-ancho.svg".into(),
-                                )))
-                                .w(px(140.))
-                                .h(px(40.))
-                                .object_fit(ObjectFit::Contain),
+                                div()
+                                    .id("launcher-logo-home")
+                                    .aria_label("Inicio")
+                                    .track_focus(&logo_focus)
+                                    .tab_index(0)
+                                    .cursor_pointer()
+                                    .w(px(140.))
+                                    .h(px(40.))
+                                    .child(
+                                        img(ImageSource::Resource(Resource::Embedded(
+                                            "images/wachiland-launcher-ancho.svg".into(),
+                                        )))
+                                        .w(px(140.))
+                                        .h(px(40.))
+                                        .object_fit(ObjectFit::Contain),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.switch_page(PageType::Instances, &[], window, cx);
+                                        if let LauncherPage::Home(home) = &this.page {
+                                            home.update(cx, |page, cx| page.show_home(cx));
+                                        }
+                                    }))
+                                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                                        if event.keystroke.key == "enter" || event.keystroke.key == "space" {
+                                            this.switch_page(PageType::Instances, &[], window, cx);
+                                            if let LauncherPage::Home(home) = &this.page {
+                                                home.update(cx, |page, cx| page.show_home(cx));
+                                            }
+                                            cx.stop_propagation();
+                                        }
+                                    })),
                             )
                             .when(crate::launcher_updates::available(cx), |row| {
                                 row.child(crate::launcher_updates::indicator(cx))
