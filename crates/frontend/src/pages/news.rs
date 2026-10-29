@@ -63,6 +63,7 @@ pub struct NewsPage {
     article: Option<Article>,
     seed: Option<HomeNews>,
     media: Arc<Mutex<BTreeMap<String, PathBuf>>>,
+    media_ratios: Arc<Mutex<BTreeMap<String, f32>>>,
     requested: BTreeSet<String>,
     queue: VecDeque<NewsImageRequest>,
     media_loading: bool,
@@ -233,6 +234,7 @@ impl NewsPage {
             article: None,
             seed,
             media: Default::default(),
+            media_ratios: Default::default(),
             requested: Default::default(),
             queue: Default::default(),
             media_loading: false,
@@ -449,6 +451,11 @@ impl NewsPage {
                     if let Ok(mut map) = this.media.lock() {
                         for image in images {
                             if let Some(path) = image.path {
+                                if image.width > 0 && image.height > 0 {
+                                    if let Ok(mut ratios) = this.media_ratios.lock() {
+                                        ratios.insert(image.key.clone(), image.width as f32 / image.height as f32);
+                                    }
+                                }
                                 map.insert(image.key, path);
                             }
                         }
@@ -482,6 +489,7 @@ impl NewsPage {
             .insert(item.id.clone());
         let media = self.media.clone();
         let body_media = self.media.clone();
+        let body_ratios = self.media_ratios.clone();
         let extensions = MarkdownExtensions::default()
             .commonmark()
             .block_parser(|node, context| {
@@ -508,6 +516,7 @@ impl NewsPage {
                 let (alt, src, size, align) =
                     node.data::<(String, String, String, String)>().cloned().unwrap_or_default();
                 let path = body_media.lock().ok().and_then(|m| m.get(&src).cloned());
+                let ratio = body_ratios.lock().ok().and_then(|m| m.get(&src).copied());
                 div().w_full().flex().when(align == "center", |d| d.justify_center()).child(
                     div()
                         .w_full()
@@ -519,7 +528,9 @@ impl NewsPage {
                             }))
                         })
                         .when_some(path.clone(), |d, path| {
-                            d.child(img(path).w_full().h_auto().object_fit(ObjectFit::Contain))
+                            d.relative()
+                                .when_some(ratio, |d, ratio| d.aspect_ratio(ratio))
+                                .child(img(path).absolute().size_full().object_fit(ObjectFit::Contain))
                         })
                         .when(path.is_none(), |d| d.child(alt)),
                 )
