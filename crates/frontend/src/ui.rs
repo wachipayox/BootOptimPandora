@@ -848,15 +848,9 @@ impl LauncherUI {
             .child(footer);
         let mut account_menu = div()
             .id("home-account-menu")
-            .bg(rgba(0x0a0a0cf2))
-            .occlude()
             .flex()
             .flex_col()
-            .absolute()
-            .left(px(10.))
-            .bottom(px(64.))
-            .w(px(200.))
-            .max_h(relative(0.7))
+            .size_full()
             .overflow_y_scrollbar()
             .p(px(6.));
         for (ix, account) in saved_accounts.iter().enumerate() {
@@ -991,10 +985,25 @@ impl LauncherUI {
             .child(sidebar)
             .child(div().flex_1().min_w_0().h_full().child(self.page.clone().render(self, window, cx)))
             .when(self.home_account_menu, |d| {
-                d.child(account_menu.on_mouse_down_out(cx.listener(|this, _, _, c| {
-                    this.home_account_menu = false;
-                    c.notify();
-                })))
+                // Keep positioning outside Scrollable: its wrapper only carries sizing styles.
+                let height =
+                    (saved_accounts.len() as f32 * 42. + 76.).min(window.viewport_size().height.as_f32() * 0.7);
+                d.child(
+                    div()
+                        .id("home-account-menu-overlay")
+                        .absolute()
+                        .left(px(10.))
+                        .bottom(px(64.))
+                        .w(px(200.))
+                        .h(px(height))
+                        .bg(rgba(0x0a0a0cf2))
+                        .occlude()
+                        .child(account_menu)
+                        .on_mouse_down_out(cx.listener(|this, _, _, c| {
+                            this.home_account_menu = false;
+                            c.notify();
+                        })),
+                )
             })
             .into_any_element()
     }
