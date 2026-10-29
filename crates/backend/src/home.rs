@@ -12,6 +12,18 @@ struct CachedDocument {
     value: Value,
     fetched_at: u64,
 }
+fn home_image_cache_suffix(kind: &str) -> &str {
+    if kind == "news" { "news-tone-v1" } else { kind }
+}
+fn tone_home_thumbnail(image: &mut image::RgbaImage) {
+    // Android Home: ColorMatrix saturation .75, followed by RGB scale .8.
+    for pixel in image.pixels_mut() {
+        let luma = 0.213 * pixel[0] as f32 + 0.715 * pixel[1] as f32 + 0.072 * pixel[2] as f32;
+        for channel in 0..3 {
+            pixel[channel] = ((luma + (pixel[channel] as f32 - luma) * 0.75) * 0.8).round().clamp(0., 255.) as u8;
+        }
+    }
+}
 impl DistributionClient {
     fn cached_cosmetic_document(&self, route: &str, root: &Path) -> Option<Value> {
         let key = hex::encode(Sha256::digest(format!("{}{}", self.base_url, route).as_bytes()));
@@ -34,7 +46,7 @@ impl DistributionClient {
             }
             object.sha256
         };
-        let path = root.join(format!("{key}-{kind}.png"));
+        let path = root.join(format!("{key}-{}.png", home_image_cache_suffix(kind)));
         path.is_file().then_some(path)
     }
     pub(super) async fn cosmetic_document(
@@ -155,7 +167,7 @@ impl DistributionClient {
                 }
                 (self.fetch_verified_object(&object, root).await?, object.sha256)
             };
-            let output = root.join(format!("{key}-{kind}.png"));
+            let output = root.join(format!("{key}-{}.png", home_image_cache_suffix(kind)));
             if output.exists() {
                 return Ok(output);
             }
@@ -185,6 +197,7 @@ impl DistributionClient {
             }
             if kind == "news" {
                 let mut cover = decoded.resize_to_fill(488, 274, image::imageops::FilterType::Triangle).to_rgba8();
+                tone_home_thumbnail(&mut cover);
                 for y in 0..12 {
                     for x in 0..12 - y {
                         cover.get_pixel_mut(x, y)[3] = 0;
@@ -324,10 +337,16 @@ impl crate::BackendState {
             return Ok(out);
         }
         let news_root = self.directories.root_launcher_dir.join("news-state");
-        let feed = match if cache_only {
-            client.cached_news_snapshot(&news_root)
+        #[cfg(feature = "ui-capture")]
+        let capture_news = std::env::var_os("WBOMBO_UI_CAPTURE_NEWS").is_some();
+        #[cfg(not(feature = "ui-capture"))]
+        let capture_news = false;
+        let feed = match if capture_news {
+            self.load_news_feed().await
+        } else if cache_only {
+            client.cached_news_snapshot(&news_root).map_err(|e| e.to_string())
         } else {
-            client.news_snapshot(&news_root).await
+            client.news_snapshot(&news_root).await.map_err(|e| e.to_string())
         } {
             Ok(v) => v,
             Err(_) => {
@@ -577,6 +596,15 @@ fn home_news_visible(
 #[cfg(test)]
 mod home_tests {
     use super::*;
+    #[test]
+    fn home_news_thumbnail_uses_android_tone_and_preserves_alpha() {
+        let mut image = image::RgbaImage::new(2, 1);
+        image.put_pixel(0, 0, image::Rgba([255, 0, 0, 127]));
+        image.put_pixel(1, 0, image::Rgba([128, 128, 128, 255]));
+        tone_home_thumbnail(&mut image);
+        assert_eq!(image.get_pixel(0, 0).0, [164, 11, 11, 127]);
+        assert_eq!(image.get_pixel(1, 0).0, [102, 102, 102, 255]);
+    }
     #[test]
     fn local_cosmetic_cache_reuses_unchanged_files_and_recovers_missing_output() {
         let root = std::env::temp_dir().join(format!("pandora-local-cosmetic-{}", uuid::Uuid::new_v4()));

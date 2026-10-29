@@ -10,6 +10,7 @@ pub mod instance_list;
 pub mod main_title_bar;
 pub mod menu;
 pub mod named_dropdown;
+pub mod news_card;
 pub mod page_path;
 pub mod path_label;
 pub mod player_model;
