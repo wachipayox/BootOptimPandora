@@ -1200,6 +1200,10 @@ impl InstanceSettingsSubpage {
         let wrapper_command_enabled = self.wrapper_command_enabled;
         let jvm_flags_enabled = self.jvm_flags_enabled;
         let jvm_binary_enabled = self.jvm_binary_enabled;
+        let automatic_java = self.profile_jvm_section.read(cx).automatic_java_major();
+        let automatic_label: SharedString = automatic_java
+            .map(|major| format!("Automático ({major})").into())
+            .unwrap_or_else(|| "Automático".into());
         let content = v_flex()
             .w_full()
             .gap(px(16.))
@@ -1261,18 +1265,19 @@ impl InstanceSettingsSubpage {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(h_flex().w_full().justify_between().child("Java").child(
-                        crate::component::design::chip("java-automatic", "Automático", !jvm_binary_enabled).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.jvm_binary_enabled = false;
-                                this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
-                                    id: this.instance_id,
-                                    jvm_binary: this.get_jvm_binary_configuration(),
-                                });
-                                cx.notify();
-                            }),
+                    .child(
+                        h_flex().w_full().justify_between().child("Java").child(
+                            crate::component::design::chip("java-automatic", automatic_label, !jvm_binary_enabled)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.jvm_binary_enabled = false;
+                                    this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
+                                        id: this.instance_id,
+                                        jvm_binary: this.get_jvm_binary_configuration(),
+                                    });
+                                    cx.notify();
+                                })),
                         ),
-                    ))
+                    )
                     .child(DesignButton::new("select_jvm_binary").label("Elegir java.exe…").on_click(cx.listener(
                         |this, _, window, cx| {
                             this.select_file(
@@ -1297,6 +1302,9 @@ impl InstanceSettingsSubpage {
             .when_some(self.jvm_binary_path.clone().filter(|_| jvm_binary_enabled), |d, path| d.child(path))
             .when_some(self.profile_jvm_section.read(cx).last_java_text(), |d, java| {
                 d.child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(java))
+            })
+            .when(automatic_java == Some(25) && !jvm_binary_enabled, |d| {
+                d.child(self.render_aot_cache_setting(cx))
             })
             .child(
                 DesignButton::new("advanced-settings")
@@ -1480,7 +1488,6 @@ impl InstanceSettingsSubpage {
     }
     fn render_actions_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let launch = settings_panel("Arranque")
-            .child(self.render_aot_cache_setting(cx))
             .child(DesignButton::new("repair_game_files").label("Reparar archivos del juego").on_click({
                 let id = self.instance_id;
                 let backend = self.backend_handle.clone();

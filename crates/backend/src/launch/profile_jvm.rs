@@ -14,7 +14,7 @@ use std::{
 };
 
 use schema::{
-    instance::InstanceConfiguration,
+    instance::{InstanceConfiguration, Java25Fallback},
     profile_jvm::{self, JvmLaunchFacts, JvmPlanEntry, JvmPlanStatus, ManifestJvmOption},
 };
 
@@ -24,6 +24,38 @@ use schema::{
 /// show whether an option fits without starting a JVM.
 static LAST_JAVA_BY_GAME_DIR: LazyLock<Mutex<HashMap<PathBuf, (Option<u32>, Option<String>)>>> =
     LazyLock::new(Default::default);
+
+struct AutomaticJava {
+    minecraft_version: ustr::Ustr,
+    fallback: Option<Java25Fallback>,
+    major: u32,
+}
+static LAST_AUTOMATIC_JAVA: LazyLock<Mutex<HashMap<PathBuf, AutomaticJava>>> = LazyLock::new(Default::default);
+
+fn remember_automatic_java(configuration: &InstanceConfiguration, game_dir: &Path, source: &JavaRuntimeSource) {
+    if let JavaRuntimeSource::Mojang { major_version } = source
+        && let Ok(mut last) = LAST_AUTOMATIC_JAVA.lock()
+    {
+        last.insert(
+            game_dir.to_owned(),
+            AutomaticJava {
+                minecraft_version: configuration.minecraft_version,
+                fallback: configuration.java25_fallback.clone(),
+                major: *major_version,
+            },
+        );
+    }
+}
+
+fn automatic_java_major(configuration: &InstanceConfiguration, game_dir: &Path, forced_external: bool) -> Option<u32> {
+    if forced_external {
+        return None;
+    }
+    LAST_AUTOMATIC_JAVA.lock().ok()?.get(game_dir).and_then(|last| {
+        (last.minecraft_version == configuration.minecraft_version && last.fallback == configuration.java25_fallback)
+            .then_some(last.major)
+    })
+}
 
 static JAVA_PROBE_CACHE: LazyLock<Mutex<HashMap<(PathBuf, u64, Option<SystemTime>), (u32, String)>>> =
     LazyLock::new(Default::default);
@@ -54,6 +86,9 @@ pub(crate) fn plan_launch_arguments(
     launch_wrapper: &Path,
     game_dir: &Path,
 ) -> Vec<String> {
+    // The runtime is already selected by the normal launch path. Record that
+    // fact even without inherited options; never start Java just for the UI.
+    remember_automatic_java(configuration, game_dir, &java_source);
     if options.is_empty() {
         return Vec::new();
     }
@@ -121,6 +156,56 @@ pub(crate) fn settings_view(
     profile_jvm::ProfileJvmOptionsView {
         options: options.into_iter().zip(plan).collect(),
         facts,
+        automatic_java_major: automatic_java_major(
+            configuration,
+            game_dir,
+            std::env::var_os("FORCE_EXTERNAL_JAVA").is_some(),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod automatic_runtime_tests {
+    use super::*;
+
+    #[test]
+    fn empty_options_record_the_selected_managed_runtime_without_a_java_probe() {
+        let configuration = InstanceConfiguration::new(ustr::ustr("1.21.1"), schema::loader::Loader::Vanilla);
+        let directory = PathBuf::from(format!("automatic-java-test-{}", uuid::Uuid::from_bytes(rand::random())));
+        assert!(
+            plan_launch_arguments(
+                &[],
+                &configuration,
+                Path::new("java-must-not-be-executed"),
+                JavaRuntimeSource::Mojang { major_version: 25 },
+                Path::new("wrapper-must-not-be-executed"),
+                &directory,
+            )
+            .is_empty()
+        );
+        assert_eq!(automatic_java_major(&configuration, &directory, false), Some(25));
+        // A manual runtime must never relabel the automatic choice.
+        remember_automatic_java(&configuration, &directory, &JavaRuntimeSource::External);
+        assert_eq!(automatic_java_major(&configuration, &directory, false), Some(25));
+        LAST_AUTOMATIC_JAVA.lock().unwrap().remove(&directory);
+    }
+
+    #[test]
+    fn automatic_metadata_is_unknown_for_changed_configuration_or_an_external_override() {
+        let mut configuration = InstanceConfiguration::new(ustr::ustr("1.21.1"), schema::loader::Loader::Vanilla);
+        let directory = PathBuf::from(format!("automatic-java-test-{}", uuid::Uuid::from_bytes(rand::random())));
+        assert_eq!(automatic_java_major(&configuration, &directory, false), None);
+        remember_automatic_java(&configuration, &directory, &JavaRuntimeSource::Mojang { major_version: 25 });
+        assert_eq!(automatic_java_major(&configuration, &directory, true), None);
+        configuration.minecraft_version = ustr::ustr("1.20.1");
+        assert_eq!(automatic_java_major(&configuration, &directory, false), None);
+        configuration.minecraft_version = ustr::ustr("1.21.1");
+        configuration.java25_fallback = Some(Java25Fallback {
+            reason: "test".into(),
+            recorded_unix_secs: 1,
+        });
+        assert_eq!(automatic_java_major(&configuration, &directory, false), None);
+        LAST_AUTOMATIC_JAVA.lock().unwrap().remove(&directory);
     }
 }
 
