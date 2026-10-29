@@ -39,7 +39,6 @@ pub fn init(cx: &mut App) {
 #[derive(Clone, Copy, PartialEq)]
 enum NewsTab {
     Recent,
-    History,
     Saved,
 }
 struct Article {
@@ -79,7 +78,7 @@ fn category_chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selec
         .text_color(rgb(if selected { theme::INK } else { theme::INK_MUTED }))
         .when(selected, |d| d.border_b_2().border_color(rgb(theme::ACCENT_TEXT)))
 }
-fn preview(body: &str) -> String {
+pub(super) fn preview(body: &str) -> String {
     fn text(nodes: &[Inline]) -> String {
         nodes
             .iter()
@@ -102,14 +101,6 @@ fn preview(body: &str) -> String {
             })
         })
         .unwrap_or_default()
-}
-fn new_tag() -> Div {
-    h_flex()
-        .gap(px(5.))
-        .text_size(px(11.))
-        .text_color(rgb(theme::ACCENT_TEXT))
-        .child(div().size(px(6.)).bg(rgb(theme::ACCENT_TEXT)))
-        .child("Nueva")
 }
 fn empty(text: &'static str) -> Div {
     div().w_full().py(px(48.)).text_center().text_color(rgb(theme::INK_MUTED)).child(text)
@@ -141,12 +132,7 @@ fn picture(path: Option<PathBuf>, width: f32, height: f32) -> AnyElement {
             .h(px(height))
             .object_fit(ObjectFit::Cover)
             .into_any_element(),
-        None => div()
-            .w(px(width))
-            .flex_shrink_0()
-            .h(px(height))
-            .bg(rgb(theme::PANEL_RAISED))
-            .into_any_element(),
+        None => div().w(px(width)).flex_shrink_0().h(px(height)).bg(rgba(0xffffff1a)).into_any_element(),
     }
 }
 fn date(value: &str, now: &str) -> String {
@@ -303,7 +289,6 @@ impl NewsPage {
                 }
                 if let Ok(route) = std::env::var("WBOMBO_UI_CAPTURE_PAGE") {
                     match route.as_str() {
-                        "news-history" => this.tab = NewsTab::History,
                         "news-saved" => this.tab = NewsTab::Saved,
                         "news-search" => this.search.update(cx, |s, c| s.set_value("dragones de hielo", window, c)),
                         "news-profiles" => this.profile_filter(window, cx),
@@ -348,7 +333,6 @@ impl NewsPage {
             .filter(|n| self.feed.matches_profiles(n, self.profiles.as_ref()))
             .filter(|n| match self.tab {
                 NewsTab::Recent => !n.expired(&self.feed.server_time),
-                NewsTab::History => n.expired(&self.feed.server_time),
                 NewsTab::Saved => self.marks(cx).is_some_and(|s| s.saved.contains(&n.id)),
             })
             .filter(|n| !category || self.category.as_ref().is_none_or(|id| id == &n.category_id))
@@ -381,13 +365,9 @@ impl NewsPage {
         for n in pinned.iter().skip(self.pinned).take(1) {
             self.cover(n, "pinned", 1984, 330, ImageCorners::All);
         }
-        for (ix, n) in items.iter().take(self.visible + 1).enumerate() {
-            if ix == 0 {
-                self.previews.entry(cover_key(n, "preview")).or_insert_with(|| preview(&n.body));
-                self.cover(n, "featured", 1102, 622, ImageCorners::All);
-            } else {
-                self.cover(n, "grid", 640, 360, ImageCorners::Top);
-            }
+        for n in items.iter().take(self.visible) {
+            self.previews.entry(cover_key(n, "preview")).or_insert_with(|| preview(&n.body));
+            self.cover(n, "grid", 640, 360, ImageCorners::None);
         }
         if let Some(article) = &self.article {
             let item = article.item.clone();
@@ -545,7 +525,7 @@ impl NewsPage {
                     .w_full()
                     .h(px(383.))
                     .relative()
-                    .bg(rgb(theme::PANEL_SUNKEN))
+                    .bg(rgb(0x0b0b0d))
                     .child(picture(path, 680., 383.))
                     .child(
                         DesignButton::new(SharedString::from(format!("youtube-play-{id}")))
@@ -682,53 +662,23 @@ impl NewsPage {
             .w(px(width))
             .h_auto()
             .p_0()
+            .paint(0., [[0, 0]; 3], rgb(theme::INK).into(), rgb(theme::INK).into())
             .child(div().w_full().whitespace_normal().text_left().text_color(rgb(theme::INK)).child(content))
             .on_click(cx.listener(move |this, _, w, c| this.set_article(item.clone(), w, c)))
     }
     fn card(&self, n: &NewsItem, ix: usize, cx: &Context<Self>) -> AnyElement {
         let unread = self.marks(cx).is_none_or(|s| !s.read.contains(&n.id));
-        let card = design::notched_panel(0x0f0f12ff)
-            .id(("news-card", ix))
-            .w(px(320.))
-            .flex_shrink_0()
-            .cursor_pointer()
-            .when(n.image.is_some(), |d| d.child(self.image(n, "grid", 320., 180.)))
-            .child(
-                v_flex()
-                    .px(px(12.))
-                    .pt(px(10.))
-                    .pb(px(12.))
-                    .gap(px(6.))
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(theme::INK_MUTED))
-                                    .bg(rgba(0xffffff08))
-                                    .px(px(6.))
-                                    .py(px(2.))
-                                    .child(self.category_name(&n.category_id)),
-                            )
-                            .when(unread, |d| d.child(new_tag())),
-                    )
-                    .child(
-                        div()
-                            .font_family(theme::DISPLAY)
-                            .text_size(px(15.))
-                            .line_height(px(20.))
-                            .line_clamp(2)
-                            .child(n.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(rgb(theme::INK_MUTED))
-                            .child(date(&n.published_at, &self.feed.server_time)),
-                    ),
-            )
-            .into_any_element();
+        let card = crate::component::news_card::NewsCard {
+            width: 320.,
+            image: n.image.as_ref().map(|_| self.image(n, "grid", 318., 180.)),
+            category: self.category_name(&n.category_id),
+            title: n.title.clone(),
+            summary: self.previews.get(&cover_key(n, "preview")).cloned().unwrap_or_default(),
+            date: date(&n.published_at, &self.feed.server_time),
+            pinned: false,
+            unread,
+        }
+        .render();
         self.story(("news-card-open", ix), n, 320., card, cx).into_any_element()
     }
     fn article_view(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -865,7 +815,22 @@ impl NewsPage {
         v_flex()
             .w_full()
             .gap(px(24.))
-            .when(item.image.is_some(), |d| d.child(self.image(item, "article", 992., 360.)))
+            .when(item.image.is_some(), |d| {
+                let path = self.media.lock().ok().and_then(|m| m.get(&cover_key(item, "article")).cloned());
+                d.child(
+                    h_flex().w_full().justify_center().child(
+                        div()
+                            .relative()
+                            .w_full()
+                            .max_w(px(992.))
+                            .aspect_ratio(992. / 360.)
+                            .bg(rgba(0xffffff1a))
+                            .when_some(path, |d, path| {
+                                d.child(img(path).absolute().size_full().object_fit(ObjectFit::Cover))
+                            }),
+                    ),
+                )
+            })
             .child(reader)
             .into_any_element()
     }
@@ -956,11 +921,7 @@ impl Render for NewsPage {
             .pt(px(8.))
             .child(design::eyebrow("COMUNIDAD"));
         let mut tabs = h_flex().gap(px(20.));
-        for (ix, label, tab) in [
-            (0, "Noticias", NewsTab::Recent),
-            (1, "Historial", NewsTab::History),
-            (2, "Guardadas", NewsTab::Saved),
-        ] {
+        for (ix, label, tab) in [(0, "Noticias", NewsTab::Recent), (1, "Guardadas", NewsTab::Saved)] {
             tabs = tabs.child(design::tab(("news-tab", ix as usize), label, self.tab == tab).on_click(cx.listener(
                 move |this, _, w, c| {
                     this.tab = tab;
@@ -1022,7 +983,9 @@ impl Render for NewsPage {
                     .child(
                         design::text_field(&self.search)
                             .prefix(gpui_component::Icon::new(crate::icon::PandoraIcon::Search).size(px(14.)))
-                            .w_full(),
+                            .w_full()
+                            .bg(rgba(0x00000059))
+                            .border_color(rgb(0x75757d)),
                     )
                     .child(
                         DesignButton::new("news-search-focus")
@@ -1081,7 +1044,6 @@ impl Render for NewsPage {
             } else if !self.feed.load_failed {
                 body.child(empty(match self.tab {
                     NewsTab::Recent => "No hay noticias recientes.",
-                    NewsTab::History => "No hay noticias anteriores.",
                     NewsTab::Saved => "No tienes noticias guardadas.",
                 }))
             } else {
@@ -1129,14 +1091,24 @@ impl Render for NewsPage {
                                 "news-pin-open",
                                 n,
                                 992.,
-                                design::notched_panel(0x0f0f12ff)
+                                design::notched_panel(0xffffff14)
                                     .id("pinned-news")
                                     .relative()
                                     .h(px(165.))
                                     .w(px(992.))
                                     .cursor_pointer()
                                     .when(n.image.is_some(), |d| d.child(self.image(n, "pinned", 992., 165.)))
-                                    .child(div().absolute().inset_0().bg(rgba(0x06060788)))
+                                    .child(div().absolute().inset_0().bg(linear_gradient(
+                                        90.,
+                                        linear_color_stop(
+                                            rgba(if n.image.is_some() { 0x06060788 } else { 0xffffff1f }),
+                                            0.,
+                                        ),
+                                        linear_color_stop(
+                                            rgba(if n.image.is_some() { 0x06060788 } else { 0xffffff0d }),
+                                            1.,
+                                        ),
+                                    )))
                                     .child(
                                         v_flex()
                                             .absolute()
@@ -1173,77 +1145,7 @@ impl Render for NewsPage {
                 .iter()
                 .filter(|n| !n.pinned || n.expired(&self.feed.server_time))
                 .collect::<Vec<_>>();
-            if let Some(n) = unpinned.first() {
-                let unread = self.marks(cx).is_none_or(|s| !s.read.contains(&n.id));
-                body = body.child(
-                    self.story(
-                        "news-featured-open",
-                        n,
-                        992.,
-                        design::notched_panel(0x0f0f12ff)
-                            .id("news-featured")
-                            .w(px(992.))
-                            .when(n.image.is_some(), |d| d.h(px(311.)))
-                            .flex()
-                            .cursor_pointer()
-                            .when(n.image.is_some(), |d| d.child(self.image(n, "featured", 551., 311.)))
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .px(px(24.))
-                                    .py(px(22.))
-                                    .gap(px(12.))
-                                    .child(
-                                        h_flex()
-                                            .justify_between()
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .text_color(rgb(theme::ACCENT_TEXT))
-                                                    .child(self.category_name(&n.category_id)),
-                                            )
-                                            .when(unread, |d| d.child(new_tag())),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_family(theme::DISPLAY)
-                                            .text_size(px(17.))
-                                            .line_height(px(22.))
-                                            .line_clamp(3)
-                                            .child(n.title.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_color(rgb(theme::INK_MUTED))
-                                            .text_size(px(15.))
-                                            .line_height(px(22.))
-                                            .line_clamp(3)
-                                            .child(
-                                                self.previews
-                                                    .get(&cover_key(n, "preview"))
-                                                    .cloned()
-                                                    .unwrap_or_default(),
-                                            ),
-                                    )
-                                    .child(div().flex_1())
-                                    .child(
-                                        h_flex()
-                                            .justify_between()
-                                            .text_size(px(12.))
-                                            .child(div().text_color(rgb(theme::INK_MUTED)).child(format!(
-                                                "{} · por {}",
-                                                date(&n.published_at, &self.feed.server_time),
-                                                n.author
-                                            )))
-                                            .child(div().text_color(rgb(theme::INK_MUTED)).child("Leer")),
-                                    ),
-                            ),
-                        cx,
-                    ),
-                );
-            }
-            if unpinned.len() > 1 {
+            if !unpinned.is_empty() {
                 body = body
                     .child(
                         div()
@@ -1253,11 +1155,13 @@ impl Render for NewsPage {
                             .font_weight(FontWeight::BOLD)
                             .child("Últimas"),
                     )
-                    .child(h_flex().flex_wrap().items_start().gap(px(16.)).children(
-                        unpinned.iter().skip(1).take(self.visible).enumerate().map(|(ix, n)| self.card(n, ix, cx)),
-                    ));
+                    .child(
+                        h_flex().flex_wrap().items_start().gap(px(16.)).children(
+                            unpinned.iter().take(self.visible).enumerate().map(|(ix, n)| self.card(n, ix, cx)),
+                        ),
+                    );
             }
-            let shown = (self.visible + 1).min(unpinned.len());
+            let shown = self.visible.min(unpinned.len());
             if !unpinned.is_empty() {
                 body = body.child(
                     h_flex()
@@ -1294,7 +1198,7 @@ impl Render for NewsPage {
                 v_flex()
                     .size_full()
                     .child(header)
-                    .child(div().flex_shrink_0().bg(rgba(0x0f0f12e6)).px(px(28.)).py(px(16.)).child(filters))
+                    .child(div().flex_shrink_0().bg(rgba(0xffffff0a)).px(px(28.)).py(px(16.)).child(filters))
                     .child(
                         v_flex()
                             .flex_1()

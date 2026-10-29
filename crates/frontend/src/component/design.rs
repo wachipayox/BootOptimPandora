@@ -618,17 +618,19 @@ impl RenderOnce for PlayButton {
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(TrackedText::new(self.title.clone(), 0.02)),
                                     )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .line_height(px(13.))
-                                            .text_color(if disabled {
-                                                rgba(0x66666eff)
-                                            } else {
-                                                rgba(theme::ON_PLAY_MUTED)
-                                            })
-                                            .child(self.status),
-                                    ),
+                                    .when(!self.status.is_empty(), |d| {
+                                        d.child(
+                                            div()
+                                                .text_size(px(11.))
+                                                .line_height(px(13.))
+                                                .text_color(if disabled {
+                                                    rgba(0x66666eff)
+                                                } else {
+                                                    rgba(theme::ON_PLAY_MUTED)
+                                                })
+                                                .child(self.status.clone()),
+                                        )
+                                    }),
                             ),
                     ),
             )

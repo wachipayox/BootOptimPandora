@@ -375,7 +375,7 @@ try {
         $screens += @{ page='home-news'; file='home-news.png'; label='Destino de Ver todas (pantalla completa en paso 3)' }
     }
     if ($NewsScreens) {
-        foreach ($newsPage in @('home-news','news-history','news-saved','news-search','news-profiles','news-article','news-changelog')) {
+        foreach ($newsPage in @('home-news','news-saved','news-search','news-profiles','news-article','news-changelog')) {
             $screens += @{ page=$newsPage; file="$newsPage.png"; label='Native News screen/state' }
         }
     }
