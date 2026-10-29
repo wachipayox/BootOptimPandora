@@ -76,7 +76,14 @@ impl Processor {
                 accounts,
                 selected_account,
             } => {
+                let changed = self.data.accounts.read(cx).selected_account_uuid != selected_account;
+                let offline = selected_account.is_some_and(|uuid| accounts.iter().any(|a| a.uuid == uuid && a.offline));
                 AccountEntries::set(&self.data.accounts, accounts, selected_account, cx);
+                if changed && offline {
+                    self.data
+                        .backend_handle
+                        .send(bridge::message::MessageToBackend::RefreshSelectedOfflineHead);
+                }
             },
             MessageToFrontend::InstanceAdded {
                 id,

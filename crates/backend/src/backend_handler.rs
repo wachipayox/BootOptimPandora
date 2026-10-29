@@ -2154,6 +2154,7 @@ impl BackendState {
                     account_info.selected_account = Some(uuid);
                 });
             },
+            MessageToBackend::RefreshSelectedOfflineHead => self.refresh_selected_offline_head(),
             MessageToBackend::SelectAccount { uuid } => {
                 let mut account_info = self.account_info.write();
 
@@ -3077,7 +3078,7 @@ impl BackendState {
         launch_tracker.set_finished(ProgressTrackerFinishType::from_err(is_err));
     }
 
-    fn extract_skin_url_from_profile(profile_json: &str) -> Option<Arc<str>> {
+    pub(crate) fn extract_skin_url_from_profile(profile_json: &str) -> Option<Arc<str>> {
         use base64::Engine;
         let parsed: serde_json::Value = serde_json::from_str(profile_json).ok()?;
         for prop in parsed["properties"].as_array()? {

@@ -436,6 +436,7 @@ pub enum MessageToBackend {
     SelectAccount {
         uuid: Uuid,
     },
+    RefreshSelectedOfflineHead,
     DeleteAccount {
         uuid: Uuid,
     },

@@ -35,6 +35,7 @@ mod log_listing;
 mod log_reader;
 mod metadata;
 mod mod_metadata;
+mod offline_account_head;
 mod persistent;
 mod prelaunch_attribution;
 #[cfg(test)]
