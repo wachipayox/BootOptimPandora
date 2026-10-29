@@ -27,6 +27,20 @@ struct HomeVisualCache {
     logo: crate::component::retained_image::RetainedImage,
 }
 impl Global for HomeVisualCache {}
+#[derive(Default)]
+struct ServerMarquee {
+    text: String,
+    started: Option<Instant>,
+}
+impl ServerMarquee {
+    fn elapsed(&mut self, text: &str, now: Instant) -> Duration {
+        if self.started.is_none() || self.text != text {
+            self.text = text.to_owned();
+            self.started = Some(now);
+        }
+        now.duration_since(self.started.unwrap())
+    }
+}
 struct ServerPlayerTooltip(SharedString);
 impl Render for ServerPlayerTooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -64,6 +78,8 @@ pub struct HomePage {
     selected_server: Option<InstanceServerSummary>,
     selected_server_pending: bool,
     selected_server_checked: Option<Instant>,
+    server_name_marquee: ServerMarquee,
+    server_motd_marquee: ServerMarquee,
     timer: Option<Task<()>>,
     server_serial: AtomicOptionSerial,
 }
@@ -213,33 +229,71 @@ fn server_frame(content: impl IntoElement) -> Div {
         .py(px(8.))
         .child(content)
 }
-fn home_server_marquee(id: &'static str, characters: usize, available: f32, content: impl IntoElement) -> Div {
-    let distance = (characters as f32 * 8. - available).max(0.);
-    let line = div().absolute().top_0().left_0().whitespace_nowrap().child(content);
-    let line = if distance > 0. {
-        let old_seconds = (distance / 24. + 2.).clamp(3., 30.);
-        let speed = distance / (old_seconds * 0.5);
-        let width = characters as f32 * 8.;
-        let gap = 20.;
-        let travel = width + available + gap;
-        let seconds = travel / speed.max(1.);
-        line.with_animation(id, Animation::new(Duration::from_secs_f32(seconds)).repeat(), move |line, t| {
-            let offset = travel * t;
-            let x = if offset <= width {
-                -offset
-            } else {
-                available + gap - (offset - width)
-            };
-            line.left(px(x))
+fn home_server_marquee(
+    state: &mut ServerMarquee,
+    text: &str,
+    styles: &[schema::text_component::TextComponentRun],
+    size: f32,
+    available: f32,
+    window: &mut Window,
+    content: impl IntoElement,
+) -> Div {
+    let runs: Vec<TextRun> = text
+        .char_indices()
+        .map(|(index, ch)| {
+            let mut run = window.text_style().to_run(ch.len_utf8());
+            run.font = font("Minecraft Default");
+            for style in styles.iter().filter(|run| run.range.contains(&index)) {
+                if let Some(bold) = style.style.bold {
+                    run.font.weight = if bold { FontWeight::BOLD } else { FontWeight::NORMAL };
+                }
+                // Match the existing styled MOTD renderer's font selection.
+                if let Some(italic) = style.style.italic {
+                    run.font.style = if italic { FontStyle::Normal } else { FontStyle::Italic };
+                }
+            }
+            run
         })
-        .into_any_element()
-    } else {
-        line.into_any_element()
-    };
-    div().relative().w_full().h(px(18.)).overflow_hidden().child(line)
+        .collect();
+    let width = window.text_system().layout_line(text, px(size), &runs, None).width.as_f32();
+    let elapsed = state.elapsed(text, Instant::now()).as_secs_f32();
+    let mut x = 0.;
+    if width > available {
+        let distance = (text.chars().count() as f32 * 8. - available).max(1.);
+        let old_seconds = (distance / 24. + 2.).clamp(3., 30.);
+        let speed = (distance / (old_seconds * 0.5)).max(1.);
+        let gap = 20.;
+        let offset = (elapsed * speed) % (width + available + gap);
+        x = if offset <= width {
+            -offset
+        } else {
+            available + gap - (offset - width)
+        };
+        window.request_animation_frame();
+    }
+    div()
+        .relative()
+        .w_full()
+        .h(px(18.))
+        .overflow_hidden()
+        .child(div().absolute().top_0().left(px(x)).whitespace_nowrap().child(content))
 }
 pub fn add_instance(_data: &DataEntities, window: &mut Window, cx: &mut App) {
     root::switch_page(PageType::AddInstance, &[PageType::Instances], window, cx);
+}
+#[cfg(test)]
+mod server_marquee_tests {
+    use super::ServerMarquee;
+    use std::time::{Duration, Instant};
+    #[test]
+    fn unchanged_ping_does_not_restart_the_text_clock() {
+        let start = Instant::now();
+        let mut marquee = ServerMarquee::default();
+        assert_eq!(marquee.elapsed("motd", start), Duration::ZERO);
+        assert_eq!(marquee.elapsed("motd", start + Duration::from_secs(31)), Duration::from_secs(31));
+        assert_eq!(marquee.elapsed("motd", start + Duration::from_secs(61)), Duration::from_secs(61));
+        assert_eq!(marquee.elapsed("changed", start + Duration::from_secs(62)), Duration::ZERO);
+    }
 }
 
 impl HomePage {
@@ -281,6 +335,8 @@ impl HomePage {
             selected_server: None,
             selected_server_pending: false,
             selected_server_checked: None,
+            server_name_marquee: Default::default(),
+            server_motd_marquee: Default::default(),
             timer: None,
             server_serial: AtomicOptionSerial::default(),
         };
@@ -497,11 +553,16 @@ impl HomePage {
                     }),
             )
     }
-    fn server_panel(&self, server: &InstanceServerSummary, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn server_panel(
+        &mut self,
+        server: &InstanceServerSummary,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let online = server.status.as_ref().and_then(|s| s.players.as_ref());
         let ip = server.ip.clone();
         let data = self.data.clone();
-        let i = self.instance.as_ref().unwrap().read(cx);
+        let i = self.instance.as_ref().unwrap().read(cx).clone();
         let id = i.id;
         let name = i.name.clone();
         let text_width = ((window.viewport_size().width.as_f32() - 220.) * 0.2 - 20.).max(1.);
@@ -516,14 +577,17 @@ impl HomePage {
         });
         let detail_width = (text_width - if icon.is_some() { 40. } else { 0. }).max(1.);
         let mut details = v_flex().flex_1().min_w_0().child(home_server_marquee(
-            "server-name",
-            server_name.chars().count(),
+            &mut self.server_name_marquee,
+            &server_name,
+            &[],
+            15.,
             detail_width,
+            window,
             div()
                 .font_family("Minecraft Default")
                 .text_size(px(15.))
                 .text_color(rgb(theme::INK))
-                .child(SharedString::from(server_name)),
+                .child(SharedString::from(server_name.clone())),
         ));
         if let Some(status) = &server.status {
             let motd = schema::text_component::FlatTextComponent {
@@ -539,9 +603,12 @@ impl HomePage {
                     .collect(),
             };
             details = details.child(home_server_marquee(
-                "server-motd",
-                motd.content.chars().count(),
+                &mut self.server_motd_marquee,
+                &motd.content,
+                &motd.runs,
+                13.,
                 detail_width,
+                window,
                 div()
                     .font_family("Minecraft Default")
                     .text_size(px(13.))
