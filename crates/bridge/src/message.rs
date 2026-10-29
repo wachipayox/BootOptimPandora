@@ -196,6 +196,11 @@ pub enum MessageToBackend {
         path: Option<std::path::PathBuf>,
         channel: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
+    SetInstanceHomeLogo {
+        id: InstanceID,
+        path: Option<std::path::PathBuf>,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     KillInstance {
         id: InstanceID,
     },
