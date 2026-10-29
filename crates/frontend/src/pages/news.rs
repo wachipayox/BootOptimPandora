@@ -672,6 +672,7 @@ impl NewsPage {
             width: 320.,
             image: n.image.as_ref().map(|_| self.image(n, "grid", 318., 180.)),
             category: self.category_name(&n.category_id),
+            category_emphasis: n.target_profile_id.is_some(),
             title: n.title.clone(),
             summary: self.previews.get(&cover_key(n, "preview")).cloned().unwrap_or_default(),
             date: date(&n.published_at, &self.feed.server_time),
@@ -1091,7 +1092,7 @@ impl Render for NewsPage {
                                 "news-pin-open",
                                 n,
                                 992.,
-                                design::notched_panel(0xffffff14)
+                                design::notched_panel(0xffffff00)
                                     .id("pinned-news")
                                     .relative()
                                     .h(px(165.))
