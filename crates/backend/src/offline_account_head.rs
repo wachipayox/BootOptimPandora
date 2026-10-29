@@ -94,7 +94,6 @@ impl BackendState {
     /// Called only when the UI first receives or changes its selected account.
     /// Cached bytes can be shown immediately; network never gates startup.
     pub(crate) fn refresh_selected_offline_head(&self) {
-        #[cfg(feature = "ui-capture")]
         if std::env::var_os("WBOMBO_UI_CAPTURE_PAGE").is_some() {
             return;
         }
