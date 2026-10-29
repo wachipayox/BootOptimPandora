@@ -820,8 +820,18 @@ impl SkinsPage {
                             },
                             |this| this.bg(secondary).hover(|style| style.bg(secondary_hover)),
                         )
+                        .child(
+                            div()
+                                .w_full()
+                                .h(px(16.))
+                                .flex_shrink_0()
+                                .truncate()
+                                .text_center()
+                                .text_size(px(11.))
+                                .line_height(px(16.))
+                                .child(skin_name),
+                        )
                         .child(div().w_full().flex_1().min_h_0().overflow_hidden().child(skin_child))
-                        .child(div().w_full().truncate().text_center().text_size(px(11.)).child(skin_name))
                         .when_else(
                             active,
                             |this| this.child(Icon::new(PandoraIcon::Flag).absolute().right(padding).bottom(padding)),
