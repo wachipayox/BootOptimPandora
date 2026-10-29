@@ -536,7 +536,7 @@ impl NewsPage {
                             .top(px(167.5))
                             .w(px(56.))
                             .h(px(48.))
-                            .bg(rgba(0x000000cc))
+                            .bg(rgba(0x00000099))
                             .on_click(move |_, _, cx| cx.open_url(&url)),
                     )
             });
@@ -787,7 +787,7 @@ impl NewsPage {
                 DesignButton::new("news-changelog")
                     .h(px(40.))
                     .w_full()
-                    .bg(rgba(0xffffff05))
+                    .bg(rgba(0xffffff06))
                     .border_l_2()
                     .border_color(rgb(0xc9a2ff))
                     .child(
