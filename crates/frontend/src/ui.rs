@@ -769,6 +769,7 @@ impl LauncherUI {
             .border_color(rgba(0xffffff00))
             .child(
                 h_flex()
+                    .w_full()
                     .gap(px(8.))
                     .child(div().w(px(12.)).flex_shrink_0().text_center().child(if self.home_account_menu {
                         "▾"
@@ -888,86 +889,91 @@ impl LauncherUI {
                     .into_any_element()
                 });
             let confirm_name = name.clone();
-            account_menu = account_menu.child(
-                h_flex()
-                    .w_full()
-                    .child(
-                        DesignButton::new(("account-choice", ix))
-                            .aria_label(name.clone())
-                            .flex_1()
-                            .min_w_0()
-                            .h(px(42.))
-                            .justify_start()
-                            .px_0()
-                            .pl(px(20.))
-                            .border_l_2()
-                            .border_color(if active {
-                                rgb(theme::ACCENT_TEXT)
-                            } else {
-                                rgba(0xffffff00)
-                            })
-                            .child(h_flex().gap(px(8.)).child(account_head).child(div().overflow_hidden().child(name)))
-                            .on_click(cx.listener(move |this, _, _, c| {
-                                this.data
-                                    .backend_handle
-                                    .send(bridge::message::MessageToBackend::SelectAccount { uuid });
-                                this.home_account_menu = false;
-                                c.notify();
-                            })),
-                    )
-                    .child(
-                        DesignButton::new(("account-logout", ix))
-                            .aria_label("Cerrar sesión")
-                            .w(px(32.))
-                            .h(px(42.))
-                            .px_0()
-                            .text_color(rgb(theme::DANGER))
-                            .child(gpui_component::Icon::new(PandoraIcon::Close).size(px(16.)))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.home_account_menu = false;
-                                let backend = this.data.backend_handle.clone();
-                                let name = confirm_name.clone();
-                                window.open_dialog(cx, move |dialog, _, _| {
-                                    let backend = backend.clone();
-                                    design::dialog(dialog)
-                                        .title(design::dialog_title("Cerrar sesión"))
-                                        .child(format!("¿Quieres cerrar sesión de {name}?"))
-                                        .footer(
-                                            h_flex()
-                                                .gap(px(8.))
-                                                .justify_end()
-                                                .child(
-                                                    design::action_button(
-                                                        "cancel-logout",
-                                                        "Cancelar",
-                                                        design::ButtonAction::Secondary,
+            account_menu =
+                account_menu.child(
+                    h_flex()
+                        .w_full()
+                        .child(
+                            DesignButton::new(("account-choice", ix))
+                                .aria_label(name.clone())
+                                .flex_1()
+                                .min_w_0()
+                                .h(px(42.))
+                                .justify_start()
+                                .px_0()
+                                .pl(px(20.))
+                                .border_l_2()
+                                .border_color(if active {
+                                    rgb(theme::ACCENT_TEXT)
+                                } else {
+                                    rgba(0xffffff00)
+                                })
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .gap(px(8.))
+                                        .child(account_head)
+                                        .child(div().flex_1().min_w_0().overflow_hidden().child(name)),
+                                )
+                                .on_click(cx.listener(move |this, _, _, c| {
+                                    this.data
+                                        .backend_handle
+                                        .send(bridge::message::MessageToBackend::SelectAccount { uuid });
+                                    this.home_account_menu = false;
+                                    c.notify();
+                                })),
+                        )
+                        .child(
+                            DesignButton::new(("account-logout", ix))
+                                .aria_label("Cerrar sesión")
+                                .w(px(32.))
+                                .h(px(42.))
+                                .px_0()
+                                .text_color(rgb(theme::DANGER))
+                                .child(gpui_component::Icon::new(PandoraIcon::Close).size(px(16.)))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.home_account_menu = false;
+                                    let backend = this.data.backend_handle.clone();
+                                    let name = confirm_name.clone();
+                                    window.open_dialog(cx, move |dialog, _, _| {
+                                        let backend = backend.clone();
+                                        design::dialog(dialog)
+                                            .title(design::dialog_title("Cerrar sesión"))
+                                            .child(format!("¿Quieres cerrar sesión de {name}?"))
+                                            .footer(
+                                                h_flex()
+                                                    .gap(px(8.))
+                                                    .justify_end()
+                                                    .child(
+                                                        design::action_button(
+                                                            "cancel-logout",
+                                                            "Cancelar",
+                                                            design::ButtonAction::Secondary,
+                                                        )
+                                                        .on_click(|_, window, cx| window.close_dialog(cx)),
                                                     )
-                                                    .on_click(|_, window, cx| window.close_dialog(cx)),
-                                                )
-                                                .child(
-                                                    design::action_button(
-                                                        "confirm-logout",
-                                                        "Cerrar sesión",
-                                                        design::ButtonAction::Danger,
-                                                    )
-                                                    .on_click(
-                                                        move |_, window, cx| {
+                                                    .child(
+                                                        design::action_button(
+                                                            "confirm-logout",
+                                                            "Cerrar sesión",
+                                                            design::ButtonAction::Danger,
+                                                        )
+                                                        .on_click(move |_, window, cx| {
                                                             backend.send(
                                                                 bridge::message::MessageToBackend::DeleteAccount {
                                                                     uuid,
                                                                 },
                                                             );
                                                             window.close_dialog(cx);
-                                                        },
+                                                        }),
                                                     ),
-                                                ),
-                                        )
-                                });
-                                cx.notify();
-                            })),
-                    ),
-            );
+                                            )
+                                    });
+                                    cx.notify();
+                                })),
+                        ),
+                );
         }
         account_menu = account_menu
             .child(
@@ -1067,11 +1073,15 @@ fn account_add_row(label: &'static str, microsoft: bool) -> Div {
             .child(div().absolute().left(px(2.)).top(px(5.)).w(px(8.)).h(px(2.)).bg(rgb(crate::theme::INK)))
             .child(div().absolute().left(px(5.)).top(px(2.)).w(px(2.)).h(px(8.)).bg(rgb(crate::theme::INK))),
     );
-    h_flex()
-        .w_full()
-        .gap(px(8.))
-        .child(icon)
-        .child(div().flex_1().min_w_0().text_size(px(13.)).line_height(px(16.)).child(label))
+    h_flex().w_full().gap(px(8.)).child(icon).child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .whitespace_normal()
+            .text_size(px(13.))
+            .line_height(px(16.))
+            .child(label),
+    )
 }
 
 pub(crate) fn browser_sources(data: &DataEntities, install_for: Option<InstanceID>, modrinth: bool, cx: &App) -> Div {
