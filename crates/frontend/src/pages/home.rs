@@ -173,6 +173,18 @@ fn configure_home_server(instance: &InstanceEntry, data: &DataEntities, window: 
             )
     });
 }
+#[cfg(feature = "ui-capture")]
+pub(crate) fn capture_server_settings(data: &DataEntities, window: &mut Window, cx: &mut App) {
+    let selected = InterfaceConfig::get(cx).home_instance.clone();
+    let entries = data.instances.read(cx).entries.clone();
+    let instance = selected
+        .and_then(|name| entries.values().find(|entry| entry.read(cx).name == name).cloned())
+        .or_else(|| entries.values().next().cloned());
+    if let Some(instance) = instance {
+        let instance = instance.read(cx).clone();
+        configure_home_server(&instance, data, window, cx);
+    }
+}
 fn server_frame(content: impl IntoElement) -> Div {
     div()
         .absolute()
