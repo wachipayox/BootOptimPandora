@@ -910,7 +910,10 @@ impl Render for HomePage {
                     .child(div().child(logo).w(px(370.)).h(px(70.))),
             )
             .when_some(server.as_ref(), |d, s| d.child(self.server_panel(s, window, cx)))
-            .when(selected_server_missing, |d| d.child(server_frame(self.server_header())))
+            .when(
+                selected_server_missing || (instance.is_some() && server.is_none() && !server_loading),
+                |d| d.child(server_frame(self.server_header())),
+            )
             .when(server_loading, |d| {
                 d.child(server_frame(
                     v_flex()
