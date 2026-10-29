@@ -47,6 +47,20 @@ fn write_cache(path: &Path, cache: &CachedHead) -> bool {
         .ok()
         .is_some_and(|bytes| crate::fs::write_safe(path, &bytes).is_ok())
 }
+async fn bounded_body(response: reqwest::Response, limit: usize) -> Option<Vec<u8>> {
+    let mut response = response.error_for_status().ok()?;
+    if response.content_length().is_some_and(|n| n > limit as u64) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if chunk.len() > limit.saturating_sub(bytes.len()) {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Some(bytes)
+}
 fn grayscale_head(mut skin: DynamicImage) -> Option<UniqueBytes> {
     if !crate::skin_manager::SkinManager::is_valid_size(&skin) {
         return None;
@@ -140,31 +154,24 @@ impl BackendState {
         let mut lookup = url::Url::parse("https://api.mojang.com/minecraft/profile/lookup/name/").ok()?;
         lookup.path_segments_mut().ok()?.pop_if_empty().push(username);
         let lookup: serde_json::Value =
-            client.get(lookup).send().await.ok()?.error_for_status().ok()?.json().await.ok()?;
+            serde_json::from_slice(&bounded_body(client.get(lookup).send().await.ok()?, 64 * 1024).await?).ok()?;
         let uuid = Uuid::parse_str(lookup["id"].as_str()?).ok()?;
-        let profile = client
-            .get(format!("https://sessionserver.mojang.com/session/minecraft/profile/{}", uuid.simple()))
-            .send()
-            .await
-            .ok()?
-            .error_for_status()
-            .ok()?
-            .text()
-            .await
-            .ok()?;
-        if profile.len() > 64 * 1024 {
-            return None;
-        }
-        let texture: Arc<str> = Self::extract_skin_url_from_profile(&profile)?;
+        let profile = bounded_body(
+            client
+                .get(format!("https://sessionserver.mojang.com/session/minecraft/profile/{}", uuid.simple()))
+                .send()
+                .await
+                .ok()?,
+            64 * 1024,
+        )
+        .await?;
+        let texture: Arc<str> = Self::extract_skin_url_from_profile(std::str::from_utf8(&profile).ok()?)?;
         let mut texture = url::Url::parse(&texture).ok()?;
         if texture.host_str() != Some("textures.minecraft.net") || !matches!(texture.scheme(), "http" | "https") {
             return None;
         }
         texture.set_scheme("https").ok()?;
-        let bytes = client.get(texture).send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?;
-        if bytes.len() > 1024 * 1024 {
-            return None;
-        }
+        let bytes = bounded_body(client.get(texture).send().await.ok()?, 1024 * 1024).await?;
         let dimensions = image::ImageReader::new(Cursor::new(&bytes))
             .with_guessed_format()
             .ok()?
