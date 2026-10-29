@@ -16,7 +16,7 @@ param(
     [switch]$StartupScreens,
     [string]$LauncherUpdateFixture,
     [string]$NewsFixture,
-    [ValidateSet('advanced','version','expanded','editing')][string]$CaptureState,
+    [ValidateSet('advanced','version','expanded','editing','loading','revealing')][string]$CaptureState,
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
