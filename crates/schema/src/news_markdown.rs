@@ -34,6 +34,8 @@ pub enum Block {
     Image {
         alt: String,
         src: String,
+        size: String,
+        align: String,
     },
     Youtube {
         id: String,
@@ -61,6 +63,26 @@ pub enum BodyError {
 static YOUTUBE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^https://(?:(?:www\.|m\.)?youtube\.com/(?:watch\?(?:[^#\s]*&)?v=([A-Za-z0-9_-]{11})(?:&[^#\s]*)?|shorts/([A-Za-z0-9_-]{11})(?:\?[^#\s]*)?)|youtu\.be/([A-Za-z0-9_-]{11})(?:\?[^#\s]*)?)$").unwrap()
 });
+
+fn image_hints(title: Option<&str>) -> (String, String) {
+    let (mut size, mut align) = (String::new(), String::new());
+    for token in title.unwrap_or_default().split_whitespace() {
+        if let Some(value) = token.strip_prefix("size=") {
+            size = if matches!(value, "small" | "medium" | "large" | "full") {
+                value.into()
+            } else {
+                String::new()
+            };
+        } else if let Some(value) = token.strip_prefix("align=") {
+            align = if matches!(value, "left" | "center") {
+                value.into()
+            } else {
+                String::new()
+            };
+        }
+    }
+    (size, align)
+}
 
 pub fn https_url(raw: &str) -> bool {
     if raw.len() > 2048 || !raw.starts_with("https://") || raw.chars().any(|c| c <= ' ' || c == '\u{7f}') {
@@ -186,7 +208,10 @@ impl Parser<'_> {
                             Block::Youtube { id }
                         } else if let [Node::Image(i)] = p.children.as_slice() {
                             self.image(&i.url)?;
+                            let (size, align) = image_hints(i.title.as_deref());
                             Block::Image {
+                                size,
+                                align,
                                 alt: i.alt.clone(),
                                 src: i.url.clone(),
                             }
@@ -248,7 +273,12 @@ mod tests {
             },
             Block::Quote(b) => json!({"type":"quote","blocks":normalized(b)}),
             Block::Rule => json!({"type":"rule"}),
-            Block::Image { alt, src } => json!({"type":"image","alt":alt,"src":src}),
+            Block::Image { alt, src, size, align } => {
+                let mut value = json!({"type":"image","alt":alt,"src":src});
+                if !size.is_empty() { value["size"] = json!(size); }
+                if !align.is_empty() { value["align"] = json!(align); }
+                value
+            },
             Block::Youtube { id } => json!({"type":"youtube","id":id}),
         }).collect()
     }

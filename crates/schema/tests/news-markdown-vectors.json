@@ -4,6 +4,7 @@
  "notes": {
   "cas_existing": "cas:\u003csha256\u003e images are valid only if the digest is listed here (the server asks its CAS; clients treat every cas: image of an accepted news as present).",
   "blocks": "Normalized description. paragraph/heading text is plain: emphasis and link markup removed, images contribute their alt text, soft and hard line breaks are \"\n\". list items hold blocks (tight list text counts as a paragraph). image is a paragraph whose only content is one image. an absent blocks field means no blocks. youtube is a paragraph whose only content is a YouTube link (bare URL, link or autolink); id is the 11-character video id.",
+  "image_hints": "An image may carry presentation hints in its CommonMark title (double or single quotes): size=small|medium|large|full and align=left|center, separated by whitespace, e.g. ![alt](cas:<sha256> \"size=medium align=center\"). The image block exposes size and align (absent = empty string = not given; clients default to medium and left). The last token of each key wins; an unknown value or key is ignored, so that key stays empty; a title without those fields is not an error. src is only the URL or cas: reference. Width caps in logical pixels: small 180, medium 300, large 480, full = the whole container; align=center centers an image narrower than the container.",
   "images": "Number of images (image blocks plus images inside text). YouTube videos are not images.",
   "videos": "Number of youtube blocks.",
   "error_line": "1-based line of the first problem for rejected cases. The server reports it in the message of 422 invalid_news_body; clients only need to reject (the line is informative).",
@@ -352,6 +353,196 @@
    ],
    "images": 1,
    "videos": 0
+  },
+  {
+   "name": "image title valid size and align",
+   "markdown": "![Portada](cas:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \"size=large align=center\")",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Portada",
+     "src": "cas:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "size": "large",
+     "align": "center"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title single quotes",
+   "markdown": "![Captura](https://example.com/c.png 'size=small align=left')",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Captura",
+     "src": "https://example.com/c.png",
+     "size": "small",
+     "align": "left"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title full",
+   "markdown": "![Ancha](https://example.com/w.png \"align=center size=full\")",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Ancha",
+     "src": "https://example.com/w.png",
+     "size": "full",
+     "align": "center"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title size only",
+   "markdown": "![Solo](cas:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \"size=medium\")",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Solo",
+     "src": "cas:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "size": "medium"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title unknown values",
+   "markdown": "![Rara](https://example.com/r.png \"size=huge align=right\")",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Rara",
+     "src": "https://example.com/r.png"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title unknown keys",
+   "markdown": "![Rara](https://example.com/r.png \"color=red size=large\")",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Rara",
+     "src": "https://example.com/r.png",
+     "size": "large"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title last token wins",
+   "markdown": "![Dos](https://example.com/d.png \"size=large size=small align=center align=left\")",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Dos",
+     "src": "https://example.com/d.png",
+     "size": "small",
+     "align": "left"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title unknown last token",
+   "markdown": "![Dos](https://example.com/d.png \"size=large size=huge\")",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Dos",
+     "src": "https://example.com/d.png"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title with plain text",
+   "markdown": "![Texto](https://example.com/t.png \"Una descripcion cualquiera\")",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Texto",
+     "src": "https://example.com/t.png"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title empty",
+   "markdown": "![Vacio](https://example.com/v.png \"\")",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Vacio",
+     "src": "https://example.com/v.png"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title does not change destination",
+   "markdown": "![Url](https://example.com/u.png \"size=small https://other.example/x.png\")",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "image",
+     "alt": "Url",
+     "src": "https://example.com/u.png",
+     "size": "small"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title inside text",
+   "markdown": "Texto ![icono](https://example.com/i.png \"size=small\") fin",
+   "accepted": true,
+   "blocks": [
+    {
+     "type": "paragraph",
+     "text": "Texto icono fin"
+    }
+   ],
+   "images": 1,
+   "videos": 0
+  },
+  {
+   "name": "image title with http destination",
+   "markdown": "![Mala](http://example.com/m.png \"size=small\")",
+   "accepted": false,
+   "error_line": 1
+  },
+  {
+   "name": "image title with missing cas",
+   "markdown": "![Falta](cas:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \"size=small\")",
+   "accepted": false,
+   "error_line": 1
   },
   {
    "name": "youtube watch bare",

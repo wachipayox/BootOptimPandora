@@ -63,6 +63,7 @@ pub struct NewsPage {
     article: Option<Article>,
     seed: Option<HomeNews>,
     media: Arc<Mutex<BTreeMap<String, PathBuf>>>,
+    media_ratios: Arc<Mutex<BTreeMap<String, f32>>>,
     requested: BTreeSet<String>,
     queue: VecDeque<NewsImageRequest>,
     media_loading: bool,
@@ -233,6 +234,7 @@ impl NewsPage {
             article: None,
             seed,
             media: Default::default(),
+            media_ratios: Default::default(),
             requested: Default::default(),
             queue: Default::default(),
             media_loading: false,
@@ -449,6 +451,11 @@ impl NewsPage {
                     if let Ok(mut map) = this.media.lock() {
                         for image in images {
                             if let Some(path) = image.path {
+                                if image.width > 0 && image.height > 0 {
+                                    if let Ok(mut ratios) = this.media_ratios.lock() {
+                                        ratios.insert(image.key.clone(), image.width as f32 / image.height as f32);
+                                    }
+                                }
                                 map.insert(image.key, path);
                             }
                         }
@@ -481,6 +488,8 @@ impl NewsPage {
             .read
             .insert(item.id.clone());
         let media = self.media.clone();
+        let body_media = self.media.clone();
+        let body_ratios = self.media_ratios.clone();
         let extensions = MarkdownExtensions::default()
             .commonmark()
             .block_parser(|node, context| {
@@ -494,9 +503,37 @@ impl NewsPage {
                             .text(format!("https://www.youtube.com/watch?v={id}"))
                             .markdown(context.node_source(node)?.to_owned()),
                     )
+                } else if let [Block::Image { alt, src, size, align }] = doc.blocks.as_slice() {
+                    Some(MarkdownNode::new(
+                        "news-body-image",
+                        (alt.clone(), src.clone(), size.clone(), align.clone()),
+                    ))
                 } else {
                     None
                 }
+            })
+            .block_renderer("news-body-image", move |node, _, _| {
+                let (alt, src, size, align) =
+                    node.data::<(String, String, String, String)>().cloned().unwrap_or_default();
+                let path = body_media.lock().ok().and_then(|m| m.get(&src).cloned());
+                let ratio = body_ratios.lock().ok().and_then(|m| m.get(&src).copied());
+                div().w_full().flex().when(align == "center", |d| d.justify_center()).child(
+                    div()
+                        .w_full()
+                        .when(size != "full", |d| {
+                            d.max_w(px(match size.as_str() {
+                                "small" => 180.,
+                                "large" => 480.,
+                                _ => 300.,
+                            }))
+                        })
+                        .when_some(path.clone(), |d, path| {
+                            d.relative()
+                                .when_some(ratio, |d, ratio| d.aspect_ratio(ratio))
+                                .child(img(path).absolute().size_full().object_fit(ObjectFit::Contain))
+                        })
+                        .when(path.is_none(), |d| d.child(alt)),
+                )
             })
             .block_renderer("news-youtube", move |node, _, _| {
                 let id = node.data::<String>().cloned().unwrap_or_default();
@@ -699,6 +736,37 @@ impl NewsPage {
         let item = &article.item;
         let saved = self.marks(cx).is_some_and(|s| s.saved.contains(&item.id));
         let id = item.id.clone();
+        let save_button = DesignButton::new("save-news")
+            .aria_label("Guardar")
+            .tooltip("Guardar")
+            .w(px(28.))
+            .h(px(24.))
+            .px_0()
+            .text_color(rgb(if saved { theme::ACCENT_TEXT } else { theme::INK_MUTED }))
+            .paint(
+                0.,
+                [[0, 0]; 3],
+                rgb(if saved { theme::ACCENT_TEXT } else { theme::INK_MUTED }).into(),
+                rgb(if saved { theme::ACCENT_TEXT } else { theme::INK_MUTED }).into(),
+            )
+            .child(
+                gpui_component::Icon::new(if saved {
+                    crate::icon::PandoraIcon::NewsBookmarkFilled
+                } else {
+                    crate::icon::PandoraIcon::NewsBookmark
+                })
+                .size(px(20.)),
+            )
+            .disabled(!self.feed.items.iter().any(|n| n.id == item.id))
+            .on_click(cx.listener(move |this, _, w, c| {
+                InterfaceConfig::get_mut(c)
+                    .news_marks
+                    .entry(this.feed.origin_key.clone())
+                    .or_default()
+                    .toggle_saved(&id);
+                w.refresh();
+                c.notify();
+            }));
         let mut reader = v_flex()
             .w(px(680.))
             .mx_auto()
@@ -726,7 +794,8 @@ impl NewsPage {
                         date(&item.published_at, &self.feed.server_time),
                         item.author,
                         (item.body.split_whitespace().count().div_ceil(200)).max(1)
-                    ))),
+                    )))
+                    .child(save_button),
             )
             .child(
                 div()
@@ -792,22 +861,7 @@ impl NewsPage {
                     }),
             );
         }
-        reader = reader.child(
-            DesignButton::new("save-news")
-                .label("Guardar")
-                .w(px(110.))
-                .disabled(!self.feed.items.iter().any(|n| n.id == item.id))
-                .when(saved, |d| d.bg(rgba(0x5bcef51f)).text_color(rgb(theme::ACCENT_TEXT)))
-                .on_click(cx.listener(move |this, _, w, c| {
-                    InterfaceConfig::get_mut(c)
-                        .news_marks
-                        .entry(this.feed.origin_key.clone())
-                        .or_default()
-                        .toggle_saved(&id);
-                    w.refresh();
-                    c.notify();
-                })),
-        );
+
         v_flex()
             .w_full()
             .gap(px(24.))
