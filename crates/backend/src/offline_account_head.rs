@@ -93,7 +93,7 @@ impl BackendState {
 
     /// Called only when the UI first receives or changes its selected account.
     /// Cached bytes can be shown immediately; network never gates startup.
-    pub(crate) fn refresh_selected_offline_head(&self) {
+    pub(crate) fn refresh_selected_offline_head(self: &Arc<Self>) {
         if std::env::var_os("WBOMBO_UI_CAPTURE_PAGE").is_some() {
             return;
         }
@@ -204,7 +204,7 @@ mod tests {
         assert!(!cache.fresh("Player", 10_000 + RETRY_SECONDS));
         let encoded = serde_json::to_vec(&cache).unwrap();
         let decoded: CachedHead = serde_json::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.head.unwrap().as_ref(), b"cached");
+        assert_eq!(&*decoded.head.unwrap(), b"cached");
     }
     #[test]
     fn face_is_monochrome_with_overlay_and_keeps_its_pixel_size() {
