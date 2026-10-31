@@ -585,10 +585,16 @@ impl LauncherUI {
             .gap(px(4.))
             .child(div().px(px(8.)).pb(px(8.)).child(design::eyebrow("INSTANCIAS")));
         let entries = self.data.instances.read(cx).entries.clone();
+        let last_played = entries
+            .iter()
+            .filter_map(|(id, entity)| entity.read(cx).playtime.last_played_unix_ms.map(|time| (*id, time)))
+            .max_by_key(|(_, time)| *time)
+            .map(|(id, _)| id);
         for (ix, (_id, entity)) in entries.iter().enumerate() {
             let i = entity.read(cx).clone();
             let name = i.name.clone();
             let active = selected.as_ref() == Some(&name);
+            let recently_played = last_played == Some(i.id);
             let icon = i
                 .icon
                 .clone()
@@ -621,7 +627,7 @@ impl LauncherUI {
                         rgb(theme::INK).into(),
                         rgb(theme::INK).into(),
                     )
-                    .when(active, |button| {
+                    .when(recently_played, |button| {
                         button.child(
                             div().absolute().left(px(6.)).top(px(9.)).w(px(6.)).h(px(24.)).child(
                                 gpui_component::Icon::new(PandoraIcon::SidebarInstanceArrow)
@@ -631,7 +637,7 @@ impl LauncherUI {
                             ),
                         )
                     })
-                    .child(h_flex().when(active, |row| row.ml(px(10.))).gap(px(8.)).child(icon).child(
+                    .child(h_flex().when(recently_played, |row| row.ml(px(10.))).gap(px(8.)).child(icon).child(
                         v_flex().items_start().child(div().text_size(px(12.)).child(name.clone())).child(
                             div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(format!(
                                 "{} {}",
