@@ -614,7 +614,10 @@ impl LauncherUI {
                     .aria_label(name.clone())
                     .w_full()
                     .h(px(42.))
-                    .when(active, |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)))
+                    .relative()
+                    .border_l_2()
+                    .border_color(rgba(0x00000000))
+                    .when(active, |d| d.border_color(rgb(theme::ACCENT_TEXT)))
                     .justify_start()
                     .px(px(8.))
                     .paint(
@@ -629,7 +632,7 @@ impl LauncherUI {
                     )
                     .when(recently_played, |button| {
                         button.child(
-                            div().absolute().left(px(6.)).top(px(9.)).w(px(6.)).h(px(24.)).child(
+                            div().absolute().left(px(8.)).top(px(9.)).w(px(6.)).h(px(24.)).child(
                                 gpui_component::Icon::new(PandoraIcon::SidebarInstanceArrow)
                                     .w(px(6.))
                                     .h(px(24.))
