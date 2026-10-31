@@ -235,6 +235,9 @@ mod tests {
         let decoded = image::load_from_memory(&bytes).unwrap().to_rgba8();
         assert_eq!(decoded.dimensions(), (256, 256));
         assert_eq!(decoded.get_pixel(128, 128).0, [40, 80, 120, 255]);
+        assert_eq!(decoded.get_pixel(0, 128).0, [40, 80, 120, 255]);
+        assert_eq!(decoded.get_pixel(128, 63).0[3], 0);
+        assert_eq!(decoded.get_pixel(128, 64).0[3], 255);
         assert_eq!(decoded.get_pixel(0, 0).0[3], 0);
         let same = prepare_icon(&scratch.0, ShortcutIconChoice::Instance(png.into())).unwrap();
         assert_eq!(cached, same);
