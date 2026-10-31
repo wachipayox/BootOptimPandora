@@ -665,7 +665,7 @@ pub fn open_main_window(
                 }
                 if let Some((route, name)) =
                     capture_page.as_deref().and_then(|page| page.split_once(':')).filter(|(route, name)| {
-                        matches!(*route, "delete" | "export" | "groups") && name.starts_with("agente-274-")
+                        matches!(*route, "delete" | "export" | "groups" | "shortcut") && name.starts_with("agente-274-")
                     })
                 {
                     let route = route.to_owned();
@@ -680,6 +680,17 @@ pub fn open_main_window(
                             return;
                         };
                         match route.as_str() {
+                            "shortcut" => {
+                                let instance = capture_data.instances.read(cx).entries.get(&id).cloned();
+                                if let Some(instance) = instance {
+                                    crate::modals::create_shortcut::open(
+                                        instance,
+                                        capture_data.backend_handle.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            },
                             "delete" => crate::modals::delete_instance::open_delete_instance(
                                 id,
                                 name,
@@ -873,7 +884,7 @@ fn capture_instance_target(page: &str) -> Option<(&str, pages::instance::instanc
         "instance-logs" | "instance-crashes" => Tab::Logs,
         "instance-overwrites" => Tab::Overwrites,
         "instance-changelog" => Tab::Changelog,
-        "instance-settings" | "derived" | "duplicate" | "delete" | "export" | "groups" => Tab::Settings,
+        "instance-settings" | "derived" | "duplicate" | "delete" | "export" | "groups" | "shortcut" => Tab::Settings,
         "instance-live" => Tab::LiveGameOutput,
         _ => return None,
     };
