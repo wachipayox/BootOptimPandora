@@ -89,6 +89,7 @@ pub struct InstanceSettingsSubpage {
     jvm_flags_enabled: bool,
     jvm_flags_input_state: Entity<TextareaState>,
     profile_jvm_section: Entity<super::profile_jvm_section::ProfileJvmSection>,
+    runtime_state: (InstanceStatus, ustr::Ustr, Option<schema::instance::Java25Fallback>),
     jvm_binary_enabled: bool,
     jvm_binary_path: Option<PathLabel>,
 
@@ -131,6 +132,11 @@ impl InstanceSettingsSubpage {
     ) -> Self {
         let entry = instance.read(cx);
         let instance_id = entry.id;
+        let runtime_state = (
+            entry.status,
+            entry.configuration.minecraft_version,
+            entry.configuration.java25_fallback.clone(),
+        );
         let instance_name = entry.name.clone();
         let loader = entry.configuration.loader;
         let loader_version_latest_string = "Última";
@@ -255,7 +261,20 @@ impl InstanceSettingsSubpage {
         // The page shows the section's "Last Java detected" line, so it redraws when that loads.
         cx.observe(&profile_jvm_section, |_, _, cx| cx.notify()).detach();
         // The AOT cache option can be turned off by the launcher while this page is open.
-        cx.observe(instance, |_, _, cx| cx.notify()).detach();
+        cx.observe(instance, |page, instance, cx| {
+            let entry = instance.read(cx);
+            let runtime_state = (
+                entry.status,
+                entry.configuration.minecraft_version,
+                entry.configuration.java25_fallback.clone(),
+            );
+            if runtime_state != page.runtime_state {
+                page.runtime_state = runtime_state;
+                page.refresh_profile_jvm(cx);
+            }
+            cx.notify();
+        })
+        .detach();
 
         let artwork_section = cx.new(|cx| {
             super::artwork_section::InstanceArtworkSection::new(instance.clone(), backend_handle.clone(), window, cx)
@@ -289,6 +308,7 @@ impl InstanceSettingsSubpage {
             jvm_flags_enabled: jvm_flags.enabled,
             jvm_flags_input_state,
             profile_jvm_section,
+            runtime_state,
             jvm_binary_enabled: jvm_binary.enabled,
             jvm_binary_path: jvm_binary.path.clone().map(|path| PathLabel::new(path, false)),
             override_glfw_enabled: system_libraries.override_glfw,
