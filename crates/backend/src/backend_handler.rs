@@ -2240,15 +2240,39 @@ impl BackendState {
 
                 self.update_http_clients().await;
             },
-            MessageToBackend::CreateInstanceShortcut { id, path } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    let Ok(current_exe) = std::env::current_exe() else {
-                        return;
-                    };
-
-                    let args = &["--run-instance", instance.name.as_str()];
-                    crate::shortcut::create_shortcut(path, &format!("Launch {}", instance.name), &current_exe, args);
-                }
+            MessageToBackend::CreateInstanceShortcut {
+                id,
+                path,
+                icon,
+                channel,
+            } => {
+                let Some(name) = self.instance_state.read().instances.get(id).map(|instance| instance.name.clone())
+                else {
+                    _ = channel.send(Err(bridge::message::ShortcutError::Create));
+                    return;
+                };
+                let root = self.directories.root_launcher_dir.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let current_exe = std::env::current_exe().map_err(|error| {
+                        log::warn!("Could not locate executable for shortcut: {error}");
+                        bridge::message::ShortcutError::Create
+                    })?;
+                    let icon = crate::shortcut::prepare_icon(&root, icon)?;
+                    crate::shortcut::create_shortcut(
+                        path,
+                        &format!("Launch {name}"),
+                        &current_exe,
+                        &["--run-instance", name.as_str()],
+                        &icon,
+                    )
+                    .map_err(|error| {
+                        log::warn!("Could not create instance shortcut: {error}");
+                        bridge::message::ShortcutError::Create
+                    })
+                })
+                .await
+                .unwrap_or(Err(bridge::message::ShortcutError::Create));
+                _ = channel.send(result);
             },
             MessageToBackend::RelocateInstance { id, path } => {
                 if let Err(err) = std::fs::remove_dir(&path)

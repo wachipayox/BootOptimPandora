@@ -1123,7 +1123,12 @@ impl Render for HomePage {
                                         }
                                     },
                                     3 => root::repair_game_files(id, &this.data.backend_handle, w, c),
-                                    4 => create_shortcut(id, i.name.clone(), this.data.backend_handle.clone(), c),
+                                    4 => crate::modals::create_shortcut::open(
+                                        i.clone(),
+                                        this.data.backend_handle.clone(),
+                                        w,
+                                        c,
+                                    ),
                                     2 => this.open_tab(InstanceSubpageType::Logs, w, c),
                                     5 => this.open_tab(InstanceSubpageType::Settings, w, c),
                                     6 => this.data.backend_handle.send(MessageToBackend::KillInstance { id }),
@@ -1335,32 +1340,6 @@ impl Render for HomePage {
             .child(div().absolute().top_0().w_full().child(header))
             .into_any_element()
     }
-}
-
-fn create_shortcut(
-    id: bridge::instance::InstanceID,
-    name: SharedString,
-    backend: bridge::handle::BackendHandle,
-    cx: &mut App,
-) {
-    let user_dirs = directories::UserDirs::new();
-    let directory = user_dirs
-        .as_ref()
-        .and_then(directories::UserDirs::desktop_dir)
-        .unwrap_or(std::path::Path::new("."));
-    #[cfg(target_os = "windows")]
-    let suggested = format!("{name}.lnk");
-    #[cfg(target_os = "linux")]
-    let suggested = format!("{name}.desktop");
-    #[cfg(target_os = "macos")]
-    let suggested = format!("{name}.app");
-    let receiver = cx.prompt_for_new_path(directory, Some(&suggested));
-    cx.spawn(async move |_| {
-        if let Ok(Ok(Some(path))) = receiver.await {
-            backend.send(MessageToBackend::CreateInstanceShortcut { id, path });
-        }
-    })
-    .detach();
 }
 
 fn relative_date(value: &str) -> String {
