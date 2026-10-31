@@ -1306,6 +1306,9 @@ impl InstanceSettingsSubpage {
                     .child(div().flex_shrink_0().child("Java"))
                     .child(
                         DesignButton::new("select_jvm_binary")
+                            .when_some(self.profile_jvm_section.read(cx).last_java_text(), |button, java| {
+                                button.tooltip(java)
+                            })
                             .flex_1()
                             .min_w_0()
                             .h(px(30.))
@@ -1540,6 +1543,7 @@ impl InstanceSettingsSubpage {
     }
     fn render_shortcut_action(&self) -> impl IntoElement {
         DesignButton::new("shortcut")
+            .aria_label("Crear acceso directo")
             .w_full()
             .h(px(32.))
             .child(action_label(PandoraIcon::ExternalLink, "Crear acceso directo"))
@@ -1615,6 +1619,7 @@ impl InstanceSettingsSubpage {
                 .gap(px(8.))
                 .child(
                     DesignButton::new("update_global_profile")
+                        .aria_label("Buscar actualización")
                         .label("Buscar actualización")
                         .child(Icon::new(PandoraIcon::RefreshCcw).size(px(14.)))
                         .overflow_x_hidden()
@@ -1628,6 +1633,7 @@ impl InstanceSettingsSubpage {
                 )
                 .child(
                     DesignButton::new("repair_game_files")
+                        .aria_label("Reparar archivos del juego")
                         .flex_1()
                         .min_w_0()
                         .h(px(32.))
