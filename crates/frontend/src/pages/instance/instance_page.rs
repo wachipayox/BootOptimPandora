@@ -155,11 +155,18 @@ impl InstancePage {
         header = header.child(div().flex_1().min_w_0().h_full().overflow_x_scrollbar().child(tabs));
         if selected != InstanceSubpageType::Quickplay {
             let instance = self.instance.read(cx).clone();
-            let running = instance.status == bridge::instance::InstanceStatus::Running;
+            #[allow(unused_mut)]
+            let mut status = instance.status;
+            #[cfg(feature = "ui-capture")]
+            if crate::capture::local_fixture() && std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("running") {
+                // Cosmetic fixture only: no game is started and no backend status is changed.
+                status = bridge::instance::InstanceStatus::Running;
+            }
+            let running = status == bridge::instance::InstanceStatus::Running;
             let play = crate::component::instance_play::instance_play_button(
                 "instance-header-play",
                 &instance,
-                instance.status,
+                status,
                 &self.data,
                 window,
                 cx,
