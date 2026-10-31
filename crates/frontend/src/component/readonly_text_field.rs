@@ -1055,6 +1055,10 @@ impl Render for ReadonlyTextFieldWithControls {
                         Point::new(Pixels::ZERO, state.offset().clamp(-max, Pixels::ZERO))
                     },
                 ) {
+                    if delta > Pixels::ZERO && max_scroll_amount > Pixels::ZERO {
+                        root.scroll_handler.state.borrow_mut().scrolling =
+                            GameOutputScrolling::Top { offset: current_offset };
+                    }
                     return;
                 }
                 let new_offset = (current_offset + delta).clamp(-max_scroll_amount, Pixels::ZERO);
