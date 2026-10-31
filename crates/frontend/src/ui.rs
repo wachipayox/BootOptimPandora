@@ -636,12 +636,22 @@ impl LauncherUI {
                             .items_center()
                             .when(recently_played, |row| {
                                 row.child(
-                                    svg()
-                                        .path("icons/sidebar-instance-arrow.svg")
-                                        .w(px(6.))
-                                        .h(px(24.))
-                                        .flex_shrink_0()
-                                        .text_color(rgb(0xffffff)),
+                                    canvas(
+                                        |_, _, _| (),
+                                        |bounds, _, window, _| {
+                                            let mut arrow = PathBuilder::fill();
+                                            arrow.move_to(bounds.origin);
+                                            arrow.line_to(point(bounds.right(), bounds.center().y));
+                                            arrow.line_to(point(bounds.left(), bounds.bottom()));
+                                            arrow.close();
+                                            if let Ok(arrow) = arrow.build() {
+                                                window.paint_path(arrow, rgb(0xffffff));
+                                            }
+                                        },
+                                    )
+                                    .w(px(6.))
+                                    .h(px(24.))
+                                    .flex_shrink_0(),
                                 )
                             })
                             .child(h_flex().gap(px(8.)).child(icon).child(
