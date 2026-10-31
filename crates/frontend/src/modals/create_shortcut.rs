@@ -83,6 +83,21 @@ impl ShortcutDialog {
                     .h(px(60.))
                     .justify_start()
                     .toggled(self.choice == index)
+                    .paint(
+                        0.,
+                        if self.choice == index {
+                            [[0x5bcef51f; 2], [0x5bcef52e; 2], [0x5bcef53d; 2]]
+                        } else {
+                            [[0x00000000; 2], [0xffffff0d; 2], [0xffffff14; 2]]
+                        },
+                        rgb(if self.choice == index {
+                            theme::ACCENT_TEXT
+                        } else {
+                            theme::INK
+                        })
+                        .into(),
+                        rgb(theme::INK).into(),
+                    )
                     .disabled(self.busy)
                     .child(h_flex().w_full().gap(px(12.)).items_center().child(preview).child(description))
                     .on_click(cx.listener(move |this, _, window, cx| {
