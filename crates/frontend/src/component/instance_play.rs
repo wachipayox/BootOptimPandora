@@ -14,7 +14,7 @@ pub fn instance_play_button(
     state: InstanceStatus,
     data: &DataEntities,
     window: &mut Window,
-    cx: &mut App,
+    _cx: &mut App,
 ) -> PlayButton {
     let button_id = button_id.into();
     let mut play = PlayButton::new(button_id.clone(), "Al día", None);
