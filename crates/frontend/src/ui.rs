@@ -621,7 +621,17 @@ impl LauncherUI {
                         rgb(theme::INK).into(),
                         rgb(theme::INK).into(),
                     )
-                    .child(h_flex().gap(px(8.)).child(icon).child(
+                    .when(active, |button| {
+                        button.child(
+                            div().absolute().left(px(6.)).top(px(9.)).w(px(6.)).h(px(24.)).child(
+                                gpui_component::Icon::new(PandoraIcon::SidebarInstanceArrow)
+                                    .w(px(6.))
+                                    .h(px(24.))
+                                    .text_color(rgb(0xffffff)),
+                            ),
+                        )
+                    })
+                    .child(h_flex().when(active, |row| row.ml(px(10.))).gap(px(8.)).child(icon).child(
                         v_flex().items_start().child(div().text_size(px(12.)).child(name.clone())).child(
                             div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(format!(
                                 "{} {}",
