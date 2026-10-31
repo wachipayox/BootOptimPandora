@@ -1,4 +1,6 @@
 #[cfg(target_os = "linux")]
+use gpui_component::Disableable;
+#[cfg(target_os = "linux")]
 use schema::instance::InstanceLinuxWrapperConfiguration;
 use std::{path::Path, sync::Arc};
 
@@ -11,7 +13,7 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable, Icon, IndexPath, WindowExt,
+    ActiveTheme as _, Icon, IndexPath, WindowExt,
     button::ButtonVariants,
     h_flex,
     input::{InputEvent, InputState, Textarea, TextareaState},
@@ -89,6 +91,7 @@ pub struct InstanceSettingsSubpage {
     jvm_flags_enabled: bool,
     jvm_flags_input_state: Entity<TextareaState>,
     profile_jvm_section: Entity<super::profile_jvm_section::ProfileJvmSection>,
+    runtime_state: (InstanceStatus, ustr::Ustr, Option<schema::instance::Java25Fallback>),
     jvm_binary_enabled: bool,
     jvm_binary_path: Option<PathLabel>,
 
@@ -131,6 +134,11 @@ impl InstanceSettingsSubpage {
     ) -> Self {
         let entry = instance.read(cx);
         let instance_id = entry.id;
+        let runtime_state = (
+            entry.status,
+            entry.configuration.minecraft_version,
+            entry.configuration.java25_fallback.clone(),
+        );
         let instance_name = entry.name.clone();
         let loader = entry.configuration.loader;
         let loader_version_latest_string = "Última";
@@ -191,6 +199,7 @@ impl InstanceSettingsSubpage {
         });
         cx.observe_in(&data.accounts, window, |page, accounts, window, cx| {
             page.update_account_list(accounts, window, cx);
+            cx.notify();
         })
         .detach();
         cx.subscribe(&account_items, Self::on_account_selected).detach();
@@ -254,7 +263,20 @@ impl InstanceSettingsSubpage {
         // The page shows the section's "Last Java detected" line, so it redraws when that loads.
         cx.observe(&profile_jvm_section, |_, _, cx| cx.notify()).detach();
         // The AOT cache option can be turned off by the launcher while this page is open.
-        cx.observe(instance, |_, _, cx| cx.notify()).detach();
+        cx.observe(instance, |page, instance, cx| {
+            let entry = instance.read(cx);
+            let runtime_state = (
+                entry.status,
+                entry.configuration.minecraft_version,
+                entry.configuration.java25_fallback.clone(),
+            );
+            if runtime_state != page.runtime_state {
+                page.runtime_state = runtime_state;
+                page.refresh_profile_jvm(cx);
+            }
+            cx.notify();
+        })
+        .detach();
 
         let artwork_section = cx.new(|cx| {
             super::artwork_section::InstanceArtworkSection::new(instance.clone(), backend_handle.clone(), window, cx)
@@ -288,6 +310,7 @@ impl InstanceSettingsSubpage {
             jvm_flags_enabled: jvm_flags.enabled,
             jvm_flags_input_state,
             profile_jvm_section,
+            runtime_state,
             jvm_binary_enabled: jvm_binary.enabled,
             jvm_binary_path: jvm_binary.path.clone().map(|path| PathLabel::new(path, false)),
             override_glfw_enabled: system_libraries.override_glfw,
@@ -616,7 +639,7 @@ impl InstanceSettingsSubpage {
         &mut self,
         _state: Entity<SelectState<NamedDropdown<Uuid>>>,
         event: &SelectEvent<NamedDropdown<Uuid>>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let SelectEvent::Confirm(value) = event;
 
@@ -624,6 +647,7 @@ impl InstanceSettingsSubpage {
             id: self.instance_id,
             account: value.clone(),
         });
+        cx.notify();
     }
 
     pub fn on_loader_selected(
@@ -837,7 +861,93 @@ fn settings_panel(title: &'static str) -> Div {
     )
 }
 
+fn settings_panel_caption(title: &'static str, caption: impl Into<SharedString>) -> Div {
+    let caption: SharedString = caption.into();
+    let tooltip = caption.clone();
+    v_flex().w_full().gap(px(10.)).px(px(18.)).py(px(16.)).bg(rgb(theme::PANEL)).child(
+        h_flex()
+            .w_full()
+            .gap(px(12.))
+            .items_center()
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .font_family(theme::DISPLAY)
+                    .font_weight(FontWeight::BOLD)
+                    .text_size(px(20.))
+                    .line_height(px(24.))
+                    .child(title),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("settings-caption-{title}")))
+                    .flex_1()
+                    .min_w_0()
+                    .text_right()
+                    .truncate()
+                    .text_size(px(11.))
+                    .text_color(rgb(theme::INK_MUTED))
+                    .child(caption)
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                    }),
+            ),
+    )
+}
+fn action_label(icon: PandoraIcon, label: &'static str) -> impl IntoElement {
+    h_flex()
+        .gap(px(6.))
+        .items_center()
+        .child(Icon::new(icon).size(px(14.)).flex_shrink_0())
+        .child(div().text_size(px(12.)).truncate().child(label))
+}
+
 impl InstanceSettingsSubpage {
+    fn render_account_selector(&self, cx: &mut Context<Self>) -> AnyElement {
+        let accounts = self.data.accounts.read(cx);
+        let uuid = self.account_items.read(cx).selected_value().copied().or(accounts.selected_account_uuid);
+        let hide_skins = InterfaceConfig::get(cx).hide_skins;
+        let head = uuid
+            .and_then(|id| accounts.accounts.iter().find(|account| account.uuid == id))
+            .filter(|_| !hide_skins)
+            .and_then(|account| account.head.clone());
+        let head = head
+            .map(|bytes| {
+                png_render_cache::render_with_transform(
+                    bytes,
+                    png_render_cache::ImageTransformation::Resize { width: 32, height: 32 },
+                    cx,
+                )
+                .into_any_element()
+            })
+            .unwrap_or_else(|| {
+                img(ImageSource::Resource(Resource::Embedded(
+                    if hide_skins {
+                        "images/hidden_head.png"
+                    } else {
+                        "images/default_head.png"
+                    }
+                    .into(),
+                )))
+                .size(px(32.))
+                .into_any_element()
+            });
+        crate::labelled(
+            "Cuenta para esta instancia",
+            h_flex().w_full().gap(px(8.)).child(head).child(
+                Select::new(&self.account_items)
+                    .placeholder("La activa")
+                    .appearance(false)
+                    .h(px(44.))
+                    .text_size(px(16.))
+                    .search_placeholder("Buscar...")
+                    .cleanable(true)
+                    .flex_1()
+                    .min_w_0(),
+            ),
+        )
+        .into_any_element()
+    }
     // Keep these sections in separate render frames and erase their concrete
     // builder types before composing them. This prevents the large settings
     // tree from exhausting the Windows UI thread's limited stack.
@@ -1021,26 +1131,7 @@ impl InstanceSettingsSubpage {
                     .child(div().w(px(140.)).h(px(28.)).flex_shrink_0().flex().items_center().child("Versión"))
                     .child(div().flex_1().min_w_0().child(version_row)),
             )
-            .when(
-                !self
-                    .profile_info
-                    .as_ref()
-                    .is_some_and(|i| i.global_profile_id.is_some() || i.local_parent_name.is_some()),
-                |d| {
-                    d.child(crate::labelled(
-                        "Cuenta para esta instancia",
-                        h_flex().gap_2().child(
-                            Select::new(&self.account_items)
-                                .placeholder("La activa")
-                                .bg(rgb(theme::PANEL_SUNKEN))
-                                .h(px(36.))
-                                .text_size(px(13.))
-                                .search_placeholder("Buscar...")
-                                .cleanable(true),
-                        ),
-                    ))
-                },
-            );
+            .child(self.render_account_selector(cx));
 
         basic_content = basic_content.child(
             h_flex()
@@ -1084,8 +1175,15 @@ impl InstanceSettingsSubpage {
                                 .detach();
                             }
                         }),
-                ),
+                )
+                .child(DesignButton::new("open-instance-minecraft").label("Abrir").h(px(28.)).on_click({
+                    let instance = self.instance.clone();
+                    move |_, window, cx| {
+                        crate::open_folder(&instance.read(cx).dot_minecraft_folder.clone(), window, cx);
+                    }
+                })),
         );
+        basic_content = basic_content.child(self.render_shortcut_action());
         basic_content.into_any_element()
     }
 
@@ -1166,6 +1264,10 @@ impl InstanceSettingsSubpage {
         let wrapper_command_enabled = self.wrapper_command_enabled;
         let jvm_flags_enabled = self.jvm_flags_enabled;
         let jvm_binary_enabled = self.jvm_binary_enabled;
+        let automatic_java = self.profile_jvm_section.read(cx).automatic_java_major();
+        let automatic_label: SharedString = automatic_java
+            .map(|major| format!("Automático ({major})").into())
+            .unwrap_or_else(|| "Automático".into());
         let content = v_flex()
             .w_full()
             .gap(px(16.))
@@ -1188,11 +1290,13 @@ impl InstanceSettingsSubpage {
                             },
                         )),
                     ))
-                    .child(
-                        Textarea::new(&self.jvm_flags_input_state)
-                            .bg(rgb(theme::PANEL_SUNKEN))
-                            .disabled(!jvm_flags_enabled),
-                    ),
+                    .when(jvm_flags_enabled || !self.jvm_flags_input_state.read(cx).value().is_empty(), |d| {
+                        d.child(
+                            Textarea::new(&self.jvm_flags_input_state)
+                                .bg(rgb(theme::PANEL_SUNKEN))
+                                .disabled(!jvm_flags_enabled),
+                        )
+                    }),
             )
             .child(
                 v_flex()
@@ -1211,51 +1315,71 @@ impl InstanceSettingsSubpage {
                             },
                         )),
                     ))
-                    .child(
-                        Textarea::new(&self.wrapper_command_input_state)
-                            .bg(rgb(theme::PANEL_SUNKEN))
-                            .disabled(!wrapper_command_enabled),
+                    .when(
+                        wrapper_command_enabled || !self.wrapper_command_input_state.read(cx).value().is_empty(),
+                        |d| {
+                            d.child(
+                                Textarea::new(&self.wrapper_command_input_state)
+                                    .bg(rgb(theme::PANEL_SUNKEN))
+                                    .disabled(!wrapper_command_enabled),
+                            )
+                        },
                     ),
             )
             .child(
-                v_flex()
-                    .gap_1()
-                    .child(h_flex().w_full().justify_between().child("Java").child(
-                        crate::component::design::chip("java-automatic", "Automático", !jvm_binary_enabled).on_click(
-                            cx.listener(|this, _, _, cx| {
+                h_flex()
+                    .w_full()
+                    .gap(px(10.))
+                    .items_center()
+                    .child(div().flex_shrink_0().child("Java"))
+                    .child(
+                        DesignButton::new("select_jvm_binary")
+                            .when_some(self.profile_jvm_section.read(cx).last_java_text(), |button, java| {
+                                button.tooltip(java)
+                            })
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(30.))
+                            .when_some(self.jvm_binary_path.clone().filter(|_| jvm_binary_enabled), |button, path| {
+                                button.child(path)
+                            })
+                            .when(!jvm_binary_enabled || self.jvm_binary_path.is_none(), |button| {
+                                button.label("Elegir java.exe…")
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.select_file(
+                                    "Elegir java.exe…",
+                                    |this, path| {
+                                        if path.is_none() {
+                                            return;
+                                        }
+                                        this.jvm_binary_enabled = true;
+                                        this.jvm_binary_path = path.map(|path| PathLabel::new(path, false));
+                                        this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
+                                            id: this.instance_id,
+                                            jvm_binary: this.get_jvm_binary_configuration(),
+                                        });
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        crate::component::design::chip("java-automatic", automatic_label, !jvm_binary_enabled)
+                            .on_click(cx.listener(|this, _, _, cx| {
                                 this.jvm_binary_enabled = false;
                                 this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
                                     id: this.instance_id,
                                     jvm_binary: this.get_jvm_binary_configuration(),
                                 });
+                                this.refresh_profile_jvm(cx);
                                 cx.notify();
-                            }),
-                        ),
-                    ))
-                    .child(DesignButton::new("select_jvm_binary").label("Elegir java.exe…").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.select_file(
-                                "Elegir java.exe…",
-                                |this, path| {
-                                    if path.is_none() {
-                                        return;
-                                    }
-                                    this.jvm_binary_enabled = true;
-                                    this.jvm_binary_path = path.map(|path| PathLabel::new(path, false));
-                                    this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
-                                        id: this.instance_id,
-                                        jvm_binary: this.get_jvm_binary_configuration(),
-                                    });
-                                },
-                                window,
-                                cx,
-                            );
-                        },
-                    ))),
+                            })),
+                    ),
             )
-            .when_some(self.jvm_binary_path.clone().filter(|_| jvm_binary_enabled), |d, path| d.child(path))
-            .when_some(self.profile_jvm_section.read(cx).last_java_text(), |d, java| {
-                d.child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(java))
+            .when(automatic_java == Some(25) && !jvm_binary_enabled, |d| {
+                d.child(self.render_aot_cache_setting(cx))
             })
             .child(
                 DesignButton::new("advanced-settings")
@@ -1274,86 +1398,101 @@ impl InstanceSettingsSubpage {
             .w_full()
             .gap(px(12.))
             .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap(px(12.))
-                            .child(div().flex_1().child("Biblioteca GLFW del sistema"))
-                            .child(YesNo::new("system_glfw").checked(self.override_glfw_enabled).on_click(
-                                cx.listener(|page, value, _, cx| {
-                                    if page.override_glfw_enabled != *value {
-                                        page.override_glfw_enabled = *value;
-                                        page.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
-                                            id: page.instance_id,
-                                            system_libraries: page.get_system_libraries_configuration(),
-                                        });
-                                        cx.notify();
-                                    }
-                                }),
-                            )),
-                    )
-                    .child(
-                        DesignButton::new("select_glfw")
-                            .label("Seleccionar biblioteca…")
-                            .disabled(!self.override_glfw_enabled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.select_file(
-                                    "Seleccionar biblioteca…",
-                                    |this, path| {
-                                        this.override_glfw_path = path.map(|path| PathLabel::new(path, false));
-                                        this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
-                                            id: this.instance_id,
-                                            system_libraries: this.get_system_libraries_configuration(),
-                                        });
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    ),
+                v_flex().gap_1().child(
+                    h_flex()
+                        .w_full()
+                        .gap(px(12.))
+                        .child(div().flex_1().child("Biblioteca GLFW del sistema"))
+                        .when(self.override_glfw_enabled, |row| {
+                            row.child(
+                                DesignButton::new("select_glfw")
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h(px(30.))
+                                    .when_some(self.override_glfw_path.clone(), |button, path| button.child(path))
+                                    .when(self.override_glfw_path.is_none(), |button| {
+                                        button.label("Seleccionar biblioteca…")
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.select_file(
+                                            "Seleccionar biblioteca…",
+                                            |this, path| {
+                                                this.override_glfw_path = path.map(|path| PathLabel::new(path, false));
+                                                this.backend_handle.send(
+                                                    MessageToBackend::SetInstanceSystemLibraries {
+                                                        id: this.instance_id,
+                                                        system_libraries: this.get_system_libraries_configuration(),
+                                                    },
+                                                );
+                                            },
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                        })
+                        .child(YesNo::new("system_glfw").checked(self.override_glfw_enabled).on_click(cx.listener(
+                            |page, value, _, cx| {
+                                if page.override_glfw_enabled != *value {
+                                    page.override_glfw_enabled = *value;
+                                    page.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
+                                        id: page.instance_id,
+                                        system_libraries: page.get_system_libraries_configuration(),
+                                    });
+                                    cx.notify();
+                                }
+                            },
+                        ))),
+                ),
             )
             .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap(px(12.))
-                            .child(div().flex_1().child("Biblioteca OpenAL del sistema"))
-                            .child(YesNo::new("system_openal").checked(self.override_openal_enabled).on_click(
-                                cx.listener(|page, value, _, cx| {
-                                    if page.override_openal_enabled != *value {
-                                        page.override_openal_enabled = *value;
-                                        page.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
-                                            id: page.instance_id,
-                                            system_libraries: page.get_system_libraries_configuration(),
-                                        });
-                                        cx.notify();
-                                    }
-                                }),
-                            )),
-                    )
-                    .child(
-                        DesignButton::new("select_openal")
-                            .label("Seleccionar biblioteca…")
-                            .disabled(!self.override_openal_enabled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.select_file(
-                                    "Seleccionar biblioteca…",
-                                    |this, path| {
-                                        this.override_openal_path = path.map(|path| PathLabel::new(path, false));
-                                        this.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
-                                            id: this.instance_id,
-                                            system_libraries: this.get_system_libraries_configuration(),
-                                        });
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    ),
+                v_flex().gap_1().child(
+                    h_flex()
+                        .w_full()
+                        .gap(px(12.))
+                        .child(div().flex_1().child("Biblioteca OpenAL del sistema"))
+                        .when(self.override_openal_enabled, |row| {
+                            row.child(
+                                DesignButton::new("select_openal")
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h(px(30.))
+                                    .when_some(self.override_openal_path.clone(), |button, path| button.child(path))
+                                    .when(self.override_openal_path.is_none(), |button| {
+                                        button.label("Seleccionar biblioteca…")
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.select_file(
+                                            "Seleccionar biblioteca…",
+                                            |this, path| {
+                                                this.override_openal_path =
+                                                    path.map(|path| PathLabel::new(path, false));
+                                                this.backend_handle.send(
+                                                    MessageToBackend::SetInstanceSystemLibraries {
+                                                        id: this.instance_id,
+                                                        system_libraries: this.get_system_libraries_configuration(),
+                                                    },
+                                                );
+                                            },
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                        })
+                        .child(YesNo::new("system_openal").checked(self.override_openal_enabled).on_click(
+                            cx.listener(|page, value, _, cx| {
+                                if page.override_openal_enabled != *value {
+                                    page.override_openal_enabled = *value;
+                                    page.backend_handle.send(MessageToBackend::SetInstanceSystemLibraries {
+                                        id: page.instance_id,
+                                        system_libraries: page.get_system_libraries_configuration(),
+                                    });
+                                    cx.notify();
+                                }
+                            }),
+                        )),
+                ),
             );
         #[cfg(target_os = "linux")]
         let advanced = advanced.child(
@@ -1428,82 +1567,64 @@ impl InstanceSettingsSubpage {
                         ),
                 ),
         );
-        advanced
-            .when_some(self.override_glfw_path.clone().filter(|_| self.override_glfw_enabled), |d, path| {
-                d.child(path)
-            })
-            .when_some(self.override_openal_path.clone().filter(|_| self.override_openal_enabled), |d, path| {
-                d.child(path)
-            })
-            .into_any_element()
+        advanced.into_any_element()
     }
-    fn render_actions_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let launch = settings_panel("Arranque")
-            .child(self.render_aot_cache_setting(cx))
-            .child(DesignButton::new("repair_game_files").label("Reparar archivos del juego").on_click({
-                let id = self.instance_id;
-                let backend = self.backend_handle.clone();
-                move |_, window, cx| crate::root::repair_game_files(id, &backend, window, cx)
-            }))
-            .child(
-                DesignButton::new("shortcut")
-                    .label("Crear acceso directo")
-                    .child(Icon::new(PandoraIcon::ExternalLink).size(px(14.)))
-                    .overflow_x_hidden()
-                    .on_click({
-                        let instance = self.instance.clone();
-                        let backend_handle = self.backend_handle.clone();
-                        move |_: &ClickEvent, _, cx| {
-                            let user_dirs = directories::UserDirs::new();
-                            let directory = user_dirs
-                                .as_ref()
-                                .and_then(directories::UserDirs::desktop_dir)
-                                .unwrap_or(Path::new("."));
-                            let instance = instance.read(cx);
-                            let id = instance.id;
-                            let name = instance.name.clone();
+    fn render_shortcut_action(&self) -> impl IntoElement {
+        DesignButton::new("shortcut")
+            .aria_label("Crear acceso directo")
+            .w_full()
+            .h(px(32.))
+            .child(action_label(PandoraIcon::ExternalLink, "Crear acceso directo"))
+            .overflow_x_hidden()
+            .on_click({
+                let instance = self.instance.clone();
+                let backend_handle = self.backend_handle.clone();
+                move |_: &ClickEvent, _, cx| {
+                    let user_dirs = directories::UserDirs::new();
+                    let directory =
+                        user_dirs.as_ref().and_then(directories::UserDirs::desktop_dir).unwrap_or(Path::new("."));
+                    let instance = instance.read(cx);
+                    let id = instance.id;
+                    let name = instance.name.clone();
 
-                            #[cfg(target_os = "linux")]
-                            let suggested_name = format!("{name}.desktop");
-                            #[cfg(target_os = "windows")]
-                            let suggested_name = format!("{name}.lnk");
-                            #[cfg(target_os = "macos")]
-                            let suggested_name = format!("{name}.app");
+                    #[cfg(target_os = "linux")]
+                    let suggested_name = format!("{name}.desktop");
+                    #[cfg(target_os = "windows")]
+                    let suggested_name = format!("{name}.lnk");
+                    #[cfg(target_os = "macos")]
+                    let suggested_name = format!("{name}.app");
 
-                            let receiver = cx.prompt_for_new_path(directory, Some(&suggested_name));
-                            let backend_handle = backend_handle.clone();
-                            cx.spawn(async move |_| {
-                                let Ok(Ok(Some(path))) = receiver.await else {
-                                    return;
-                                };
-                                backend_handle.send(MessageToBackend::CreateInstanceShortcut { id, path });
-                            })
-                            .detach();
-                        }
-                    }),
-            );
-        let worlds = settings_panel("Mundos compartidos")
-            .child(
-                v_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .child("Comparte la carpeta saves con otras instancias mediante un grupo local."),
-                    )
-                    .child(DesignButton::new("manage-save-groups").label("Gestionar grupo").on_click({
-                        let id = self.instance_id;
-                        let backend = self.backend_handle.clone();
-                        move |_, window, cx| {
-                            crate::modals::save_groups::open_save_groups(id, backend.clone(), window, cx)
-                        }
-                    })),
+                    let receiver = cx.prompt_for_new_path(directory, Some(&suggested_name));
+                    let backend_handle = backend_handle.clone();
+                    cx.spawn(async move |_| {
+                        let Ok(Ok(Some(path))) = receiver.await else {
+                            return;
+                        };
+                        backend_handle.send(MessageToBackend::CreateInstanceShortcut { id, path });
+                    })
+                    .detach();
+                }
+            })
+    }
+    fn render_actions_content(&mut self, _cx: &mut Context<Self>) -> AnyElement {
+        let worlds = settings_panel_caption(
+            "Mundos compartidos",
+            "Comparte la carpeta saves con otras instancias mediante un grupo local.",
+        )
+        .when_some(self.save_group.as_ref(), |d, group| {
+            d.child(
+                div()
+                    .w_full()
+                    .text_center()
+                    .child(format!("Grupo: {} ({} instancias)", group.name, group.member_count)),
             )
-            .when_some(self.save_group.as_ref(), |d, group| {
-                d.child(format!("Grupo: {} ({} instancias)", group.name, group.member_count))
-            });
-        let mut inherited = settings_panel("Perfil heredado")
-            .child(div().child("Lo que edites o borres en local se conserva al actualizar."));
+        })
+        .child(DesignButton::new("manage-save-groups").label("Gestionar grupo").on_click({
+            let id = self.instance_id;
+            let backend = self.backend_handle.clone();
+            move |_, window, cx| crate::modals::save_groups::open_save_groups(id, backend.clone(), window, cx)
+        }));
+        let mut inherited = settings_panel("Perfil heredado");
         let parent = self
             .profile_info
             .as_ref()
@@ -1518,36 +1639,66 @@ impl InstanceSettingsSubpage {
             } else {
                 format!("Deriva de {parent}.")
             };
-            inherited = inherited.child(caption);
+            inherited = settings_panel_caption("Perfil heredado", caption);
         }
         inherited = inherited.child(
-            DesignButton::new("update_global_profile")
-                .label("Buscar actualización")
-                .child(Icon::new(PandoraIcon::RefreshCcw).size(px(14.)))
-                .overflow_x_hidden()
-                .on_click({
-                    let id = self.instance_id;
-                    let data = self.data.clone();
-                    move |_: &ClickEvent, window, cx| {
-                        crate::root::update_inherited_files(id, &data, window, cx);
-                    }
-                }),
+            h_flex()
+                .w_full()
+                .gap(px(8.))
+                .child(
+                    DesignButton::new("update_global_profile")
+                        .aria_label("Buscar actualización")
+                        .label("Buscar actualización")
+                        .child(Icon::new(PandoraIcon::RefreshCcw).size(px(14.)))
+                        .overflow_x_hidden()
+                        .on_click({
+                            let id = self.instance_id;
+                            let data = self.data.clone();
+                            move |_: &ClickEvent, window, cx| {
+                                crate::root::update_inherited_files(id, &data, window, cx);
+                            }
+                        }),
+                )
+                .child(
+                    DesignButton::new("repair_game_files")
+                        .aria_label("Reparar archivos del juego")
+                        .flex_1()
+                        .min_w_0()
+                        .h(px(32.))
+                        .child(action_label(PandoraIcon::Wrench, "Reparar archivos del juego"))
+                        .on_click({
+                            let id = self.instance_id;
+                            let backend = self.backend_handle.clone();
+                            move |_, window, cx| crate::root::repair_game_files(id, &backend, window, cx)
+                        }),
+                ),
         );
-        inherited = inherited.child(crate::labelled(
-            "Cuenta para esta instancia",
-            Select::new(&self.account_items)
-                .placeholder("La activa")
-                .bg(rgb(theme::PANEL_SUNKEN))
-                .h(px(36.))
-                .text_size(px(13.))
-                .search_placeholder("Buscar...")
-                .cleanable(true),
-        ));
         let has_parent = self
             .profile_info
             .as_ref()
             .is_some_and(|i| i.global_profile_id.is_some() || i.local_parent_name.is_some());
         let actions = settings_panel("Acciones")
+            .child(
+                DesignButton::new("derive")
+                    .label("Crear hija")
+                    .child(Icon::new(PandoraIcon::GitBranch).size(px(14.)))
+                    .on_click({
+                        let instance = self.instance.clone();
+                        let instances = self.data.instances.clone();
+                        let backend = self.backend_handle.clone();
+                        move |_, window, cx| {
+                            let instance = instance.read(cx);
+                            crate::modals::duplicate_instance::open_derived_instance(
+                                instance.id,
+                                instance.name.clone(),
+                                instances.clone(),
+                                backend.clone(),
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+            )
             .child(
                 DesignButton::new("duplicate")
                     .label("Duplicar")
@@ -1591,27 +1742,6 @@ impl InstanceSettingsSubpage {
                     }),
             )
             .child(
-                DesignButton::new("derive")
-                    .label("Crear hija")
-                    .child(Icon::new(PandoraIcon::Copy).size(px(14.)))
-                    .on_click({
-                        let instance = self.instance.clone();
-                        let instances = self.data.instances.clone();
-                        let backend = self.backend_handle.clone();
-                        move |_, window, cx| {
-                            let instance = instance.read(cx);
-                            crate::modals::duplicate_instance::open_derived_instance(
-                                instance.id,
-                                instance.name.clone(),
-                                instances.clone(),
-                                backend.clone(),
-                                window,
-                                cx,
-                            );
-                        }
-                    }),
-            )
-            .child(
                 DesignButton::new("delete")
                     .label("Eliminar instancia")
                     .child(Icon::new(PandoraIcon::Trash2).size(px(14.)))
@@ -1642,7 +1772,6 @@ impl InstanceSettingsSubpage {
         v_flex()
             .w_full()
             .gap(px(16.))
-            .child(launch)
             .when(has_parent, |d| d.child(inherited))
             .child(worlds)
             .child(actions)

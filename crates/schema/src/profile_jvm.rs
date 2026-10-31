@@ -544,6 +544,9 @@ fn plan_one(
 pub struct ProfileJvmOptionsView {
     pub options: Vec<(ManifestJvmOption, JvmPlanEntry)>,
     pub facts: JvmLaunchFacts,
+    /// Last launcher-managed runtime for this instance/configuration, if known.
+    /// Local UI metadata only; this is not part of the signed profile protocol.
+    pub automatic_java_major: Option<u32>,
 }
 
 /// Resolves a signed chain (oldest first): children replace options by id and
