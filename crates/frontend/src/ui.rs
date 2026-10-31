@@ -585,10 +585,16 @@ impl LauncherUI {
             .gap(px(4.))
             .child(div().px(px(8.)).pb(px(8.)).child(design::eyebrow("INSTANCIAS")));
         let entries = self.data.instances.read(cx).entries.clone();
+        let last_played = entries
+            .iter()
+            .filter_map(|(id, entity)| entity.read(cx).playtime.last_played_unix_ms.map(|time| (*id, time)))
+            .max_by_key(|(_, time)| *time)
+            .map(|(id, _)| id);
         for (ix, (_id, entity)) in entries.iter().enumerate() {
             let i = entity.read(cx).clone();
             let name = i.name.clone();
             let active = selected.as_ref() == Some(&name);
+            let recently_played = last_played == Some(i.id);
             let icon = i
                 .icon
                 .clone()
@@ -608,7 +614,10 @@ impl LauncherUI {
                     .aria_label(name.clone())
                     .w_full()
                     .h(px(42.))
-                    .when(active, |d| d.border_l_2().border_color(rgb(theme::ACCENT_TEXT)))
+                    .relative()
+                    .border_l_2()
+                    .border_color(rgba(0x00000000))
+                    .when(active, |d| d.border_color(rgb(theme::ACCENT_TEXT)))
                     .justify_start()
                     .px(px(8.))
                     .paint(
@@ -621,15 +630,59 @@ impl LauncherUI {
                         rgb(theme::INK).into(),
                         rgb(theme::INK).into(),
                     )
-                    .child(h_flex().gap(px(8.)).child(icon).child(
-                        v_flex().items_start().child(div().text_size(px(12.)).child(name.clone())).child(
-                            div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(format!(
-                                "{} {}",
-                                i.configuration.loader.pretty_name(),
-                                i.configuration.minecraft_version
-                            )),
-                        ),
-                    ))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap(px(4.))
+                            .items_center()
+                            .when(recently_played, |row| {
+                                row.child(
+                                    canvas(
+                                        |_, _, _| (),
+                                        |bounds, _, window, _| {
+                                            let mut arrow = PathBuilder::fill();
+                                            arrow.move_to(bounds.origin);
+                                            arrow.line_to(point(bounds.right(), bounds.center().y));
+                                            arrow.line_to(point(bounds.left(), bounds.bottom()));
+                                            arrow.close();
+                                            if let Ok(arrow) = arrow.build() {
+                                                window.paint_path(arrow, rgb(0xffffff));
+                                            }
+                                        },
+                                    )
+                                    .w(px(6.))
+                                    .h(px(24.))
+                                    .flex_shrink_0(),
+                                )
+                            })
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap(px(8.))
+                                    .child(div().size(px(28.)).flex_shrink_0().child(icon))
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .items_start()
+                                            .child(div().w_full().truncate().text_size(px(12.)).child(name.clone()))
+                                            .child(
+                                                div()
+                                                    .w_full()
+                                                    .truncate()
+                                                    .text_size(px(10.))
+                                                    .text_color(rgb(theme::INK_DISABLED))
+                                                    .child(format!(
+                                                        "{} {}",
+                                                        i.configuration.loader.pretty_name(),
+                                                        i.configuration.minecraft_version
+                                                    )),
+                                            ),
+                                    ),
+                            ),
+                    )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         InterfaceConfig::get_mut(cx).home_instance = Some(name.clone());
                         this.switch_page_without_history(PageType::Instances, [].into(), window, cx);
