@@ -554,9 +554,6 @@ impl LauncherUI {
 
 impl Render for LauncherUI {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !cx.try_global::<gpui::SmoothScrollSettings>().is_some_and(|s| s.0) {
-            cx.set_global(gpui::SmoothScrollSettings(true));
-        }
         if let Some(pending_page) = self.pending_page.clone() {
             if let Ok(page) = Self::create_page(&self.data, pending_page.0.clone(), window, cx) {
                 self.pending_page = None;

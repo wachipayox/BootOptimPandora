@@ -3870,6 +3870,28 @@ impl ScrollHandle {
         state.scroll_to_bottom = true;
     }
 
+    /// Animate a discrete wheel delta with caller-supplied content extents.
+    /// Returns false for precise input, reduced motion or an app without opt-in;
+    /// in that case the caller retains its ordinary immediate scrolling path.
+    pub fn animate_wheel(
+        &self,
+        delta: Point<Pixels>,
+        max: Point<Pixels>,
+        precise: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let state = self.0.borrow();
+        let offset = state.offset.clone();
+        let current = *offset.borrow();
+        state.wheel_motion.queue(current, delta, max, precise, window, cx, move |next, _, _| {
+            if let Some(next) = next {
+                *offset.borrow_mut() = next;
+            }
+            *offset.borrow()
+        })
+    }
+
     /// Set the offset explicitly. The offset is the distance from the top left of the
     /// parent container to the top left of the first child.
     /// As you scroll further down the offset becomes more negative.

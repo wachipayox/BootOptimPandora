@@ -1116,6 +1116,7 @@ impl Render for GameOutputRoot {
                     .tooltip("Ir al principio")
                     .w(px(32.))
                     .on_click(cx.listener(|root, _, _, cx| {
+                        root.wheel_motion.cancel();
                         let mut state = root.scroll_handler.state.borrow_mut();
                         state.scrolling = GameOutputScrolling::Top { offset: Pixels::ZERO };
                         cx.notify();
@@ -1127,6 +1128,7 @@ impl Render for GameOutputRoot {
                     .tooltip("Ir al final")
                     .w(px(32.))
                     .on_click(cx.listener(|root, _, _, cx| {
+                        root.wheel_motion.cancel();
                         let mut state = root.scroll_handler.state.borrow_mut();
                         state.scrolling = GameOutputScrolling::Bottom;
                         cx.notify();
