@@ -31,6 +31,7 @@ pub struct InstancePage {
 impl InstancePage {
     pub fn new(instance_id: InstanceID, data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let instance = data.instances.read(cx).entries.get(&instance_id).unwrap().clone();
+        cx.observe(&instance, |_, _, cx| cx.notify()).detach();
         let desired = InterfaceConfig::get(cx).instance_subpage;
         let subpage = desired
             .create(&instance, data, data.backend_handle.clone(), window, cx)
@@ -152,6 +153,41 @@ impl InstancePage {
             )));
         }
         header = header.child(div().flex_1().min_w_0().h_full().overflow_x_scrollbar().child(tabs));
+        if selected != InstanceSubpageType::Quickplay {
+            let instance = self.instance.read(cx).clone();
+            #[allow(unused_mut)]
+            let mut status = instance.status;
+            #[cfg(feature = "ui-capture")]
+            if crate::capture::local_fixture() && std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("running") {
+                // Cosmetic fixture only: no game is started and no backend status is changed.
+                status = bridge::instance::InstanceStatus::Running;
+            }
+            let running = status == bridge::instance::InstanceStatus::Running;
+            let play = crate::component::instance_play::instance_play_button(
+                "instance-header-play",
+                &instance,
+                status,
+                &self.data,
+                window,
+                cx,
+            )
+            .compact();
+            header = header.child(h_flex().flex_shrink_0().gap(px(6.)).child(play).when(running, |row| {
+                row.child(
+                    design::DesignButton::new("instance-live-output")
+                        .aria_label("Registros")
+                        .tooltip("Registros")
+                        .w(px(30.))
+                        .h(px(36.))
+                        .child(gpui_component::Icon::new(crate::icon::PandoraIcon::Eye).size(px(16.)))
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::LiveGameOutput;
+                            cx.notify();
+                        })),
+                )
+            }));
+        }
+
         if root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
             header = header.child(
                 h_flex()
