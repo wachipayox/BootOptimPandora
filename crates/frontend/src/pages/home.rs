@@ -74,6 +74,7 @@ pub struct HomePage {
     news_view: bool,
     news_page: Option<Entity<super::news::NewsPage>>,
     article: Option<String>,
+    news_forward_to_article: bool,
     heads: std::collections::BTreeMap<String, std::path::PathBuf>,
     head_ids: Vec<String>,
     selected_server: Option<InstanceServerSummary>,
@@ -332,6 +333,7 @@ impl HomePage {
                 .is_ok_and(|p| p == "home-news" || p.starts_with("news-")),
             news_page: None,
             article: None,
+            news_forward_to_article: false,
             heads: Default::default(),
             head_ids: Vec::new(),
             selected_server: None,
@@ -436,6 +438,7 @@ impl HomePage {
     pub fn show_home(&mut self, cx: &mut Context<Self>) {
         self.news_view = false;
         self.article = None;
+        self.news_forward_to_article = false;
         cx.notify();
     }
     pub fn instance_id(&self, cx: &App) -> Option<bridge::instance::InstanceID> {
@@ -445,7 +448,44 @@ impl HomePage {
         self.news_view = true;
         self.article = None;
         self.news_page = None;
+        self.news_forward_to_article = false;
         cx.notify();
+    }
+    pub(crate) fn nav_backwards(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.news_view {
+            return false;
+        }
+        if self
+            .news_page
+            .as_ref()
+            .is_some_and(|page| page.update(cx, |p, c| p.nav_backwards(window, c)))
+        {
+            return true;
+        }
+        if self.article.is_some() {
+            // A Home card seeded this reader directly; there was no News list
+            // between Home and the article. Retain its entity for Forward.
+            self.news_view = false;
+            self.news_forward_to_article = true;
+            cx.notify();
+            return true;
+        }
+        false
+    }
+    pub(crate) fn nav_forwards(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.news_view {
+            return self
+                .news_page
+                .as_ref()
+                .map_or(self.article.is_some(), |page| page.update(cx, |p, c| p.nav_forwards(window, c)));
+        }
+        if self.news_forward_to_article {
+            self.news_view = true;
+            self.news_forward_to_article = false;
+            cx.notify();
+            return true;
+        }
+        false
     }
     fn request_heads(&mut self, server: &InstanceServerSummary, window: &mut Window, cx: &mut Context<Self>) {
         if InterfaceConfig::get(cx).hide_skins {
@@ -1245,14 +1285,13 @@ impl Render for HomePage {
                                     w.refresh();
                                 }),
                         )
-                        .child(DesignButton::new("home-all-news").label("Ver todas →").h(px(24.)).px_0().on_click(
-                            cx.listener(|this, _, _, c| {
-                                this.news_view = true;
-                                this.news_page = None;
-                                this.article = None;
-                                c.notify();
-                            }),
-                        )),
+                        .child(
+                            DesignButton::new("home-all-news")
+                                .label("Ver todas →")
+                                .h(px(24.))
+                                .px_0()
+                                .on_click(cx.listener(|this, _, _, c| this.show_news(c))),
+                        ),
                 ),
         );
         if !self.news_loaded {
@@ -1313,6 +1352,7 @@ impl Render for HomePage {
                         this.news_view = true;
                         this.article = Some(n.id.clone());
                         this.news_page = None;
+                        this.news_forward_to_article = false;
                         c.notify();
                     }))
                     .into_any_element()
