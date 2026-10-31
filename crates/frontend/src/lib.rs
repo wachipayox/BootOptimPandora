@@ -115,6 +115,7 @@ pub fn start(
             ]);
 
             gpui_component::init(cx);
+            cx.set_global(gpui::SmoothScrollSettings(true));
             theme::init(cx);
             pages::news::init(cx);
             InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());

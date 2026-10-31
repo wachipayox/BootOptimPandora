@@ -958,6 +958,7 @@ impl Render for ReadonlyTextFieldWithControls {
                 .aria_label("Ir al principio")
                 .child(Icon::new(PandoraIcon::ArrowUp).size(px(14.)))
                 .on_click(cx.listener(|this, _, _, c| {
+                    this.wheel_motion.cancel();
                     this.scroll_handler.state.borrow_mut().scrolling =
                         GameOutputScrolling::Top { offset: Pixels::ZERO };
                     c.notify();
@@ -967,6 +968,7 @@ impl Render for ReadonlyTextFieldWithControls {
             Button::new("top")
                 .label(t::common::nav::top())
                 .on_click(cx.listener(|this, _, _, c| {
+                    this.wheel_motion.cancel();
                     this.scroll_handler.state.borrow_mut().scrolling =
                         GameOutputScrolling::Top { offset: Pixels::ZERO };
                     c.notify();
@@ -978,6 +980,7 @@ impl Render for ReadonlyTextFieldWithControls {
                 .aria_label("Ir al final")
                 .child(Icon::new(PandoraIcon::ArrowDown).size(px(14.)))
                 .on_click(cx.listener(|this, _, _, c| {
+                    this.wheel_motion.cancel();
                     this.scroll_handler.state.borrow_mut().scrolling = GameOutputScrolling::Bottom;
                     c.notify();
                 }))
@@ -986,6 +989,7 @@ impl Render for ReadonlyTextFieldWithControls {
             Button::new("bottom")
                 .label(t::common::nav::bottom())
                 .on_click(cx.listener(|this, _, _, c| {
+                    this.wheel_motion.cancel();
                     this.scroll_handler.state.borrow_mut().scrolling = GameOutputScrolling::Bottom;
                     c.notify();
                 }))
