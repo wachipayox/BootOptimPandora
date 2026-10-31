@@ -11,7 +11,7 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable, Icon, IndexPath, WindowExt,
+    ActiveTheme as _, Icon, IndexPath, WindowExt,
     button::ButtonVariants,
     h_flex,
     input::{InputEvent, InputState, Textarea, TextareaState},
@@ -860,6 +860,7 @@ fn settings_panel_caption(title: &'static str, caption: impl Into<SharedString>)
                     .flex_1()
                     .min_w_0()
                     .text_right()
+                    .truncate()
                     .text_size(px(11.))
                     .text_color(rgb(theme::INK_MUTED))
                     .child(caption),
@@ -1578,7 +1579,7 @@ impl InstanceSettingsSubpage {
                 }
             })
     }
-    fn render_actions_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_actions_content(&mut self, _cx: &mut Context<Self>) -> AnyElement {
         let worlds = settings_panel_caption(
             "Mundos compartidos",
             "Comparte la carpeta saves con otras instancias mediante un grupo local.",
