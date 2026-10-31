@@ -2253,7 +2253,7 @@ impl BackendState {
                 };
                 let root = self.directories.root_launcher_dir.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    let current_exe = std::env::current_exe().map_err(|error| {
+                    let current_exe = crate::shortcut::launcher_executable().map_err(|error| {
                         log::warn!("Could not locate executable for shortcut: {error}");
                         bridge::message::ShortcutError::Create
                     })?;

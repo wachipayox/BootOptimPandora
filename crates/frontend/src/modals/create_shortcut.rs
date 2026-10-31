@@ -23,6 +23,7 @@ use crate::{
 
 struct ShortcutDialog {
     instance: Entity<InstanceEntry>,
+    launcher_icon: Arc<Image>,
     backend: BackendHandle,
     choice: usize,
     custom: Option<PathBuf>,
@@ -60,12 +61,7 @@ impl ShortcutDialog {
                             .into_any_element()
                     }
                 },
-                1 => img(Arc::new(Image::from_bytes(
-                    ImageFormat::Png,
-                    include_bytes!("../../../../package/windows_icons/icon_256x256.png").to_vec(),
-                )))
-                .size(px(32.))
-                .into_any_element(),
+                1 => img(self.launcher_icon.clone()).size(px(32.)).into_any_element(),
                 _ => Icon::new(PandoraIcon::File).size(px(32.)).into_any_element(),
             };
             let description =
@@ -277,6 +273,10 @@ pub fn open(instance: Entity<InstanceEntry>, backend: BackendHandle, window: &mu
         cx.observe(&instance, |_, _, cx| cx.notify()).detach();
         ShortcutDialog {
             instance,
+            launcher_icon: Arc::new(Image::from_bytes(
+                ImageFormat::Png,
+                include_bytes!("../../../../package/windows_icons/icon_256x256.png").to_vec(),
+            )),
             backend,
             choice: 0,
             custom: None,

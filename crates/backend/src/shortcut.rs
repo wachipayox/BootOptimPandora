@@ -1,5 +1,19 @@
 use bridge::message::{ShortcutError, ShortcutIconChoice};
 use sha2::Digest;
+
+pub fn launcher_executable() -> anyhow::Result<PathBuf> {
+    let current = std::env::current_exe()?;
+    #[cfg(target_os = "linux")]
+    return Ok(linux_executable(&current, std::env::var_os("APPIMAGE").as_deref().map(Path::new))?);
+    #[cfg(not(target_os = "linux"))]
+    Ok(current)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_executable(current: &Path, appimage: Option<&Path>) -> std::io::Result<PathBuf> {
+    // Match the updater: an AppImage's mounted executable vanishes on exit.
+    appimage.map(Path::canonicalize).unwrap_or_else(|| Ok(current.to_owned()))
+}
 use std::{
     io::Cursor,
     path::{Path, PathBuf},
@@ -220,6 +234,15 @@ mod tests {
         let mut encoded = Cursor::new(Vec::new());
         image.write_to(&mut encoded, image::ImageFormat::Png).unwrap();
         encoded.into_inner()
+    }
+    #[test]
+    fn appimage_shortcuts_target_the_persistent_image_instead_of_its_mount() {
+        let scratch = Scratch::new();
+        let appimage = scratch.0.join("Pandora.AppImage");
+        std::fs::write(&appimage, b"test fixture only").unwrap();
+        let mounted = Path::new("/temporary-mount/usr/bin/pandora");
+        assert_eq!(linux_executable(mounted, Some(&appimage)).unwrap(), appimage.canonicalize().unwrap());
+        assert_eq!(linux_executable(mounted, None).unwrap(), mounted);
     }
     #[test]
     fn custom_icon_survives_its_source_and_preserves_proportions_and_pixels() {
