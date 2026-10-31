@@ -1454,8 +1454,7 @@ impl InstanceSettingsSubpage {
                         let instance = self.instance.clone();
                         let backend_handle = self.backend_handle.clone();
                         move |_: &ClickEvent, window, cx| {
-                            let entry = instance.read(cx).clone();
-                            crate::modals::create_shortcut::open(entry, backend_handle.clone(), window, cx);
+                            crate::modals::create_shortcut::open(instance.clone(), backend_handle.clone(), window, cx);
                         }
                     }),
             );

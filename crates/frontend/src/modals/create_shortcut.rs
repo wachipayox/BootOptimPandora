@@ -22,7 +22,7 @@ use crate::{
 };
 
 struct ShortcutDialog {
-    instance: InstanceEntry,
+    instance: Entity<InstanceEntry>,
     backend: BackendHandle,
     choice: usize,
     custom: Option<PathBuf>,
@@ -33,12 +33,13 @@ struct ShortcutDialog {
 
 impl ShortcutDialog {
     fn render(&mut self, dialog: Dialog, _window: &mut Window, cx: &mut Context<Self>) -> Dialog {
+        let instance = self.instance.read(cx).clone();
         let mut options = v_flex().w_full().gap(px(8.));
         for (index, label) in ["Icono de la instancia", "Icono del launcher", "Imagen propia…"].into_iter().enumerate()
         {
             let preview = match index {
                 0 => {
-                    if let Some(bytes) = self.instance.icon.clone() {
+                    if let Some(bytes) = instance.icon.clone() {
                         png_render_cache::render_with_transform(
                             bytes,
                             png_render_cache::ImageTransformation::Resize { width: 32, height: 32 },
@@ -49,7 +50,7 @@ impl ShortcutDialog {
                     } else {
                         Icon::default()
                             .path(
-                                self.instance
+                                instance
                                     .configuration
                                     .instance_fallback_icon
                                     .map(|p| p.as_str())
@@ -175,8 +176,9 @@ impl ShortcutDialog {
         if self.busy {
             return;
         }
+        let instance = self.instance.read(cx).clone();
         let icon = match self.choice {
-            0 => match instance_icon_png(&self.instance, cx) {
+            0 => match instance_icon_png(&instance, cx) {
                 Ok(bytes) => ShortcutIconChoice::Instance(bytes),
                 Err(error) => {
                     self.error = Some(error);
@@ -202,9 +204,9 @@ impl ShortcutDialog {
         let suffix = "desktop";
         #[cfg(target_os = "macos")]
         let suffix = "app";
-        let receiver = cx.prompt_for_new_path(directory, Some(&format!("{}.{suffix}", self.instance.name)));
+        let receiver = cx.prompt_for_new_path(directory, Some(&format!("{}.{suffix}", instance.name)));
         let backend = self.backend.clone();
-        let id = self.instance.id;
+        let id = instance.id;
         let weak = cx.entity().downgrade();
         self.busy = true;
         self.error = None;
@@ -270,15 +272,18 @@ fn instance_icon_png(instance: &InstanceEntry, cx: &App) -> Result<Arc<[u8]>, Sh
     Ok(encoded.into_inner().into())
 }
 
-pub fn open(instance: InstanceEntry, backend: BackendHandle, window: &mut Window, cx: &mut App) {
-    let state = cx.new(|_| ShortcutDialog {
-        instance,
-        backend,
-        choice: 0,
-        custom: None,
-        busy: false,
-        error: None,
-        task: Task::ready(()),
+pub fn open(instance: Entity<InstanceEntry>, backend: BackendHandle, window: &mut Window, cx: &mut App) {
+    let state = cx.new(|cx| {
+        cx.observe(&instance, |_, _, cx| cx.notify()).detach();
+        ShortcutDialog {
+            instance,
+            backend,
+            choice: 0,
+            custom: None,
+            busy: false,
+            error: None,
+            task: Task::ready(()),
+        }
     });
     window.open_dialog(cx, move |dialog, window, cx| {
         cx.update_entity(&state, |this, cx| this.render(dialog, window, cx))

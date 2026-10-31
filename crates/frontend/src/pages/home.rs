@@ -1110,8 +1110,8 @@ impl Render for HomePage {
                         })
                         .on_click(cx.listener(move |this, _, w, c| {
                             this.menu = false;
-                            if let Some(i) = &this.instance {
-                                let i = i.read(c);
+                            if let Some(instance_entity) = &this.instance {
+                                let i = instance_entity.read(c);
                                 let id = i.id;
                                 match ix {
                                     0 => crate::open_folder(&i.dot_minecraft_folder.clone(), w, c),
