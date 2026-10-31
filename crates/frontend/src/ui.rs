@@ -632,6 +632,8 @@ impl LauncherUI {
                     )
                     .child(
                         h_flex()
+                            .w_full()
+                            .min_w_0()
                             .gap(px(4.))
                             .items_center()
                             .when(recently_played, |row| {
@@ -654,15 +656,32 @@ impl LauncherUI {
                                     .flex_shrink_0(),
                                 )
                             })
-                            .child(h_flex().gap(px(8.)).child(icon).child(
-                                v_flex().items_start().child(div().text_size(px(12.)).child(name.clone())).child(
-                                    div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(format!(
-                                        "{} {}",
-                                        i.configuration.loader.pretty_name(),
-                                        i.configuration.minecraft_version
-                                    )),
-                                ),
-                            )),
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap(px(8.))
+                                    .child(div().size(px(28.)).flex_shrink_0().child(icon))
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .items_start()
+                                            .child(div().w_full().truncate().text_size(px(12.)).child(name.clone()))
+                                            .child(
+                                                div()
+                                                    .w_full()
+                                                    .truncate()
+                                                    .text_size(px(10.))
+                                                    .text_color(rgb(theme::INK_DISABLED))
+                                                    .child(format!(
+                                                        "{} {}",
+                                                        i.configuration.loader.pretty_name(),
+                                                        i.configuration.minecraft_version
+                                                    )),
+                                            ),
+                                    ),
+                            ),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         InterfaceConfig::get_mut(cx).home_instance = Some(name.clone());
