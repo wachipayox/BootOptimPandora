@@ -1,4 +1,6 @@
 #[cfg(target_os = "linux")]
+use gpui_component::Disableable;
+#[cfg(target_os = "linux")]
 use schema::instance::InstanceLinuxWrapperConfiguration;
 use std::{path::Path, sync::Arc};
 
