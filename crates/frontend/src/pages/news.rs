@@ -73,7 +73,7 @@ impl ArticleHistory {
 
 #[cfg(test)]
 mod navigation_tests {
-    use super::*;
+    use super::{ArticleHistory, NewsItem};
     fn article(id: &str) -> NewsItem {
         NewsItem {
             id: id.into(),
