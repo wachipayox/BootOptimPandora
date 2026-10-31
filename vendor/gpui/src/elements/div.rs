@@ -1858,9 +1858,9 @@ pub struct Interactivity {
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
-    wheel_motion: Option<crate::SmoothScroll>,
+    pub(crate) wheel_motion: Option<crate::SmoothScroll>,
     pub(crate) ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
-    scroll_max: std::cell::Cell<Point<Pixels>>,
+    pub(crate) scroll_max: std::cell::Cell<Point<Pixels>>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
