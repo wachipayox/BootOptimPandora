@@ -60,6 +60,7 @@ impl std::fmt::Debug for ListState {
 }
 
 struct StateInner {
+    wheel_motion: crate::SmoothScroll,
     last_layout_bounds: Option<Bounds<Pixels>>,
     last_padding: Option<Edges<Pixels>>,
     items: SumTree<ListItem>,
@@ -111,7 +112,7 @@ enum ScrollAnchor {
 /// Controls whether the list automatically follows new content at the end.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum FollowMode {
-    /// Normal scrolling — no automatic following.
+    /// Normal scrolling â€” no automatic following.
     #[default]
     Normal,
     /// The list should auto-scroll along with the tail, when scrolled to bottom.
@@ -313,6 +314,7 @@ impl ListState {
     /// that the list doesn't flicker or pop in when scrolling.
     pub fn new(item_count: usize, alignment: ListAlignment, overdraw: Pixels) -> Self {
         let this = Self(Rc::new(RefCell::new(StateInner {
+            wheel_motion: crate::SmoothScroll::default(),
             last_layout_bounds: None,
             last_padding: None,
             items: SumTree::default(),
@@ -353,6 +355,7 @@ impl ListState {
     ///
     /// Note that this will cause scroll events to be dropped until the next paint.
     pub fn reset(&self, element_count: usize) {
+        self.0.borrow().wheel_motion.cancel();
         let old_count = {
             let state = &mut *self.0.borrow_mut();
             state.reset = true;
@@ -370,6 +373,7 @@ impl ListState {
     /// uniform height hint so the scrollbar thumb is correctly sized from the first
     /// frame even for off-screen items.
     pub fn reset_with_uniform_height(&self, element_count: usize, height: Pixels) {
+        self.0.borrow().wheel_motion.cancel();
         self.reset(element_count);
         self.apply_uniform_item_height(height);
     }
@@ -563,6 +567,7 @@ impl ListState {
 
     /// Scroll the list by the given offset
     pub fn scroll_by(&self, distance: Pixels) {
+        self.0.borrow().wheel_motion.cancel();
         if distance == px(0.) {
             return;
         }
@@ -598,9 +603,10 @@ impl ListState {
     ///
     /// Unlike [`scroll_to_reveal_item`], this uses the total item count as the
     /// anchor, so the list's layout pass will walk backwards from the end and
-    /// always show the bottom of the last item — even when that item is still
+    /// always show the bottom of the last item â€” even when that item is still
     /// growing (e.g. during streaming).
     pub fn scroll_to_end(&self) {
+        self.0.borrow().wheel_motion.cancel();
         let state = &mut *self.0.borrow_mut();
         let item_count = state.items.summary().count;
         state.pending_scroll = None;
@@ -658,6 +664,7 @@ impl ListState {
 
     /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
+        self.0.borrow().wheel_motion.cancel();
         let state = &mut *self.0.borrow_mut();
         let item_count = state.items.summary().count;
         if scroll_top.item_ix >= item_count {
@@ -675,6 +682,7 @@ impl ListState {
 
     /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
+        self.0.borrow().wheel_motion.cancel();
         let state = &mut *self.0.borrow_mut();
 
         let mut scroll_top = state.logical_scroll_top();
@@ -741,6 +749,7 @@ impl ListState {
     /// This will prevent the height reported to the scrollbar from changing during the drag
     /// as items in the overdraw get measured, and help offset scroll position changes accordingly.
     pub fn scrollbar_drag_started(&self) {
+        self.0.borrow().wheel_motion.cancel();
         let mut state = self.0.borrow_mut();
         state.scrollbar_drag_start_height = Some(state.items.summary().height);
     }
@@ -764,6 +773,7 @@ impl ListState {
 
     /// Set the offset from the scrollbar
     pub fn set_offset_from_scrollbar(&self, point: Point<Pixels>) {
+        self.0.borrow().wheel_motion.cancel();
         self.0.borrow_mut().set_offset_from_scrollbar(point);
     }
 
@@ -1602,6 +1612,33 @@ impl Element for List {
             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
                 accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
                 let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
+                let (motion, current, max) = {
+                    let state = list_state.0.borrow();
+                    let padding = state.last_padding.unwrap_or_default();
+                    let max = (state.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
+                    (state.wheel_motion.clone(), -state.scroll_top(&state.logical_scroll_top()), max)
+                };
+                let animated_state = list_state.clone();
+                if motion.queue(
+                    point(px(0.), current),
+                    pixel_delta,
+                    point(px(0.), max),
+                    event.delta.precise(),
+                    window,
+                    cx,
+                    move |next, window, cx| {
+                        let mut state = animated_state.0.borrow_mut();
+                        let top = state.logical_scroll_top();
+                        let current = -state.scroll_top(&top);
+                        if let Some(next) = next {
+                            let height = state.last_layout_bounds.map(|b| b.size.height).unwrap_or(height);
+                            state.scroll(&top, height, point(px(0.), next.y - current), current_view, window, cx);
+                        }
+                        point(px(0.), -state.scroll_top(&state.logical_scroll_top()))
+                    },
+                ) {
+                    return;
+                }
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,
@@ -2340,7 +2377,7 @@ mod test {
     fn test_follow_tail_stays_at_bottom_as_items_grow(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 10 items, each 50px tall → 500px total content, 200px viewport.
+        // 10 items, each 50px tall â†’ 500px total content, 200px viewport.
         // With follow-tail on, the list should always show the bottom.
         let item_height = Rc::new(Cell::new(50usize));
         let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
@@ -2371,7 +2408,7 @@ mod test {
 
         state.set_follow_mode(FollowMode::Tail);
 
-        // First paint — items are 50px, total 500px, viewport 200px.
+        // First paint â€” items are 50px, total 500px, viewport 200px.
         // Follow-tail should anchor to the end.
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
             view.clone().into_any_element()
@@ -2385,7 +2422,7 @@ mod test {
         assert!(state.is_following_tail());
 
         // Simulate items growing (e.g. streaming content makes each item taller).
-        // 10 items × 80px = 800px total.
+        // 10 items Ã— 80px = 800px total.
         item_height.set(80);
         state.remeasure();
 
@@ -2394,11 +2431,11 @@ mod test {
         });
 
         // After growth, follow-tail should have re-anchored to the new end.
-        // 800px total − 200px viewport = 600px offset → item 7 at offset 40px,
+        // 800px total âˆ’ 200px viewport = 600px offset â†’ item 7 at offset 40px,
         // but follow-tail anchors to item_count (10), and layout walks back to
-        // fill 200px, landing at item 7 (7 × 80 = 560, 800 − 560 = 240 > 200,
-        // so item 8: 8 × 80 = 640, 800 − 640 = 160 < 200 → keeps walking →
-        // item 7: offset = 800 − 200 = 600, item_ix = 600/80 = 7, remainder 40).
+        // fill 200px, landing at item 7 (7 Ã— 80 = 560, 800 âˆ’ 560 = 240 > 200,
+        // so item 8: 8 Ã— 80 = 640, 800 âˆ’ 640 = 160 < 200 â†’ keeps walking â†’
+        // item 7: offset = 800 âˆ’ 200 = 600, item_ix = 600/80 = 7, remainder 40).
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 7);
         assert_eq!(offset.offset_in_item, px(40.));
@@ -2409,7 +2446,7 @@ mod test {
     fn test_pause_following_tail_reengages_when_still_at_bottom(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 10 items × 50px = 500px total, 200px viewport.
+        // 10 items Ã— 50px = 500px total, 200px viewport.
         let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
 
         struct TestView(ListState);
@@ -2478,7 +2515,7 @@ mod test {
         });
         state.set_follow_mode(FollowMode::Tail);
 
-        // At the bottom: 500px content, 200px viewport → top at item 6.
+        // At the bottom: 500px content, 200px viewport â†’ top at item 6.
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
             view.clone().into_any_element()
         });
@@ -2519,7 +2556,7 @@ mod test {
     fn test_follow_tail_disengages_on_user_scroll(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 10 items × 50px = 500px total, 200px viewport.
+        // 10 items Ã— 50px = 500px total, 200px viewport.
         let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
 
         struct TestView(ListState);
@@ -2535,7 +2572,7 @@ mod test {
 
         state.set_follow_mode(FollowMode::Tail);
 
-        // Paint with follow-tail — scroll anchored to the bottom.
+        // Paint with follow-tail â€” scroll anchored to the bottom.
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, cx| {
             cx.new(|_| TestView(state.clone())).into_any_element()
         });
@@ -2559,7 +2596,7 @@ mod test {
     fn test_follow_tail_disengages_on_scrollbar_reposition(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 10 items × 50px = 500px total, 200px viewport.
+        // 10 items Ã— 50px = 500px total, 200px viewport.
         let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
 
         struct TestView(ListState);
@@ -2577,7 +2614,7 @@ mod test {
 
         state.set_follow_mode(FollowMode::Tail);
 
-        // Paint with follow-tail — scroll anchored to the bottom.
+        // Paint with follow-tail â€” scroll anchored to the bottom.
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
             view.clone().into_any_element()
         });
@@ -2674,7 +2711,7 @@ mod test {
     fn test_set_follow_tail_snaps_to_bottom(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 10 items × 50px = 500px total, 200px viewport.
+        // 10 items Ã— 50px = 500px total, 200px viewport.
         let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
 
         struct TestView(ListState);
@@ -2705,7 +2742,7 @@ mod test {
         assert_eq!(offset.offset_in_item, px(0.));
         assert!(!state.is_following_tail());
 
-        // Enable follow-tail — this should immediately snap the scroll anchor
+        // Enable follow-tail â€” this should immediately snap the scroll anchor
         // to the end, like the user just sent a prompt.
         state.set_follow_mode(FollowMode::Tail);
 
@@ -2714,7 +2751,7 @@ mod test {
         });
 
         // After paint, scroll should be at the bottom.
-        // 500px total − 200px viewport = 300px offset → item 6, offset 0.
+        // 500px total âˆ’ 200px viewport = 300px offset â†’ item 6, offset 0.
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 6);
         assert_eq!(offset.offset_in_item, px(0.));
@@ -2770,7 +2807,7 @@ mod test {
     fn test_follow_tail_reengages_when_scrolled_back_to_bottom(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 10 items × 50px = 500px total, 200px viewport.
+        // 10 items Ã— 50px = 500px total, 200px viewport.
         let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
 
         struct TestView(ListState);
@@ -2793,7 +2830,7 @@ mod test {
         });
         assert!(state.is_following_tail());
 
-        // Scroll up — follow_tail should suspend (not fully disengage).
+        // Scroll up â€” follow_tail should suspend (not fully disengage).
         cx.simulate_event(ScrollWheelEvent {
             position: point(px(50.), px(100.)),
             delta: ScrollDelta::Pixels(point(px(0.), px(50.))),
@@ -2825,7 +2862,7 @@ mod test {
     fn test_follow_tail_reengagement_not_fooled_by_unmeasured_items(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 20 items × 50px = 1000px total, 200px viewport, 1000px
+        // 20 items Ã— 50px = 1000px total, 200px viewport, 1000px
         // overdraw so all items get measured during the follow_tail
         // paint (matching realistic production settings).
         let state = ListState::new(20, crate::ListAlignment::Top, px(1000.));
@@ -2850,8 +2887,8 @@ mod test {
         });
         assert!(state.is_following_tail());
 
-        // Scroll up a meaningful amount — suspends follow_tail.
-        // 20 items × 50px = 1000px. viewport 200px. scroll_max = 800px.
+        // Scroll up a meaningful amount â€” suspends follow_tail.
+        // 20 items Ã— 50px = 1000px. viewport 200px. scroll_max = 800px.
         // Scrolling up 200px puts us at 600px, clearly not at bottom.
         cx.simulate_event(ScrollWheelEvent {
             position: point(px(50.), px(100.)),
@@ -2865,10 +2902,10 @@ mod test {
         // temporarily wrong (0px for the invalidated item).
         state.remeasure_items(19..20);
 
-        // Paint — layout re-measures the invalidated item with its true
+        // Paint â€” layout re-measures the invalidated item with its true
         // height. The re-engagement check uses these fresh measurements.
         // Since we scrolled 200px up from the 800px max, we're at
-        // ~600px — NOT at the bottom, so follow_tail should NOT
+        // ~600px â€” NOT at the bottom, so follow_tail should NOT
         // re-engage.
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
             view.clone().into_any_element()
@@ -2884,7 +2921,7 @@ mod test {
     fn test_follow_tail_reengages_after_scrollbar_disengagement(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 10 items × 50px = 500px total, 200px viewport, scroll_max = 300px.
+        // 10 items Ã— 50px = 500px total, 200px viewport, scroll_max = 300px.
         let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
 
         struct TestView(ListState);
@@ -2906,11 +2943,11 @@ mod test {
         });
         assert!(state.is_following_tail());
 
-        // Drag the scrollbar up to the middle — follow_tail should suspend.
+        // Drag the scrollbar up to the middle â€” follow_tail should suspend.
         state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
         assert!(!state.is_following_tail());
 
-        // Drag the scrollbar back to the bottom — follow_tail should re-engage
+        // Drag the scrollbar back to the bottom â€” follow_tail should re-engage
         // on the next paint.
         state.set_offset_from_scrollbar(point(px(0.), px(-300.)));
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {

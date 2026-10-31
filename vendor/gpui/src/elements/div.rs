@@ -1146,7 +1146,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     }
 
     /// Report this element as the focused node in the accessibility tree,
-    /// overriding the element that holds real keyboard focus — but only while
+    /// overriding the element that holds real keyboard focus â€” but only while
     /// one of its ancestors actually holds focus.
     ///
     /// This implements the `aria-activedescendant` pattern for composite
@@ -1158,15 +1158,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// produces an accessibility node. Unlike the web's container-side
     /// `aria-activedescendant`, this is set on the descendant; GPUI honors it
     /// only when a focused ancestor is present in the tree, so it is safe to
-    /// set unconditionally on the selected child — if the container isn't
+    /// set unconditionally on the selected child â€” if the container isn't
     /// focused, the claim is ignored.
     fn aria_active_descendant(mut self) -> Self {
         self.interactivity().report_active_descendant_focus = true;
         self
     }
 
-    /// Contribute synthetic accessibility nodes — nodes that don't correspond
-    /// to any element — as children of this element's a11y node. For example,
+    /// Contribute synthetic accessibility nodes â€” nodes that don't correspond
+    /// to any element â€” as children of this element's a11y node. For example,
     /// text runs describing an editor's text content.
     ///
     /// The closure is called after this element is prepainted, and only if it
@@ -1858,7 +1858,9 @@ pub struct Interactivity {
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    wheel_motion: Option<crate::SmoothScroll>,
     pub(crate) ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
+    scroll_max: std::cell::Cell<Point<Pixels>>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
@@ -1971,12 +1973,14 @@ impl Interactivity {
             if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
                 let scroll_handle_state = scroll_handle.0.borrow();
                 self.scroll_offset = Some(scroll_handle_state.offset.clone());
+                self.wheel_motion = Some(scroll_handle_state.wheel_motion.clone());
                 self.ongoing_scroll = Some(scroll_handle_state.ongoing_scroll.clone());
             } else if (self.base_style.overflow.x == Some(Overflow::Scroll)
                 || self.base_style.overflow.y == Some(Overflow::Scroll))
                 && let Some(element_state) = element_state.as_mut()
             {
                 self.scroll_offset = Some(element_state.scroll_offset.get_or_insert_with(Rc::default).clone());
+                self.wheel_motion = Some(element_state.wheel_motion.get_or_insert_with(Default::default).clone());
                 self.ongoing_scroll = Some(
                     element_state
                         .ongoing_scroll
@@ -2133,6 +2137,12 @@ impl Interactivity {
             let scroll_max = Point::from(padded_content_size - bounds.size)
                 .map(round_to_two_decimals)
                 .max(&Default::default());
+            self.scroll_max.set(scroll_max);
+            if scroll_to_bottom {
+                if let Some(motion) = &self.wheel_motion {
+                    motion.cancel();
+                }
+            }
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -2893,6 +2903,8 @@ impl Interactivity {
     fn paint_scroll_listener(&self, hitbox: &Hitbox, style: &Style, window: &mut Window, _cx: &mut App) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let ongoing_scroll = self.ongoing_scroll.clone();
+            let wheel_motion = self.wheel_motion.clone();
+            let scroll_max = self.scroll_max.get();
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
@@ -2901,6 +2913,7 @@ impl Interactivity {
             let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+                    let offset_handle = scroll_offset.clone();
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let mut delta = event.delta.pixel_delta(line_height);
@@ -2928,6 +2941,28 @@ impl Interactivity {
                         } else {
                             delta_x = Pixels::ZERO;
                         }
+                    }
+                    if let Some(motion) = &wheel_motion {
+                        let current = *scroll_offset;
+                        drop(scroll_offset);
+                        let offset = offset_handle.clone();
+                        if motion.queue(
+                            current,
+                            crate::point(delta_x, delta_y),
+                            scroll_max,
+                            event.delta.precise(),
+                            window,
+                            cx,
+                            move |next, _, _| {
+                                if let Some(next) = next {
+                                    *offset.borrow_mut() = next;
+                                }
+                                *offset.borrow()
+                            },
+                        ) {
+                            return;
+                        }
+                        scroll_offset = offset_handle.borrow_mut();
                     }
                     scroll_offset.y += delta_y;
                     scroll_offset.x += delta_x;
@@ -3157,6 +3192,7 @@ pub struct InteractiveElementState {
     /// blur). `None` means no activation key is pending.
     pub(crate) pending_keyboard_down: Option<Rc<RefCell<Option<u64>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    wheel_motion: Option<crate::SmoothScroll>,
     ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
 }
@@ -3655,6 +3691,7 @@ impl ScrollAnchor {
 
 #[derive(Default, Debug)]
 struct ScrollHandleState {
+    wheel_motion: crate::SmoothScroll,
     offset: Rc<RefCell<Point<Pixels>>>,
     ongoing_scroll: Rc<RefCell<OngoingScroll>>,
     bounds: Bounds<Pixels>,
@@ -3756,6 +3793,7 @@ impl ScrollHandle {
 
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
     pub fn scroll_to_item(&self, ix: usize) {
+        self.0.borrow().wheel_motion.cancel();
         let mut state = self.0.borrow_mut();
         state.active_item = Some(ScrollActiveItem {
             index: ix,
@@ -3766,6 +3804,7 @@ impl ScrollHandle {
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
     /// This scrolls the minimal amount to ensure that the child is the first visible element
     pub fn scroll_to_top_of_item(&self, ix: usize) {
+        self.0.borrow().wheel_motion.cancel();
         let mut state = self.0.borrow_mut();
         state.active_item = Some(ScrollActiveItem {
             index: ix,
@@ -3827,6 +3866,7 @@ impl ScrollHandle {
     /// Scrolls to the bottom.
     pub fn scroll_to_bottom(&self) {
         let mut state = self.0.borrow_mut();
+        state.wheel_motion.cancel();
         state.scroll_to_bottom = true;
     }
 
@@ -3835,6 +3875,7 @@ impl ScrollHandle {
     /// As you scroll further down the offset becomes more negative.
     pub fn set_offset(&self, mut position: Point<Pixels>) {
         let state = self.0.borrow();
+        state.wheel_motion.cancel();
         *state.offset.borrow_mut() = position;
     }
 

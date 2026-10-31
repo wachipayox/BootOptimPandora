@@ -688,6 +688,7 @@ fn paint_lines<'a, const REVERSE: bool>(
 
 pub struct ReadonlyTextFieldWithControls {
     designed: bool,
+    wheel_motion: gpui::SmoothScroll,
     scroll_handler: ScrollHandler,
     text_field: Entity<ReadonlyTextField>,
     search_state: Entity<InputState>,
@@ -842,6 +843,7 @@ impl ReadonlyTextFieldWithControls {
 
         Self {
             designed,
+            wheel_motion: gpui::SmoothScroll::default(),
             scroll_handler: ScrollHandler { state: scroll_state },
             text_field,
             search_state,
@@ -1021,13 +1023,40 @@ impl Render for ReadonlyTextFieldWithControls {
                     })
                     .child(div().w_3().h_full().border_y_12().child(Scrollbar::vertical(&self.scroll_handler))),
             )
-            .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, window, cx| {
                 let state = root.scroll_handler.state.borrow();
                 let delta = event.delta.pixel_delta(state.line_height).y;
                 let max_scroll_amount = state.max_scroll_amount();
                 drop(state);
 
-                let current_offset = root.scroll_handler.offset().y;
+                let current_offset = root.scroll_handler.offset().y.clamp(-max_scroll_amount, Pixels::ZERO);
+                let handler = root.scroll_handler.clone();
+                let animation = root.wheel_motion.clone();
+                if root.wheel_motion.queue(
+                    Point::new(Pixels::ZERO, current_offset),
+                    Point::new(Pixels::ZERO, delta),
+                    Point::new(Pixels::ZERO, max_scroll_amount),
+                    event.delta.precise(),
+                    window,
+                    cx,
+                    move |next, _, _| {
+                        let mut state = handler.state.borrow_mut();
+                        let max = state.max_scroll_amount();
+                        if state.active_drag.is_some() {
+                            animation.cancel();
+                        } else if let Some(next) = next {
+                            let offset = next.y.clamp(-max, Pixels::ZERO);
+                            state.scrolling = if offset == -max {
+                                GameOutputScrolling::Bottom
+                            } else {
+                                GameOutputScrolling::Top { offset }
+                            };
+                        }
+                        Point::new(Pixels::ZERO, state.offset().clamp(-max, Pixels::ZERO))
+                    },
+                ) {
+                    return;
+                }
                 let new_offset = (current_offset + delta).clamp(-max_scroll_amount, Pixels::ZERO);
                 if current_offset != new_offset {
                     root.scroll_handler.set_offset(Point::new(Pixels::ZERO, new_offset));

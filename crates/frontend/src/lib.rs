@@ -879,3 +879,6 @@ fn capture_instance_target(page: &str) -> Option<(&str, pages::instance::instanc
     };
     Some((name, tab))
 }
+
+#[cfg(test)]
+mod smooth_scroll_tests;
