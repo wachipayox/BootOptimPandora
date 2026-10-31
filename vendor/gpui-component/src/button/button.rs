@@ -386,6 +386,18 @@ impl Button {
         self
     }
 
+    /// Append a hover callback while retaining the caller's existing handler.
+    pub fn on_hover_composed(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        let previous = self.on_hover.take();
+        self.on_hover = Some(Rc::new(move |hovered, window, cx| {
+            if let Some(previous) = &previous {
+                previous(hovered, window, cx);
+            }
+            handler(hovered, window, cx);
+        }));
+        self
+    }
+
     /// Set the loading icon of the button, it will be used when loading is true.
     ///
     /// Default is a spinner icon.
@@ -733,27 +745,26 @@ impl RenderOnce for Button {
                 on_click(event, window, cx);
             })
         })
-        .when_some(self.on_hover.filter(|_| hoverable), |this, on_hover| {
-            this.on_hover(move |hovered, window, cx| {
-                on_hover(hovered, window, cx);
-            })
-        })
         .map(|this| {
+            let on_hover = self.on_hover.filter(|_| hoverable);
             if let Some(builder) = self.tooltip_builder {
-                this.managed_tooltip(move |window, cx| builder(window, cx))
+                this.managed_tooltip_with_hover(None, move |window, cx| builder(window, cx), on_hover)
             } else if let Some((tooltip, action)) = self.tooltip {
-                this.managed_tooltip(move |window, cx| {
-                    Tooltip::new(tooltip.clone())
-                        .when_some(action.clone(), |this, (action, context)| {
-                            this.action(
-                                action.boxed_clone().as_ref(),
-                                context.as_ref().map(|c| c.as_ref()),
-                            )
-                        })
-                        .build(window, cx)
-                })
+                this.managed_tooltip_with_hover(
+                    None,
+                    move |window, cx| {
+                        Tooltip::new(tooltip.clone())
+                            .when_some(action.clone(), |this, (action, context)| {
+                                this.action(action.boxed_clone().as_ref(), context.as_ref().map(|c| c.as_ref()))
+                            })
+                            .build(window, cx)
+                    },
+                    on_hover,
+                )
             } else {
-                this
+                this.when_some(on_hover, |this, on_hover| {
+                    this.on_hover(move |hovered, window, cx| on_hover(hovered, window, cx))
+                })
             }
         })
         .when(is_focused && self.focus_ring_enabled, |this| {
@@ -1252,6 +1263,48 @@ mod tests {
     use super::*;
     use crate::IconName;
     use gpui::{linear_color_stop, linear_gradient, px};
+
+    #[gpui::test]
+    fn composed_hover_and_managed_tooltip_share_one_listener(cx: &mut gpui::TestAppContext) {
+        use gpui::{Context, Modifiers, Render, point};
+        use std::cell::RefCell;
+
+        struct Harness {
+            events: Rc<RefCell<Vec<(&'static str, bool)>>>,
+            custom_tooltip: bool,
+        }
+        impl Render for Harness {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let user = self.events.clone();
+                let motion = self.events.clone();
+                let mut button = Button::new("hover-tooltip")
+                    .on_hover(move |hovered, _, _| user.borrow_mut().push(("user", *hovered)))
+                    .on_hover_composed(move |hovered, _, _| motion.borrow_mut().push(("motion", *hovered)))
+                    .child(div().debug_selector(|| "hover-tooltip-content".into()).child("Hover"));
+                if self.custom_tooltip {
+                    button.tooltip_builder = Some(Rc::new(|window, cx| Tooltip::new("Tooltip").build(window, cx)));
+                } else {
+                    button = button.tooltip("Tooltip");
+                }
+                div().size(px(160.)).p(px(20.)).child(button)
+            }
+        }
+
+        cx.update(crate::init);
+        for custom_tooltip in [false, true] {
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let (_, window) = cx.add_window_view({
+                let events = events.clone();
+                move |_, _| Harness { events, custom_tooltip }
+            });
+            window.update(|window, cx| window.draw(cx).clear(cx));
+            let bounds = window.debug_bounds("hover-tooltip-content").unwrap();
+            events.borrow_mut().clear();
+            window.simulate_mouse_move(bounds.center(), None, Modifiers::default());
+            window.simulate_mouse_move(point(px(300.), px(300.)), None, Modifiers::default());
+            assert_eq!(*events.borrow(), [("user", true), ("motion", true), ("user", false), ("motion", false)]);
+        }
+    }
 
     #[gpui::test]
     fn disabled_legacy_button_keeps_existing_pointer_blocking(cx: &mut gpui::TestAppContext) {

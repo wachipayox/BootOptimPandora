@@ -249,6 +249,15 @@ pub(crate) trait ManagedTooltipExt:
         preferred_placement: Option<Placement>,
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self {
+        self.managed_tooltip_with_hover(preferred_placement, build_tooltip, None)
+    }
+
+    fn managed_tooltip_with_hover(
+        self,
+        preferred_placement: Option<Placement>,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+        on_hover: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+    ) -> Self {
         let build_tooltip = Rc::new(build_tooltip);
         let trigger_bounds_cell: Rc<Cell<Bounds<Pixels>>> = Rc::new(Cell::new(Bounds::default()));
         let bounds_writer = trigger_bounds_cell.clone();
@@ -260,14 +269,15 @@ pub(crate) trait ManagedTooltipExt:
             let trigger_bounds_cell = trigger_bounds_cell.clone();
             let build_tooltip = build_tooltip.clone();
             move |hovered, window, cx| {
+                if let Some(on_hover) = &on_hover {
+                    on_hover(hovered, window, cx);
+                }
                 if let Some(overlay) = Root::tooltip_overlay(window, cx) {
                     if *hovered {
                         let bounds = trigger_bounds_cell.get();
                         overlay.update(cx, |o: &mut BaseTooltipOverlay, cx| {
                             let build = build_tooltip.clone();
-                            let request = BaseTooltipRequest::new(bounds, move |window, cx| {
-                                build(window, cx)
-                            });
+                            let request = BaseTooltipRequest::new(bounds, move |window, cx| build(window, cx));
                             let request = match preferred_placement {
                                 Some(placement) => request.placement(placement),
                                 None => request,

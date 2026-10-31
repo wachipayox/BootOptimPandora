@@ -74,6 +74,10 @@ impl DesignButton {
         self.inner = self.inner.toggled(value);
         self
     }
+    pub fn on_hover(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.inner = self.inner.on_hover(handler);
+        self
+    }
     pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.inner = self.inner.on_click(handler);
         self
@@ -180,7 +184,7 @@ impl RenderOnce for DesignButton {
                 let key_motion = motion.clone();
                 self.inner = self
                     .inner
-                    .on_hover(move |hovered, w, c| {
+                    .on_hover_composed(move |hovered, w, c| {
                         hover_motion.update(c, |m, _| m.event(Some(*hovered), None, Instant::now(), colors));
                         w.refresh();
                     })
