@@ -1880,6 +1880,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         direction: Option<MoveDirection>,
         cx: &mut Context<Self>,
     ) {
+        self.wheel_motion.cancel();
         let Some(last_layout) = self.last_layout.as_ref() else {
             return;
         };
