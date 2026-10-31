@@ -333,6 +333,7 @@ pub struct InputBaseState<M: InputModeKind> {
     /// The maximum value for [`super::NumberInput`]. See [`Self::max`].
     pub(crate) number_max: Option<f64>,
     pub(crate) scroll_handle: ScrollHandle,
+    wheel_motion: gpui::SmoothScroll,
     /// The deferred scroll offset to apply on next layout.
     pub(crate) deferred_scroll_offset: Option<Point<Pixels>>,
     /// The size of the scrollable content.
@@ -641,6 +642,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             last_selected_range: None,
             last_cursor: None,
             scroll_handle: ScrollHandle::new(),
+            wheel_motion: gpui::SmoothScroll::default(),
             scroll_size: gpui::size(px(0.), px(0.)),
             editor_scrollbar_snapshot: Cell::new(None),
             editor_paddings: Edges::default(),
@@ -1788,20 +1790,49 @@ impl<M: InputModeKind> InputBaseState<M> {
         }
     }
 
-    pub(super) fn on_scroll_wheel(
-        &mut self,
-        event: &ScrollWheelEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let line_height = self
-            .last_layout
-            .as_ref()
-            .map(|layout| layout.line_height)
-            .unwrap_or(window.line_height());
+    pub(super) fn on_scroll_wheel(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let line_height = self.last_layout.as_ref().map(|layout| layout.line_height).unwrap_or(window.line_height());
         let delta = event.delta.pixel_delta(line_height);
 
         let old_offset = self.scroll_handle.offset();
+        let safe_x = if self.text_align == TextAlign::Left {
+            px(0.)
+        } else {
+            CURSOR_WIDTH
+        };
+        let max = gpui::point(
+            (self.scroll_size.width - self.input_bounds.size.width + safe_x).max(px(0.)),
+            if self.is_single_line() {
+                px(0.)
+            } else {
+                (self.scroll_size.height - self.input_bounds.size.height).max(px(0.))
+            },
+        );
+        let target = gpui::point(
+            (old_offset.x + delta.x).clamp(-max.x, px(0.)),
+            (old_offset.y + delta.y).clamp(-max.y, px(0.)),
+        );
+        if target != old_offset {
+            let weak = cx.entity().downgrade();
+            if self
+                .wheel_motion
+                .queue(old_offset, delta, max, event.delta.precise(), window, cx, move |next, _, cx| {
+                    weak.update(cx, |this, cx| {
+                        if let Some(next) = next {
+                            this.update_scroll_offset(Some(next), cx);
+                        }
+                        this.scroll_handle.offset()
+                    })
+                    .unwrap_or_default()
+                })
+            {
+                self.diagnostic_popover = None;
+                cx.stop_propagation();
+                return;
+            }
+        } else {
+            self.wheel_motion.cancel();
+        }
         self.update_scroll_offset(Some(old_offset + delta), cx);
 
         // Only stop propagation if the offset actually changed
@@ -1849,6 +1880,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         direction: Option<MoveDirection>,
         cx: &mut Context<Self>,
     ) {
+        self.wheel_motion.cancel();
         let Some(last_layout) = self.last_layout.as_ref() else {
             return;
         };
@@ -2390,6 +2422,7 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     pub(super) fn on_key_down(&mut self, _: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.wheel_motion.cancel();
         self.pause_blink_cursor(cx);
     }
 

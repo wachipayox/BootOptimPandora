@@ -2,11 +2,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::{
-    App, Axis, BorderStyle, Bounds, ContentMask, Edges, Element, ElementId, GlobalElementId,
-    Hitbox, Hsla, InteractiveElement as _, IntoElement, IsZero as _, LayoutId, OngoingScroll,
-    PaintQuad, ParentElement as _, Point, Position, ScrollHandle, ScrollWheelEvent,
-    StatefulInteractiveElement as _, Style, StyleRefinement, Styled as _, Window, div, px,
-    relative,
+    App, Axis, BorderStyle, Bounds, ContentMask, Edges, Element, ElementId, GlobalElementId, Hitbox, Hsla,
+    InteractiveElement as _, IntoElement, IsZero as _, LayoutId, OngoingScroll, PaintQuad, ParentElement as _, Point,
+    Position, ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement as _, Style, StyleRefinement, Styled as _,
+    Window, div, px, relative,
 };
 use gpui::{Corners, Pixels};
 
@@ -230,9 +229,7 @@ impl Element for ScrollableMask {
                     // trackpad swipe cannot flip which mask consumes it from one
                     // event to the next. Line deltas carry no touch phase.
                     if event.delta.precise() {
-                        ongoing_scroll
-                            .borrow_mut()
-                            .lock_axis(&mut delta, event.touch_phase);
+                        ongoing_scroll.borrow_mut().lock_axis(&mut delta, event.touch_phase);
                     }
 
                     // Limit for only one way scrolling at same time.
@@ -256,10 +253,21 @@ impl Element for ScrollableMask {
                         let current = offset.y.clamp(-axis_max, px(0.));
                         let new_offset = (current + delta.y).clamp(-axis_max, px(0.));
                         if new_offset == current {
-                            // At the edge or no overflow: bubble to the parent.
+                            // At the edge or no overflow: cancel pending travel and bubble.
+                            scroll_handle.set_offset(offset);
                             return;
                         }
 
+                        if scroll_handle.animate_wheel(
+                            gpui::point(px(0.), delta.y),
+                            scroll_handle.max_offset(),
+                            event.delta.precise(),
+                            window,
+                            cx,
+                        ) {
+                            cx.stop_propagation();
+                            return;
+                        }
                         offset.y = new_offset;
                         scroll_handle.set_offset(offset);
                         cx.notify(view_id);
@@ -275,6 +283,16 @@ impl Element for ScrollableMask {
                     // event is consumed rather than turned into a parent
                     // scroll.
                     if offset != scroll_handle.offset() {
+                        if scroll_handle.animate_wheel(
+                            gpui::point(delta.x, px(0.)),
+                            scroll_handle.max_offset(),
+                            event.delta.precise(),
+                            window,
+                            cx,
+                        ) {
+                            cx.stop_propagation();
+                            return;
+                        }
                         scroll_handle.set_offset(offset);
                         cx.notify(view_id);
                         cx.stop_propagation();
@@ -289,8 +307,8 @@ impl Element for ScrollableMask {
 mod tests {
     use super::*;
     use gpui::{
-        Context, IntoElement, ListAlignment, ListState, Render, ScrollDelta, ScrollWheelEvent,
-        TestAppContext, VisualTestContext, Window, div, list, point, px,
+        Context, IntoElement, ListAlignment, ListState, Render, ScrollDelta, ScrollWheelEvent, TestAppContext,
+        VisualTestContext, Window, div, list, point, px,
     };
 
     struct HorizontalScrollAreaTest {

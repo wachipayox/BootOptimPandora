@@ -115,6 +115,7 @@ pub fn start(
             ]);
 
             gpui_component::init(cx);
+            cx.set_global(gpui::SmoothScrollSettings(true));
             theme::init(cx);
             pages::news::init(cx);
             InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
@@ -879,3 +880,6 @@ fn capture_instance_target(page: &str) -> Option<(&str, pages::instance::instanc
     };
     Some((name, tab))
 }
+
+#[cfg(test)]
+mod smooth_scroll_tests;
