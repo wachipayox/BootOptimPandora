@@ -863,6 +863,7 @@ fn settings_panel(title: &'static str) -> Div {
 
 fn settings_panel_caption(title: &'static str, caption: impl Into<SharedString>) -> Div {
     let caption: SharedString = caption.into();
+    let tooltip = caption.clone();
     v_flex().w_full().gap(px(10.)).px(px(18.)).py(px(16.)).bg(rgb(theme::PANEL)).child(
         h_flex()
             .w_full()
@@ -879,13 +880,17 @@ fn settings_panel_caption(title: &'static str, caption: impl Into<SharedString>)
             )
             .child(
                 div()
+                    .id(SharedString::from(format!("settings-caption-{title}")))
                     .flex_1()
                     .min_w_0()
                     .text_right()
                     .truncate()
                     .text_size(px(11.))
                     .text_color(rgb(theme::INK_MUTED))
-                    .child(caption),
+                    .child(caption)
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                    }),
             ),
     )
 }
