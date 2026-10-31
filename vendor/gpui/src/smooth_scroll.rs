@@ -97,7 +97,11 @@ impl SmoothScroll {
         if let Some(motion) = state.motion.as_mut() {
             motion.push(values(current), values(delta), values(max), now);
         } else {
-            state.motion = Some(WheelMotion::new(values(current), values(delta), values(max), now));
+            let motion = WheelMotion::new(values(current), values(delta), values(max), now);
+            if motion.target == values(current) {
+                return true;
+            }
+            state.motion = Some(motion);
         }
         let generation = state.generation;
         drop(state);
