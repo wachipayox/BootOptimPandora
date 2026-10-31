@@ -1004,8 +1004,6 @@ impl Render for HomePage {
                         crate::background::AppBackground::Artwork(config.last_played_artwork.clone());
                 }
             }
-            let id = i.id;
-            let name = i.name.clone();
             #[allow(unused_mut)]
             let mut state = i.status;
             #[cfg(feature = "ui-capture")]
@@ -1014,54 +1012,9 @@ impl Render for HomePage {
                 Ok("home-optimizing") => state = InstanceStatus::Optimizing,
                 _ => {},
             }
-            match state {
-                InstanceStatus::Launching => {
-                    play = PlayButton::new("home-play", "Abriendo Minecraft", None).title("Iniciando").disabled(true)
-                },
-                InstanceStatus::Stopping => {
-                    play = PlayButton::new("home-play", "Cerrando Minecraft", None)
-                        .title("Deteniendo")
-                        .disabled(true)
-                },
-                InstanceStatus::Optimizing => {
-                    let progress = i.optimization.map(|p| p.0).unwrap_or(0.).clamp(0., 1.);
-                    play = PlayButton::new(
-                        "home-play",
-                        format!("Creando la caché de arranque · {:.0} %", progress * 100.),
-                        None,
-                    )
-                    .title("Iniciando")
-                    .tint(0x176daf60)
-                    .progress(progress);
-                },
-                InstanceStatus::Running => {
-                    play = PlayButton::new("home-play", "En marcha", None)
-                        .title("Detener")
-                        .stop_icon()
-                        .tint(0xc52222b0)
-                        .on_click(move |_, _, _| data.backend_handle.send(MessageToBackend::KillInstance { id }))
-                },
-                InstanceStatus::NotRunning => {
-                    play = play.disabled(root::inherited_operation_active(id)).on_click(move |_, w, c| {
-                        if data.accounts.read(c).selected_account.is_none() {
-                            root::open_home_accounts(c);
-                        } else {
-                            root::start_instance(id, name.clone(), None, &data, w, c);
-                        }
-                    })
-                },
-            }
+            play = crate::component::instance_play::instance_play_button("home-play", i, state, &data, window, cx);
         } else {
             play = play.add_instance().on_click(move |_, w, c| add_instance(&data, w, c));
-        }
-        if let Some((progress, count, total)) = instance.as_ref().and_then(|i| root::home_update_progress(i.id)) {
-            let detail = if total > 0 {
-                format!("{:.0} % · {} de {} MB", progress * 100., count / 1024 / 1024, total / 1024 / 1024)
-            } else {
-                String::new()
-            };
-            play = PlayButton::new("home-play", detail, None).updating(progress);
-            window.request_animation_frame();
         }
         let left = if let Some(i) = &instance {
             let text = if i.playtime.last_played_unix_ms.is_none() && i.playtime.total_secs == 0 {

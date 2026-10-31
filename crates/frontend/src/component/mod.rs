@@ -75,3 +75,5 @@ pub fn create_styled_text(text: &schema::text_component::FlatTextComponent, gray
 }
 
 pub mod global_profile_carousel;
+
+pub mod instance_play;
