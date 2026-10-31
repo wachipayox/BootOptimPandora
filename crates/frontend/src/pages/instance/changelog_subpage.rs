@@ -8,7 +8,7 @@ use bridge::{handle::BackendHandle, instance::InstanceID, message::MessageToBack
 use gpui::{prelude::*, *};
 use gpui_component::{checkbox::Checkbox, h_flex, scroll::ScrollableElement, v_flex};
 use schema::changelog::{ChangelogEntry, ChangelogQuery, ProfileChangelog};
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 pub struct InstanceChangelogSubpage {
     backend: BackendHandle,
@@ -53,6 +53,24 @@ fn relative_date(value: &str) -> String {
 impl InstanceChangelogSubpage {
     pub fn new(id: InstanceID, backend: BackendHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let stones = cx.new(|cx| StoneField::new(window, cx));
+        #[cfg(feature = "ui-capture")]
+        if crate::capture::local_fixture()
+            && let Some(history) = std::env::var_os("WBOMBO_UI_CAPTURE_CHANGELOG")
+                .and_then(|path| std::fs::read(path).ok())
+                .and_then(|bytes| serde_json::from_slice::<ProfileChangelog>(&bytes).ok())
+        {
+            log::info!("instance-changelog-ready pid={}", std::process::id());
+            return Self {
+                backend,
+                history,
+                hidden: BTreeSet::new(),
+                kind: 0,
+                period: 2,
+                failed: false,
+                loaded: true,
+                stones,
+            };
+        }
         let (send, receive) = tokio::sync::oneshot::channel();
         backend.send(MessageToBackend::GetInstanceProfileInfo { id, channel: send });
         let loader = backend.clone();
@@ -85,13 +103,10 @@ impl InstanceChangelogSubpage {
                     Ok(Ok(page)) => {
                         let next = page.next_cursor.clone();
                         if this
-                            .update(cx, |this, cx| {
+                            .update(cx, |this, _| {
                                 this.history.profile_id = page.profile_id;
                                 this.history.lineage = page.lineage;
                                 this.history.entries.extend(page.entries);
-                                this.loaded = true;
-                                cx.notify();
-                                log::info!("instance-changelog-ready pid={}", std::process::id());
                             })
                             .is_err()
                         {
@@ -103,16 +118,18 @@ impl InstanceChangelogSubpage {
                         }
                     },
                     _ => {
-                        let _ = this.update(cx, |this, cx| {
-                            this.loaded = true;
+                        let _ = this.update(cx, |this, _| {
                             this.failed = true;
-                            cx.notify();
-                            log::info!("instance-changelog-ready pid={}", std::process::id());
                         });
                         break;
                     },
                 }
             }
+            let _ = this.update(cx, |this, cx| {
+                this.loaded = true;
+                cx.notify();
+                log::info!("instance-changelog-ready pid={}", std::process::id());
+            });
         })
         .detach();
         Self {
@@ -294,15 +311,23 @@ impl InstanceChangelogSubpage {
 }
 impl Render for InstanceChangelogSubpage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Deterministic diagnostic frames never hold a real request open.
+        #[cfg(feature = "ui-capture")]
+        let capture_opacity = std::env::var("WBOMBO_UI_CAPTURE_STATE").ok().and_then(|state| match state.as_str() {
+            "loading" => Some(0.),
+            "revealing" => Some(0.5),
+            _ => None,
+        });
+        #[cfg(not(feature = "ui-capture"))]
+        let capture_opacity: Option<f32> = None;
+        let loaded = self.loaded && capture_opacity != Some(0.);
         let count = self.history.entries.iter().filter(|entry| self.visible(entry)).count();
         let mut rows = v_flex()
             .relative()
             .w_full()
-            .min_h_full()
             .px(px(28.))
             .pt(px(22.))
             .pb(px(96.))
-            .child(self.stones.clone())
             .child(
                 div()
                     .absolute()
@@ -336,6 +361,34 @@ impl Render for InstanceChangelogSubpage {
                     .child("No se ha podido cargar el changelog."),
             );
         }
+        let foreground = if loaded {
+            rows.with_animation("changelog-reveal", Animation::new(Duration::from_millis(300)), move |d, progress| {
+                d.opacity(capture_opacity.unwrap_or(progress))
+            })
+            .into_any_element()
+        } else {
+            v_flex()
+                .w_full()
+                .min_h_full()
+                .items_center()
+                .justify_center()
+                .child(
+                    h_flex()
+                        .gap(px(10.))
+                        .text_size(px(13.))
+                        .text_color(rgb(theme::INK_MUTED))
+                        .child(gpui_component::spinner::Spinner::new())
+                        .child("Cargando el changelog…"),
+                )
+                .into_any_element()
+        };
+        let filters = div().w(px(260.)).h_full().flex_shrink_0().bg(rgba(0x08080af2)).when(loaded, |d| {
+            d.child(div().size_full().child(self.filters(cx)).with_animation(
+                "changelog-filter-reveal",
+                Animation::new(Duration::from_millis(300)),
+                move |d, progress| d.opacity(capture_opacity.unwrap_or(progress)),
+            ))
+        });
         h_flex()
             .size_full()
             .items_start()
@@ -346,9 +399,9 @@ impl Render for InstanceChangelogSubpage {
                     .min_w_0()
                     .h_full()
                     .overflow_y_scrollbar()
-                    .child(rows),
+                    .child(div().relative().w_full().min_h_full().child(self.stones.clone()).child(foreground)),
             )
-            .child(self.filters(cx))
+            .child(filters)
     }
 }
 

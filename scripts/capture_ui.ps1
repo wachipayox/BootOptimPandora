@@ -16,7 +16,8 @@ param(
     [switch]$StartupScreens,
     [string]$LauncherUpdateFixture,
     [string]$NewsFixture,
-    [ValidateSet('advanced','version','expanded','editing')][string]$CaptureState,
+    [string]$ChangelogFixture,
+    [ValidateSet('advanced','version','expanded','editing','loading','revealing')][string]$CaptureState,
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
@@ -327,9 +328,11 @@ function Invoke-CaptureCli([string[]]$Arguments) {
     if ($cli.ExitCode -ne 0) { throw "Capture CLI failed ($($cli.ExitCode)); inspect isolated capture-cli files." }
 }
 $oldNewsFixture = $env:WBOMBO_UI_CAPTURE_NEWS
+$oldChangelogFixture = $env:WBOMBO_UI_CAPTURE_CHANGELOG
 $oldDragRegions = $env:WBOMBO_UI_CAPTURE_DRAG_REGIONS
 if ($DragRegions) {$env:WBOMBO_UI_CAPTURE_DRAG_REGIONS='1'} else {Remove-Item Env:WBOMBO_UI_CAPTURE_DRAG_REGIONS -ErrorAction SilentlyContinue}
 if ($NewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS = (Resolve-Path -LiteralPath $NewsFixture).Path }
+if ($ChangelogFixture) { $env:WBOMBO_UI_CAPTURE_CHANGELOG = (Resolve-Path -LiteralPath $ChangelogFixture).Path }
 $createdInstance = $false
 $distributionCaptureActive = $false
 $distributionOriginalConfig = $null
@@ -637,6 +640,8 @@ try {
         launcher = 'BootOptimPandora'
         executableSha256 = $executableHash
         executableSourceCommit = $ExecutableSourceCommit
+        captureState = $CaptureState
+        changelogFixtureSha256 = if ($ChangelogFixture) { (Get-FileHash -LiteralPath $ChangelogFixture -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
         launcherUpdateFixtureSha256 = if ($LauncherUpdateFixture) { (Get-FileHash -LiteralPath $LauncherUpdateFixture -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
         captureScriptCommit = (git -C $repo rev-parse HEAD)
         captureScriptSha256 = $scriptHashAtStart
@@ -657,6 +662,7 @@ try {
     if ($null -ne $oldLauncherUpdateFixture) { $env:WBOMBO_UI_CAPTURE_LAUNCHER_RELEASES=$oldLauncherUpdateFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_LAUNCHER_RELEASES -ErrorAction SilentlyContinue }
     if ($null -ne $oldFramebufferDirectory) { $env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR=$oldFramebufferDirectory } else { Remove-Item Env:WBOMBO_UI_CAPTURE_FRAMEBUFFER_DIR -ErrorAction SilentlyContinue }
     if ($null -ne $oldNewsFixture) { $env:WBOMBO_UI_CAPTURE_NEWS=$oldNewsFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_NEWS -ErrorAction SilentlyContinue }
+    if ($null -ne $oldChangelogFixture) { $env:WBOMBO_UI_CAPTURE_CHANGELOG=$oldChangelogFixture } else { Remove-Item Env:WBOMBO_UI_CAPTURE_CHANGELOG -ErrorAction SilentlyContinue }
     if ($null -ne $proc -and -not $proc.HasExited) {
         Close-CapturedProcess $proc
     }
