@@ -60,6 +60,7 @@ impl std::fmt::Debug for ListState {
 }
 
 struct StateInner {
+    wheel_motion: crate::SmoothScroll,
     last_layout_bounds: Option<Bounds<Pixels>>,
     last_padding: Option<Edges<Pixels>>,
     items: SumTree<ListItem>,
@@ -313,6 +314,7 @@ impl ListState {
     /// that the list doesn't flicker or pop in when scrolling.
     pub fn new(item_count: usize, alignment: ListAlignment, overdraw: Pixels) -> Self {
         let this = Self(Rc::new(RefCell::new(StateInner {
+            wheel_motion: crate::SmoothScroll::default(),
             last_layout_bounds: None,
             last_padding: None,
             items: SumTree::default(),
@@ -353,6 +355,7 @@ impl ListState {
     ///
     /// Note that this will cause scroll events to be dropped until the next paint.
     pub fn reset(&self, element_count: usize) {
+        self.0.borrow().wheel_motion.cancel();
         let old_count = {
             let state = &mut *self.0.borrow_mut();
             state.reset = true;
@@ -370,6 +373,7 @@ impl ListState {
     /// uniform height hint so the scrollbar thumb is correctly sized from the first
     /// frame even for off-screen items.
     pub fn reset_with_uniform_height(&self, element_count: usize, height: Pixels) {
+        self.0.borrow().wheel_motion.cancel();
         self.reset(element_count);
         self.apply_uniform_item_height(height);
     }
@@ -563,6 +567,7 @@ impl ListState {
 
     /// Scroll the list by the given offset
     pub fn scroll_by(&self, distance: Pixels) {
+        self.0.borrow().wheel_motion.cancel();
         if distance == px(0.) {
             return;
         }
@@ -601,6 +606,7 @@ impl ListState {
     /// always show the bottom of the last item — even when that item is still
     /// growing (e.g. during streaming).
     pub fn scroll_to_end(&self) {
+        self.0.borrow().wheel_motion.cancel();
         let state = &mut *self.0.borrow_mut();
         let item_count = state.items.summary().count;
         state.pending_scroll = None;
@@ -658,6 +664,7 @@ impl ListState {
 
     /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
+        self.0.borrow().wheel_motion.cancel();
         let state = &mut *self.0.borrow_mut();
         let item_count = state.items.summary().count;
         if scroll_top.item_ix >= item_count {
@@ -675,6 +682,7 @@ impl ListState {
 
     /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
+        self.0.borrow().wheel_motion.cancel();
         let state = &mut *self.0.borrow_mut();
 
         let mut scroll_top = state.logical_scroll_top();
@@ -741,6 +749,7 @@ impl ListState {
     /// This will prevent the height reported to the scrollbar from changing during the drag
     /// as items in the overdraw get measured, and help offset scroll position changes accordingly.
     pub fn scrollbar_drag_started(&self) {
+        self.0.borrow().wheel_motion.cancel();
         let mut state = self.0.borrow_mut();
         state.scrollbar_drag_start_height = Some(state.items.summary().height);
     }
@@ -764,6 +773,7 @@ impl ListState {
 
     /// Set the offset from the scrollbar
     pub fn set_offset_from_scrollbar(&self, point: Point<Pixels>) {
+        self.0.borrow().wheel_motion.cancel();
         self.0.borrow_mut().set_offset_from_scrollbar(point);
     }
 
@@ -1602,6 +1612,33 @@ impl Element for List {
             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
                 accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
                 let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
+                let (motion, current, max) = {
+                    let state = list_state.0.borrow();
+                    let padding = state.last_padding.unwrap_or_default();
+                    let max = (state.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
+                    (state.wheel_motion.clone(), -state.scroll_top(&state.logical_scroll_top()), max)
+                };
+                let animated_state = list_state.clone();
+                if motion.queue(
+                    point(px(0.), current),
+                    pixel_delta,
+                    point(px(0.), max),
+                    event.delta.precise(),
+                    window,
+                    cx,
+                    move |next, window, cx| {
+                        let mut state = animated_state.0.borrow_mut();
+                        let top = state.logical_scroll_top();
+                        let current = -state.scroll_top(&top);
+                        if let Some(next) = next {
+                            let height = state.last_layout_bounds.map(|b| b.size.height).unwrap_or(height);
+                            state.scroll(&top, height, point(px(0.), next.y - current), current_view, window, cx);
+                        }
+                        point(px(0.), -state.scroll_top(&state.logical_scroll_top()))
+                    },
+                ) {
+                    return;
+                }
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,
