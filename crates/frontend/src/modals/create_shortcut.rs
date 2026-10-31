@@ -271,7 +271,8 @@ fn instance_icon_png(instance: &InstanceEntry, cx: &App) -> Result<Arc<[u8]>, Sh
 pub fn open(instance: Entity<InstanceEntry>, backend: BackendHandle, window: &mut Window, cx: &mut App) {
     let state = cx.new(|cx| {
         cx.observe(&instance, |_, _, cx| cx.notify()).detach();
-        ShortcutDialog {
+        #[allow(unused_mut)]
+        let mut dialog = ShortcutDialog {
             instance,
             launcher_icon: Arc::new(Image::from_bytes(
                 ImageFormat::Png,
@@ -283,7 +284,21 @@ pub fn open(instance: Entity<InstanceEntry>, backend: BackendHandle, window: &mu
             busy: false,
             error: None,
             task: Task::ready(()),
+        };
+        #[cfg(feature = "ui-capture")]
+        if crate::capture::local_fixture()
+            && std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p.starts_with("shortcut:"))
+        {
+            match std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() {
+                Ok("launcher") => dialog.choice = 1,
+                Ok("custom") => {
+                    dialog.choice = 2;
+                    dialog.custom = std::env::var_os("WBOMBO_UI_CAPTURE_SHORTCUT_IMAGE").map(PathBuf::from);
+                },
+                _ => {},
+            }
         }
+        dialog
     });
     window.open_dialog(cx, move |dialog, window, cx| {
         cx.update_entity(&state, |this, cx| this.render(dialog, window, cx))

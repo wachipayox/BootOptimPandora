@@ -129,3 +129,5 @@ verify the eight-second intro cap or the 1.6-second normal-launch cap; it does
 not affect ordinary builds. Startup timing
 logs distinguish Rust main entry, native window creation, first paint submission,
 visual readiness and reveal start. Paint submission is not GPU Present latency.
+
+`shortcut:agente-274-…` opens the actual shortcut icon-choice dialog on the owned fixture. `-CaptureState launcher|custom` selects cosmetic choices without opening an OS file picker or writing a shortcut. For custom, `WBOMBO_UI_CAPTURE_SHORTCUT_IMAGE` supplies the owned local fixture path. These screenshots do not prove actual file-picker clicks or Explorer icon display.

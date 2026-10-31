@@ -17,7 +17,7 @@ param(
     [string]$LauncherUpdateFixture,
     [string]$NewsFixture,
     [string]$ChangelogFixture,
-    [ValidateSet('advanced','version','expanded','editing','loading','revealing')][string]$CaptureState,
+    [ValidateSet('advanced','version','expanded','editing','loading','revealing','launcher','custom')][string]$CaptureState,
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,
@@ -492,8 +492,9 @@ try {
         }
         $instanceReadyMarkers = @()
         if ($screen.page -match '^instance-(mods|resources|shaders):') { $instanceReadyMarkers=@('instance-content-ready','instance-content-origin-ready') }
-        if ($screen.page -match '^(instance-settings|derived|duplicate):') { $instanceReadyMarkers=@('instance-settings-profile-ready','instance-settings-group-ready','instance-artwork-ready','instance-memory-ready') }
+        if ($screen.page -match '^(instance-settings|derived|duplicate|shortcut):') { $instanceReadyMarkers=@('instance-settings-profile-ready','instance-settings-group-ready','instance-artwork-ready','instance-memory-ready') }
         if ($screen.page -match '^(derived|duplicate):') { $instanceReadyMarkers += 'instance-derived-ready' }
+        if ($screen.page.StartsWith('shortcut:')) { $instanceReadyMarkers += 'launcher-dialog-ready' }
         if ($screen.page -match '^instance-overwrites:') { $instanceReadyMarkers=@('instance-overwrites-ready') }
         if ($screen.page -match '^instance-(logs|crashes):') { $instanceReadyMarkers=@('instance-log-ready') }
         if ($screen.page -match '^instance-changelog:') { $instanceReadyMarkers=@('instance-changelog-ready','instance-stone-ready') }
@@ -619,7 +620,7 @@ try {
                 Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
             }
         }
-        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page.StartsWith('add-local-') -or $screen.page.StartsWith('add-profile-') -or $screen.page -in @('skins','skins-url','skins-copy','skins-import','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news','window-dialog') -or $screen.page -match '^(instance-|derived:|duplicate:|update:|delete:|export:|groups:)') {
+        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page.StartsWith('add-local-') -or $screen.page.StartsWith('add-profile-') -or $screen.page -in @('skins','skins-url','skins-copy','skins-import','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news','window-dialog') -or $screen.page -match '^(instance-|derived:|duplicate:|update:|delete:|export:|groups:|shortcut:)') {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
             if (-not [CaptureWindow]::PostMessage($captureHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }
