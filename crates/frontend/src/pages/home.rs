@@ -1124,7 +1124,7 @@ impl Render for HomePage {
                                     },
                                     3 => root::repair_game_files(id, &this.data.backend_handle, w, c),
                                     4 => crate::modals::create_shortcut::open(
-                                        i.clone(),
+                                        instance_entity.clone(),
                                         this.data.backend_handle.clone(),
                                         w,
                                         c,
