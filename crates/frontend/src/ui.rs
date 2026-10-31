@@ -630,25 +630,30 @@ impl LauncherUI {
                         rgb(theme::INK).into(),
                         rgb(theme::INK).into(),
                     )
-                    .when(recently_played, |button| {
-                        button.child(
-                            div().absolute().left(px(8.)).top(px(9.)).w(px(6.)).h(px(24.)).child(
-                                gpui_component::Icon::new(PandoraIcon::SidebarInstanceArrow)
-                                    .w(px(6.))
-                                    .h(px(24.))
-                                    .text_color(rgb(0xffffff)),
-                            ),
-                        )
-                    })
-                    .child(h_flex().when(recently_played, |row| row.ml(px(10.))).gap(px(8.)).child(icon).child(
-                        v_flex().items_start().child(div().text_size(px(12.)).child(name.clone())).child(
-                            div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(format!(
-                                "{} {}",
-                                i.configuration.loader.pretty_name(),
-                                i.configuration.minecraft_version
+                    .child(
+                        h_flex()
+                            .gap(px(4.))
+                            .items_center()
+                            .when(recently_played, |row| {
+                                row.child(
+                                    svg()
+                                        .path("icons/sidebar-instance-arrow.svg")
+                                        .w(px(6.))
+                                        .h(px(24.))
+                                        .flex_shrink_0()
+                                        .text_color(rgb(0xffffff)),
+                                )
+                            })
+                            .child(h_flex().gap(px(8.)).child(icon).child(
+                                v_flex().items_start().child(div().text_size(px(12.)).child(name.clone())).child(
+                                    div().text_size(px(10.)).text_color(rgb(theme::INK_DISABLED)).child(format!(
+                                        "{} {}",
+                                        i.configuration.loader.pretty_name(),
+                                        i.configuration.minecraft_version
+                                    )),
+                                ),
                             )),
-                        ),
-                    ))
+                    )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         InterfaceConfig::get_mut(cx).home_instance = Some(name.clone());
                         this.switch_page_without_history(PageType::Instances, [].into(), window, cx);
