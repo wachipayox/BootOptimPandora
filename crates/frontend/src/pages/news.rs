@@ -46,6 +46,66 @@ struct Article {
     valid: bool,
     extensions: MarkdownExtensions,
 }
+#[derive(Default)]
+struct ArticleHistory {
+    back: VecDeque<Option<NewsItem>>,
+    forward: Vec<Option<NewsItem>>,
+}
+impl ArticleHistory {
+    fn visit(&mut self, current: Option<&NewsItem>) {
+        self.forward.clear();
+        if self.back.len() == 32 {
+            self.back.pop_front();
+        }
+        self.back.push_back(current.cloned());
+    }
+    fn back(&mut self, current: Option<&NewsItem>) -> Option<Option<NewsItem>> {
+        let destination = self.back.pop_back()?;
+        self.forward.push(current.cloned());
+        Some(destination)
+    }
+    fn forward(&mut self, current: Option<&NewsItem>) -> Option<Option<NewsItem>> {
+        let destination = self.forward.pop()?;
+        self.back.push_back(current.cloned());
+        Some(destination)
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::{ArticleHistory, NewsItem};
+    fn article(id: &str) -> NewsItem {
+        NewsItem {
+            id: id.into(),
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn list_article_back_and_forward_preserve_the_origin() {
+        let a = article("a");
+        let mut history = ArticleHistory::default();
+        history.visit(None);
+        assert!(history.back(Some(&a)).unwrap().is_none());
+        assert_eq!(history.forward(None).unwrap().unwrap().id, "a");
+        // Explicitly returning to the list is a visit too, so Back can reopen A.
+        history.visit(Some(&a));
+        assert_eq!(history.back(None).unwrap().unwrap().id, "a");
+        assert!(history.forward(Some(&a)).unwrap().is_none());
+    }
+    #[test]
+    fn a_new_article_discards_the_forward_branch() {
+        let a = article("a");
+        let b = article("b");
+        let mut history = ArticleHistory::default();
+        history.visit(None);
+        history.back(Some(&a));
+        history.visit(None);
+        assert!(history.forward(Some(&b)).is_none());
+        assert!(history.back(Some(&b)).unwrap().is_none());
+        // A directly seeded article has no invented list in its history.
+        assert!(ArticleHistory::default().back(Some(&a)).is_none());
+    }
+}
 pub struct NewsPage {
     data: DataEntities,
     focus: FocusHandle,
@@ -60,6 +120,7 @@ pub struct NewsPage {
     visible: usize,
     pinned: usize,
     article: Option<Article>,
+    article_history: ArticleHistory,
     seed: Option<HomeNews>,
     media: Arc<Mutex<BTreeMap<String, PathBuf>>>,
     media_ratios: Arc<Mutex<BTreeMap<String, f32>>>,
@@ -218,6 +279,7 @@ impl NewsPage {
             visible: 6,
             pinned: 0,
             article: None,
+            article_history: ArticleHistory::default(),
             seed,
             media: Default::default(),
             media_ratios: Default::default(),
@@ -549,6 +611,53 @@ impl NewsPage {
         window.refresh();
         cx.notify();
     }
+    fn visit_article(&mut self, item: NewsItem, window: &mut Window, cx: &mut Context<Self>) {
+        self.article_history.visit(self.article.as_ref().map(|a| &a.item));
+        self.set_article(item, window, cx);
+    }
+    fn visit_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.article.is_some() {
+            self.article_history.visit(self.article.as_ref().map(|a| &a.item));
+            self.article = None;
+        }
+        self.focus.focus(window, cx);
+        cx.notify();
+    }
+    fn restore_article(&mut self, item: Option<NewsItem>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(item) = item {
+            if let Some(current) = self.feed.items.iter().find(|n| n.id == item.id).cloned() {
+                self.set_article(current, window, cx);
+            } else {
+                // A deleted article keeps its heading/navigation, but must not
+                // recreate read/saved marks removed by feed synchronization.
+                self.article = Some(Article {
+                    item,
+                    valid: false,
+                    extensions: MarkdownExtensions::default().commonmark(),
+                });
+            }
+        } else {
+            self.article = None;
+        }
+        self.focus.focus(window, cx);
+        cx.notify();
+    }
+    pub(crate) fn nav_backwards(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(item) = self.article_history.back(self.article.as_ref().map(|a| &a.item)) else {
+            return false;
+        };
+        self.restore_article(item, window, cx);
+        true
+    }
+    pub(crate) fn nav_forwards(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(item) = self.article_history.forward(self.article.as_ref().map(|a| &a.item)) else {
+            // Opening/closing an article starts a local branch. A stale global
+            // Forward destination must not jump out of that branch.
+            return self.article.is_some() || !self.article_history.back.is_empty();
+        };
+        self.restore_article(item, window, cx);
+        true
+    }
     fn profile_filter(&self, window: &mut Window, cx: &mut Context<Self>) {
         let selected = Arc::new(Mutex::new(
             self.profiles
@@ -664,7 +773,7 @@ impl NewsPage {
             .p_0()
             .paint(0., [[0, 0]; 3], rgb(theme::INK).into(), rgb(theme::INK).into())
             .child(div().w_full().whitespace_normal().text_left().text_color(rgb(theme::INK)).child(content))
-            .on_click(cx.listener(move |this, _, w, c| this.set_article(item.clone(), w, c)))
+            .on_click(cx.listener(move |this, _, w, c| this.visit_article(item.clone(), w, c)))
     }
     fn card(&self, n: &NewsItem, ix: usize, cx: &Context<Self>) -> AnyElement {
         let unread = self.marks(cx).is_none_or(|s| !s.read.contains(&n.id));
@@ -729,11 +838,7 @@ impl NewsPage {
                     .text_color(rgb(theme::ACCENT_TEXT))
                     .justify_start()
                     .px_0()
-                    .on_click(cx.listener(|this, _, w, c| {
-                        this.article = None;
-                        this.focus.focus(w, c);
-                        c.notify();
-                    })),
+                    .on_click(cx.listener(|this, _, w, c| this.visit_list(w, c))),
             )
             .child(
                 h_flex()
@@ -838,14 +943,13 @@ impl NewsPage {
 }
 impl NewsPage {
     fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
-        self.article = None;
+        self.visit_list(window, cx);
         self.search.read(cx).focus_handle(cx).focus(window, cx);
         cx.notify();
     }
     fn leave_article(&mut self, _: &LeaveArticle, window: &mut Window, cx: &mut Context<Self>) {
-        if self.article.take().is_some() {
-            self.focus.focus(window, cx);
-            cx.notify();
+        if self.article.is_some() {
+            self.visit_list(window, cx);
         } else if !self.search.read(cx).value().is_empty() {
             self.search.update(cx, |input, cx| input.set_value("", window, cx));
         } else {
