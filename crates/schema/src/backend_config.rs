@@ -16,6 +16,12 @@ pub struct BackendConfig {
         deserialize_with = "try_deserialize_sync_targets"
     )]
     pub sync_targets: SyncTargets,
+    /// One-time approved preset migration; later user toggles remain authoritative.
+    #[serde(default)]
+    pub shared_data_defaults_version: u8,
+    /// Previous targets retained until each instance has detached legacy links safely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_sync_targets: Option<SyncTargets>,
     #[serde(
         default,
         skip_serializing_if = "crate::skip_if_default",
@@ -312,7 +318,7 @@ impl ProxyProtocol {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct SyncTargets {
     pub files: BTreeSet<Arc<str>>,
     pub folders: BTreeSet<Arc<str>>,

@@ -552,6 +552,26 @@ impl PersistentProfileLayout {
     ) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
         self.recover_if_needed()?;
         delta.validate(self.profile_uuid)?;
+        let mut protected_shared_paths: Vec<String> = delta
+            .changes
+            .iter()
+            .filter_map(|change| {
+                let enforced = match change {
+                    ProfileDeltaChange::Upsert(entry) => entry.metadata.policy == ProfileFilePolicy::Enforced,
+                    ProfileDeltaChange::Remove { policy, .. } => *policy == ProfileFilePolicy::Enforced,
+                };
+                enforced.then(|| change.path().to_owned())
+            })
+            .collect();
+        protected_shared_paths.extend(
+            delta
+                .config_settings
+                .iter()
+                .filter(|rule| rule.policy == "enforced")
+                .map(|rule| rule.path.clone()),
+        );
+        crate::shared_data::prepare_profile_paths(&self.instance_root, &protected_shared_paths)?;
+        let shared_routes = crate::shared_data::active_routes(&self.instance_root)?;
         let target_config_setting_signatures =
             crate::config_settings::config_setting_signatures(&delta.config_settings)?;
         self.status.state = ProfileLayoutState::Planning;
@@ -598,6 +618,20 @@ impl PersistentProfileLayout {
             let logical_path = crate::profile_branch::canonical_mod_path(change.path());
             if !canonical_paths.insert(logical_path.clone()) {
                 return Err(ProfileLayoutFlowError::OwnershipChanged(logical_path));
+            }
+            let personal_shared = shared_routes
+                .iter()
+                .any(|route| schema::shared_data::contains_path(&route.path, route.is_file, &logical_path))
+                && !protected_shared_paths.iter().any(|path| path.eq_ignore_ascii_case(&logical_path));
+            if personal_shared {
+                // Personal shared data is already initialized. Never write/delete through a shared link.
+                if let ProfileDeltaChange::Upsert(entry) = change {
+                    let mut metadata = entry.metadata.clone();
+                    metadata.ownership = ProfileEntryOwnership::UserOwned;
+                    branch.entries.insert(logical_path.clone(), metadata);
+                }
+                managed_entries.remove(&logical_path);
+                continue;
             }
             let path = self.resolve_mod_state_path(&logical_path, &branch, &managed_entries)?;
             rekey_profile_path(&mut branch.entries, &logical_path, &path)?;
@@ -3011,5 +3045,90 @@ mod tests {
             .configure_branch_lineage(crate::profile_branch::ProfileLineage::pure_local())
             .unwrap();
         assert!(matches!(layout.repair_modpack(&[], &[]), Err(ProfileLayoutFlowError::RepairUnavailable)));
+    }
+    #[test]
+    fn enforced_delta_materializes_shared_folder_without_modifying_group() {
+        let root = TestRoot::new("shared-enforced");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let pin = global_pin("shared-r1", 'a');
+        layout.reconcile_revision_delta(&global_delta(pin.clone(), Vec::new())).unwrap();
+        let dirs = crate::directories::LauncherDirectories::new(root.0.join("launcher"));
+        let group = crate::shared_data::Group {
+            id: Uuid::new_v4(),
+            name: "test".into(),
+            targets: schema::backend_config::SyncTargets {
+                files: Default::default(),
+                folders: ["config/litematica".into()].into(),
+            },
+        };
+        fs::create_dir_all(dirs.save_groups_dir.join(group.id.to_string())).unwrap();
+        fs::create_dir_all(root.0.join(".minecraft/config/litematica")).unwrap();
+        fs::write(root.0.join(".minecraft/config/litematica/state.json"), b"personal").unwrap();
+        let global = schema::backend_config::SyncTargets::default();
+        let ignored = schema::ignored_profile_paths::IgnoredProfilePaths::default();
+        let minecraft = root.0.join(".minecraft");
+        let context = crate::shared_data::Context {
+            root: &root.0,
+            minecraft: &minecraft,
+            directories: &dirs,
+            global: &global,
+            previous: None,
+            group: Some(&group),
+            ignored: &ignored,
+        };
+        crate::shared_data::apply(&context).unwrap();
+        let shared = dirs
+            .save_groups_dir
+            .join(group.id.to_string())
+            .join("shared/config/litematica/state.json");
+        assert!(crate::shared_storage::is_link(&minecraft.join("config/litematica")));
+        let entry = effective_config_entry(&root, "config/litematica/state.json", b"required", pin.clone());
+        layout
+            .reconcile_revision_delta(&global_delta(pin, vec![ProfileDeltaChange::Upsert(entry)]))
+            .unwrap();
+        assert!(!crate::shared_storage::is_link(&minecraft.join("config/litematica")));
+        assert_eq!(fs::read(minecraft.join("config/litematica/state.json")).unwrap(), b"required");
+        assert_eq!(fs::read(shared).unwrap(), b"personal");
+        assert!(crate::shared_data::routes(&context).unwrap()[0].conflict.is_some());
+    }
+
+    #[test]
+    fn default_once_delta_does_not_write_into_personal_shared_folder() {
+        let root = TestRoot::new("shared-default-once");
+        let mut layout = PersistentProfileLayout::open(&root.0).unwrap();
+        let pin = global_pin("shared-r1", 'a');
+        layout.reconcile_revision_delta(&global_delta(pin.clone(), Vec::new())).unwrap();
+        let dirs = crate::directories::LauncherDirectories::new(root.0.join("launcher"));
+        let group = crate::shared_data::Group {
+            id: Uuid::new_v4(),
+            name: "test".into(),
+            targets: schema::backend_config::SyncTargets {
+                files: Default::default(),
+                folders: ["config/litematica".into()].into(),
+            },
+        };
+        fs::create_dir_all(dirs.save_groups_dir.join(group.id.to_string())).unwrap();
+        fs::create_dir_all(root.0.join(".minecraft/config/litematica")).unwrap();
+        fs::write(root.0.join(".minecraft/config/litematica/state.json"), b"personal").unwrap();
+        let global = schema::backend_config::SyncTargets::default();
+        let ignored = schema::ignored_profile_paths::IgnoredProfilePaths::default();
+        let minecraft = root.0.join(".minecraft");
+        let context = crate::shared_data::Context {
+            root: &root.0,
+            minecraft: &minecraft,
+            directories: &dirs,
+            global: &global,
+            previous: None,
+            group: Some(&group),
+            ignored: &ignored,
+        };
+        crate::shared_data::apply(&context).unwrap();
+        let mut entry = effective_config_entry(&root, "config/litematica/state.json", b"initial", pin.clone());
+        entry.metadata.policy = ProfileFilePolicy::DefaultOnce;
+        layout
+            .reconcile_revision_delta(&global_delta(pin, vec![ProfileDeltaChange::Upsert(entry)]))
+            .unwrap();
+        assert!(crate::shared_storage::is_link(&minecraft.join("config/litematica")));
+        assert_eq!(fs::read(minecraft.join("config/litematica/state.json")).unwrap(), b"personal");
     }
 }

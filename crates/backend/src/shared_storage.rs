@@ -7,6 +7,53 @@ use std::{
 };
 use uuid::Uuid;
 
+pub(crate) struct StorageLock(fs::File);
+impl Drop for StorageLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        unsafe {
+            let _ = libc::flock(std::os::fd::AsRawFd::as_raw_fd(&self.0), libc::LOCK_UN);
+        }
+    }
+}
+pub(crate) fn lock(root: &Path) -> io::Result<StorageLock> {
+    if is_link(root) {
+        return Err(invalid("Shared storage owner root is a link"));
+    }
+    fs::create_dir_all(root)?;
+    let path = root.join(".pandora-shared-data.lock");
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0).custom_flags(0x00200000);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    if is_link(&path) {
+        return Err(invalid("Shared storage lock is linked"));
+    }
+    let file = options.open(&path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if file.metadata()?.file_attributes() & 0x400 != 0 {
+            return Err(invalid("Shared lock is a reparse point"));
+        }
+    }
+    #[cfg(unix)]
+    {
+        if unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(StorageLock(file))
+}
+
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
 }
@@ -30,6 +77,9 @@ fn plain(path: &Path) -> io::Result<fs::Metadata> {
     Ok(metadata)
 }
 pub(crate) fn checked_path(root: &Path, relative: &str) -> io::Result<PathBuf> {
+    if Path::new(relative).is_absolute() || relative.starts_with('/') {
+        return Err(invalid("Absolute shared-data path"));
+    }
     let safe = bridge::safe_path::SafePath::new(relative).ok_or_else(|| invalid("Unsafe shared-data path"))?;
     if safe.as_str().is_empty()
         || safe.as_str() == "."

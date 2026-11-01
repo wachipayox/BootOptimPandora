@@ -31,6 +31,25 @@ pub fn group_defaults() -> SyncTargets {
     }
 }
 
+/// Apply once without resetting later user choices or dropping custom routes.
+pub fn migrate_global_defaults(config: &mut crate::backend_config::BackendConfig) -> bool {
+    if config.shared_data_defaults_version >= 1 {
+        return false;
+    }
+    config.previous_sync_targets = Some(config.sync_targets.clone());
+    config
+        .sync_targets
+        .files
+        .retain(|path| !RETIRED_GLOBAL_FILES.iter().any(|old| old.eq_ignore_ascii_case(path)));
+    config
+        .sync_targets
+        .folders
+        .retain(|path| !RETIRED_GLOBAL_FOLDERS.iter().any(|old| old.eq_ignore_ascii_case(path)));
+    config.sync_targets.folders.extend(global_defaults().folders);
+    config.shared_data_defaults_version = 1;
+    true
+}
+
 /// Matching is conservative on every platform so settings remain portable to Windows.
 /// Callers validate paths before storage; this function never resolves filesystem links.
 pub fn contains_path(target: &str, is_file: bool, path: &str) -> bool {
@@ -88,6 +107,24 @@ pub fn inherited_conflict<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn migration_retains_custom_paths_and_is_not_reapplied_after_user_disables() {
+        let mut config = crate::backend_config::BackendConfig::default();
+        config.sync_targets.files.insert("custom.txt".into());
+        config.sync_targets.folders.insert("config".into());
+        config.sync_targets.files.insert("servers.dat".into());
+        let original = config.sync_targets.clone();
+        assert!(migrate_global_defaults(&mut config));
+        assert_eq!(config.previous_sync_targets, Some(original));
+        assert!(config.sync_targets.files.contains("custom.txt"));
+        assert!(!config.sync_targets.files.contains("servers.dat"));
+        assert!(!config.sync_targets.folders.contains("config"));
+        config.sync_targets.folders.remove("screenshots");
+        let saved = serde_json::to_vec(&config).unwrap();
+        let mut reopened: crate::backend_config::BackendConfig = serde_json::from_slice(&saved).unwrap();
+        assert!(!migrate_global_defaults(&mut reopened));
+        assert!(!reopened.sync_targets.folders.contains("screenshots"));
+    }
     #[test]
     fn folders_match_segments_and_portable_case_not_similar_names() {
         assert!(contains_path("config/litematica", false, "Config/Litematica/a.json"));
