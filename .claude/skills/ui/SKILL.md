@@ -129,3 +129,5 @@ verify the eight-second intro cap or the 1.6-second normal-launch cap; it does
 not affect ordinary builds. Startup timing
 logs distinguish Rust main entry, native window creation, first paint submission,
 visual readiness and reveal start. Paint submission is not GPU Present latency.
+
+For an owned local instance fixture, `-CaptureState running` renders the instance header Stop/eye controls without starting Minecraft or changing backend process state. It is a cosmetic capture state, not evidence of a real running game or a click on Stop.
