@@ -34,12 +34,6 @@ pub trait ListDelegate: Sized + 'static {
     /// the section header and footer will also be skipped.
     fn items_count(&self, section: usize, cx: &App) -> usize;
 
-    /// Opt in when rows have an explicit, invariant height and fill the viewport
-    /// width. Other delegates retain measured sizing.
-    fn fixed_item_height(&self, cx: &App) -> Option<gpui::Pixels> {
-        None
-    }
-
     /// Render the item at the given index.
     ///
     /// Return None will skip the item.
