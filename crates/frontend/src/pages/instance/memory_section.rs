@@ -196,7 +196,7 @@ impl Render for InstanceMemorySection {
                     .line_height(px(18.))
                     .text_color(rgb(theme::INK_MUTED))
                     .child(format!(
-                        "Recomendada para tu equipo: {} GB (entre {} y {}). En Manual se escribe a mano.",
+                        "Recomendada para tu equipo: {} GB (entre {} y {}).",
                         gib(m.recommended_mib),
                         gib(m.minimum_mib),
                         gib(m.maximum_mib)

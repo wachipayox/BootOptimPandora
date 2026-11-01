@@ -46,6 +46,9 @@ pub struct ProfileJvmSection {
 }
 
 impl ProfileJvmSection {
+    pub fn automatic_java_major(&self) -> Option<u32> {
+        self.view.as_ref()?.automatic_java_major
+    }
     pub fn new(
         backend_handle: BackendHandle,
         instance_id: InstanceID,

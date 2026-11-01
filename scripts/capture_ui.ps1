@@ -17,7 +17,7 @@ param(
     [string]$LauncherUpdateFixture,
     [string]$NewsFixture,
     [string]$ChangelogFixture,
-    [ValidateSet('advanced','version','expanded','editing','loading','revealing','launcher','custom')][string]$CaptureState,
+    [ValidateSet('advanced','version','expanded','editing','running','loading','revealing','launcher','custom')][string]$CaptureState,
     [string[]]$Pages,
     [switch]$SkipUpdateCapture,
     [switch]$DesignViewport,

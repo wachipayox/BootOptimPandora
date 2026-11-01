@@ -74,6 +74,7 @@ pub struct HomePage {
     news_view: bool,
     news_page: Option<Entity<super::news::NewsPage>>,
     article: Option<String>,
+    news_forward_to_article: bool,
     heads: std::collections::BTreeMap<String, std::path::PathBuf>,
     head_ids: Vec<String>,
     selected_server: Option<InstanceServerSummary>,
@@ -332,6 +333,7 @@ impl HomePage {
                 .is_ok_and(|p| p == "home-news" || p.starts_with("news-")),
             news_page: None,
             article: None,
+            news_forward_to_article: false,
             heads: Default::default(),
             head_ids: Vec::new(),
             selected_server: None,
@@ -436,6 +438,7 @@ impl HomePage {
     pub fn show_home(&mut self, cx: &mut Context<Self>) {
         self.news_view = false;
         self.article = None;
+        self.news_forward_to_article = false;
         cx.notify();
     }
     pub fn instance_id(&self, cx: &App) -> Option<bridge::instance::InstanceID> {
@@ -445,7 +448,44 @@ impl HomePage {
         self.news_view = true;
         self.article = None;
         self.news_page = None;
+        self.news_forward_to_article = false;
         cx.notify();
+    }
+    pub(crate) fn nav_backwards(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.news_view {
+            return false;
+        }
+        if self
+            .news_page
+            .as_ref()
+            .is_some_and(|page| page.update(cx, |p, c| p.nav_backwards(window, c)))
+        {
+            return true;
+        }
+        if self.article.is_some() {
+            // A Home card seeded this reader directly; there was no News list
+            // between Home and the article. Retain its entity for Forward.
+            self.news_view = false;
+            self.news_forward_to_article = true;
+            cx.notify();
+            return true;
+        }
+        false
+    }
+    pub(crate) fn nav_forwards(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.news_view {
+            return self
+                .news_page
+                .as_ref()
+                .map_or(self.article.is_some(), |page| page.update(cx, |p, c| p.nav_forwards(window, c)));
+        }
+        if self.news_forward_to_article {
+            self.news_view = true;
+            self.news_forward_to_article = false;
+            cx.notify();
+            return true;
+        }
+        false
     }
     fn request_heads(&mut self, server: &InstanceServerSummary, window: &mut Window, cx: &mut Context<Self>) {
         if InterfaceConfig::get(cx).hide_skins {
@@ -964,8 +1004,6 @@ impl Render for HomePage {
                         crate::background::AppBackground::Artwork(config.last_played_artwork.clone());
                 }
             }
-            let id = i.id;
-            let name = i.name.clone();
             #[allow(unused_mut)]
             let mut state = i.status;
             #[cfg(feature = "ui-capture")]
@@ -974,54 +1012,9 @@ impl Render for HomePage {
                 Ok("home-optimizing") => state = InstanceStatus::Optimizing,
                 _ => {},
             }
-            match state {
-                InstanceStatus::Launching => {
-                    play = PlayButton::new("home-play", "Abriendo Minecraft", None).title("Iniciando").disabled(true)
-                },
-                InstanceStatus::Stopping => {
-                    play = PlayButton::new("home-play", "Cerrando Minecraft", None)
-                        .title("Deteniendo")
-                        .disabled(true)
-                },
-                InstanceStatus::Optimizing => {
-                    let progress = i.optimization.map(|p| p.0).unwrap_or(0.).clamp(0., 1.);
-                    play = PlayButton::new(
-                        "home-play",
-                        format!("Creando la caché de arranque · {:.0} %", progress * 100.),
-                        None,
-                    )
-                    .title("Iniciando")
-                    .tint(0x176daf60)
-                    .progress(progress);
-                },
-                InstanceStatus::Running => {
-                    play = PlayButton::new("home-play", "En marcha", None)
-                        .title("Detener")
-                        .stop_icon()
-                        .tint(0xc52222b0)
-                        .on_click(move |_, _, _| data.backend_handle.send(MessageToBackend::KillInstance { id }))
-                },
-                InstanceStatus::NotRunning => {
-                    play = play.disabled(root::inherited_operation_active(id)).on_click(move |_, w, c| {
-                        if data.accounts.read(c).selected_account.is_none() {
-                            root::open_home_accounts(c);
-                        } else {
-                            root::start_instance(id, name.clone(), None, &data, w, c);
-                        }
-                    })
-                },
-            }
+            play = crate::component::instance_play::instance_play_button("home-play", i, state, &data, window, cx);
         } else {
             play = play.add_instance().on_click(move |_, w, c| add_instance(&data, w, c));
-        }
-        if let Some((progress, count, total)) = instance.as_ref().and_then(|i| root::home_update_progress(i.id)) {
-            let detail = if total > 0 {
-                format!("{:.0} % · {} de {} MB", progress * 100., count / 1024 / 1024, total / 1024 / 1024)
-            } else {
-                String::new()
-            };
-            play = PlayButton::new("home-play", detail, None).updating(progress);
-            window.request_animation_frame();
         }
         let left = if let Some(i) = &instance {
             let text = if i.playtime.last_played_unix_ms.is_none() && i.playtime.total_secs == 0 {
@@ -1250,14 +1243,13 @@ impl Render for HomePage {
                                     w.refresh();
                                 }),
                         )
-                        .child(DesignButton::new("home-all-news").label("Ver todas →").h(px(24.)).px_0().on_click(
-                            cx.listener(|this, _, _, c| {
-                                this.news_view = true;
-                                this.news_page = None;
-                                this.article = None;
-                                c.notify();
-                            }),
-                        )),
+                        .child(
+                            DesignButton::new("home-all-news")
+                                .label("Ver todas →")
+                                .h(px(24.))
+                                .px_0()
+                                .on_click(cx.listener(|this, _, _, c| this.show_news(c))),
+                        ),
                 ),
         );
         if !self.news_loaded {
@@ -1318,6 +1310,7 @@ impl Render for HomePage {
                         this.news_view = true;
                         this.article = Some(n.id.clone());
                         this.news_page = None;
+                        this.news_forward_to_article = false;
                         c.notify();
                     }))
                     .into_any_element()
