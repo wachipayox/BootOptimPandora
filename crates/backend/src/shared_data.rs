@@ -290,6 +290,25 @@ pub(crate) fn apply(context: &Context<'_>) -> io::Result<()> {
             }
         }
     }
+    if let Some(group) = context.group {
+        let route = Route {
+            path: "saves".into(),
+            is_file: false,
+            scope: Scope::Group {
+                id: group.id,
+                name: group.name.clone(),
+            },
+            conflict: None,
+        };
+        let destination = target(context, &route)?;
+        let local = storage::checked_path(context.minecraft, "saves")?;
+        if storage::targeting(&local, &destination) {
+            receipt.folders.entry("saves".into()).or_insert(Folder {
+                route,
+                target: destination,
+            });
+        }
+    }
     receipt.routes = desired.clone();
     if receipt != original {
         write(context.root, &receipt)?;

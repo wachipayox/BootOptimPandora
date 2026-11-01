@@ -52,6 +52,7 @@ mod save_groups;
 mod server_list_pinger;
 mod shared_data;
 mod shared_storage;
+mod sharing_backend;
 mod shortcut;
 mod skin_import;
 mod skin_manager;

@@ -105,6 +105,11 @@ pub enum MessageToBackend {
         id: InstanceID,
         channel: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
+    SetSaveGroupTargets {
+        group_id: uuid::Uuid,
+        targets: schema::backend_config::SyncTargets,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     RenameSaveGroup {
         group_id: uuid::Uuid,
         name: String,
@@ -569,6 +574,7 @@ pub struct SaveGroupSummary {
     pub name: String,
     pub member_count: usize,
     pub selected: bool,
+    pub targets: schema::backend_config::SyncTargets,
 }
 
 /// State of an instance's JDK 25 AOT cache, as the instance settings show it.

@@ -176,6 +176,11 @@ pub fn start(
             settings.ignored_profile_defaults_version = 1;
         });
     }
+    if config.get().shared_data_defaults_version < 1 {
+        config.modify(|settings| {
+            let _ = schema::shared_data::migrate_global_defaults(settings);
+        });
+    }
     let proxy_config = config.get().proxy.clone();
     let proxy_password: Option<String> = if proxy_config.enabled && proxy_config.auth_enabled {
         runtime.block_on(async {
@@ -1059,6 +1064,11 @@ impl BackendState {
                 }
             }
 
+            if status_before != InstanceStatus::NotRunning && instance.status() == InstanceStatus::NotRunning {
+                if let Err(error) = crate::sharing_backend::publish_finished(instance, &self.directories) {
+                    log::warn!("Unable to publish finished-instance shared files: {error}");
+                }
+            }
             if killed || instance.status() != status_before {
                 instance.update_session();
                 self.send.send(instance.create_modify_message());
@@ -1306,16 +1316,22 @@ impl BackendState {
         let probe = crate::prelaunch_attribution::PrelaunchAttribution::from_environment(modal_action.probe_key());
         let prelaunch_span = probe.begin("prelaunch", None, false);
         if prelaunch_span.is_none() {
-            self.apply_syncing_to_instance(id);
             self.prelaunch_setup_mods(id, modal_action).await;
+            if let Err(error) = self.prepare_shared_data(id) {
+                log::warn!("Unable to prepare shared data before launch: {error}");
+                modal_action.set_finished_with_error("No se ha podido cambiar la sincronización.".into());
+            }
             return probe;
         }
 
-        let sync_span = probe.begin("sync", Some("prelaunch"), false);
-        self.apply_syncing_to_instance(id);
-        probe.finish(sync_span, crate::prelaunch_attribution::SpanCounters::default());
-
         self.prelaunch_setup_mods_attributed(id, modal_action, &probe).await;
+
+        let sync_span = probe.begin("sync", Some("prelaunch"), false);
+        if let Err(error) = self.prepare_shared_data(id) {
+            log::warn!("Unable to prepare shared data before launch: {error}");
+            modal_action.set_finished_with_error("No se ha podido cambiar la sincronización.".into());
+        }
+        probe.finish(sync_span, crate::prelaunch_attribution::SpanCounters::default());
 
         probe.finish(prelaunch_span, crate::prelaunch_attribution::SpanCounters::default());
         probe.complete_required_observations();
@@ -1324,23 +1340,9 @@ impl BackendState {
     }
 
     pub fn apply_syncing_to_instance(&self, id: InstanceID) {
-        let mut instances = self.instance_state.write();
-
-        let (disable, path) = if let Some(instance) = instances.instances.get_mut(id) {
-            (instance.configuration.get().disable_file_syncing, instance.dot_minecraft_path.clone())
-        } else {
-            return;
-        };
-
-        if disable {
-            crate::syncing::apply_to_instance(&SyncTargets::default(), &self.directories, path, &mut instances);
-        } else {
-            crate::syncing::apply_to_instance(
-                &self.config.lock().get().sync_targets,
-                &self.directories,
-                path,
-                &mut instances,
-            );
+        if let Err(error) = self.prepare_shared_data(id) {
+            log::warn!("Unable to change shared data: {error}");
+            self.send.send_error("No se ha podido cambiar la sincronización.");
         }
     }
 

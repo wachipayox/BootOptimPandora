@@ -150,6 +150,13 @@ impl BackendState {
             MessageToBackend::GetSaveGroups { id, channel } => {
                 let _ = channel.send(crate::BackendState::list_save_groups(self, id));
             },
+            MessageToBackend::SetSaveGroupTargets {
+                group_id,
+                targets,
+                channel,
+            } => {
+                let _ = channel.send(self.set_save_group_targets(group_id, targets));
+            },
             MessageToBackend::RenameSaveGroup {
                 group_id,
                 name,
@@ -1678,41 +1685,16 @@ impl BackendState {
                 }
             },
             MessageToBackend::SetSyncing { target, is_file, value } => {
-                let mut write = self.config.lock();
-
-                let result = if value {
-                    crate::syncing::enable_all(&target, is_file, &mut *self.instance_state.write(), &self.directories)
-                } else {
-                    crate::syncing::disable_all(&target, is_file, &self.directories).map(|_| true)
-                };
-
-                match result {
-                    Ok(success) => {
-                        if !success {
-                            self.send.send_error("Unable to enable syncing");
-                            return;
-                        }
-                    },
-                    Err(error) => {
-                        self.send.send_error(format!("Error while enabling syncing: {error}"));
-                        return;
-                    },
+                if let Err(error) = self.set_shared_global(target.to_string(), is_file, value) {
+                    log::warn!("Unable to change global shared data: {error}");
+                    self.send.send_error(
+                        if error == "Detén las instancias afectadas antes de cambiar lo que comparten." {
+                            error
+                        } else {
+                            "No se ha podido cambiar la sincronización.".to_owned()
+                        },
+                    );
                 }
-
-                write.modify(|config| {
-                    let (set, other_set) = if is_file {
-                        (&mut config.sync_targets.files, &mut config.sync_targets.folders)
-                    } else {
-                        (&mut config.sync_targets.folders, &mut config.sync_targets.files)
-                    };
-
-                    other_set.remove(&target);
-                    if value {
-                        _ = set.insert(target);
-                    } else {
-                        set.remove(&target);
-                    }
-                });
             },
             MessageToBackend::GetBackendConfiguration { channel } => {
                 _ = channel.send(self.config.lock().get().clone());

@@ -3082,7 +3082,8 @@ mod tests {
             .join(group.id.to_string())
             .join("shared/config/litematica/state.json");
         assert!(crate::shared_storage::is_link(&minecraft.join("config/litematica")));
-        let entry = effective_config_entry(&root, "config/litematica/state.json", b"required", pin.clone());
+        let mut entry = effective_config_entry(&root, "config/litematica/state.json", b"required", pin.clone());
+        entry.metadata.policy = ProfileFilePolicy::Enforced;
         layout
             .reconcile_revision_delta(&global_delta(pin, vec![ProfileDeltaChange::Upsert(entry)]))
             .unwrap();

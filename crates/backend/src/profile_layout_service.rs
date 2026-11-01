@@ -43,6 +43,8 @@ pub enum ProfileLayoutServiceError {
     BranchCycle,
     #[error("persistent profile identity/lock could not be established safely: {0}")]
     ProfileLock(String),
+    #[error("shared-data preparation failed: {0}")]
+    SharedData(String),
     #[error(transparent)]
     Layout(#[from] ProfileLayoutFlowError),
 }
@@ -163,6 +165,7 @@ impl BackendState {
         id: InstanceID,
         delta: &ProfileRevisionDelta,
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        self.prepare_shared_data(id).map_err(ProfileLayoutServiceError::SharedData)?;
         self.with_stopped_profile_layout(id, |layout| layout.reconcile_revision_delta(delta))
     }
 
@@ -174,6 +177,7 @@ impl BackendState {
         effective: &[EffectiveProfileEntry],
         config_settings: &[crate::distribution::ManifestConfigSetting],
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        self.prepare_shared_data(id).map_err(ProfileLayoutServiceError::SharedData)?;
         self.with_stopped_profile_layout(id, |layout| layout.repair_modpack(effective, config_settings))
     }
 
@@ -184,6 +188,7 @@ impl BackendState {
         id: InstanceID,
         desired: &[DesiredManagedFile],
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        self.prepare_shared_data(id).map_err(ProfileLayoutServiceError::SharedData)?;
         self.with_stopped_profile_layout(id, |layout| layout.reconcile(desired))
     }
 

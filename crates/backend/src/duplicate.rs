@@ -109,7 +109,7 @@ fn duplicate_with_content_library(
             let relative = relative_directory.join(entry.file_name());
             // Persistent profile control state is identity/transaction state, not instance
             // payload. The destination namespace is created separately with a fresh UUID.
-            if relative == Path::new(CONTROL_DIR_NAME) {
+            if relative == Path::new(CONTROL_DIR_NAME) || relative == Path::new(".pandora-shared-v1") {
                 continue;
             }
             // The JDK 25 AOT cache is trained for the source instance's exact files (about 300 MB);
