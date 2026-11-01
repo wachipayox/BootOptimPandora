@@ -27,6 +27,7 @@ pub mod pandora_update;
 pub mod profile_jvm;
 pub mod resourcepack;
 pub mod server_status;
+pub mod shared_data;
 pub mod text_component;
 pub mod unique_bytes;
 pub mod version;
