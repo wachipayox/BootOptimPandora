@@ -894,3 +894,8 @@ fn capture_instance_target(page: &str) -> Option<(&str, pages::instance::instanc
 
 #[cfg(test)]
 mod smooth_scroll_tests;
+
+// Run the vendored pure cache-key regressions without GPUI's headless test runtime.
+#[cfg(test)]
+#[path = "../../../vendor/gpui/src/elements/text_measurement_cache.rs"]
+mod text_measurement_cache_tests;
