@@ -75,13 +75,16 @@ impl SmoothScroll {
     }
     /// Queue a discrete wheel event. Returns false when the caller should apply
     /// its ordinary immediate scroll path. The callback reads on None and writes
-    /// on Some; it always returns the actual resulting offset.
+    /// on Some; it always returns the actual resulting offset. Capture `view`
+    /// while painting, or use the owning entity's ID; wheel dispatch has no
+    /// current rendered view.
     pub fn queue(
         &self,
         current: Point<Pixels>,
         delta: Point<Pixels>,
         max: Point<Pixels>,
         precise: bool,
+        view: EntityId,
         window: &mut Window,
         cx: &mut App,
         apply: impl FnMut(Option<Point<Pixels>>, &mut Window, &mut App) -> Point<Pixels> + 'static,
@@ -106,7 +109,7 @@ impl SmoothScroll {
         let generation = state.generation;
         drop(state);
         if !scheduled {
-            self.schedule(generation, window.current_view(), Rc::new(RefCell::new(apply)), window);
+            self.schedule(generation, view, Rc::new(RefCell::new(apply)), window);
         }
         true
     }
