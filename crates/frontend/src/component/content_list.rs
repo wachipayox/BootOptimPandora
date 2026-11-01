@@ -157,6 +157,7 @@ impl ContentListDelegate {
         summary: &InstanceContentSummary,
         selected: bool,
         expand_index: Option<usize>,
+        window: &Window,
         cx: &mut Context<ListState<Self>>,
     ) -> ListItem {
         let icon = if let Some(png_icon) = summary.content_summary.png_icon.as_ref() {
@@ -413,28 +414,9 @@ impl ContentListDelegate {
                     })),
             );
         }
-        name_cell = name_cell.child(icon.size(px(32.)).flex_shrink_0().grayscale(!summary.enabled)).child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .gap(px(1.))
-                .child(
-                    div()
-                        .text_size(px(13.))
-                        .line_height(px(18.))
-                        .line_clamp(1)
-                        .text_color(rgb(theme::INK))
-                        .child(name),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .line_height(px(14.))
-                        .line_clamp(1)
-                        .text_color(rgb(theme::INK_MUTED))
-                        .child(author),
-                ),
-        );
+        name_cell = name_cell
+            .child(icon.size(px(32.)).flex_shrink_0().grayscale(!summary.enabled))
+            .child(summary_labels(name, author, window));
         // These table columns already have fixed widths. Position their slots
         // directly instead of repeatedly distributing flex/intrinsic widths.
         let item_content = div()
@@ -1063,7 +1045,7 @@ impl ListDelegate for ContentListDelegate {
     fn render_item(
         &mut self,
         ix: IndexPath,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> Option<Self::Item> {
         let mut index = ix.row;
@@ -1073,7 +1055,7 @@ impl ListDelegate for ContentListDelegate {
             match item {
                 SummaryOrChild::Summary(instance_mod_summary) => {
                     let selected = self.is_selected(instance_mod_summary.filename_hash);
-                    return Some(self.render_summary(instance_mod_summary, selected, None, cx));
+                    return Some(self.render_summary(instance_mod_summary, selected, None, window, cx));
                 },
                 SummaryOrChild::Child(mod_entry_child) => {
                     return Some(self.render_child_entry(mod_entry_child, cx));
@@ -1098,7 +1080,7 @@ impl ListDelegate for ContentListDelegate {
         } else {
             Some(index + 1)
         };
-        Some(self.render_summary(summary, selected, expand_index, cx))
+        Some(self.render_summary(summary, selected, expand_index, window, cx))
     }
 
     fn set_selected_index(&mut self, _ix: Option<IndexPath>, _window: &mut Window, _cx: &mut Context<ListState<Self>>) {
@@ -1159,4 +1141,80 @@ fn create_descriptions(
     }
 
     (description1, Some(description2))
+}
+
+/// Shape the fixed-height label pair at its final width, avoiding intrinsic probes.
+fn summary_labels(name: String, author: String, window: &Window) -> AnyElement {
+    if name.contains(['\r', '\n']) || author.contains(['\r', '\n']) {
+        return v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap(px(1.))
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .line_height(px(18.))
+                    .line_clamp(1)
+                    .text_color(rgb(theme::INK))
+                    .child(name),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .line_height(px(14.))
+                    .line_clamp(1)
+                    .text_color(rgb(theme::INK_MUTED))
+                    .child(author),
+            )
+            .into_any_element();
+    }
+    let title_height = window.pixel_snap(px(18.));
+    let author_height = window.pixel_snap(px(14.));
+    let name: SharedString = name.into();
+    let author: SharedString = author.into();
+    canvas(
+        move |bounds, window, _| {
+            let base = window.text_style();
+            let mut output = Vec::with_capacity(2);
+            for (text, font_size, line_height, offset, color) in [
+                (name, 13., title_height, px(0.), theme::INK),
+                (author, 11., author_height, title_height + px(1.), theme::INK_MUTED),
+            ] {
+                let mut style = base.clone();
+                style.color = rgb(color).into();
+                let run = style.to_run(text.len());
+                match window
+                    .text_system()
+                    .shape_text(text, px(font_size), &[run], Some(bounds.size.width), Some(1))
+                {
+                    Ok(lines) => {
+                        let scale = window.scale_factor();
+                        let y = px(((bounds.origin.y + offset).as_f32() * scale).round() / scale);
+                        let origin = point(bounds.origin.x, y);
+                        for line in lines.into_iter().take(1) {
+                            let line_bounds =
+                                Bounds::new(origin, size(line.size(line_height).width.ceil(), line_height));
+                            output.push((line, origin, line_height, line_bounds));
+                        }
+                    },
+                    Err(error) => log::warn!("Content text shaping failed: {error}"),
+                }
+            }
+            (output, base.text_align)
+        },
+        |_, (lines, align), window, cx| {
+            for (line, origin, height, bounds) in lines {
+                if let Err(error) = line
+                    .paint_background(origin, height, align, Some(bounds), window, cx)
+                    .and_then(|_| line.paint(origin, height, align, Some(bounds), window, cx))
+                {
+                    log::warn!("Content text painting failed: {error}");
+                }
+            }
+        },
+    )
+    .flex_1()
+    .min_w_0()
+    .h(title_height + px(1.) + author_height)
+    .into_any_element()
 }
