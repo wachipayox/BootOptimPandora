@@ -230,6 +230,10 @@ impl BackendState {
         id: InstanceID,
         action: impl FnOnce(&mut PersistentProfileLayout) -> Result<T, ProfileLayoutFlowError>,
     ) -> Result<T, ProfileLayoutServiceError> {
+        // Sharing changes and profile reconciliation must not race while a known
+        // shared folder is materialized. Keep the same storage -> state lock order.
+        let _shared_lock = crate::shared_storage::lock(&self.directories.root_launcher_dir)
+            .map_err(|e| ProfileLayoutServiceError::SharedData(e.to_string()))?;
         let mut instance_state = self.instance_state.write();
         let instance = instance_state.instances.get_mut(id).ok_or(ProfileLayoutServiceError::MissingInstance)?;
 
@@ -260,7 +264,11 @@ impl BackendState {
         // The OS lock isolates a profile UUID from a second launcher process.
         let _profile_lock = acquire_or_initialize_profile_lock(&instance.root_path).map_err(map_lock_error)?;
         let mut layout = PersistentProfileLayout::open(&instance.root_path)?;
-        Ok(action(&mut layout)?)
+        let result = action(&mut layout);
+        // A revision can isolate a newly enforced path after the earlier sharing
+        // preparation. Refresh link-sensitive watches even after a recoverable error.
+        instance.rewatch_directories(&mut self.file_watching.write());
+        Ok(result?)
     }
 }
 
