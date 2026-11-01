@@ -430,10 +430,13 @@ where
 
         // Measure the item_height and section header/footer height.
         let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-        measured_size.item_size = self
-            .render_list_item(self.item_to_measure_index, window, cx)
-            .into_any_element()
-            .layout_as_root(available_space, window, cx);
+        measured_size.item_size = if let Some(height) = self.delegate.fixed_item_height(cx) {
+            size(px(0.), height)
+        } else {
+            self.render_list_item(self.item_to_measure_index, window, cx)
+                .into_any_element()
+                .layout_as_root(available_space, window, cx)
+        };
 
         if let Some(mut el) = self
             .delegate
@@ -515,6 +518,7 @@ where
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let rows_cache = self.rows_cache.clone();
+        let fixed_item_height = self.delegate.fixed_item_height(cx);
         let scrollbar_visible = self.options.scrollbar_visible;
         let scroll_handle = self.scroll_handle.clone();
         let item_to_measure_index = rows_cache
@@ -575,6 +579,9 @@ where
                             },
                         )
                         .with_item_to_measure_index(item_to_measure_index)
+                        .when(fixed_item_height.is_some(), |this| {
+                            this.with_cross_axis_size(px(0.))
+                        })
                         .paddings(self.options.paddings.clone())
                         .when(self.options.max_height.is_some(), |this| {
                             this.with_sizing_behavior(ListSizingBehavior::Infer)

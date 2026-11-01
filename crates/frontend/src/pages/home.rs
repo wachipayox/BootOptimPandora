@@ -945,7 +945,13 @@ impl Render for HomePage {
             .flex_shrink_0()
             .overflow_hidden()
             .child(div().absolute().size_full().child(artwork))
-            .child(div().absolute().bottom_0().w_full().h(relative(0.55)).bg(shade(0x06060700, 0x060607ff)))
+            // Share the artwork's full bounds: independently rounded fractional
+            // heights can expose its last bright row while smooth-scrolling.
+            .child(div().absolute().inset_0().bg(linear_gradient(
+                180.,
+                linear_color_stop(rgba(0x06060700), 0.45),
+                linear_color_stop(rgba(0x060607ff), 1.),
+            )))
             .child(
                 div()
                     .absolute()
