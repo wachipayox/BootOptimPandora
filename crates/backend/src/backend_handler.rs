@@ -546,7 +546,9 @@ impl BackendState {
                             &configuration,
                             &game_dir,
                         )),
-                        Ok(None) => None,
+                        Ok(None) => {
+                            Some(crate::launch::profile_jvm::settings_view(Vec::new(), &configuration, &game_dir))
+                        },
                         Err(error) => {
                             log::warn!("[profile-jvm] could not read the profile state for settings: {error}");
                             None

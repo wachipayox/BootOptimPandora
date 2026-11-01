@@ -74,6 +74,10 @@ impl DesignButton {
         self.inner = self.inner.toggled(value);
         self
     }
+    pub fn on_hover(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.inner = self.inner.on_hover(handler);
+        self
+    }
     pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.inner = self.inner.on_click(handler);
         self
@@ -180,7 +184,7 @@ impl RenderOnce for DesignButton {
                 let key_motion = motion.clone();
                 self.inner = self
                     .inner
-                    .on_hover(move |hovered, w, c| {
+                    .on_hover_composed(move |hovered, w, c| {
                         hover_motion.update(c, |m, _| m.event(Some(*hovered), None, Instant::now(), colors));
                         w.refresh();
                     })
@@ -479,6 +483,7 @@ pub struct PlayButton {
     title: SharedString,
     add_instance: bool,
     stop: bool,
+    compact: bool,
     artwork: Option<ImageSource>,
     disabled: bool,
     tint: Option<u32>,
@@ -493,11 +498,16 @@ impl PlayButton {
             title: "Jugar".into(),
             add_instance: false,
             stop: false,
+            compact: false,
             artwork,
             disabled: false,
             tint: None,
             on_click: None,
         }
+    }
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
+        self
     }
     pub fn title(mut self, title: impl Into<SharedString>) -> Self {
         self.title = title.into();
@@ -548,8 +558,8 @@ impl RenderOnce for PlayButton {
         let progress = self.progress;
         div()
             .relative()
-            .w(px(theme::PLAY_MIN_W))
-            .h(px(theme::PLAY_H))
+            .w(px(if self.compact { 176. } else { theme::PLAY_MIN_W }))
+            .h(px(if self.compact { 36. } else { theme::PLAY_H }))
             .when(disabled, |d| d.bg(rgb(theme::DISABLED_FILL)))
             .when(!disabled, |d| {
                 d.when_some(backdrop, |d, backdrop| d.child(backdrop))
@@ -557,6 +567,8 @@ impl RenderOnce for PlayButton {
                         d.child(img(image).absolute().size_full().object_fit(ObjectFit::Cover))
                     })
             })
+            // The compact control sits over the instance header's translucent surface.
+            .when(!disabled && self.compact, |d| d.child(div().absolute().size_full().bg(rgba(0x0b0b0ce6))))
             .when_some(self.tint.filter(|_| !disabled), |d, tint| {
                 d.child(div().absolute().size_full().bg(rgba(tint)))
             })
@@ -591,7 +603,7 @@ impl RenderOnce for PlayButton {
                     .when_some(self.on_click, |b, f| b.on_click(move |e, w, c| f(e, w, c)))
                     .child(
                         h_flex()
-                            .gap(px(12.))
+                            .gap(px(if self.compact { 8. } else { 12. }))
                             .items_center()
                             .text_color(if disabled {
                                 rgb(theme::INK_DISABLED)
@@ -610,17 +622,20 @@ impl RenderOnce for PlayButton {
                             .child(
                                 v_flex()
                                     .items_start()
+                                    .min_w_0()
+                                    .when(self.compact, |column| column.max_w(px(132.)))
                                     .child(
                                         div()
                                             .font_family(theme::SANS)
-                                            .text_size(px(17.))
-                                            .line_height(px(20.))
+                                            .text_size(px(if self.compact { 14. } else { 17. }))
+                                            .line_height(px(if self.compact { 16. } else { 20. }))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(TrackedText::new(self.title.clone(), 0.02)),
                                     )
                                     .when(!self.status.is_empty(), |d| {
                                         d.child(
                                             div()
+                                                .when(self.compact, |line| line.max_w(px(132.)).truncate())
                                                 .text_size(px(11.))
                                                 .line_height(px(13.))
                                                 .text_color(if disabled {
