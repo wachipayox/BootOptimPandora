@@ -262,6 +262,7 @@ impl Element for ScrollableMask {
                             gpui::point(px(0.), delta.y),
                             scroll_handle.max_offset(),
                             event.delta.precise(),
+                            view_id,
                             window,
                             cx,
                         ) {
@@ -287,6 +288,7 @@ impl Element for ScrollableMask {
                             gpui::point(delta.x, px(0.)),
                             scroll_handle.max_offset(),
                             event.delta.precise(),
+                            view_id,
                             window,
                             cx,
                         ) {

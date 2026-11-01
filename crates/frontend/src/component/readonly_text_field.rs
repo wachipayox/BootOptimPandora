@@ -1041,6 +1041,7 @@ impl Render for ReadonlyTextFieldWithControls {
                     Point::new(Pixels::ZERO, delta),
                     Point::new(Pixels::ZERO, max_scroll_amount),
                     event.delta.precise(),
+                    cx.entity_id(),
                     window,
                     cx,
                     move |next, _, _| {

@@ -2951,6 +2951,7 @@ impl Interactivity {
                             crate::point(delta_x, delta_y),
                             scroll_max,
                             event.delta.precise(),
+                            current_view,
                             window,
                             cx,
                             move |next, _, _| {
@@ -3878,18 +3879,21 @@ impl ScrollHandle {
         delta: Point<Pixels>,
         max: Point<Pixels>,
         precise: bool,
+        view: crate::EntityId,
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
         let state = self.0.borrow();
         let offset = state.offset.clone();
         let current = *offset.borrow();
-        state.wheel_motion.queue(current, delta, max, precise, window, cx, move |next, _, _| {
-            if let Some(next) = next {
-                *offset.borrow_mut() = next;
-            }
-            *offset.borrow()
-        })
+        state
+            .wheel_motion
+            .queue(current, delta, max, precise, view, window, cx, move |next, _, _| {
+                if let Some(next) = next {
+                    *offset.borrow_mut() = next;
+                }
+                *offset.borrow()
+            })
     }
 
     /// Set the offset explicitly. The offset is the distance from the top left of the

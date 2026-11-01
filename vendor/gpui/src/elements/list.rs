@@ -1624,6 +1624,7 @@ impl Element for List {
                     pixel_delta,
                     point(px(0.), max),
                     event.delta.precise(),
+                    current_view,
                     window,
                     cx,
                     move |next, window, cx| {

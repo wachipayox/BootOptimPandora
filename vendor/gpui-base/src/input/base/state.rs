@@ -1814,9 +1814,15 @@ impl<M: InputModeKind> InputBaseState<M> {
         );
         if target != old_offset {
             let weak = cx.entity().downgrade();
-            if self
-                .wheel_motion
-                .queue(old_offset, delta, max, event.delta.precise(), window, cx, move |next, _, cx| {
+            if self.wheel_motion.queue(
+                old_offset,
+                delta,
+                max,
+                event.delta.precise(),
+                cx.entity_id(),
+                window,
+                cx,
+                move |next, _, cx| {
                     weak.update(cx, |this, cx| {
                         if let Some(next) = next {
                             this.update_scroll_offset(Some(next), cx);
@@ -1824,8 +1830,8 @@ impl<M: InputModeKind> InputBaseState<M> {
                         this.scroll_handle.offset()
                     })
                     .unwrap_or_default()
-                })
-            {
+                },
+            ) {
                 self.diagnostic_popover = None;
                 cx.stop_propagation();
                 return;
