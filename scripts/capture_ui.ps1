@@ -9,6 +9,7 @@ param(
     [switch]$Components,
     [switch]$HomeScreens,
     [switch]$HomeScrollProbe,
+    [switch]$ScrollProfile,
     [switch]$NewsScreens,
     [switch]$InstanceScreens,
     [switch]$LauncherScreens,
@@ -522,6 +523,26 @@ try {
             if($dialogOwner -ne $proc.Id -or ([CaptureWindow]::GetWindowLongPtr($captureHandle,-16).ToInt64() -band 0x40000) -ne 0){throw 'Standalone dialog HWND is not the active owned nonresizable window.'}
         }
         Save-Window (Join-Path $outputPath $screen.file) $captureHandle $proc.Id
+        if ($ScrollProfile) {
+            if (-not $Framebuffer -or -not $env:WBOMBO_UI_SCROLL_TIMINGS) { throw 'Scroll profiling needs framebuffer capture and WBOMBO_UI_SCROLL_TIMINGS.' }
+            $profileClient = New-Object CaptureWindow+RECT
+            $profileOrigin = New-Object CaptureWindow+POINT
+            [void][CaptureWindow]::GetClientRect($captureHandle,[ref]$profileClient)
+            [void][CaptureWindow]::ClientToScreen($captureHandle,[ref]$profileOrigin)
+            $profilePoint = [IntPtr](([int64]($profileOrigin.Y + [int]($profileClient.Bottom * 0.7)) -shl 16) -bor
+                ([int64]($profileOrigin.X + [int]($profileClient.Right * 0.65)) -band 0xffff))
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            for ($packet = 0; $packet -lt 40; $packet++) {
+                if (-not [CaptureWindow]::PostMessage($captureHandle,0x20a,[IntPtr](-7864320),$profilePoint)) { throw 'Cannot send owned profiling wheel packet' }
+                Start-Sleep -Milliseconds 70
+            }
+            Start-Sleep -Milliseconds 250
+            $timer.Stop()
+            Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-profile.png')) $captureHandle $proc.Id
+            Copy-Item -LiteralPath (Join-Path $framebufferRoot 'frame-stats.json') -Destination (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-timings.json'))
+            @{ packets=40; packetDelta=-120; requestedSpacingMs=70; inclusiveWallMs=$timer.Elapsed.TotalMilliseconds; boundary='first WM_MOUSEWHEEL post through last 70 ms wait plus 250 ms settle; framebuffer readback excluded' } |
+                ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-stimulus.json'))
+        }
         if ($HomeScrollProbe -and $screen.page -eq 'instances') {
             # Send the wheel only to this verified owned window, as for the
             # existing article and instance scroll captures below.
