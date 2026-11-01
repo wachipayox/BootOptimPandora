@@ -51,6 +51,8 @@ pub mod queue;
 mod scene;
 mod shared_uri;
 mod spring;
+mod smooth_scroll;
+pub use smooth_scroll::{SmoothScroll, SmoothScrollSettings, WheelMotion};
 mod style;
 mod styled;
 mod subscription;

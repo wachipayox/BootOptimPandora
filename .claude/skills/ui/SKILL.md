@@ -26,7 +26,9 @@ Every visual change must include before and after screenshots in its PR.
 
 Use `component/design.rs` for new screens: button A, glass Play (sample the actual app surface behind its window bounds), NO/SÍ, chips, tabs, field, setting row, eyebrow and dialog. Preserve native keyboard interaction. Existing layouts migrate in subsequent PRs; do not mistake the capture-only component review for the redesigned Home screen.
 
-After changing the vendored GPUI component, invalidate both cached profiles with `cargo clean -p gpui-component` and `cargo clean --release -p gpui-component`. Cargo treats vendored git dependencies as immutable; otherwise a local build can reuse stale API/paint code. Update the edited source hashes in its `.cargo-checksum.json` too.
+After changing a vendored GPUI crate, invalidate both cached profiles with `cargo clean -p <crate>` and `cargo clean --release -p <crate>` for each edited crate (`gpui`, `gpui-base`, or `gpui-component`). Cargo treats vendored git dependencies as immutable; otherwise a local build can reuse stale API/paint code. Update the edited source hashes in its `.cargo-checksum.json` too.
+
+Discrete wheel interpolation is app-opted-in at frontend initialization, with its elapsed-time policy in `gpui::SmoothScroll`. Audit Div/uniform lists, variable-height lists, component scroll masks, multiline inputs and both manual log viewers when changing it. Precise touchpads and reduced motion bypass interpolation; caret navigation and direct scrollbar positioning retain their immediate behavior.
 
 The one-exe distribution writes both font OFL notices to `<launcher data>/licenses/fonts/` at startup.
 
