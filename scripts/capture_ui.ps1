@@ -10,6 +10,7 @@ param(
     [switch]$HomeScreens,
     [switch]$HomeScrollProbe,
     [switch]$ScrollProfile,
+    [switch]$ScrollSeam,
     [switch]$NewsScreens,
     [switch]$InstanceScreens,
     [switch]$LauncherScreens,
@@ -542,6 +543,21 @@ try {
             Copy-Item -LiteralPath (Join-Path $framebufferRoot 'frame-stats.json') -Destination (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-timings.json'))
             @{ packets=40; packetDelta=-120; requestedSpacingMs=70; inclusiveWallMs=$timer.Elapsed.TotalMilliseconds; boundary='first WM_MOUSEWHEEL post through last 70 ms wait plus 250 ms settle; framebuffer readback excluded' } |
                 ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-stimulus.json'))
+        }
+        if ($ScrollSeam -and $screen.page -eq 'instances') {
+            $seamClient = New-Object CaptureWindow+RECT
+            $seamOrigin = New-Object CaptureWindow+POINT
+            [void][CaptureWindow]::GetClientRect($captureHandle,[ref]$seamClient)
+            [void][CaptureWindow]::ClientToScreen($captureHandle,[ref]$seamOrigin)
+            $seamPoint = [IntPtr](([int64]($seamOrigin.Y + [int]($seamClient.Bottom * 0.7)) -shl 16) -bor
+                ([int64]($seamOrigin.X + [int]($seamClient.Right * 0.65)) -band 0xffff))
+            # These readbacks deliberately inspect intermediate geometry; never
+            # use their timings as an uninstrumented performance measurement.
+            for ($step = 0; $step -lt 8; $step++) {
+                if (-not [CaptureWindow]::PostMessage($captureHandle,0x20a,[IntPtr](-2621440),$seamPoint)) { throw 'Cannot send owned seam probe wheel packet' }
+                Start-Sleep -Milliseconds 10
+                Save-Window (Join-Path $outputPath "instances-seam-$step.png") $captureHandle $proc.Id
+            }
         }
         if ($HomeScrollProbe -and $screen.page -eq 'instances') {
             # Send the wheel only to this verified owned window, as for the
