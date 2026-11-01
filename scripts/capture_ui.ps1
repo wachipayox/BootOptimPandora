@@ -535,7 +535,14 @@ try {
             [void][CaptureWindow]::SetForegroundWindow($captureHandle)
             Start-Sleep -Milliseconds 250
             $foregroundBefore = [CaptureWindow]::GetForegroundWindow() -eq $captureHandle
-            if (-not $foregroundBefore) { throw 'Owned profiling window is not foreground; rejecting inactive-window measurement.' }
+            if (-not $foregroundBefore) {
+                $focusDeadline = (Get-Date).AddSeconds(45)
+                while (-not $foregroundBefore -and (Get-Date) -lt $focusDeadline) {
+                    Start-Sleep -Milliseconds 100
+                    $foregroundBefore = [CaptureWindow]::GetForegroundWindow() -eq $captureHandle
+                }
+                if (-not $foregroundBefore) { throw 'Owned profiling window is not foreground; rejecting inactive-window measurement.' }
+            }
             $inactivePackets = 0
             $timer = [Diagnostics.Stopwatch]::StartNew()
             for ($packet = 0; $packet -lt 40; $packet++) {
