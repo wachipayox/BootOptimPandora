@@ -203,13 +203,17 @@ impl ContentListDelegate {
         let can_update = summary.update.can_update(self.for_loader, self.for_version.as_str());
         let is_loading = self.updating.lock().contains(&element_id);
         let open_version = {
-            let summary = summary.clone();
             let data = self.data.clone();
             let updating = self.updating.clone();
-            let list = cx.entity();
+            let list = cx.entity().downgrade();
             move |_: &ClickEvent, w: &mut Window, c: &mut App| {
                 c.stop_propagation();
-                crate::modals::change_version::open(id, &summary, &data, updating.clone(), list.clone(), w, c);
+                let Some(list) = list.upgrade() else { return };
+                // Resolve metadata only for the clicked row, not every animation frame.
+                let summary = list.read(c).delegate().content.iter().find(|item| item.id == content_id).cloned();
+                if let Some(summary) = summary {
+                    crate::modals::change_version::open(id, &summary, &data, updating.clone(), list, w, c);
+                }
             }
         };
         let update = {
