@@ -386,6 +386,18 @@ impl Button {
         self
     }
 
+    /// Append a hover callback while retaining the caller's existing handler.
+    pub fn on_hover_composed(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        let previous = self.on_hover.take();
+        self.on_hover = Some(Rc::new(move |hovered, window, cx| {
+            if let Some(previous) = &previous {
+                previous(hovered, window, cx);
+            }
+            handler(hovered, window, cx);
+        }));
+        self
+    }
+
     /// Set the loading icon of the button, it will be used when loading is true.
     ///
     /// Default is a spinner icon.
@@ -733,27 +745,26 @@ impl RenderOnce for Button {
                 on_click(event, window, cx);
             })
         })
-        .when_some(self.on_hover.filter(|_| hoverable), |this, on_hover| {
-            this.on_hover(move |hovered, window, cx| {
-                on_hover(hovered, window, cx);
-            })
-        })
         .map(|this| {
+            let on_hover = self.on_hover.filter(|_| hoverable);
             if let Some(builder) = self.tooltip_builder {
-                this.managed_tooltip(move |window, cx| builder(window, cx))
+                this.managed_tooltip_with_hover(None, move |window, cx| builder(window, cx), on_hover)
             } else if let Some((tooltip, action)) = self.tooltip {
-                this.managed_tooltip(move |window, cx| {
-                    Tooltip::new(tooltip.clone())
-                        .when_some(action.clone(), |this, (action, context)| {
-                            this.action(
-                                action.boxed_clone().as_ref(),
-                                context.as_ref().map(|c| c.as_ref()),
-                            )
-                        })
-                        .build(window, cx)
-                })
+                this.managed_tooltip_with_hover(
+                    None,
+                    move |window, cx| {
+                        Tooltip::new(tooltip.clone())
+                            .when_some(action.clone(), |this, (action, context)| {
+                                this.action(action.boxed_clone().as_ref(), context.as_ref().map(|c| c.as_ref()))
+                            })
+                            .build(window, cx)
+                    },
+                    on_hover,
+                )
             } else {
-                this
+                this.when_some(on_hover, |this, on_hover| {
+                    this.on_hover(move |hovered, window, cx| on_hover(hovered, window, cx))
+                })
             }
         })
         .when(is_focused && self.focus_ring_enabled, |this| {
