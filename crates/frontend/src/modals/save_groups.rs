@@ -338,12 +338,15 @@ impl SaveGroupsModal {
                                         Button::new(format!("rename-save-group-{id}"))
                                             .label("Renombrar")
                                             .disabled(self.busy)
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                let input = cx.new(|cx| {
-                                                    InputState::new(window, cx).default_value(group.name.clone())
-                                                });
-                                                this.rename = Some((id, input));
-                                                cx.notify();
+                                            .on_click(cx.listener({
+                                                let name = group.name.clone();
+                                                move |this, _, window, cx| {
+                                                    let input = cx.new(|cx| {
+                                                        InputState::new(window, cx).default_value(name.clone())
+                                                    });
+                                                    this.rename = Some((id, input));
+                                                    cx.notify();
+                                                }
                                             })),
                                     )
                                 })
