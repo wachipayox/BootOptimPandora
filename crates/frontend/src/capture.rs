@@ -60,23 +60,12 @@ pub fn start(window: &mut Window, cx: &mut App) {
                     continue;
                 }
                 let request = std::fs::read(directory.join("request")).unwrap_or_default();
-                #[cfg(feature = "scroll-profile")]
-                {
-                    let stats = cx.update(|window, _| {
-                        let snapshot = window.frame_duration_snapshot();
-                        // Preserve counts for subtracting the startup baseline.
-                        let draw = snapshot.draw_duration_histogram.iter_recorded()
-                            .map(|v| [v.value_iterated_to(), v.count_since_last_iteration()]).collect::<Vec<_>>();
-                        let present = snapshot.present_interval_histogram.iter_recorded()
-                            .map(|v| [v.value_iterated_to(), v.count_since_last_iteration()]).collect::<Vec<_>>();
-                        serde_json::json!({"draw_ns": draw, "present_interval_ns": present})
-                    });
-                    if let Ok(stats) = stats {
-                        let path = directory.join("frame-stats.json");
-                        cx.background_executor().spawn(async move {
-                            let _ = std::fs::write(path, serde_json::to_vec_pretty(&stats).unwrap());
-                        }).await;
-                    }
+                let stats = cx.update(|window, _| window.take_capture_frame_timings());
+                if let Ok(Some(stats)) = stats {
+                    let path = directory.join("frame-stats.json");
+                    cx.background_executor().spawn(async move {
+                        let _ = std::fs::write(path, serde_json::to_vec(&stats).unwrap());
+                    }).await;
                 }
                 let resize = serde_json::from_slice::<serde_json::Value>(&request).ok().and_then(|value| {
                     let pair = value.get("resize")?.as_array()?;

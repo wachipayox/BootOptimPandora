@@ -1176,6 +1176,8 @@ pub struct Window {
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     #[cfg(feature = "profiler")]
     window_profiler: profiler::WindowProfiler,
+    #[cfg(feature = "native-capture")]
+    capture_frame_timings: Option<(Instant, Vec<[u64; 2]>)>,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -1822,6 +1824,8 @@ impl Window {
             input_rate_tracker,
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
+            #[cfg(feature = "native-capture")]
+            capture_frame_timings: std::env::var_os("WBOMBO_UI_SCROLL_TIMINGS").map(|_| (Instant::now(), Vec::new())),
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -2381,6 +2385,13 @@ impl Window {
         self.platform_window.render_to_image(&self.rendered_frame.scene)
     }
 
+    /// Diagnostic draw-start and UI-thread draw-duration samples, in microseconds.
+    /// Enabled only by WBOMBO_UI_SCROLL_TIMINGS in native-capture builds.
+    #[cfg(feature = "native-capture")]
+    pub fn take_capture_frame_timings(&mut self) -> Option<Vec<[u64; 2]>> {
+        self.capture_frame_timings.as_mut().map(|(_, frames)| std::mem::take(frames))
+    }
+
     /// Requests a copy during the next draw, before presentation rotates buffers.
     #[cfg(feature = "native-capture")]
     pub fn request_framebuffer_capture(&self) -> anyhow::Result<()> {
@@ -2758,6 +2769,8 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        #[cfg(feature = "native-capture")]
+        let capture_draw_start = self.capture_frame_timings.as_ref().map(|_| Instant::now());
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -2868,6 +2881,12 @@ impl Window {
             self.debug_frame_overlay.record_frame(draw_duration);
         }
 
+        #[cfg(feature = "native-capture")]
+        if let (Some((origin, frames)), Some(start)) = (&mut self.capture_frame_timings, capture_draw_start) {
+            if frames.len() < 10_000 {
+                frames.push([start.duration_since(*origin).as_micros() as u64, start.elapsed().as_micros() as u64]);
+            }
+        }
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.
         arena_scope.exit(&cx.element_arena)
