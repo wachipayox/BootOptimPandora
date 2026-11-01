@@ -246,7 +246,7 @@ impl ContentListDelegate {
             .gap(px(6.))
             .text_size(px(13.))
             .text_color(rgb(theme::INK_MUTED))
-            .child(div().line_clamp(1).child(summary.content_summary.version_str.to_string()));
+            .child(div().truncate().child(summary.content_summary.version_str.to_string()));
         if can_update {
             version = version.child(
                 DesignButton::new(("update", element_id))
@@ -407,7 +407,7 @@ impl ContentListDelegate {
                     div()
                         .text_size(px(13.))
                         .line_height(px(18.))
-                        .line_clamp(1)
+                        .truncate()
                         .text_color(rgb(theme::INK))
                         .child(name),
                 )
@@ -415,7 +415,7 @@ impl ContentListDelegate {
                     div()
                         .text_size(px(11.))
                         .line_height(px(14.))
-                        .line_clamp(1)
+                        .truncate()
                         .text_color(rgb(theme::INK_MUTED))
                         .child(author),
                 ),
@@ -560,7 +560,7 @@ impl ContentListDelegate {
                         div()
                             .text_size(px(13.))
                             .line_height(px(18.))
-                            .line_clamp(1)
+                            .truncate()
                             .text_color(rgb(theme::INK))
                             .child(name),
                     )
@@ -568,7 +568,7 @@ impl ContentListDelegate {
                         div()
                             .text_size(px(11.))
                             .line_height(px(14.))
-                            .line_clamp(1)
+                            .truncate()
                             .text_color(rgb(theme::INK_MUTED))
                             .child(summary.authors.strip_prefix("By ").unwrap_or(&summary.authors).to_owned()),
                     ),
@@ -975,11 +975,6 @@ impl ContentListDelegate {
 
 impl ListDelegate for ContentListDelegate {
     type Item = ListItem;
-    fn fixed_item_height(&self, _: &App) -> Option<Pixels> {
-        // Both ordinary and expanded package entries explicitly render at 53 px.
-        Some(px(53.))
-    }
-
     fn render_empty(&mut self, _: &mut Window, _: &mut Context<ListState<Self>>) -> impl IntoElement {
         let text = if !self.content.is_empty() {
             "No hay resultados.".to_owned()

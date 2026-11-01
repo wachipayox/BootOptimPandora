@@ -209,7 +209,6 @@ where
         render_items: Box::new(render_range),
         sizing_behavior: ListSizingBehavior::default(),
         item_to_measure_index: 0,
-        cross_axis_size: None,
     }
 }
 
@@ -226,7 +225,6 @@ pub struct VirtualList {
     >,
     sizing_behavior: ListSizingBehavior,
     item_to_measure_index: usize,
-    cross_axis_size: Option<Pixels>,
 }
 
 impl Styled for VirtualList {
@@ -251,13 +249,6 @@ impl VirtualList {
     /// Set the item index used to infer the list's cross-axis size.
     pub fn with_item_to_measure_index(mut self, index: usize) -> Self {
         self.item_to_measure_index = index;
-        self
-    }
-
-    /// Supply a known cross-axis extent instead of rebuilding a row to infer it.
-    /// Zero keeps a viewport-filling vertical list from requesting horizontal overflow.
-    pub fn with_cross_axis_size(mut self, size: Pixels) -> Self {
-        self.cross_axis_size = Some(size);
         self
     }
 
@@ -405,14 +396,7 @@ impl Element for VirtualList {
         } else {
             None
         };
-        let longest_item_size = if let Some(cross_axis_size) = self.cross_axis_size {
-            match self.axis {
-                Axis::Vertical => size(cross_axis_size, px(0.)),
-                Axis::Horizontal => size(px(0.), cross_axis_size),
-            }
-        } else {
-            self.measure_item(list_width, window, cx)
-        };
+        let longest_item_size = self.measure_item(list_width, window, cx);
 
         let layout_id = self.base.interactivity().request_layout(
             global_id,
