@@ -5,6 +5,7 @@ edition.workspace = true
 
 [features]
 ui-capture = ["gpui/native-capture", "gpui_platform/native-capture"]
+scroll-profile = ["ui-capture", "gpui/profiler"]
 
 [dependencies]
 lewton = "0.10.2"
