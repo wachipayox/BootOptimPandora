@@ -246,7 +246,7 @@ impl ContentListDelegate {
             .gap(px(6.))
             .text_size(px(13.))
             .text_color(rgb(theme::INK_MUTED))
-            .child(div().truncate().child(summary.content_summary.version_str.to_string()));
+            .child(div().line_clamp(1).child(summary.content_summary.version_str.to_string()));
         if can_update {
             version = version.child(
                 DesignButton::new(("update", element_id))
@@ -407,7 +407,7 @@ impl ContentListDelegate {
                     div()
                         .text_size(px(13.))
                         .line_height(px(18.))
-                        .truncate()
+                        .line_clamp(1)
                         .text_color(rgb(theme::INK))
                         .child(name),
                 )
@@ -415,7 +415,7 @@ impl ContentListDelegate {
                     div()
                         .text_size(px(11.))
                         .line_height(px(14.))
-                        .truncate()
+                        .line_clamp(1)
                         .text_color(rgb(theme::INK_MUTED))
                         .child(author),
                 ),
@@ -560,7 +560,7 @@ impl ContentListDelegate {
                         div()
                             .text_size(px(13.))
                             .line_height(px(18.))
-                            .truncate()
+                            .line_clamp(1)
                             .text_color(rgb(theme::INK))
                             .child(name),
                     )
@@ -568,7 +568,7 @@ impl ContentListDelegate {
                         div()
                             .text_size(px(11.))
                             .line_height(px(14.))
-                            .truncate()
+                            .line_clamp(1)
                             .text_color(rgb(theme::INK_MUTED))
                             .child(summary.authors.strip_prefix("By ").unwrap_or(&summary.authors).to_owned()),
                     ),
