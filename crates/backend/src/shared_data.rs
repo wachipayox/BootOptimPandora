@@ -675,7 +675,7 @@ mod tests {
         let shared = f.directories.synced_dir.join("saves");
         fs::create_dir_all(shared.join("World")).unwrap();
         fs::write(shared.join("World/level.dat"), b"old-global").unwrap();
-        storage::link_directory(&shared, &f.minecraft.join("saves")).unwrap();
+        storage::attach_folder(&f.minecraft.join("saves"), &shared, &f.root.join("fixture-recovery")).unwrap();
         let global = SyncTargets::default();
         let mut context = f.context(&global, None, &ignored);
         context.previous = Some(&previous);
