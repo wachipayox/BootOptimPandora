@@ -975,6 +975,11 @@ impl ContentListDelegate {
 
 impl ListDelegate for ContentListDelegate {
     type Item = ListItem;
+    fn fixed_item_height(&self, _: &App) -> Option<Pixels> {
+        // Both ordinary and expanded package entries explicitly render at 53 px.
+        Some(px(53.))
+    }
+
     fn render_empty(&mut self, _: &mut Window, _: &mut Context<ListState<Self>>) -> impl IntoElement {
         let text = if !self.content.is_empty() {
             "No hay resultados.".to_owned()
