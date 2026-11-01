@@ -188,6 +188,18 @@ impl BackendState {
         let ignored = self.config.lock().get().ignored_profile_paths.clone();
         let mut report = ProfileOverwritesReport {
             ignored_paths: ignored.0.clone(),
+            shared_paths: self
+                .shared_routes_for_instance(id)?
+                .into_iter()
+                .map(|route| bridge::profile_overwrites::SharedProfilePath {
+                    path: route.path,
+                    group: match route.scope {
+                        crate::shared_data::Scope::Global => None,
+                        crate::shared_data::Scope::Group { name, .. } => Some(name),
+                    },
+                    conflict: route.conflict,
+                })
+                .collect(),
             files: Vec::new(),
             local_parent: None,
             local_changes: Vec::new(),
@@ -202,6 +214,13 @@ impl BackendState {
                 .await
                 .map_err(|error| error.to_string())??;
             report.files = file_summaries(&files);
+            for file in &mut report.files {
+                if report.shared_paths.iter().any(|route| {
+                    route.conflict.is_none() && schema::shared_data::contains_path(&route.path, false, &file.path)
+                }) {
+                    file.editable = false;
+                }
+            }
             report.skipped_entries = skipped;
             return Ok(report);
         };
@@ -323,8 +342,13 @@ impl BackendState {
             }
             (instance.root_path.to_path_buf(), instance.dot_minecraft_path.to_path_buf())
         };
+        let shared_owner_root = self.directories.root_launcher_dir.clone();
         tokio::task::spawn_blocking(move || {
+            let _sharing_lock = crate::shared_storage::lock(&shared_owner_root).map_err(|e| e.to_string())?;
             let _guard = profile_edit_lock(&root)?;
+            if crate::shared_data::active_shared_path(&root, &canonical_mod_path(&path)).map_err(|e| e.to_string())? {
+                return Err("Shared personal paths must be changed through their sharing owner".into());
+            }
             save_text(&minecraft, &path, &contents, &expected_sha256)
         })
         .await
@@ -340,8 +364,13 @@ impl BackendState {
             }
             (instance.root_path.to_path_buf(), instance.dot_minecraft_path.to_path_buf())
         };
+        let shared_owner_root = self.directories.root_launcher_dir.clone();
         tokio::task::spawn_blocking(move || {
+            let _sharing_lock = crate::shared_storage::lock(&shared_owner_root).map_err(|e| e.to_string())?;
             let _guard = profile_edit_lock(&root)?;
+            if crate::shared_data::active_shared_path(&root, &canonical_mod_path(&path)).map_err(|e| e.to_string())? {
+                return Err("Shared personal paths must be changed through their sharing owner".into());
+            }
             toggle_mod(&minecraft, &path)
         })
         .await
@@ -400,8 +429,13 @@ impl BackendState {
                 RestoreInput::Global(file, relative)
             },
         };
+        let shared_owner_root = self.directories.root_launcher_dir.clone();
         tokio::task::spawn_blocking(move || {
+            let _sharing_lock = crate::shared_storage::lock(&shared_owner_root).map_err(|e| e.to_string())?;
             let _child_lock = profile_edit_lock(&root)?;
+            if crate::shared_data::active_shared_path(&root, &canonical).map_err(|e| e.to_string())? {
+                return Err("Shared personal paths must be changed through their sharing owner".into());
+            }
             match input {
                 RestoreInput::Local(parent_root, parent_minecraft) => {
                     let _parent_lock = profile_edit_lock(&parent_root)?;

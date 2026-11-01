@@ -13,8 +13,20 @@ impl BackendState {
         let config = self.config.lock().get().clone();
         let group = self.shared_group_for_instance(id)?;
         let mut instances = self.instance_state.write();
+        let mut active_roots = Vec::new();
+        for other in instances.instances.iter().filter(|i| {
+            i.id != id && (!i.processes.is_empty() || !i.closing_processes.is_empty() || i.aot_create.is_some())
+        }) {
+            let roots = shared_data::active_folder_roots(&other.root_path).map_err(|e| e.to_string())?;
+            if roots.is_empty() {
+                active_roots.push(self.directories.synced_dir.to_path_buf());
+                active_roots.push(self.directories.save_groups_dir.to_path_buf());
+            } else {
+                active_roots.extend(roots);
+            }
+        }
         let instance = instances.instances.get_mut(id).ok_or("Unknown instance")?;
-        if !instance.processes.is_empty() || !instance.closing_processes.is_empty() {
+        if !instance.processes.is_empty() || !instance.closing_processes.is_empty() || instance.aot_create.is_some() {
             return Err("Detén las instancias afectadas antes de cambiar lo que comparten.".into());
         }
         let root = instance.root_path.clone();
@@ -28,7 +40,7 @@ impl BackendState {
         };
         let disabled = instance.configuration.get().disable_file_syncing;
         let empty = SyncTargets::default();
-        shared_data::apply(&Context {
+        let context = Context {
             root: &root,
             minecraft: &instance.dot_minecraft_path,
             directories: &self.directories,
@@ -36,8 +48,38 @@ impl BackendState {
             previous: config.previous_sync_targets.as_ref(),
             group: group.as_ref(),
             ignored: &config.ignored_profile_paths,
-        })
-        .map_err(|e| e.to_string())
+        };
+        if !active_roots.is_empty()
+            && shared_data::storage_overlaps(
+                &shared_data::mutation_roots(&context).map_err(|e| e.to_string())?,
+                &active_roots,
+            )
+        {
+            return Err("Detén las instancias afectadas antes de cambiar lo que comparten.".into());
+        }
+        shared_data::apply(&context).map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn ensure_shared_profile_isolation_safe(&self, id: InstanceID, paths: &[String]) -> Result<(), String> {
+        let state = self.instance_state.read();
+        let instance = state.instances.get(id).ok_or("Unknown instance")?;
+        let changing = shared_data::profile_isolation_roots(&instance.root_path, paths).map_err(|e| e.to_string())?;
+        if changing.is_empty() {
+            return Ok(());
+        }
+        for other in state.instances.iter().filter(|i| {
+            i.id != id && (!i.processes.is_empty() || !i.closing_processes.is_empty() || i.aot_create.is_some())
+        }) {
+            let mut roots = shared_data::active_folder_roots(&other.root_path).map_err(|e| e.to_string())?;
+            if roots.is_empty() {
+                roots.push(self.directories.synced_dir.to_path_buf());
+                roots.push(self.directories.save_groups_dir.to_path_buf());
+            }
+            if shared_data::storage_overlaps(&changing, &roots) {
+                return Err("Detén las instancias afectadas antes de cambiar lo que comparten.".into());
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn shared_routes_for_instance(&self, id: InstanceID) -> Result<Vec<shared_data::Route>, String> {
@@ -95,8 +137,15 @@ impl BackendState {
 pub(crate) fn publish_finished(
     instance: &crate::instance::Instance,
     directories: &crate::directories::LauncherDirectories,
+    active_roots: &[std::path::PathBuf],
 ) -> Result<(), String> {
     let _shared_lock = shared_storage::lock(&directories.root_launcher_dir).map_err(|e| e.to_string())?;
+    if shared_data::storage_overlaps(
+        &shared_data::file_storage_roots(&instance.root_path).map_err(|e| e.to_string())?,
+        active_roots,
+    ) {
+        return Err("Detén las instancias afectadas antes de cambiar lo que comparten.".into());
+    }
     let empty = SyncTargets::default();
     let ignored = schema::ignored_profile_paths::IgnoredProfilePaths::default();
     shared_data::publish(&Context {

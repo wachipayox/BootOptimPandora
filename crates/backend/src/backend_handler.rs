@@ -1669,20 +1669,7 @@ impl BackendState {
                 _ = channel.send(result);
             },
             MessageToBackend::GetSyncState { channel } => {
-                let result = crate::syncing::get_sync_state(
-                    &self.config.lock().get().sync_targets,
-                    &mut *self.instance_state.write(),
-                    &self.directories,
-                );
-
-                match result {
-                    Ok(state) => {
-                        _ = channel.send(state);
-                    },
-                    Err(error) => {
-                        self.send.send_error(format!("Error while getting sync state: {error}"));
-                    },
-                }
+                let _ = channel.send(crate::syncing::get_sync_state(self));
             },
             MessageToBackend::SetSyncing { target, is_file, value } => {
                 if let Err(error) = self.set_shared_global(target.to_string(), is_file, value) {
@@ -3433,9 +3420,11 @@ pub(crate) fn refresh_instance_saves(state: &Arc<BackendState>, id: InstanceID, 
     if let Some(instance) = state.instance_state.write().instances.get_mut(id) {
         instance.mark_all_dirty(state, true);
     }
-    let group_id = crate::save_groups::group_id_for_saves_path(&saves_path, &state.directories.save_groups_dir)
+    let group_id = state
+        .shared_group_for_instance(id)
+        .map(|group| group.map(|g| g.id))
         .unwrap_or_else(|error| {
-            log::warn!("Unable to refresh save group indicator for {id:?}: {error}");
+            log::warn!("Unable to refresh independent group membership for {id:?}: {error}");
             None
         });
     state.send.send(MessageToFrontend::InstanceSaveGroupUpdated { id, group_id });

@@ -165,6 +165,26 @@ impl BackendState {
         id: InstanceID,
         delta: &ProfileRevisionDelta,
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        let mut protected: Vec<String> = delta
+            .changes
+            .iter()
+            .filter_map(|change| match change {
+                crate::profile_branch::ProfileDeltaChange::Upsert(entry)
+                    if entry.metadata.policy == crate::profile_branch::ProfileFilePolicy::Enforced =>
+                {
+                    Some(entry.path.clone())
+                },
+                crate::profile_branch::ProfileDeltaChange::Remove { path, policy, .. }
+                    if *policy == crate::profile_branch::ProfileFilePolicy::Enforced =>
+                {
+                    Some(path.clone())
+                },
+                _ => None,
+            })
+            .collect();
+        protected.extend(delta.config_settings.iter().filter(|r| r.policy == "enforced").map(|r| r.path.clone()));
+        self.ensure_shared_profile_isolation_safe(id, &protected)
+            .map_err(ProfileLayoutServiceError::SharedData)?;
         self.prepare_shared_data(id).map_err(ProfileLayoutServiceError::SharedData)?;
         self.with_stopped_profile_layout(id, |layout| layout.reconcile_revision_delta(delta))
     }
@@ -177,6 +197,14 @@ impl BackendState {
         effective: &[EffectiveProfileEntry],
         config_settings: &[crate::distribution::ManifestConfigSetting],
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        let mut protected: Vec<String> = effective
+            .iter()
+            .filter(|e| e.metadata.policy == crate::profile_branch::ProfileFilePolicy::Enforced)
+            .map(|e| e.path.clone())
+            .collect();
+        protected.extend(config_settings.iter().filter(|r| r.policy == "enforced").map(|r| r.path.clone()));
+        self.ensure_shared_profile_isolation_safe(id, &protected)
+            .map_err(ProfileLayoutServiceError::SharedData)?;
         self.prepare_shared_data(id).map_err(ProfileLayoutServiceError::SharedData)?;
         self.with_stopped_profile_layout(id, |layout| layout.repair_modpack(effective, config_settings))
     }
@@ -189,6 +217,11 @@ impl BackendState {
         desired: &[DesiredManagedFile],
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
         self.prepare_shared_data(id).map_err(ProfileLayoutServiceError::SharedData)?;
+        self.ensure_shared_profile_isolation_safe(
+            id,
+            &desired.iter().map(|entry| entry.path.clone()).collect::<Vec<_>>(),
+        )
+        .map_err(ProfileLayoutServiceError::SharedData)?;
         self.with_stopped_profile_layout(id, |layout| layout.reconcile(desired))
     }
 

@@ -591,14 +591,16 @@ impl BackendState {
                 existing.rewatch_directories(&mut self.file_watching.write());
 
                 let _ = self.send.send(existing.create_modify_message());
-                let group_id = crate::save_groups::group_id_for_saves_path(
-                    &existing.saves_path,
-                    &self.directories.save_groups_dir,
-                )
-                .unwrap_or_else(|error| {
-                    log::warn!("Unable to determine save group for {:?}: {error}", existing.root_path);
-                    None
-                });
+                let config = existing.configuration.get();
+                let group_id = if config.shared_data_group_migrated {
+                    config.shared_data_group
+                } else {
+                    crate::save_groups::group_id_for_saves_path(&existing.saves_path, &self.directories.save_groups_dir)
+                        .unwrap_or_else(|error| {
+                            log::warn!("Unable to determine save group for {:?}: {error}", existing.root_path);
+                            None
+                        })
+                };
                 self.send.send(MessageToFrontend::InstanceSaveGroupUpdated {
                     id: existing.id,
                     group_id,
@@ -614,12 +616,16 @@ impl BackendState {
             let generation = instance_state.instances_generation;
             instance_state.instances_generation = instance_state.instances_generation.wrapping_add(1);
 
-            let save_group_id =
+            let config = instance.configuration.get();
+            let save_group_id = if config.shared_data_group_migrated {
+                config.shared_data_group
+            } else {
                 crate::save_groups::group_id_for_saves_path(&instance.saves_path, &self.directories.save_groups_dir)
                     .unwrap_or_else(|error| {
                         log::warn!("Unable to determine save group for {:?}: {error}", instance.root_path);
                         None
-                    });
+                    })
+            };
 
             let instance = instance_state.instances.insert(move |index| {
                 let instance_id = InstanceID { index, generation };
@@ -776,6 +782,7 @@ impl BackendState {
         let mut any_process_alive = false;
 
         let mut instance_state = self.instance_state.write();
+        let mut shared_files_to_publish = Vec::new();
         for instance in instance_state.instances.iter_mut() {
             let status_before = instance.status();
             let mut killed = false;
@@ -1065,9 +1072,7 @@ impl BackendState {
             }
 
             if status_before != InstanceStatus::NotRunning && instance.status() == InstanceStatus::NotRunning {
-                if let Err(error) = crate::sharing_backend::publish_finished(instance, &self.directories) {
-                    log::warn!("Unable to publish finished-instance shared files: {error}");
-                }
+                shared_files_to_publish.push(instance.id);
             }
             if killed || instance.status() != status_before {
                 instance.update_session();
@@ -1087,6 +1092,26 @@ impl BackendState {
             any_process_alive |= !instance.processes.is_empty()
                 || !instance.closing_processes.is_empty()
                 || instance.aot_create.is_some();
+        }
+        for id in shared_files_to_publish {
+            let mut active_roots = Vec::new();
+            for other in instance_state.instances.iter().filter(|i| {
+                i.id != id && (!i.processes.is_empty() || !i.closing_processes.is_empty() || i.aot_create.is_some())
+            }) {
+                match crate::shared_data::active_folder_roots(&other.root_path) {
+                    Ok(roots) if !roots.is_empty() => active_roots.extend(roots),
+                    _ => {
+                        active_roots.push(self.directories.synced_dir.to_path_buf());
+                        active_roots.push(self.directories.save_groups_dir.to_path_buf());
+                    },
+                }
+            }
+            if let Some(instance) = instance_state.instances.get(id) {
+                if let Err(error) = crate::sharing_backend::publish_finished(instance, &self.directories, &active_roots)
+                {
+                    log::warn!("Unable to publish finished-instance shared files: {error}");
+                }
+            }
         }
         any_process_alive |= !self.aot_create_requests.lock().is_empty();
 

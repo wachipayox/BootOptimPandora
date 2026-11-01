@@ -119,10 +119,7 @@ fn duplicate_with_content_library(
             }
             #[cfg(windows)]
             if let Ok(target) = junction::get_target(&path) {
-                if relative == Path::new(".minecraft/saves")
-                    && !preserve_external_saves_link
-                    && is_managed_group_saves(&target, save_groups_dir)
-                {
+                if !preserve_external_saves_link && is_managed_group_saves(&target, save_groups_dir) {
                     directories.push(relative.to_path_buf());
                     directories_to_visit.push((target, depth + 1, relative.to_path_buf()));
                     continue;
@@ -136,10 +133,7 @@ fn duplicate_with_content_library(
             }
             if file_type.is_symlink() {
                 let target = fs::read_link(&path)?;
-                if relative == Path::new(".minecraft/saves")
-                    && !preserve_external_saves_link
-                    && is_managed_group_saves(&path, save_groups_dir)
-                {
+                if !preserve_external_saves_link && is_managed_group_saves(&path, save_groups_dir) {
                     directories.push(relative.to_path_buf());
                     directories_to_visit.push((path.canonicalize()?, depth + 1, relative.to_path_buf()));
                     continue;
@@ -246,7 +240,15 @@ fn is_managed_group_saves(link: &Path, save_groups_dir: &Path) -> bool {
     let Ok(groups_root) = fs::canonicalize(save_groups_dir) else {
         return false;
     };
-    target.file_name().is_some_and(|name| name == "saves") && target.starts_with(groups_root)
+    let Ok(relative) = target.strip_prefix(groups_root) else {
+        return false;
+    };
+    let mut components = relative.components();
+    let valid_id = components
+        .next()
+        .and_then(|c| c.as_os_str().to_str())
+        .is_some_and(|name| uuid::Uuid::parse_str(name).is_ok());
+    valid_id && components.next().is_some_and(|c| c.as_os_str() == "saves" || c.as_os_str() == "shared")
 }
 
 pub async fn duplicate_instance(backend: Arc<BackendState>, id: InstanceID, name: &str, modal_action: ModalAction) {
@@ -364,6 +366,10 @@ async fn duplicate_instance_inner(
         None
     };
 
+    if let Err(error) = backend.shared_group_for_instance(id) {
+        modal_action.set_finished_with_error(error.into());
+        return;
+    }
     let source = {
         let state = backend.instance_state.read();
         let Some(instance) = state.instances.get(id) else {
@@ -428,11 +434,26 @@ async fn duplicate_instance_inner(
 
     let result = match result {
         Ok(()) => {
-            let icon_result = if as_branch {
-                apply_branch_icon(&dest, reuse_parent_icon, icon_hue_degrees)
+            let membership_result = if !as_branch {
+                let config_path = dest.join("info_v1.json");
+                crate::fs::read_json::<schema::instance::InstanceConfiguration>(&config_path)
+                    .map_err(|e| Error::other(e.to_string()))
+                    .and_then(|mut config| {
+                        config.shared_data_group = None;
+                        config.shared_data_group_migrated = true;
+                        let bytes = serde_json::to_vec(&config).map_err(|e| Error::other(e.to_string()))?;
+                        crate::fs::write_safe(&config_path, &bytes)
+                    })
             } else {
                 Ok(())
             };
+            let icon_result = membership_result.and_then(|()| {
+                if as_branch {
+                    apply_branch_icon(&dest, reuse_parent_icon, icon_hue_degrees)
+                } else {
+                    Ok(())
+                }
+            });
             let normalized = icon_result.and_then(|()| {
                 if as_branch {
                     normalize_disabled_mods_for_branch(&dest)

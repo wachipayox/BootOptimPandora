@@ -1298,8 +1298,52 @@ impl Render for InstanceOverwritesSubpage {
                 if let Some(notice) = &self.notice {
                     details = details.child(div().text_sm().child(notice.clone()));
                 }
+                let shared_rows = report
+                    .shared_paths
+                    .iter()
+                    .map(|route| {
+                        let owner = route
+                            .group
+                            .as_ref()
+                            .map(|name| format!("Compartido con el grupo {name}"))
+                            .unwrap_or_else(|| "Compartido globalmente".to_owned());
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_3()
+                            .p_2()
+                            .border_b_1()
+                            .border_color(border)
+                            .child(
+                                v_flex()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .child(div().text_sm().child(route.path.clone()))
+                                    .child(div().text_xs().text_color(muted).child(owner)),
+                            )
+                            .when_some(route.conflict.as_ref(), |row, path| {
+                                row.child(
+                                    v_flex()
+                                        .max_w(px(320.))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().warning)
+                                                .child("Conflicto con herencia"),
+                                        )
+                                        .child(div().text_xs().text_color(muted).child(path.clone())),
+                                )
+                            })
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>();
                 let mut section = v_flex()
                     .gap_3()
+                    .when(!shared_rows.is_empty(), |section| {
+                        section.child(
+                            v_flex().max_h(px(160.)).flex_shrink_0().overflow_y_scrollbar().children(shared_rows),
+                        )
+                    })
                     .flex_1()
                     .min_h_0()
                     .child(h_flex().gap_3().flex_1().min_h_0().child(explorer).child(details));

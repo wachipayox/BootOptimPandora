@@ -95,7 +95,7 @@ fn ensure_stopped(instance: &Instance) -> Result<(), String> {
     if instance.status() != InstanceStatus::NotRunning
         || instance.launch_keepalive.as_ref().is_some_and(|keepalive| keepalive.is_alive())
     {
-        Err("Stop this instance before changing its save group".into())
+        Err("Detén las instancias afectadas antes de cambiar lo que comparten.".into())
     } else {
         Ok(())
     }
@@ -239,10 +239,13 @@ fn current_members(
         if Some(instance.id) == except {
             continue;
         }
-        let configured = instance.configuration.get().shared_data_group == Some(id);
-        let legacy = expected.as_ref().is_some_and(|expected| {
-            is_link(&instance.saves_path) && fs::canonicalize(&instance.saves_path).is_ok_and(|p| p == *expected)
-        });
+        let config = instance.configuration.get();
+        let configured = config.shared_data_group == Some(id);
+        let migrated = config.shared_data_group_migrated;
+        let legacy = !migrated
+            && expected.as_ref().is_some_and(|expected| {
+                is_link(&instance.saves_path) && fs::canonicalize(&instance.saves_path).is_ok_and(|p| p == *expected)
+            });
         if configured || legacy {
             ensure_stopped(instance)?;
             members.push(instance.id);
@@ -259,10 +262,14 @@ fn member_count(state: &BackendState, group_root: &Path) -> usize {
         .instances
         .iter_mut()
         .map(|instance| {
-            let configured = id.is_some() && instance.configuration.get().shared_data_group == id;
-            let legacy = expected.as_ref().is_some_and(|expected| {
-                is_link(&instance.saves_path) && fs::canonicalize(&instance.saves_path).is_ok_and(|p| p == *expected)
-            });
+            let config = instance.configuration.get();
+            let configured = id.is_some() && config.shared_data_group == id;
+            let migrated = config.shared_data_group_migrated;
+            let legacy = !migrated
+                && expected.as_ref().is_some_and(|expected| {
+                    is_link(&instance.saves_path)
+                        && fs::canonicalize(&instance.saves_path).is_ok_and(|p| p == *expected)
+                });
             usize::from(configured || legacy)
         })
         .sum()
@@ -289,6 +296,10 @@ fn candidate_name(name: &str, source: &str, occupied: &mut std::collections::Has
         suffix += 1;
     }
     candidate
+}
+
+pub(crate) fn merge_worlds_for_sharing(source: &Path, target: &Path, instance_name: &str) -> Result<(), String> {
+    join_contents(source, target, instance_name)
 }
 
 fn join_contents(source: &Path, target: &Path, instance_name: &str) -> Result<(), String> {
@@ -360,10 +371,19 @@ impl BackendState {
         let groups = load_records(&self.directories.save_groups_dir)?;
         let mut instances = self.instance_state.write();
         let instance = instances.instances.get_mut(id).ok_or("Unknown instance")?;
-        let configured = instance.configuration.get().shared_data_group;
-        let selected = configured.or(group_for_link(&instance.saves_path, &groups)?);
-        if configured != selected {
-            instance.configuration.modify(|c| c.shared_data_group = selected);
+        let config = instance.configuration.get();
+        let configured = config.shared_data_group;
+        let migrated = config.shared_data_group_migrated;
+        let selected = if migrated {
+            configured
+        } else {
+            configured.or(group_for_link(&instance.saves_path, &groups)?)
+        };
+        if !migrated || configured != selected {
+            instance.configuration.modify(|c| {
+                c.shared_data_group = selected;
+                c.shared_data_group_migrated = true;
+            });
         }
         Ok(selected.and_then(|id| {
             groups.into_iter().find(|(g, _)| g.id == id).map(|(g, _)| crate::shared_data::Group {
@@ -408,7 +428,7 @@ impl BackendState {
             .saves_path
             .to_path_buf();
         let groups = load_records(&self.directories.save_groups_dir)?;
-        let mut selected = configured.or(group_for_link(&saves, &groups)?);
+        let mut selected = configured;
         if let Some(group_id) = selected
             && is_link(&saves)
             && fs::canonicalize(&saves).is_err()
@@ -434,6 +454,9 @@ impl BackendState {
     }
 
     pub fn create_save_group(&self, id: InstanceID, name: String) -> Result<(), String> {
+        if self.shared_group_for_instance(id)?.is_some() {
+            return Err("This instance already belongs to a save group".into());
+        }
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
             return Err("Group name must contain 1 to 80 characters".into());

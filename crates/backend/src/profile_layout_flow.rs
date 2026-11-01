@@ -309,6 +309,10 @@ impl PersistentProfileLayout {
     }
 
     pub fn reconcile(&mut self, desired: &[DesiredManagedFile]) -> Result<ReconcileOutcome, ProfileLayoutFlowError> {
+        let _ = crate::shared_data::prepare_profile_paths(
+            &self.instance_root,
+            &desired.iter().map(|entry| entry.path.clone()).collect::<Vec<_>>(),
+        )?;
         self.recover_if_needed()?;
         self.status.state = ProfileLayoutState::Planning;
 
@@ -570,7 +574,7 @@ impl PersistentProfileLayout {
                 .filter(|rule| rule.policy == "enforced")
                 .map(|rule| rule.path.clone()),
         );
-        crate::shared_data::prepare_profile_paths(&self.instance_root, &protected_shared_paths)?;
+        let shared_conflicts = crate::shared_data::prepare_profile_paths(&self.instance_root, &protected_shared_paths)?;
         let shared_routes = crate::shared_data::active_routes(&self.instance_root)?;
         let target_config_setting_signatures =
             crate::config_settings::config_setting_signatures(&delta.config_settings)?;
@@ -638,6 +642,7 @@ impl PersistentProfileLayout {
             rekey_profile_path(&mut branch.tombstones, &logical_path, &path)?;
             rekey_profile_path(&mut managed_entries, &logical_path, &path)?;
             let current_metadata = branch.entries.get(&path).cloned();
+            let required_shared = shared_conflicts.iter().any(|shared| shared.eq_ignore_ascii_case(&logical_path));
             let has_local_tombstone = branch.tombstones.contains_key(&path);
             let path_has_config_rules = delta.config_settings.iter().any(|setting| setting.path == path);
 
@@ -655,6 +660,7 @@ impl PersistentProfileLayout {
             // the last applied hash. Preserve an edit or deletion as a local override/tombstone
             // instead of replacing it and hiding the edit in a conflict-copy directory.
             if incoming_is_inherited
+                && !required_shared
                 && !local_child_baseline
                 && !has_local_tombstone
                 && let Some(mut metadata) = current_metadata.clone()
@@ -704,6 +710,7 @@ impl PersistentProfileLayout {
             // Once this profile already has a parent baseline, preserve that untracked live file
             // as a local addition instead of replacing it with the newly inherited path.
             if incoming_is_inherited
+                && !required_shared
                 && !local_child_baseline
                 && !has_local_tombstone
                 && current_metadata.is_none()
@@ -725,14 +732,14 @@ impl PersistentProfileLayout {
 
             if incoming_is_inherited
                 && (has_local_tombstone
-                    || current_metadata
-                        .as_ref()
-                        .is_some_and(|metadata| metadata.ownership != ProfileEntryOwnership::Inherited)
-                        && !current_metadata.as_ref().is_some_and(|metadata| {
-                            path_has_config_rules
-                                && metadata.logical_identity.starts_with("config:")
-                                && matches!(&metadata.origin, ProfileEntryOrigin::GlobalRevision { .. })
-                        }))
+                    || current_metadata.as_ref().is_some_and(|metadata| {
+                        metadata.ownership != ProfileEntryOwnership::Inherited
+                            && !(required_shared && metadata.ownership == ProfileEntryOwnership::UserOwned)
+                    }) && !current_metadata.as_ref().is_some_and(|metadata| {
+                        path_has_config_rules
+                            && metadata.logical_identity.starts_with("config:")
+                            && matches!(&metadata.origin, ProfileEntryOrigin::GlobalRevision { .. })
+                    }))
             {
                 // A local override/tombstone owns this destination; ancestor history no longer
                 // flows through it.

@@ -127,6 +127,8 @@ pub struct InstanceConfiguration {
     /// Membership is independent from whether this group currently shares saves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_data_group: Option<Uuid>,
+    #[serde(default)]
+    pub shared_data_group_migrated: bool,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub show_shader_tab: bool,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
@@ -164,6 +166,7 @@ impl InstanceConfiguration {
             instance_fallback_icon: None,
             disable_file_syncing: false,
             shared_data_group: None,
+            shared_data_group_migrated: false,
             show_shader_tab: false,
             sandbox: false, // todo: for now, off by default. In the future, turn this on by default
             created_by_cli: false,

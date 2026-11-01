@@ -44,6 +44,10 @@ struct File {
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 struct Receipt {
     #[serde(default)]
+    legacy_global_migrated: bool,
+    #[serde(default)]
+    legacy_group_seen: Option<Uuid>,
+    #[serde(default)]
     routes: Vec<Route>,
     #[serde(default)]
     folders: BTreeMap<String, Folder>,
@@ -264,7 +268,7 @@ pub(crate) fn apply(context: &Context<'_>) -> io::Result<()> {
     let original = receipt.clone();
     let protected_paths = protected(context.root, context.ignored)?;
     // Adopt only known old global links; never claim an arbitrary external link.
-    if let Some(previous) = context.previous {
+    if let Some(previous) = context.previous.filter(|_| !receipt.legacy_global_migrated) {
         for path in &previous.folders {
             validate_route(path)?;
             if receipt
@@ -290,7 +294,7 @@ pub(crate) fn apply(context: &Context<'_>) -> io::Result<()> {
             }
         }
     }
-    if let Some(group) = context.group {
+    if let Some(group) = context.group.filter(|g| receipt.legacy_group_seen != Some(g.id)) {
         let route = Route {
             path: "saves".into(),
             is_file: false,
@@ -382,27 +386,53 @@ pub(crate) fn apply(context: &Context<'_>) -> io::Result<()> {
                 },
             );
             write(context.root, &receipt)?;
+            if route.path.eq_ignore_ascii_case("saves")
+                && local.is_dir()
+                && !storage::is_link(&local)
+                && destination.is_dir()
+            {
+                let name = context.root.file_name().and_then(|s| s.to_str()).unwrap_or("instance");
+                crate::save_groups::merge_worlds_for_sharing(&local, &destination, name).map_err(error)?;
+            }
             storage::attach_folder(&local, &destination, &backup(context.root, route)?)?;
         }
+    }
+    let group_seen = context.group.map(|g| g.id);
+    if !receipt.legacy_global_migrated || receipt.legacy_group_seen != group_seen {
+        receipt.legacy_global_migrated = true;
+        receipt.legacy_group_seen = group_seen;
+        write(context.root, &receipt)?;
     }
     Ok(())
 }
 pub(crate) fn publish(context: &Context<'_>) -> io::Result<()> {
     let mut receipt = read(context.root)?;
+    if receipt.files.is_empty() {
+        return Ok(());
+    }
+    let original = receipt.clone();
     for file in receipt.files.values_mut() {
         validate_owned_target(context, &file.route, &file.target)?;
         let local = storage::checked_path(context.minecraft, &file.route.path)?;
         file.seed =
             storage::publish_file(&local, &file.target, file.seed.as_deref(), &backup(context.root, &file.route)?)?;
     }
-    write(context.root, &receipt)
+    if receipt != original {
+        write(context.root, &receipt)?;
+    }
+    Ok(())
 }
 /// Called under the inherited-layout lock before applying an enforced profile delta.
 /// This never writes to the shared source: it materializes a local independent copy.
-pub(crate) fn prepare_profile_paths(root: &Path, paths: &[String]) -> io::Result<()> {
+pub(crate) fn prepare_profile_paths(root: &Path, paths: &[String]) -> io::Result<Vec<String>> {
     let mut receipt = read(root)?;
+    let conflicts: Vec<String> = paths
+        .iter()
+        .filter(|path| receipt.routes.iter().any(|route| contains_path(&route.path, route.is_file, path)))
+        .cloned()
+        .collect();
     if receipt.folders.is_empty() && receipt.files.is_empty() {
-        return Ok(());
+        return Ok(conflicts);
     }
     for path in paths {
         crate::profile_branch::validate_profile_relative_path(path).map_err(|e| error(e.to_string()))?;
@@ -435,7 +465,8 @@ pub(crate) fn prepare_profile_paths(root: &Path, paths: &[String]) -> io::Result
             }
         }
     }
-    write(root, &receipt)
+    write(root, &receipt)?;
+    Ok(conflicts)
 }
 pub(crate) fn active_routes(root: &Path) -> io::Result<Vec<Route>> {
     let receipt = read(root)?;
@@ -451,4 +482,97 @@ pub(crate) fn active_routes(root: &Path) -> io::Result<Vec<Route>> {
 }
 pub(crate) fn active_shared_path(root: &Path, path: &str) -> io::Result<bool> {
     Ok(active_routes(root)?.iter().any(|route| contains_path(&route.path, route.is_file, path)))
+}
+
+/// Storage folders currently exposed to a game through owned directory links.
+pub(crate) fn active_folder_roots(root: &Path) -> io::Result<Vec<PathBuf>> {
+    Ok(read(root)?
+        .folders
+        .into_values()
+        .filter(|f| storage::targeting(&root.join(".minecraft").join(&f.route.path), &f.target))
+        .map(|f| f.target)
+        .collect())
+}
+pub(crate) fn profile_isolation_roots(root: &Path, paths: &[String]) -> io::Result<Vec<PathBuf>> {
+    Ok(read(root)?
+        .folders
+        .into_values()
+        .filter(|f| {
+            paths.iter().any(|p| contains_path(&f.route.path, false, p))
+                && storage::targeting(&root.join(".minecraft").join(&f.route.path), &f.target)
+        })
+        .map(|f| f.target)
+        .collect())
+}
+pub(crate) fn storage_overlaps(first: &[PathBuf], second: &[PathBuf]) -> bool {
+    fn key(path: &Path) -> String {
+        let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let value = path.to_string_lossy().replace('\\', "/");
+        #[cfg(windows)]
+        {
+            value.to_lowercase()
+        }
+        #[cfg(not(windows))]
+        {
+            value
+        }
+    }
+    first.iter().any(|a| {
+        second.iter().any(|b| {
+            let a = key(a);
+            let b = key(b);
+            contains_path(&a, false, &b) || contains_path(&b, false, &a)
+        })
+    })
+}
+/// Only selected route metadata is examined; no recursive instance walk.
+pub(crate) fn mutation_roots(context: &Context<'_>) -> io::Result<Vec<PathBuf>> {
+    let desired = plan(context)?;
+    let receipt = read(context.root)?;
+    let mut roots = Vec::new();
+    for old in receipt.folders.values() {
+        let retained = desired.iter().any(|r| {
+            !r.is_file
+                && r.path == old.route.path
+                && r.conflict.is_none()
+                && target(context, r).is_ok_and(|p| p == old.target)
+        });
+        if !retained && storage::targeting(&context.minecraft.join(&old.route.path), &old.target) {
+            roots.push(old.target.clone());
+        }
+    }
+    if let Some(previous) = context.previous.filter(|_| !receipt.legacy_global_migrated) {
+        for path in &previous.folders {
+            validate_route(path)?;
+            let route = Route {
+                path: path.to_string(),
+                is_file: false,
+                scope: Scope::Global,
+                conflict: None,
+            };
+            let shared = target(context, &route)?;
+            let retained = desired
+                .iter()
+                .any(|r| !r.is_file && r.path == route.path && r.scope == Scope::Global && r.conflict.is_none());
+            if !retained && storage::targeting(&context.minecraft.join(path.as_ref()), &shared) {
+                roots.push(shared);
+            }
+        }
+    }
+    for route in desired.iter().filter(|r| r.conflict.is_none()) {
+        let destination = target(context, route)?;
+        if route.is_file {
+            roots.push(destination);
+            continue;
+        }
+        let local = storage::checked_path(context.minecraft, &route.path)?;
+        if !storage::targeting(&local, &destination) && local.is_dir() && fs::read_dir(&local)?.next().is_some() {
+            roots.push(destination);
+        }
+    }
+    Ok(roots)
+}
+
+pub(crate) fn file_storage_roots(root: &Path) -> io::Result<Vec<PathBuf>> {
+    Ok(read(root)?.files.into_values().map(|f| f.target).collect())
 }
