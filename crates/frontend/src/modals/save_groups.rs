@@ -44,9 +44,43 @@ impl SaveGroupsModal {
             id: self.id,
             channel: send,
         });
+        #[cfg(feature = "ui-capture")]
+        let capture_editor = std::env::var("WBOMBO_UI_CAPTURE_PAGE").is_ok_and(|p| p.starts_with("groups:agente-274-"))
+            && std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("editing");
+        #[cfg(feature = "ui-capture")]
+        let (backend, id) = (self.backend.clone(), self.id);
         cx.spawn(async move |entity, cx| {
             let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
+            #[cfg(feature = "ui-capture")]
+            let result = if capture_editor && result.as_ref().is_ok_and(|groups| !groups.iter().any(|g| g.selected)) {
+                let (send, receive) = tokio::sync::oneshot::channel();
+                backend.send(MessageToBackend::CreateSaveGroup {
+                    id,
+                    name: "PRUEBA".into(),
+                    channel: send,
+                });
+                match receive.await {
+                    Ok(Ok(())) => {
+                        let (send, receive) = tokio::sync::oneshot::channel();
+                        backend.send(MessageToBackend::GetSaveGroups { id, channel: send });
+                        receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()))
+                    },
+                    Ok(Err(error)) => Err(error),
+                    Err(error) => Err(error.to_string()),
+                }
+            } else {
+                result
+            };
             let _ = entity.update(cx, |state, cx| {
+                #[cfg(feature = "ui-capture")]
+                if capture_editor {
+                    if let Ok(groups) = &result {
+                        if let Some(group) = groups.iter().find(|g| g.selected) {
+                            state.editing = Some((group.id, group.name.clone(), group.targets.clone()));
+                            log::info!("shared-group-editor-ready pid={}", std::process::id());
+                        }
+                    }
+                }
                 state.groups = Some(result);
                 cx.notify();
             });

@@ -495,6 +495,7 @@ try {
         if ($screen.page -match '^(instance-settings|derived|duplicate|shortcut):') { $instanceReadyMarkers=@('instance-settings-profile-ready','instance-settings-group-ready','instance-artwork-ready','instance-memory-ready') }
         if ($screen.page -match '^(derived|duplicate):') { $instanceReadyMarkers += 'instance-derived-ready' }
         if ($screen.page.StartsWith('shortcut:')) { $instanceReadyMarkers += 'launcher-dialog-ready' }
+        if ($screen.page.StartsWith('groups:') -and $CaptureState -eq 'editing') { $instanceReadyMarkers += 'shared-group-editor-ready' }
         if ($screen.page -match '^instance-overwrites:') { $instanceReadyMarkers=@('instance-overwrites-ready') }
         if ($screen.page -match '^instance-(logs|crashes):') { $instanceReadyMarkers=@('instance-log-ready') }
         if ($screen.page -match '^instance-changelog:') { $instanceReadyMarkers=@('instance-changelog-ready','instance-stone-ready') }

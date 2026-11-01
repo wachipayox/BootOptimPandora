@@ -14,7 +14,7 @@ impl Drop for StorageLock {
     fn drop(&mut self) {
         #[cfg(unix)]
         unsafe {
-            let _ = libc::flock(std::os::fd::AsRawFd::as_raw_fd(&self.0), libc::LOCK_UN);
+            let _ = libc::flock(std::os::fd::AsRawFd::as_raw_fd(&self._handle), libc::LOCK_UN);
         }
     }
 }

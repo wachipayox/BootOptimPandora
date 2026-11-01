@@ -636,6 +636,9 @@ mod tests {
             group: Option<&'a Group>,
             ignored: &'a IgnoredProfilePaths,
         ) -> Context<'a> {
+            if let Some(group) = group {
+                fs::create_dir_all(self.directories.save_groups_dir.join(group.id.to_string())).unwrap();
+            }
             Context {
                 root: &self.root,
                 minecraft: &self.minecraft,
