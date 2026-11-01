@@ -532,16 +532,23 @@ try {
             [void][CaptureWindow]::ClientToScreen($captureHandle,[ref]$profileOrigin)
             $profilePoint = [IntPtr](([int64]($profileOrigin.Y + [int]($profileClient.Bottom * 0.7)) -shl 16) -bor
                 ([int64]($profileOrigin.X + [int]($profileClient.Right * 0.65)) -band 0xffff))
+            [void][CaptureWindow]::SetForegroundWindow($captureHandle)
+            Start-Sleep -Milliseconds 250
+            $foregroundBefore = [CaptureWindow]::GetForegroundWindow() -eq $captureHandle
+            if (-not $foregroundBefore) { throw 'Owned profiling window is not foreground; rejecting inactive-window measurement.' }
+            $inactivePackets = 0
             $timer = [Diagnostics.Stopwatch]::StartNew()
             for ($packet = 0; $packet -lt 40; $packet++) {
+                if ([CaptureWindow]::GetForegroundWindow() -ne $captureHandle) { $inactivePackets++ }
                 if (-not [CaptureWindow]::PostMessage($captureHandle,0x20a,[IntPtr](-7864320),$profilePoint)) { throw 'Cannot send owned profiling wheel packet' }
                 Start-Sleep -Milliseconds 70
             }
             Start-Sleep -Milliseconds 250
             $timer.Stop()
+            $foregroundAfter = [CaptureWindow]::GetForegroundWindow() -eq $captureHandle
             Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-profile.png')) $captureHandle $proc.Id
             Copy-Item -LiteralPath (Join-Path $framebufferRoot 'frame-stats.json') -Destination (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-timings.json'))
-            @{ packets=40; packetDelta=-120; requestedSpacingMs=70; inclusiveWallMs=$timer.Elapsed.TotalMilliseconds; boundary='first WM_MOUSEWHEEL post through last 70 ms wait plus 250 ms settle; framebuffer readback excluded' } |
+            @{ packets=40; packetDelta=-120; requestedSpacingMs=70; inclusiveWallMs=$timer.Elapsed.TotalMilliseconds; foregroundBefore=$foregroundBefore; foregroundAfter=$foregroundAfter; inactivePackets=$inactivePackets; validForeground=($foregroundBefore -and $foregroundAfter -and $inactivePackets -eq 0); boundary='first WM_MOUSEWHEEL post through last 70 ms wait plus 250 ms settle; framebuffer readback excluded' } |
                 ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $outputPath (($screen.file -replace '\.png$', '') + '-stimulus.json'))
         }
         if ($ScrollSeam -and $screen.page -eq 'instances') {

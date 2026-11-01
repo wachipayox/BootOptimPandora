@@ -1177,7 +1177,9 @@ pub struct Window {
     #[cfg(feature = "profiler")]
     window_profiler: profiler::WindowProfiler,
     #[cfg(feature = "native-capture")]
-    capture_frame_timings: Option<(Instant, Vec<[u64; 2]>)>,
+    capture_frame_timings: Option<(Instant, Vec<[u64; 5]>)>,
+    #[cfg(feature = "native-capture")]
+    capture_draw_phases: [u64; 3],
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -1826,6 +1828,8 @@ impl Window {
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
             #[cfg(feature = "native-capture")]
             capture_frame_timings: std::env::var_os("WBOMBO_UI_SCROLL_TIMINGS").map(|_| (Instant::now(), Vec::new())),
+            #[cfg(feature = "native-capture")]
+            capture_draw_phases: [0; 3],
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -2388,7 +2392,7 @@ impl Window {
     /// Diagnostic draw-start and UI-thread draw-duration samples, in microseconds.
     /// Enabled only by WBOMBO_UI_SCROLL_TIMINGS in native-capture builds.
     #[cfg(feature = "native-capture")]
-    pub fn take_capture_frame_timings(&mut self) -> Option<Vec<[u64; 2]>> {
+    pub fn take_capture_frame_timings(&mut self) -> Option<Vec<[u64; 5]>> {
         self.capture_frame_timings.as_mut().map(|(_, frames)| std::mem::take(frames))
     }
 
@@ -2884,7 +2888,13 @@ impl Window {
         #[cfg(feature = "native-capture")]
         if let (Some((origin, frames)), Some(start)) = (&mut self.capture_frame_timings, capture_draw_start) {
             if frames.len() < 10_000 {
-                frames.push([start.duration_since(*origin).as_micros() as u64, start.elapsed().as_micros() as u64]);
+                frames.push([
+                    start.duration_since(*origin).as_micros() as u64,
+                    start.elapsed().as_micros() as u64,
+                    self.capture_draw_phases[0],
+                    self.capture_draw_phases[1],
+                    self.capture_draw_phases[2],
+                ]);
             }
         }
         // Exit the scope to obtain the arena-clear token this draw owes; the
@@ -3015,13 +3025,22 @@ impl Window {
         // stretches to fill the viewport unless explicitly sized, window roots
         // fill the window when their size is `auto`.
         let scale_factor = self.scale_factor();
+        #[cfg(feature = "native-capture")]
+        let capture_layout_start = self.capture_frame_timings.as_ref().map(|_| Instant::now());
         let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
         let root_layout_id = root_element.request_layout(self, cx);
         self.layout_engine
             .as_mut()
             .unwrap()
             .stretch_auto_size_to_fill(root_layout_id, root_size, scale_factor);
+        #[cfg(feature = "native-capture")]
+        let capture_prepaint_start = capture_layout_start.map(|_| Instant::now());
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+        #[cfg(feature = "native-capture")]
+        if let (Some(layout), Some(prepaint)) = (capture_layout_start, capture_prepaint_start) {
+            self.capture_draw_phases[0] = prepaint.duration_since(layout).as_micros() as u64;
+            self.capture_draw_phases[1] = prepaint.elapsed().as_micros() as u64;
+        }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_element = self.prepaint_inspector(_inspector_width, cx);
@@ -3055,7 +3074,13 @@ impl Window {
 
         // Now actually paint the elements.
         self.invalidator.set_phase(DrawPhase::Paint);
+        #[cfg(feature = "native-capture")]
+        let capture_paint_start = self.capture_frame_timings.as_ref().map(|_| Instant::now());
         root_element.paint(self, cx);
+        #[cfg(feature = "native-capture")]
+        if let Some(start) = capture_paint_start {
+            self.capture_draw_phases[2] = start.elapsed().as_micros() as u64;
+        }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
