@@ -533,6 +533,7 @@ pub(crate) fn mutation_roots(context: &Context<'_>) -> io::Result<Vec<PathBuf>> 
     let desired = plan(context)?;
     let receipt = read(context.root)?;
     let mut roots = Vec::new();
+    let mut detached = Vec::new();
     for old in receipt.folders.values() {
         let retained = desired.iter().any(|r| {
             !r.is_file
@@ -542,6 +543,7 @@ pub(crate) fn mutation_roots(context: &Context<'_>) -> io::Result<Vec<PathBuf>> 
         });
         if !retained && storage::targeting_or_broken(&context.minecraft.join(&old.route.path), &old.target) {
             roots.push(old.target.clone());
+            detached.push((old.route.path.clone(), old.target.clone()));
         }
     }
     if let Some(previous) = context.previous.filter(|_| !receipt.legacy_global_migrated) {
@@ -558,6 +560,7 @@ pub(crate) fn mutation_roots(context: &Context<'_>) -> io::Result<Vec<PathBuf>> 
                 .iter()
                 .any(|r| !r.is_file && r.path == route.path && r.scope == Scope::Global && r.conflict.is_none());
             if !retained && storage::targeting_or_broken(&context.minecraft.join(path.as_ref()), &shared) {
+                detached.push((route.path.clone(), shared.clone()));
                 roots.push(shared);
             }
         }
@@ -575,6 +578,7 @@ pub(crate) fn mutation_roots(context: &Context<'_>) -> io::Result<Vec<PathBuf>> 
         let shared = target(context, &route)?;
         let retained = desired.iter().any(|r| r.path == "saves" && !r.is_file && r.conflict.is_none());
         if !retained && storage::targeting_or_broken(&context.minecraft.join("saves"), &shared) {
+            detached.push((route.path.clone(), shared.clone()));
             roots.push(shared);
         }
     }
@@ -584,7 +588,16 @@ pub(crate) fn mutation_roots(context: &Context<'_>) -> io::Result<Vec<PathBuf>> 
             roots.push(destination);
             continue;
         }
-        let local = storage::checked_path(context.minecraft, &route.path)?;
+        // Inspect the bytes that a known parent detachment will materialize, without
+        // following an arbitrary link or mutating the instance during preflight.
+        let local = if let Some((parent, shared)) = detached
+            .iter()
+            .find(|(parent, _)| parent != &route.path && contains_path(parent, false, &route.path))
+        {
+            storage::checked_path(shared, &route.path[parent.len() + 1..])?
+        } else {
+            storage::checked_path(context.minecraft, &route.path)?
+        };
         if !storage::targeting(&local, &destination) && local.is_dir() && fs::read_dir(&local)?.next().is_some() {
             roots.push(destination);
         }
@@ -594,4 +607,103 @@ pub(crate) fn mutation_roots(context: &Context<'_>) -> io::Result<Vec<PathBuf>> 
 
 pub(crate) fn file_storage_roots(root: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(read(root)?.files.into_values().map(|f| f.target).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct Fixture {
+        directories: LauncherDirectories,
+        root: PathBuf,
+        minecraft: PathBuf,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let directories =
+                LauncherDirectories::new(std::env::temp_dir().join(format!("pandora-sharing-plan-{}", Uuid::new_v4())));
+            let root = directories.instances_dir.join("fixture");
+            let minecraft = root.join(".minecraft");
+            fs::create_dir_all(&minecraft).unwrap();
+            Self {
+                directories,
+                root,
+                minecraft,
+            }
+        }
+        fn context<'a>(
+            &'a self,
+            global: &'a SyncTargets,
+            group: Option<&'a Group>,
+            ignored: &'a IgnoredProfilePaths,
+        ) -> Context<'a> {
+            Context {
+                root: &self.root,
+                minecraft: &self.minecraft,
+                directories: &self.directories,
+                global,
+                previous: None,
+                group,
+                ignored,
+            }
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            assert!(self.directories.root_launcher_dir.starts_with(std::env::temp_dir()));
+            let _ = fs::remove_dir_all(&self.directories.root_launcher_dir);
+        }
+    }
+    #[test]
+    fn group_child_replaces_global_parent_without_following_it_in_preflight() {
+        let f = Fixture::new();
+        let ignored = IgnoredProfilePaths::default();
+        let mut global = SyncTargets::default();
+        global.folders.insert("config".into());
+        fs::create_dir_all(f.minecraft.join("config/litematica")).unwrap();
+        fs::write(f.minecraft.join("config/litematica/settings.json"), b"personal").unwrap();
+        apply(&f.context(&global, None, &ignored)).unwrap();
+        let mut group = Group {
+            id: Uuid::new_v4(),
+            name: "fixture".into(),
+            targets: SyncTargets::default(),
+        };
+        group.targets.folders.insert("config/litematica".into());
+        let context = f.context(&global, Some(&group), &ignored);
+        let roots = mutation_roots(&context).unwrap();
+        assert!(roots.contains(&f.directories.synced_dir.join("config")));
+        apply(&context).unwrap();
+        assert!(!storage::is_link(&f.minecraft.join("config")));
+        assert!(storage::is_link(&f.minecraft.join("config/litematica")));
+        assert_eq!(
+            fs::read(f.directories.synced_dir.join("config/litematica/settings.json")).unwrap(),
+            b"personal"
+        );
+    }
+    #[test]
+    fn reenabling_worlds_renames_collisions_instead_of_merging_world_contents() {
+        let f = Fixture::new();
+        let ignored = IgnoredProfilePaths::default();
+        let global = SyncTargets::default();
+        let mut group = Group {
+            id: Uuid::new_v4(),
+            name: "fixture".into(),
+            targets: SyncTargets::default(),
+        };
+        group.targets.folders.insert("saves".into());
+        fs::create_dir_all(f.minecraft.join("saves/World")).unwrap();
+        fs::write(f.minecraft.join("saves/World/level.dat"), b"group").unwrap();
+        apply(&f.context(&global, Some(&group), &ignored)).unwrap();
+        group.targets.folders.clear();
+        apply(&f.context(&global, Some(&group), &ignored)).unwrap();
+        fs::write(f.minecraft.join("saves/World/level.dat"), b"local").unwrap();
+        group.targets.folders.insert("saves".into());
+        apply(&f.context(&global, Some(&group), &ignored)).unwrap();
+        assert_eq!(fs::read(f.minecraft.join("saves/World/level.dat")).unwrap(), b"group");
+        let versions: Vec<_> = fs::read_dir(f.minecraft.join("saves"))
+            .unwrap()
+            .map(|e| fs::read(e.unwrap().path().join("level.dat")).unwrap())
+            .collect();
+        assert_eq!(versions.len(), 2);
+        assert!(versions.contains(&b"local".to_vec()));
+    }
 }

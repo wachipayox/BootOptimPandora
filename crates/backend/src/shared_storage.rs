@@ -7,7 +7,9 @@ use std::{
 };
 use uuid::Uuid;
 
-pub(crate) struct StorageLock(fs::File);
+pub(crate) struct StorageLock {
+    _handle: fs::File,
+}
 impl Drop for StorageLock {
     fn drop(&mut self) {
         #[cfg(unix)]
@@ -51,7 +53,7 @@ pub(crate) fn lock(root: &Path) -> io::Result<StorageLock> {
             return Err(io::Error::last_os_error());
         }
     }
-    Ok(StorageLock(file))
+    Ok(StorageLock { _handle: file })
 }
 
 fn invalid(message: &str) -> io::Error {
