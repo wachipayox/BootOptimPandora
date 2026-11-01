@@ -518,6 +518,12 @@ impl LauncherUI {
     }
 
     pub fn nav_backwards(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let LauncherPage::Home(home) = &self.page
+            && home.update(cx, |home, cx| home.nav_backwards(window, cx))
+        {
+            self.page_history_forwards.clear();
+            return;
+        }
         let Some((page, page_path)) = self.page_history_backwards.pop_front() else {
             return;
         };
@@ -529,6 +535,11 @@ impl LauncherUI {
     }
 
     pub fn nav_forwards(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let LauncherPage::Home(home) = &self.page
+            && home.update(cx, |home, cx| home.nav_forwards(window, cx))
+        {
+            return;
+        }
         let Some((page, page_path)) = self.page_history_forwards.pop() else {
             return;
         };
