@@ -203,13 +203,17 @@ impl ContentListDelegate {
         let can_update = summary.update.can_update(self.for_loader, self.for_version.as_str());
         let is_loading = self.updating.lock().contains(&element_id);
         let open_version = {
-            let summary = summary.clone();
             let data = self.data.clone();
             let updating = self.updating.clone();
-            let list = cx.entity();
+            let list = cx.entity().downgrade();
             move |_: &ClickEvent, w: &mut Window, c: &mut App| {
                 c.stop_propagation();
-                crate::modals::change_version::open(id, &summary, &data, updating.clone(), list.clone(), w, c);
+                let Some(list) = list.upgrade() else { return };
+                // Resolve metadata only for the clicked row, not every animation frame.
+                let summary = list.read(c).delegate().content.iter().find(|item| item.id == content_id).cloned();
+                if let Some(summary) = summary {
+                    crate::modals::change_version::open(id, &summary, &data, updating.clone(), list, w, c);
+                }
             }
         };
         let update = {
@@ -241,6 +245,10 @@ impl ContentListDelegate {
             })
         };
         let mut version = h_flex()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .right(px(304.))
             .w(px(140.))
             .justify_center()
             .gap(px(6.))
@@ -369,7 +377,14 @@ impl ContentListDelegate {
                     )
                     .min_w(px(190.))
             });
-        let mut name_cell = h_flex().flex_1().min_w_0().gap(px(12.));
+        let mut name_cell = h_flex()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(14.))
+            .right(px(456.))
+            .min_w_0()
+            .gap(px(12.));
         if let Some(index) = expand_index {
             let expanded = self.expanded.clone();
             let open = expanded.load(Ordering::Relaxed) == index;
@@ -420,11 +435,12 @@ impl ContentListDelegate {
                         .child(author),
                 ),
         );
-        let item_content = h_flex()
+        // These table columns already have fixed widths. Position their slots
+        // directly instead of repeatedly distributing flex/intrinsic widths.
+        let item_content = div()
+            .relative()
             .w_full()
             .h(px(53.))
-            .px(px(14.))
-            .gap(px(12.))
             .border_b_1()
             .border_color(rgba(0xffffff0b))
             .when(selected, |d| d.bg(rgb(theme::ACCENT_SOFT)))
@@ -432,14 +448,36 @@ impl ContentListDelegate {
             .child(version)
             .child(
                 h_flex()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .right(px(152.))
                     .w(px(140.))
                     .justify_center()
                     .text_size(px(12.))
                     .text_color(rgb(theme::INK_MUTED))
                     .child(source),
             )
-            .child(h_flex().w(px(84.)).justify_center().child(toggle))
-            .child(more);
+            .child(
+                h_flex()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .right(px(56.))
+                    .w(px(84.))
+                    .justify_center()
+                    .child(toggle),
+            )
+            .child(
+                h_flex()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .right(px(14.))
+                    .w(px(30.))
+                    .justify_center()
+                    .child(more),
+            );
 
         ListItem::new(("item", element_id)).p_0().child(item_content).on_click(cx.listener(
             move |this, click: &ClickEvent, _, cx| {

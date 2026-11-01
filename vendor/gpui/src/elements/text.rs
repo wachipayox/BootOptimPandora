@@ -1,6 +1,3 @@
-#[path = "text_measurement_cache.rs"]
-mod measurement_cache;
-
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
@@ -681,16 +678,19 @@ impl TextLayout {
                         (None, "".into(), TruncateFrom::End)
                     };
 
-                // Reuse repeated bounded measurements only when BOTH constraints
-                // match. Intrinsic probes must never see a previously truncated size.
+                // Only use cached layout if:
+                // 1. We have a cached size
+                // 2. wrap_width matches (or both are None)
+                // 3. truncate_width is None (if truncate_width is Some, we need to re-layout
+                //    because the previous layout may have been computed without truncation)
+                // 4. the cached layout was not truncated (a truncated layout answers an
+                //    unconstrained probe with the truncated size, which poisons intrinsic
+                //    sizing with whatever width some earlier measure pass happened to use)
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
                     && let Some(size) = text_layout.size
-                    && measurement_cache::can_reuse(
-                        wrap_width,
-                        truncate_width,
-                        text_layout.wrap_width,
-                        text_layout.truncate_width,
-                    )
+                    && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
+                    && truncate_width.is_none()
+                    && text_layout.truncate_width.is_none()
                 {
                     #[cfg(feature = "native-capture")]
                     { window.capture_text_counters[1] += 1; }
