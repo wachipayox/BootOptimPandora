@@ -370,6 +370,13 @@ pub(crate) fn publish_file(
         return Ok(canonical);
     }
     if current.as_deref() != seed && current.is_some() && canonical.as_deref() == seed {
+        if canonical.is_some() {
+            let recovery = backups
+                .join(Uuid::new_v4().to_string())
+                .join("previous-shared")
+                .join(shared.file_name().ok_or_else(|| invalid("Missing shared filename"))?);
+            copy_file(shared, &recovery)?;
+        }
         copy_file(local, shared)?;
         return Ok(current);
     }
@@ -448,5 +455,13 @@ mod tests {
         assert!(attach_folder(&local, &shared, &t.0.join("backup")).is_err());
         assert!(detach_folder(&local, &shared, &t.0.join("backup")).is_err());
         assert_eq!(fs::read(foreign.join("keep")).unwrap(), b"safe");
+    }
+    #[test]
+    fn storage_lock_is_exclusive_and_released_by_its_handle() {
+        let t = Temp::new();
+        let guard = lock(&t.0).unwrap();
+        assert!(lock(&t.0).is_err());
+        drop(guard);
+        assert!(lock(&t.0).is_ok());
     }
 }

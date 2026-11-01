@@ -2880,6 +2880,10 @@ impl BackendState {
                 return;
             }
 
+            if self.shared_data_changing.load(Ordering::Acquire) {
+                modal_action.set_finished_with_error("No se ha podido cambiar la sincronización.".into());
+                return;
+            }
             instance.launch_keepalive = Some(keepalive.create_handle());
 
             self.send.send(MessageToFrontend::MoveInstanceToTop { id });

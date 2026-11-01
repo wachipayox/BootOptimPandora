@@ -263,6 +263,7 @@ pub fn start(
         launcher_update_check_serial: Default::default(),
         launcher_update_restarting: AtomicBool::new(false),
         launcher_tasks: Default::default(),
+        shared_data_changing: std::sync::atomic::AtomicBool::new(false),
         manual_curseforge_downloads: ManualCurseforgeDownloadSession::default(),
     };
 
@@ -368,6 +369,7 @@ pub struct BackendState {
     pub launcher_update_check_serial: std::sync::atomic::AtomicU64,
     pub launcher_update_restarting: AtomicBool,
     pub launcher_tasks: Arc<std::sync::atomic::AtomicUsize>,
+    pub shared_data_changing: std::sync::atomic::AtomicBool,
     pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
 }
 
@@ -1095,9 +1097,11 @@ impl BackendState {
         }
         for id in shared_files_to_publish {
             let mut active_roots = Vec::new();
-            for other in instance_state.instances.iter().filter(|i| {
-                i.id != id && (!i.processes.is_empty() || !i.closing_processes.is_empty() || i.aot_create.is_some())
-            }) {
+            for other in instance_state
+                .instances
+                .iter()
+                .filter(|i| i.id != id && i.status() != InstanceStatus::NotRunning)
+            {
                 match crate::shared_data::active_folder_roots(&other.root_path) {
                     Ok(roots) if !roots.is_empty() => active_roots.extend(roots),
                     _ => {
@@ -1342,20 +1346,14 @@ impl BackendState {
         let prelaunch_span = probe.begin("prelaunch", None, false);
         if prelaunch_span.is_none() {
             self.prelaunch_setup_mods(id, modal_action).await;
-            if let Err(error) = self.prepare_shared_data(id) {
-                log::warn!("Unable to prepare shared data before launch: {error}");
-                modal_action.set_finished_with_error("No se ha podido cambiar la sincronización.".into());
-            }
+            self.prepare_sharing_for_launch(id, modal_action);
             return probe;
         }
 
         self.prelaunch_setup_mods_attributed(id, modal_action, &probe).await;
 
         let sync_span = probe.begin("sync", Some("prelaunch"), false);
-        if let Err(error) = self.prepare_shared_data(id) {
-            log::warn!("Unable to prepare shared data before launch: {error}");
-            modal_action.set_finished_with_error("No se ha podido cambiar la sincronización.".into());
-        }
+        self.prepare_sharing_for_launch(id, modal_action);
         probe.finish(sync_span, crate::prelaunch_attribution::SpanCounters::default());
 
         probe.finish(prelaunch_span, crate::prelaunch_attribution::SpanCounters::default());

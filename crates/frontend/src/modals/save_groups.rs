@@ -200,6 +200,9 @@ impl SaveGroupsModal {
             );
         }
         body.child(custom)
+            .child(div().text_xs().child(
+                "Las copias recuperables están en .pandora-shared-v1/recovery, junto a .minecraft de cada instancia.",
+            ))
             .when(self.busy, |body| body.child(gpui_component::spinner::Spinner::new()))
             .when_some(self.status.clone(), |body, status| body.child(div().text_sm().child(status)))
             .child(
@@ -340,7 +343,7 @@ impl SaveGroupsModal {
                         })
                         .collect::<Vec<_>>();
                     v_flex().gap_3()
-                    .child("Las instancias de un grupo comparten la carpeta saves. Al unirse, se trasladan los mundos de esta instancia; si hay nombres repetidos, se renombran sin sustituir mundos existentes. Detén las instancias del grupo antes de mover mundos.")
+                    .child("Las instancias de un grupo comparten lo que actives en sus ajustes. Al compartir mundos, los nombres repetidos se renombran sin sustituir mundos existentes.")
                     .children(rows)
                     .child(h_flex().gap_2().items_center()
                         .child(design::text_field(&self.name).disabled(self.busy))

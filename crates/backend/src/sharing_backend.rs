@@ -7,16 +7,62 @@ use crate::{
 use bridge::instance::{InstanceID, InstanceStatus};
 use schema::backend_config::SyncTargets;
 
+pub(crate) struct SharedChangeGuard<'a> {
+    flag: &'a std::sync::atomic::AtomicBool,
+    tasks: &'a std::sync::atomic::AtomicUsize,
+}
+impl Drop for SharedChangeGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, std::sync::atomic::Ordering::Release);
+        self.tasks.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 impl BackendState {
+    pub(crate) fn begin_shared_change(&self) -> Result<SharedChangeGuard<'_>, String> {
+        self.shared_data_changing
+            .compare_exchange(false, true, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire)
+            .map_err(|_| "No se ha podido cambiar la sincronización.".to_owned())?;
+        self.launcher_tasks.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let guard = SharedChangeGuard {
+            flag: &self.shared_data_changing,
+            tasks: &self.launcher_tasks,
+        };
+        if self.launcher_update_restarting.load(std::sync::atomic::Ordering::Acquire) {
+            return Err("No se ha podido cambiar la sincronización.".into());
+        }
+        Ok(guard)
+    }
+
+    pub(crate) fn prepare_sharing_for_launch(&self, id: InstanceID, action: &bridge::modal_action::ModalAction) {
+        use bridge::modal_action::ProgressTrackerFinishType;
+        let tracker = action.push_tracker("Sincronización".into());
+        match self.prepare_shared_data(id) {
+            Ok(()) => tracker.set_finished(ProgressTrackerFinishType::Normal),
+            Err(error) => {
+                log::warn!("Unable to prepare shared data before launch: {error}");
+                tracker.set_finished(ProgressTrackerFinishType::Error);
+                action.set_finished_with_error(
+                    if error == "Detén las instancias afectadas antes de cambiar lo que comparten." {
+                        error.into()
+                    } else {
+                        "No se ha podido cambiar la sincronización.".into()
+                    },
+                );
+            },
+        }
+    }
     pub(crate) fn prepare_shared_data(&self, id: InstanceID) -> Result<(), String> {
         let _shared_lock = shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
         let config = self.config.lock().get().clone();
         let group = self.shared_group_for_instance(id)?;
         let mut instances = self.instance_state.write();
         let mut active_roots = Vec::new();
-        for other in instances.instances.iter().filter(|i| {
-            i.id != id && (!i.processes.is_empty() || !i.closing_processes.is_empty() || i.aot_create.is_some())
-        }) {
+        for other in instances
+            .instances
+            .iter()
+            .filter(|i| i.id != id && i.status() != InstanceStatus::NotRunning)
+        {
             let roots = shared_data::active_folder_roots(&other.root_path).map_err(|e| e.to_string())?;
             if roots.is_empty() {
                 active_roots.push(self.directories.synced_dir.to_path_buf());
@@ -71,9 +117,7 @@ impl BackendState {
         if changing.is_empty() {
             return Ok(());
         }
-        for other in state.instances.iter().filter(|i| {
-            i.id != id && (!i.processes.is_empty() || !i.closing_processes.is_empty() || i.aot_create.is_some())
-        }) {
+        for other in state.instances.iter().filter(|i| i.id != id && i.status() != InstanceStatus::NotRunning) {
             let mut roots = shared_data::active_folder_roots(&other.root_path).map_err(|e| e.to_string())?;
             if roots.is_empty() {
                 roots.push(self.directories.synced_dir.to_path_buf());
@@ -106,6 +150,7 @@ impl BackendState {
     }
 
     pub(crate) fn set_shared_global(&self, target: String, is_file: bool, enabled: bool) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
         shared_data::validate_route(&target).map_err(|e| e.to_string())?;
         let ids = {
             let state = self.instance_state.read();

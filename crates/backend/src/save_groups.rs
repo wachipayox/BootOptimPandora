@@ -398,6 +398,7 @@ impl BackendState {
         group_id: Uuid,
         targets: schema::backend_config::SyncTargets,
     ) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
         crate::shared_data::validate_targets(&targets).map_err(|e| e.to_string())?;
         let root = self.directories.save_groups_dir.join(group_id.to_string());
         let members = current_members(self, &root, None)?;
@@ -454,6 +455,7 @@ impl BackendState {
     }
 
     pub fn create_save_group(&self, id: InstanceID, name: String) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
         if self.shared_group_for_instance(id)?.is_some() {
             return Err("This instance already belongs to a save group".into());
         }
@@ -518,6 +520,7 @@ impl BackendState {
     }
 
     pub fn join_save_group(&self, id: InstanceID, group_id: Uuid) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
         if self.shared_group_for_instance(id)?.is_some() {
             return Err("This instance already belongs to a group".into());
         }
@@ -577,6 +580,7 @@ impl BackendState {
     }
 
     pub fn leave_save_group(&self, id: InstanceID) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
         let group = self.shared_group_for_instance(id)?.ok_or("This instance is not in a save group")?;
         let root = self.directories.save_groups_dir.join(group.id.to_string());
         let others = current_members(self, &root, Some(id))?;

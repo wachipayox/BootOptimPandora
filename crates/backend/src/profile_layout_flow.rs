@@ -3138,5 +3138,22 @@ mod tests {
             .unwrap();
         assert!(crate::shared_storage::is_link(&minecraft.join("config/litematica")));
         assert_eq!(fs::read(minecraft.join("config/litematica/state.json")).unwrap(), b"personal");
+        let next = global_pin("shared-r2", 'b');
+        let mut required = effective_config_entry(&root, "config/litematica/state.json", b"required", next.clone());
+        required.metadata.policy = ProfileFilePolicy::Enforced;
+        layout
+            .reconcile_revision_delta(&global_delta(next, vec![ProfileDeltaChange::Upsert(required)]))
+            .unwrap();
+        assert!(!crate::shared_storage::is_link(&minecraft.join("config/litematica")));
+        assert_eq!(fs::read(minecraft.join("config/litematica/state.json")).unwrap(), b"required");
+        assert_eq!(
+            fs::read(
+                dirs.save_groups_dir
+                    .join(group.id.to_string())
+                    .join("shared/config/litematica/state.json")
+            )
+            .unwrap(),
+            b"personal"
+        );
     }
 }
