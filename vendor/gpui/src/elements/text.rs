@@ -651,6 +651,8 @@ impl TextLayout {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {
+                #[cfg(feature = "native-capture")]
+                { window.capture_text_counters[0] += 1; }
                 let wrap_width = if text_style.white_space == WhiteSpace::Normal {
                     known_dimensions.width.or(match available_space.width {
                         crate::AvailableSpace::Definite(x) => Some(x),
@@ -690,6 +692,8 @@ impl TextLayout {
                         text_layout.truncate_width,
                     )
                 {
+                    #[cfg(feature = "native-capture")]
+                    { window.capture_text_counters[1] += 1; }
                     return size;
                 }
 
@@ -698,6 +702,8 @@ impl TextLayout {
                     if let Some(max_lines) = text_style.line_clamp
                         && let Some(wrap_width) = wrap_width
                     {
+                        #[cfg(feature = "native-capture")]
+                        { window.capture_text_counters[2] += 1; }
                         line_wrapper.truncate_wrapped_line(
                             text.clone(),
                             wrap_width,
@@ -722,6 +728,8 @@ impl TextLayout {
                         // already measured untruncated this frame.
                         (text.clone(), Cow::Borrowed(&*runs))
                     } else {
+                        #[cfg(feature = "native-capture")]
+                        { window.capture_text_counters[3] += 1; }
                         line_wrapper.truncate_line(
                             text.clone(),
                             truncate_width,

@@ -1177,9 +1177,11 @@ pub struct Window {
     #[cfg(feature = "profiler")]
     window_profiler: profiler::WindowProfiler,
     #[cfg(feature = "native-capture")]
-    capture_frame_timings: Option<(Instant, Vec<[u64; 5]>)>,
+    capture_frame_timings: Option<(Instant, Vec<[u64; 9]>)>,
     #[cfg(feature = "native-capture")]
     capture_draw_phases: [u64; 3],
+    #[cfg(feature = "native-capture")]
+    pub(crate) capture_text_counters: [u64; 4],
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -1830,6 +1832,8 @@ impl Window {
             capture_frame_timings: std::env::var_os("WBOMBO_UI_SCROLL_TIMINGS").map(|_| (Instant::now(), Vec::new())),
             #[cfg(feature = "native-capture")]
             capture_draw_phases: [0; 3],
+            #[cfg(feature = "native-capture")]
+            capture_text_counters: [0; 4],
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -2392,7 +2396,7 @@ impl Window {
     /// Diagnostic draw-start and UI-thread draw-duration samples, in microseconds.
     /// Enabled only by WBOMBO_UI_SCROLL_TIMINGS in native-capture builds.
     #[cfg(feature = "native-capture")]
-    pub fn take_capture_frame_timings(&mut self) -> Option<Vec<[u64; 5]>> {
+    pub fn take_capture_frame_timings(&mut self) -> Option<Vec<[u64; 9]>> {
         self.capture_frame_timings.as_mut().map(|(_, frames)| std::mem::take(frames))
     }
 
@@ -2775,6 +2779,8 @@ impl Window {
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         #[cfg(feature = "native-capture")]
         let capture_draw_start = self.capture_frame_timings.as_ref().map(|_| Instant::now());
+        #[cfg(feature = "native-capture")]
+        { self.capture_text_counters = [0; 4]; }
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -2894,6 +2900,10 @@ impl Window {
                     self.capture_draw_phases[0],
                     self.capture_draw_phases[1],
                     self.capture_draw_phases[2],
+                    self.capture_text_counters[0],
+                    self.capture_text_counters[1],
+                    self.capture_text_counters[2],
+                    self.capture_text_counters[3],
                 ]);
             }
         }
