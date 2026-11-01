@@ -406,15 +406,21 @@ impl BackendState {
         if record.id != group_id || is_link(&root) || is_link(&record_path(&root)) {
             return Err("Unsafe save group record".into());
         }
+        let storage_guard =
+            crate::shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
         record.targets = targets;
         crate::fs::write_safe(&record_path(&root), &serde_json::to_vec_pretty(&record).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
+        drop(storage_guard);
         for member in members {
             self.prepare_shared_data(member)?;
         }
         Ok(())
     }
     pub fn rename_save_group(&self, group_id: Uuid, name: String) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
+        let _storage_guard =
+            crate::shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
         rename_group_record(&self.directories.save_groups_dir, group_id, &name)
     }
 
@@ -463,6 +469,10 @@ impl BackendState {
         if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
             return Err("Group name must contain 1 to 80 characters".into());
         }
+        // Detach any retired global saves link before the legacy world mover runs.
+        self.prepare_shared_data(id)?;
+        let storage_guard =
+            crate::shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
         let (saves, _) = instance_paths(self, id)?;
         validate_plain_saves(&saves)?;
         let groups = load_records(&self.directories.save_groups_dir)?;
@@ -516,6 +526,7 @@ impl BackendState {
             .ok_or("Unknown instance")?
             .configuration
             .modify(|c| c.shared_data_group = Some(record.id));
+        drop(storage_guard);
         self.prepare_shared_data(id)
     }
 
@@ -537,6 +548,9 @@ impl BackendState {
                 .modify(|c| c.shared_data_group = Some(group_id));
             return self.prepare_shared_data(id);
         }
+        self.prepare_shared_data(id)?;
+        let storage_guard =
+            crate::shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
         let (saves, instance_name) = instance_paths(self, id)?;
         validate_plain_saves(&saves)?;
         let groups = load_records(&self.directories.save_groups_dir)?;
@@ -576,6 +590,7 @@ impl BackendState {
             .ok_or("Unknown instance")?
             .configuration
             .modify(|c| c.shared_data_group = Some(group_id));
+        drop(storage_guard);
         self.prepare_shared_data(id)
     }
 
@@ -586,6 +601,8 @@ impl BackendState {
         let others = current_members(self, &root, Some(id))?;
         let (saves, _) = instance_paths(self, id)?;
         self.prepare_shared_data(id)?;
+        let storage_guard =
+            crate::shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
         if !others.is_empty() && crate::shared_storage::targeting(&saves, &group_saves(&root)) {
             remove_link(&saves).map_err(|e| e.to_string())?;
             fs::create_dir(&saves).map_err(|e| e.to_string())?;
@@ -598,6 +615,7 @@ impl BackendState {
             .configuration
             .modify(|c| c.shared_data_group = None);
         // Empty groups retain their store and recovery copies; no group data is deleted on leave.
+        drop(storage_guard);
         self.prepare_shared_data(id)
     }
 }

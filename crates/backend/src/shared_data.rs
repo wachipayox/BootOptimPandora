@@ -115,7 +115,7 @@ pub(crate) fn validate_route(path: &str) -> io::Result<()> {
         || path.starts_with('/')
         || safe.as_str() != path
         || path == "."
-        || path.split('/').any(|part| part.starts_with(".pandora-"))
+        || path.split('/').any(|part| part.to_ascii_lowercase().starts_with(".pandora-"))
     {
         return Err(error("Shared paths must be portable relative paths outside launcher control state"));
     }
@@ -655,6 +655,34 @@ mod tests {
             assert!(self.directories.root_launcher_dir.starts_with(std::env::temp_dir()));
             let _ = fs::remove_dir_all(&self.directories.root_launcher_dir);
         }
+    }
+    #[test]
+    fn launcher_control_routes_are_rejected_in_portable_case() {
+        for path in [
+            ".pandora-layout-v1",
+            ".PANDORA-SHARED-V1/state.json",
+            "config/.Pandora-layout-v1",
+        ] {
+            assert!(validate_route(path).is_err());
+        }
+    }
+    #[test]
+    fn retired_global_worlds_materialize_before_group_attachment() {
+        let f = Fixture::new();
+        let ignored = IgnoredProfilePaths::default();
+        let mut previous = SyncTargets::default();
+        previous.folders.insert("saves".into());
+        let shared = f.directories.synced_dir.join("saves");
+        fs::create_dir_all(shared.join("World")).unwrap();
+        fs::write(shared.join("World/level.dat"), b"old-global").unwrap();
+        storage::link_directory(&shared, &f.minecraft.join("saves")).unwrap();
+        let global = SyncTargets::default();
+        let mut context = f.context(&global, None, &ignored);
+        context.previous = Some(&previous);
+        apply(&context).unwrap();
+        assert!(!storage::is_link(&f.minecraft.join("saves")));
+        assert_eq!(fs::read(f.minecraft.join("saves/World/level.dat")).unwrap(), b"old-global");
+        assert_eq!(fs::read(shared.join("World/level.dat")).unwrap(), b"old-global");
     }
     #[test]
     fn group_child_replaces_global_parent_without_following_it_in_preflight() {
