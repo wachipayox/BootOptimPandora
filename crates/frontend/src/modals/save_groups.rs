@@ -106,12 +106,10 @@ impl SaveGroupsModal {
                     "No se ha podido cambiar el grupo de mundos.".to_owned()
                 }
             });
-            let groups = if result.is_ok() {
+            let groups = {
                 let (send, receive) = tokio::sync::oneshot::channel();
                 backend.send(MessageToBackend::GetSaveGroups { id, channel: send });
                 Some(receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into())))
-            } else {
-                None
             };
             let _ = entity.update(cx, |state, cx| {
                 state.busy = false;

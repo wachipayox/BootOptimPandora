@@ -110,6 +110,41 @@ pub(crate) fn targeting(path: &Path, target: &Path) -> bool {
             .zip(fs::canonicalize(target).ok())
             .is_some_and(|(a, b)| a == b)
 }
+/// Recognize only the exact configured target of a broken legacy link.
+/// This handles Windows app-filesystem namespaces without claiming foreign links.
+pub(crate) fn known_broken_link(local: &Path, target: &Path) -> bool {
+    if !is_link(local) || fs::canonicalize(local).is_ok() || !target.is_dir() {
+        return false;
+    }
+    #[cfg(windows)]
+    let original = junction::get_target(local).ok();
+    #[cfg(not(windows))]
+    let original = fs::read_link(local).ok();
+    fn key(path: &Path) -> String {
+        let raw = path.to_string_lossy().replace('\\', "/");
+        let raw = raw.strip_prefix("//?/").unwrap_or(&raw);
+        #[cfg(windows)]
+        {
+            raw.to_lowercase()
+        }
+        #[cfg(not(windows))]
+        {
+            raw.to_owned()
+        }
+    }
+    original.is_some_and(|original| key(&original) == key(target))
+}
+pub(crate) fn targeting_or_broken(local: &Path, target: &Path) -> bool {
+    targeting(local, target) || known_broken_link(local, target)
+}
+fn repair_known_link(local: &Path, target: &Path) -> io::Result<()> {
+    if known_broken_link(local, target) {
+        unlink_directory(local)?;
+        link_directory(target, local)?;
+    }
+    Ok(())
+}
+
 fn link_directory(target: &Path, local: &Path) -> io::Result<()> {
     let target = fs::canonicalize(target)?;
     #[cfg(windows)]
@@ -241,6 +276,7 @@ fn merge_directory(local: &Path, shared: &Path, backup: &Path) -> io::Result<()>
 
 /// Existing correct links are O(1); merging is only the first attachment/migration.
 pub(crate) fn attach_folder(local: &Path, shared: &Path, backups: &Path) -> io::Result<()> {
+    repair_known_link(local, shared)?;
     if targeting(local, shared) {
         return Ok(());
     }
@@ -280,6 +316,7 @@ pub(crate) fn attach_folder(local: &Path, shared: &Path, backups: &Path) -> io::
 }
 /// Materialize only a recognized owned link. The shared source is never removed.
 pub(crate) fn detach_folder(local: &Path, shared: &Path, backups: &Path) -> io::Result<()> {
+    repair_known_link(local, shared)?;
     if !targeting(local, shared) {
         return if is_link(local) {
             Err(invalid("Cannot detach an unknown shared-data link"))

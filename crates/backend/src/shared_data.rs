@@ -261,11 +261,12 @@ pub(crate) fn routes(context: &Context<'_>) -> io::Result<Vec<Route>> {
     plan(context)
 }
 
-pub(crate) fn apply(context: &Context<'_>) -> io::Result<()> {
+pub(crate) fn apply(context: &Context<'_>) -> io::Result<bool> {
     fs::create_dir_all(context.minecraft)?;
     let desired = plan(context)?;
     let mut receipt = read(context.root)?;
     let original = receipt.clone();
+    let mut folder_changed = false;
     let protected_paths = protected(context.root, context.ignored)?;
     // Adopt only known old global links; never claim an arbitrary external link.
     if let Some(previous) = context.previous.filter(|_| !receipt.legacy_global_migrated) {
@@ -286,7 +287,7 @@ pub(crate) fn apply(context: &Context<'_>) -> io::Result<()> {
                 conflict: None,
             };
             let destination = target(context, &route)?;
-            if storage::targeting(&local, &destination) {
+            if storage::targeting_or_broken(&local, &destination) {
                 receipt.folders.entry(path.to_string()).or_insert(Folder {
                     route,
                     target: destination,
@@ -306,7 +307,7 @@ pub(crate) fn apply(context: &Context<'_>) -> io::Result<()> {
         };
         let destination = target(context, &route)?;
         let local = storage::checked_path(context.minecraft, "saves")?;
-        if storage::targeting(&local, &destination) {
+        if storage::targeting_or_broken(&local, &destination) {
             receipt.folders.entry("saves".into()).or_insert(Folder {
                 route,
                 target: destination,
@@ -325,6 +326,7 @@ pub(crate) fn apply(context: &Context<'_>) -> io::Result<()> {
         });
         if !retain {
             let local = storage::checked_path(context.minecraft, &path)?;
+            folder_changed |= storage::targeting_or_broken(&local, &old.target);
             storage::detach_folder(&local, &old.target, &backup(context.root, &old.route)?)?;
             receipt.folders.remove(&path);
             write(context.root, &receipt)?;
@@ -377,6 +379,7 @@ pub(crate) fn apply(context: &Context<'_>) -> io::Result<()> {
             {
                 continue;
             }
+            folder_changed |= !storage::targeting(&local, &destination);
             // Persist intent before linking so a crash between the link and receipt write is recoverable.
             receipt.folders.insert(
                 route.path.clone(),
@@ -403,7 +406,7 @@ pub(crate) fn apply(context: &Context<'_>) -> io::Result<()> {
         receipt.legacy_group_seen = group_seen;
         write(context.root, &receipt)?;
     }
-    Ok(())
+    Ok(folder_changed)
 }
 pub(crate) fn publish(context: &Context<'_>) -> io::Result<()> {
     let mut receipt = read(context.root)?;
@@ -537,7 +540,7 @@ pub(crate) fn mutation_roots(context: &Context<'_>) -> io::Result<Vec<PathBuf>> 
                 && r.conflict.is_none()
                 && target(context, r).is_ok_and(|p| p == old.target)
         });
-        if !retained && storage::targeting(&context.minecraft.join(&old.route.path), &old.target) {
+        if !retained && storage::targeting_or_broken(&context.minecraft.join(&old.route.path), &old.target) {
             roots.push(old.target.clone());
         }
     }
@@ -554,9 +557,25 @@ pub(crate) fn mutation_roots(context: &Context<'_>) -> io::Result<Vec<PathBuf>> 
             let retained = desired
                 .iter()
                 .any(|r| !r.is_file && r.path == route.path && r.scope == Scope::Global && r.conflict.is_none());
-            if !retained && storage::targeting(&context.minecraft.join(path.as_ref()), &shared) {
+            if !retained && storage::targeting_or_broken(&context.minecraft.join(path.as_ref()), &shared) {
                 roots.push(shared);
             }
+        }
+    }
+    if let Some(group) = context.group.filter(|g| receipt.legacy_group_seen != Some(g.id)) {
+        let route = Route {
+            path: "saves".into(),
+            is_file: false,
+            scope: Scope::Group {
+                id: group.id,
+                name: group.name.clone(),
+            },
+            conflict: None,
+        };
+        let shared = target(context, &route)?;
+        let retained = desired.iter().any(|r| r.path == "saves" && !r.is_file && r.conflict.is_none());
+        if !retained && storage::targeting_or_broken(&context.minecraft.join("saves"), &shared) {
+            roots.push(shared);
         }
     }
     for route in desired.iter().filter(|r| r.conflict.is_none()) {

@@ -36,7 +36,7 @@ use reqwest::{StatusCode, redirect::Policy};
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use schema::{
     auxiliary::AuxiliaryContentMeta,
-    backend_config::{BackendConfig, ProxyConfig, SyncTargets},
+    backend_config::{BackendConfig, ProxyConfig},
     content::{ContentInstallReason, ContentSource},
     curseforge::{CachedCurseforgeFileInfo, CurseforgeGetFilesRequest},
     instance::InstanceConfiguration,

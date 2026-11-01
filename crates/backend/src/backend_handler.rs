@@ -3413,10 +3413,6 @@ pub(crate) fn refresh_instance_saves(state: &Arc<BackendState>, id: InstanceID, 
     if !changed {
         return;
     }
-    let saves_path = state.instance_state.read().instances.get(id).map(|instance| instance.saves_path.clone());
-    let Some(saves_path) = saves_path else {
-        return;
-    };
     if let Some(instance) = state.instance_state.write().instances.get_mut(id) {
         instance.mark_all_dirty(state, true);
     }

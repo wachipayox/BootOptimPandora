@@ -57,7 +57,11 @@ impl BackendState {
         {
             return Err("Detén las instancias afectadas antes de cambiar lo que comparten.".into());
         }
-        shared_data::apply(&context).map_err(|e| e.to_string())
+        let result = shared_data::apply(&context);
+        if result.as_ref().is_err() || result.as_ref().is_ok_and(|changed| *changed) {
+            instance.rewatch_directories(&mut self.file_watching.write());
+        }
+        result.map(|_| ()).map_err(|e| e.to_string())
     }
 
     pub(crate) fn ensure_shared_profile_isolation_safe(&self, id: InstanceID, paths: &[String]) -> Result<(), String> {

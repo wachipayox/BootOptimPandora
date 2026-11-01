@@ -83,7 +83,7 @@ pub(crate) fn get_sync_state(backend: &BackendState) -> SyncState {
                 })
             });
             if problem || excluded {
-                status.cannot_sync_instances.push(name.clone());
+                status.cannot_sync_instances.push(name.clone().into());
                 continue;
             }
             if !status.enabled {
