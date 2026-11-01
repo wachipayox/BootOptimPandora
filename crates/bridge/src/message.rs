@@ -35,6 +35,19 @@ use crate::{
     notify_signal::KeepAliveNotifySignalHandle,
 };
 
+#[derive(Debug, Clone)]
+pub enum ShortcutIconChoice {
+    Instance(Arc<[u8]>),
+    Launcher,
+    Custom(PathBuf),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutError {
+    Image,
+    Create,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
     Zip,
@@ -464,6 +477,8 @@ pub enum MessageToBackend {
     CreateInstanceShortcut {
         id: InstanceID,
         path: PathBuf,
+        icon: ShortcutIconChoice,
+        channel: tokio::sync::oneshot::Sender<Result<(), ShortcutError>>,
     },
     RelocateInstance {
         id: InstanceID,

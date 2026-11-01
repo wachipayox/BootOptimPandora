@@ -2,6 +2,7 @@ pub mod accounts;
 pub mod aot_optimization;
 pub mod change_version;
 pub mod create_instance;
+pub mod create_shortcut;
 pub mod curseforge_install;
 pub mod delete_instance;
 pub mod duplicate_instance;
