@@ -921,6 +921,14 @@ impl Render for HomePage {
                 .then(|| resource(&self.presentation.artwork, "images/artwork-vanilla.png")),
             "images/artwork-vanilla.png",
             true,
+            Some(
+                linear_gradient(
+                    180.,
+                    linear_color_stop(rgba(0x06060700), 0.45),
+                    linear_color_stop(rgba(0x060607ff), 1.),
+                )
+                .into(),
+            ),
             cx.entity().entity_id(),
             window,
             cx,
@@ -929,6 +937,7 @@ impl Render for HomePage {
             self.visual_resolved.then(|| resource(&self.presentation.logo, "images/logo-vanilla.png")),
             "images/logo-vanilla.png",
             false,
+            None,
             cx.entity().entity_id(),
             window,
             cx,
@@ -945,13 +954,6 @@ impl Render for HomePage {
             .flex_shrink_0()
             .overflow_hidden()
             .child(div().absolute().size_full().child(artwork))
-            // Share the artwork's full bounds: independently rounded fractional
-            // heights can expose its last bright row while smooth-scrolling.
-            .child(div().absolute().inset_0().bg(linear_gradient(
-                180.,
-                linear_color_stop(rgba(0x06060700), 0.45),
-                linear_color_stop(rgba(0x060607ff), 1.),
-            )))
             .child(
                 div()
                     .absolute()
