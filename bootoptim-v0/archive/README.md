@@ -22,3 +22,16 @@ When a file existed on several PRs, the most recently committed copy is kept.
 | [USN_FAST_REBOOTSTRAP_CONTRACT.md](USN_FAST_REBOOTSTRAP_CONTRACT.md) | Asset USN fast-rebootstrap contract | [#28](https://github.com/wachipayox/BootOptimPandora/pull/28) | 2026-09-16 |
 | [USN_PERSISTENT_AUTHORITY_DECISION.md](USN_PERSISTENT_AUTHORITY_DECISION.md) | Agent 173 — USN privilege architecture decision | [#28](https://github.com/wachipayox/BootOptimPandora/pull/28) | 2026-09-16 |
 | [VERIFY_IO_COORDINATOR.md](VERIFY_IO_COORDINATOR.md) | BootOptim launch verification I/O coordinator candidate | [#8](https://github.com/wachipayox/BootOptimPandora/pull/8) | 2026-09-14 |
+
+## One-off promotion and attribution notes (moved 2026-10-21)
+
+Agent notes that recorded a single promotion or measurement campaign. Their
+results are integrated (#64 launch-fast policy, USN cache, prelaunch sidecar)
+and no current doc links them.
+
+| Document | Title | Date |
+|---|---|---|
+| [LIBRARIES_LAUNCH_POLICY.md](LIBRARIES_LAUNCH_POLICY.md) | Agent 204 — recomposed libraries launch-fast policy | 2026-09-24 |
+| [USN_INTEGRATION_PROMOTION.md](USN_INTEGRATION_PROMOTION.md) | Agent 198 — USN asset-cache promotion onto persistent-layout integration | 2026-09-24 |
+| [PRELAUNCH_MODS_ATTRIBUTION.md](PRELAUNCH_MODS_ATTRIBUTION.md) | Agent 175 — `prelaunch_setup_mods` contract and attribution | 2026-09-16 |
+| [PRELAUNCH_REAL_ATTRIBUTION.md](PRELAUNCH_REAL_ATTRIBUTION.md) | Agent 180 — real prelaunch attribution sidecar | 2026-09-16 |
