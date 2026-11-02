@@ -119,3 +119,15 @@ inheritance conflict and materialized locally before profile reconciliation;
 the common store is preserved. Personal shared routes cannot be edited,
 restored, or toggled through Overwrites. Group settings determine their contents
 independently of global synchronization (see `profile-families-save-groups.md`).
+
+Sharing changes refresh the ownership/conflict rows through a separate metadata
+request. They do not invalidate the file comparison or clear the selected file,
+editor or diff. Re-entering the tab also refreshes this metadata. Ignored-path
+changes retain their separate comparison invalidation policy.
+
+On Windows the scan checks cached reparse attributes before opening a path to
+identify a junction; ordinary files avoid that native query. Local directory
+enumeration overlaps signed remote metadata resolution. Resolving metadata
+reuses its already verified target revision, while every pinned ancestor still
+passes digest, signature, identity and inheritance validation. Content comparison
+continues to use SHA-256; it is not replaced with a size/date-only comparison.

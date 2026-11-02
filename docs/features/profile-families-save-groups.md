@@ -53,7 +53,7 @@ migrates configuration metadata, without walking instance contents.
 Instance settings also expose **Gestionar global**. Its master switch defaults
 to off. With overrides on, each catalog route chooses NO, G(SÍ)/G(NO), or SÍ;
 G follows the current global value and uses the warning/yellow treatment. Turning
-the master off preserves dormant choices and resumes global defaults. The dialog
+the master off preserves and displays dormant choices in muted gray and resumes global defaults. The dialog
 cannot introduce a route that is not offered globally. Existing blanket opt-outs
 are represented as explicit NO choices and are normalized when saved.
 
