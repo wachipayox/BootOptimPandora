@@ -161,7 +161,7 @@ impl SaveGroupsModal {
         .detach();
     }
 
-    fn render_editor(&mut self, group_id: Uuid, targets: SyncTargets, cx: &mut Context<Self>) -> AnyElement {
+    fn render_editor(&mut self, targets: SyncTargets, cx: &mut Context<Self>) -> AnyElement {
         let mut body = v_flex().gap_3();
         for (heading, file, defaults) in [
             ("Archivos", true, schema::shared_data::GROUP_FILES),
@@ -239,30 +239,12 @@ impl SaveGroupsModal {
             ))
             .when(self.busy, |body| body.child(gpui_component::spinner::Spinner::new()))
             .when_some(self.status.clone(), |body, status| body.child(div().text_sm().child(status)))
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_end()
-                    .gap_2()
-                    .child(Button::new("cancel-group-targets").label("Cancelar").disabled(self.busy).on_click(
-                        cx.listener(|state, _, _, cx| {
-                            state.editing = None;
-                            state.status = None;
-                            cx.notify();
-                        }),
-                    ))
-                    .child(
-                        Button::new("save-group-targets").primary().label("Guardar").disabled(self.busy).on_click(
-                            cx.listener(move |state, _, _, cx| state.run(Operation::SaveTargets(group_id), cx)),
-                        ),
-                    ),
-            )
             .into_any_element()
     }
 
     fn render(&mut self, modal: Dialog, window: &mut Window, cx: &mut Context<Self>) -> Dialog {
-        let body = if let Some((id, _, targets)) = self.editing.clone() {
-            self.render_editor(id, targets, cx)
+        let body = if let Some((_, _, targets)) = self.editing.clone() {
+            self.render_editor(targets, cx)
         } else {
             match &self.groups {
                 None => v_flex().gap_3().child(gpui_component::spinner::Spinner::new()).into_any_element(),
@@ -417,13 +399,36 @@ impl SaveGroupsModal {
                     .overflow_y_scroll()
                     .child(body),
             )
-            .footer(
-                h_flex().w_full().justify_end().child(
-                    Button::new("close-save-groups")
-                        .label("Cerrar")
-                        .on_click(|_, window, cx| window.close_dialog(cx)),
-                ),
-            )
+            .footer(if let Some((group_id, _, _)) = &self.editing {
+                let group_id = *group_id;
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap_2()
+                    .child(Button::new("cancel-group-targets").label("Cancelar").disabled(self.busy).on_click(
+                        cx.listener(|state, _, _, cx| {
+                            state.editing = None;
+                            state.status = None;
+                            cx.notify();
+                        }),
+                    ))
+                    .child(
+                        Button::new("save-group-targets").primary().label("Guardar").disabled(self.busy).on_click(
+                            cx.listener(move |state, _, _, cx| state.run(Operation::SaveTargets(group_id), cx)),
+                        ),
+                    )
+                    .into_any_element()
+            } else {
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .child(
+                        Button::new("close-save-groups")
+                            .label("Cerrar")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .into_any_element()
+            })
     }
 }
 

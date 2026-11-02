@@ -1587,7 +1587,7 @@ impl InstanceSettingsSubpage {
     fn render_actions_content(&mut self, _cx: &mut Context<Self>) -> AnyElement {
         let worlds = settings_panel_caption(
             "Mundos compartidos",
-            "Comparte la carpeta saves con otras instancias mediante un grupo local.",
+            "Las instancias de un grupo comparten lo que actives en sus ajustes.",
         )
         .when_some(self.save_group.as_ref(), |d, group| {
             d.child(
