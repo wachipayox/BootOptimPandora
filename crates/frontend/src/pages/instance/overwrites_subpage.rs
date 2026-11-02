@@ -31,6 +31,7 @@ pub struct InstanceOverwritesSubpage {
     backend: BackendHandle,
     report: Option<Result<ProfileOverwritesReport, String>>,
     expanded: BTreeSet<String>,
+    shared_expanded: bool,
     selected: Option<String>,
     text: Option<Result<ProfileTextFile, String>>,
     ancestor: Option<Result<ProfileAncestorText, String>>,
@@ -290,6 +291,7 @@ impl InstanceOverwritesSubpage {
             backend,
             report: None,
             expanded: BTreeSet::new(),
+            shared_expanded: false,
             selected: None,
             text: None,
             ancestor: None,
@@ -333,6 +335,10 @@ impl InstanceOverwritesSubpage {
             let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
             _ = page.update_in(cx, |page, window, cx| {
                 page.report = Some(result);
+                #[cfg(feature = "ui-capture")]
+                if std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("expanded") {
+                    page.shared_expanded = true;
+                }
                 if let Some(path) = page.selected.clone() {
                     page.select(path, window, cx);
                 } else if std::env::var("WBOMBO_UI_CAPTURE_PAGE")
@@ -1341,7 +1347,34 @@ impl Render for InstanceOverwritesSubpage {
                     .gap_3()
                     .when(!shared_rows.is_empty(), |section| {
                         section.child(
-                            v_flex().max_h(px(160.)).flex_shrink_0().overflow_y_scrollbar().children(shared_rows),
+                            v_flex()
+                                .flex_shrink_0()
+                                .child(
+                                    DesignButton::new("toggle-shared-paths")
+                                        .ghost()
+                                        .aria_label("Rutas compartidas")
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .items_center()
+                                                .child(
+                                                    Icon::new(if self.shared_expanded {
+                                                        PandoraIcon::ChevronDown
+                                                    } else {
+                                                        PandoraIcon::ChevronRight
+                                                    })
+                                                    .size(px(12.)),
+                                                )
+                                                .child("Rutas compartidas"),
+                                        )
+                                        .on_click(cx.listener(|page, _, _, cx| {
+                                            page.shared_expanded = !page.shared_expanded;
+                                            cx.notify();
+                                        })),
+                                )
+                                .when(self.shared_expanded, |list| {
+                                    list.child(v_flex().max_h(px(160.)).overflow_y_scrollbar().children(shared_rows))
+                                }),
                         )
                     })
                     .flex_1()

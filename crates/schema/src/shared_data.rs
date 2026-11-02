@@ -31,6 +31,50 @@ pub fn group_defaults() -> SyncTargets {
     }
 }
 
+/// Per-instance choices are dormant while the master switch is off. An absent
+/// path follows the current global value, rather than a copied snapshot.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct InstanceGlobalSharing {
+    pub enabled: bool,
+    pub choices: std::collections::BTreeMap<String, bool>,
+}
+impl InstanceGlobalSharing {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+pub fn global_catalog(global: &SyncTargets) -> std::collections::BTreeMap<String, bool> {
+    let mut result: std::collections::BTreeMap<String, bool> =
+        GLOBAL_FOLDERS.iter().map(|p| ((*p).into(), false)).collect();
+    result.extend(global.folders.iter().map(|p| (p.to_string(), false)));
+    result.extend(global.files.iter().map(|p| (p.to_string(), true)));
+    result
+}
+pub fn effective_global(global: &SyncTargets, local: &InstanceGlobalSharing, disabled: bool) -> SyncTargets {
+    if disabled {
+        return SyncTargets::default();
+    }
+    let mut result = global.clone();
+    if local.enabled {
+        for (path, is_file) in global_catalog(global) {
+            let Some(enabled) = local.choices.get(&path) else {
+                continue;
+            };
+            result.files.remove(path.as_str());
+            result.folders.remove(path.as_str());
+            if *enabled {
+                if is_file {
+                    result.files.insert(path.into());
+                } else {
+                    result.folders.insert(path.into());
+                }
+            }
+        }
+    }
+    result
+}
+
 /// Apply once without resetting later user choices or dropping custom routes.
 pub fn migrate_global_defaults(config: &mut crate::backend_config::BackendConfig) -> bool {
     if config.shared_data_defaults_version >= 1 {
@@ -107,6 +151,30 @@ pub fn inherited_conflict<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn instance_global_choices_follow_live_defaults_and_do_not_invent_routes() {
+        let mut global = global_defaults();
+        let mut local = InstanceGlobalSharing::default();
+        local.choices.insert("screenshots".into(), false);
+        assert!(effective_global(&global, &local, false).folders.contains("screenshots"));
+        local.enabled = true;
+        assert!(!effective_global(&global, &local, false).folders.contains("screenshots"));
+        local.choices.remove("screenshots");
+        global.folders.remove("screenshots");
+        assert!(!effective_global(&global, &local, false).folders.contains("screenshots"));
+        local.choices.insert("screenshots".into(), true);
+        local.choices.insert("not-globally-configured".into(), true);
+        let chosen = effective_global(&global, &local, false);
+        assert!(chosen.folders.contains("screenshots"));
+        assert!(!chosen.folders.contains("not-globally-configured"));
+        global.files.insert("custom.txt".into());
+        local.choices.insert("custom.txt".into(), false);
+        assert!(!effective_global(&global, &local, false).files.contains("custom.txt"));
+        let saved = serde_json::to_vec(&local).unwrap();
+        let reopened: InstanceGlobalSharing = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(reopened, local);
+        assert!(effective_global(&global, &local, true).folders.is_empty());
+    }
     #[test]
     fn migration_retains_custom_paths_and_is_not_reapplied_after_user_disables() {
         let mut config = crate::backend_config::BackendConfig::default();

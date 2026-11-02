@@ -16,8 +16,15 @@ pub(crate) fn get_sync_state(backend: &BackendState) -> SyncState {
             .instances
             .iter_mut()
             .filter_map(|i| {
-                (!i.configuration.get().disable_file_syncing)
-                    .then(|| (i.id, i.name.to_string(), i.root_path.clone(), i.dot_minecraft_path.clone()))
+                (!i.configuration.get().disable_file_syncing).then(|| {
+                    (
+                        i.id,
+                        i.name.to_string(),
+                        i.root_path.clone(),
+                        i.dot_minecraft_path.clone(),
+                        i.configuration.get().global_sharing.clone(),
+                    )
+                })
             })
             .collect::<Vec<_>>()
     };
@@ -48,14 +55,15 @@ pub(crate) fn get_sync_state(backend: &BackendState) -> SyncState {
             cannot_sync_instances: Vec::new(),
         });
     }
-    for (id, name, root, minecraft) in &participants {
+    for (id, name, root, minecraft, local_choices) in &participants {
+        let global = schema::shared_data::effective_global(&config.sync_targets, local_choices, false);
         let group = backend.shared_group_for_instance(*id);
         let plan = group.and_then(|group| {
             shared_data::routes(&Context {
                 root,
                 minecraft,
                 directories: &backend.directories,
-                global: &config.sync_targets,
+                global: &global,
                 previous: None,
                 group: group.as_ref(),
                 ignored: &config.ignored_profile_paths,
@@ -86,7 +94,7 @@ pub(crate) fn get_sync_state(backend: &BackendState) -> SyncState {
                 status.cannot_sync_instances.push(name.clone().into());
                 continue;
             }
-            if !status.enabled {
+            if !global.files.contains(path.as_ref()) && !global.folders.contains(path.as_ref()) {
                 continue;
             }
             let local = local.unwrap();

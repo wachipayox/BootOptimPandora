@@ -103,6 +103,46 @@ pub fn update_inherited_files(id: InstanceID, data: &DataEntities, window: &mut 
     if !begin_inherited_operation(id, cx) {
         return;
     }
+    let modal = ModalAction::default();
+    let tracker = modal.push_tracker("Checking for updates".into());
+    let check_window = modals::generic::show_modal(
+        window,
+        cx,
+        "Checking for updates…".into(),
+        "Unable to check for updates".into(),
+        modal.clone(),
+    );
+    let (send, receive) = tokio::sync::oneshot::channel();
+    data.backend_handle.send(MessageToBackend::CheckInheritedUpdates { id, channel: send });
+    let handle = window.window_handle();
+    let data = data.clone();
+    cx.spawn(async move |cx| {
+        let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
+        tracker.set_finished(bridge::modal_action::ProgressTrackerFinishType::Normal);
+        match result {
+            Ok(updates) => {
+                modal.set_finished();
+                if let Some(check_window) = check_window {
+                    _ = cx.update_window(check_window, |_, window, _| window.remove_window());
+                }
+                _ = cx.update_window(handle, |_, window, cx| {
+                    if updates.is_empty() {
+                        finish_inherited_operation(id, window);
+                    } else {
+                        apply_inherited_files(id, &data, window, cx);
+                    }
+                });
+            },
+            Err(error) => {
+                modal.set_finished_with_error(error.into());
+                _ = cx.update_window(handle, |_, window, _| finish_inherited_operation(id, window));
+            },
+        }
+    })
+    .detach();
+}
+
+fn apply_inherited_files(id: InstanceID, data: &DataEntities, window: &mut Window, cx: &mut App) {
     window.refresh();
     let modal = ModalAction::default();
     HOME_UPDATES.lock().insert(id, modal.clone());

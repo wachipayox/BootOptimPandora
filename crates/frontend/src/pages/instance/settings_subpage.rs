@@ -1601,6 +1601,11 @@ impl InstanceSettingsSubpage {
             let id = self.instance_id;
             let backend = self.backend_handle.clone();
             move |_, window, cx| crate::modals::save_groups::open_save_groups(id, backend.clone(), window, cx)
+        }))
+        .child(DesignButton::new("manage-instance-global-sharing").label("Gestionar global").on_click({
+            let id = self.instance_id;
+            let backend = self.backend_handle.clone();
+            move |_, window, cx| crate::modals::global_sharing::open(id, backend.clone(), window, cx)
         }));
         let mut inherited = settings_panel("Perfil heredado");
         let parent = self

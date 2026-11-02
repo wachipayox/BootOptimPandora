@@ -20,3 +20,5 @@ pub mod update_prompt;
 pub mod windows_security;
 
 pub mod skin_import;
+
+pub mod global_sharing;

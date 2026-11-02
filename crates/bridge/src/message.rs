@@ -86,7 +86,22 @@ pub struct ExportOptions {
     pub curseforge: ExportCurseforgeOptions,
 }
 
+#[derive(Clone, Debug)]
+pub struct InstanceGlobalSharingSummary {
+    pub global: schema::backend_config::SyncTargets,
+    pub configuration: schema::shared_data::InstanceGlobalSharing,
+}
+
 pub enum MessageToBackend {
+    GetInstanceGlobalSharing {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<InstanceGlobalSharingSummary, String>>,
+    },
+    SetInstanceGlobalSharing {
+        id: InstanceID,
+        configuration: schema::shared_data::InstanceGlobalSharing,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     GetSaveGroups {
         id: InstanceID,
         channel: tokio::sync::oneshot::Sender<Result<Vec<SaveGroupSummary>, String>>,

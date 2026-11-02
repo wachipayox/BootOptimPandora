@@ -147,6 +147,16 @@ impl BackendState {
             return;
         }
         match message {
+            MessageToBackend::GetInstanceGlobalSharing { id, channel } => {
+                let _ = channel.send(self.instance_global_sharing(id));
+            },
+            MessageToBackend::SetInstanceGlobalSharing {
+                id,
+                configuration,
+                channel,
+            } => {
+                let _ = channel.send(self.set_instance_global_sharing(id, configuration));
+            },
             MessageToBackend::GetSaveGroups { id, channel } => {
                 let _ = channel.send(crate::BackendState::list_save_groups(self, id));
             },

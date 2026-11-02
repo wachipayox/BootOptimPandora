@@ -124,6 +124,11 @@ pub struct InstanceConfiguration {
     pub instance_fallback_icon: Option<Ustr>,
     #[serde(default, deserialize_with = "crate::try_deserialize")]
     pub disable_file_syncing: bool,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::shared_data::InstanceGlobalSharing::is_default"
+    )]
+    pub global_sharing: crate::shared_data::InstanceGlobalSharing,
     /// Membership is independent from whether this group currently shares saves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_data_group: Option<Uuid>,
@@ -165,6 +170,7 @@ impl InstanceConfiguration {
             system_libraries: None,
             instance_fallback_icon: None,
             disable_file_syncing: false,
+            global_sharing: Default::default(),
             shared_data_group: None,
             shared_data_group_migrated: false,
             show_shader_tab: false,

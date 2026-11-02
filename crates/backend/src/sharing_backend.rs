@@ -84,13 +84,17 @@ impl BackendState {
         } else {
             None
         };
-        let disabled = instance.configuration.get().disable_file_syncing;
-        let empty = SyncTargets::default();
+        let settings = instance.configuration.get();
+        let global = schema::shared_data::effective_global(
+            &config.sync_targets,
+            &settings.global_sharing,
+            settings.disable_file_syncing,
+        );
         let context = Context {
             root: &root,
             minecraft: &instance.dot_minecraft_path,
             directories: &self.directories,
-            global: if disabled { &empty } else { &config.sync_targets },
+            global: &global,
             previous: config.previous_sync_targets.as_ref(),
             group: group.as_ref(),
             ignored: &config.ignored_profile_paths,
@@ -135,18 +139,68 @@ impl BackendState {
         let group = self.shared_group_for_instance(id)?;
         let mut instances = self.instance_state.write();
         let instance = instances.instances.get_mut(id).ok_or("Unknown instance")?;
-        let empty = SyncTargets::default();
-        let disabled = instance.configuration.get().disable_file_syncing;
+        let settings = instance.configuration.get();
+        let global = schema::shared_data::effective_global(
+            &config.sync_targets,
+            &settings.global_sharing,
+            settings.disable_file_syncing,
+        );
         shared_data::routes(&Context {
             root: &instance.root_path,
             minecraft: &instance.dot_minecraft_path,
             directories: &self.directories,
-            global: if disabled { &empty } else { &config.sync_targets },
+            global: &global,
             previous: None,
             group: group.as_ref(),
             ignored: &config.ignored_profile_paths,
         })
         .map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn instance_global_sharing(
+        &self,
+        id: InstanceID,
+    ) -> Result<bridge::message::InstanceGlobalSharingSummary, String> {
+        let global = self.config.lock().get().sync_targets.clone();
+        let mut state = self.instance_state.write();
+        let instance = state.instances.get_mut(id).ok_or("Unknown instance")?;
+        let settings = instance.configuration.get();
+        let mut configuration = settings.global_sharing.clone();
+        let catalog = schema::shared_data::global_catalog(&global);
+        configuration.choices.retain(|p, _| catalog.contains_key(p));
+        // Represent the legacy blanket opt-out honestly in the new controls.
+        if settings.disable_file_syncing {
+            configuration.enabled = true;
+            configuration.choices =
+                schema::shared_data::global_catalog(&global).into_keys().map(|p| (p, false)).collect();
+        }
+        Ok(bridge::message::InstanceGlobalSharingSummary { global, configuration })
+    }
+    pub(crate) fn set_instance_global_sharing(
+        &self,
+        id: InstanceID,
+        configuration: schema::shared_data::InstanceGlobalSharing,
+    ) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
+        let global = self.config.lock().get().sync_targets.clone();
+        let catalog = schema::shared_data::global_catalog(&global);
+        if configuration.choices.keys().any(|p| !catalog.contains_key(p)) {
+            return Err("No se ha podido cambiar la sincronización.".into());
+        }
+        {
+            let mut state = self.instance_state.write();
+            let instance = state.instances.get_mut(id).ok_or("Unknown instance")?;
+            if instance.status() != InstanceStatus::NotRunning
+                || instance.launch_keepalive.as_ref().is_some_and(|k| k.is_alive())
+            {
+                return Err("Detén las instancias afectadas antes de cambiar lo que comparten.".into());
+            }
+            instance.configuration.modify(|c| {
+                c.global_sharing = configuration;
+                c.disable_file_syncing = false;
+            });
+        }
+        self.prepare_shared_data(id)
     }
 
     pub(crate) fn set_shared_global(&self, target: String, is_file: bool, enabled: bool) -> Result<(), String> {
