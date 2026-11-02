@@ -735,7 +735,8 @@ mod tests {
             ignored: &ignored,
         };
         crate::shared_data::apply(&context).unwrap();
-        let parent_layout = PersistentProfileLayout::open(&source.0).unwrap();
+        let mut parent_layout = PersistentProfileLayout::open(&source.0).unwrap();
+        parent_layout.reconcile(&[]).unwrap();
         let parent_uuid = parent_layout.profile_uuid();
         let parent_branch = parent_layout.branch_manifest().unwrap();
         drop(parent_layout);
