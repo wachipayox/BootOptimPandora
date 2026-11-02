@@ -75,7 +75,9 @@ fn remove_link(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
         if junction::exists(path).unwrap_or(false) {
-            junction::delete(path).map_err(|e| e.to_string())
+            // junction::delete only clears the reparse point and leaves an empty
+            // directory behind. Remove the link entry itself, without its target.
+            fs::remove_dir(path).map_err(|e| e.to_string())
         } else {
             fs::remove_file(path).map_err(|e| e.to_string())
         }

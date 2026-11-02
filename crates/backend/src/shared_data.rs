@@ -662,7 +662,11 @@ mod tests {
         let ignored = IgnoredProfilePaths::normalized(Vec::new()).unwrap();
         let mut global = SyncTargets::default();
         global.folders.insert("screenshots".into());
-        let mut group = Group { id: Uuid::new_v4(), name: "fixture".into(), targets: SyncTargets::default() };
+        let mut group = Group {
+            id: Uuid::new_v4(),
+            name: "fixture".into(),
+            targets: SyncTargets::default(),
+        };
         group.targets.folders.insert("config/litematica".into());
         group.targets.files.insert("command_history.txt".into());
         fs::create_dir_all(f.minecraft.join("config/litematica")).unwrap();
@@ -671,15 +675,30 @@ mod tests {
         fs::write(f.minecraft.join("command_history.txt"), b"personal commands").unwrap();
         apply(&f.context(&global, Some(&group), &ignored)).unwrap();
         let snapshot = crate::local_profile::snapshot_parent_tree_filtered(
-            &f.minecraft, Uuid::new_v4(), &crate::profile_branch::ProfileBranchManifest::default(), None, &ignored,
-        ).unwrap();
-        assert_eq!(snapshot.iter().map(|entry| entry.path.as_str()).collect::<Vec<_>>(), vec!["config/pack.json"]);
+            &f.minecraft,
+            Uuid::new_v4(),
+            &crate::profile_branch::ProfileBranchManifest::default(),
+            None,
+            &ignored,
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot.iter().map(|entry| entry.path.as_str()).collect::<Vec<_>>(),
+            vec!["config/pack.json"]
+        );
         assert_eq!(fs::read(f.minecraft.join("config/litematica/personal.json")).unwrap(), b"personal");
         // Removing the ownership receipt must not silently trust the same external link.
         fs::remove_file(f.root.join(CONTROL).join("state.json")).unwrap();
-        assert!(crate::local_profile::snapshot_parent_tree_filtered(
-            &f.minecraft, Uuid::new_v4(), &crate::profile_branch::ProfileBranchManifest::default(), None, &ignored,
-        ).is_err());
+        assert!(
+            crate::local_profile::snapshot_parent_tree_filtered(
+                &f.minecraft,
+                Uuid::new_v4(),
+                &crate::profile_branch::ProfileBranchManifest::default(),
+                None,
+                &ignored,
+            )
+            .is_err()
+        );
     }
 
     #[test]

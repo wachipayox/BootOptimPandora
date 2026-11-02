@@ -54,6 +54,15 @@ pub(crate) fn snapshot_parent_tree_filtered(
         return Err("The local parent has no .minecraft directory".into());
     }
 
+    // Personal sharing is separate from profile inheritance. Only receipt-owned routes
+    // whose directory links still target their recorded store may bypass link rejection.
+    // Load once, not once per scanned entry; unknown/replaced links remain errors.
+    let shared = root
+        .parent()
+        .map(crate::shared_data::active_routes)
+        .transpose()
+        .map_err(|error| format!("Unable to inspect parent shared routes: {error}"))?
+        .unwrap_or_default();
     let mut result = BTreeMap::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
@@ -66,6 +75,9 @@ pub(crate) fn snapshot_parent_tree_filtered(
             // Worlds are personal mutable data, not part of a modpack profile snapshot.
             // In particular, never traverse a save-group junction from a branched instance.
             if ignored.contains(&relative_for_filter)
+                || shared
+                    .iter()
+                    .any(|route| schema::shared_data::contains_path(&route.path, route.is_file, &relative_for_filter))
                 || (directory == root && is_private_runtime_root(&relative_for_filter))
             {
                 continue;
