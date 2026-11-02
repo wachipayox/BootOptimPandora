@@ -36,7 +36,7 @@ use reqwest::{StatusCode, redirect::Policy};
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use schema::{
     auxiliary::AuxiliaryContentMeta,
-    backend_config::{BackendConfig, ProxyConfig, SyncTargets},
+    backend_config::{BackendConfig, ProxyConfig},
     content::{ContentInstallReason, ContentSource},
     curseforge::{CachedCurseforgeFileInfo, CurseforgeGetFilesRequest},
     instance::InstanceConfiguration,
@@ -176,6 +176,11 @@ pub fn start(
             settings.ignored_profile_defaults_version = 1;
         });
     }
+    if config.get().shared_data_defaults_version < 1 {
+        config.modify(|settings| {
+            let _ = schema::shared_data::migrate_global_defaults(settings);
+        });
+    }
     let proxy_config = config.get().proxy.clone();
     let proxy_password: Option<String> = if proxy_config.enabled && proxy_config.auth_enabled {
         runtime.block_on(async {
@@ -258,6 +263,7 @@ pub fn start(
         launcher_update_check_serial: Default::default(),
         launcher_update_restarting: AtomicBool::new(false),
         launcher_tasks: Default::default(),
+        shared_data_changing: std::sync::atomic::AtomicBool::new(false),
         manual_curseforge_downloads: ManualCurseforgeDownloadSession::default(),
     };
 
@@ -363,6 +369,7 @@ pub struct BackendState {
     pub launcher_update_check_serial: std::sync::atomic::AtomicU64,
     pub launcher_update_restarting: AtomicBool,
     pub launcher_tasks: Arc<std::sync::atomic::AtomicUsize>,
+    pub shared_data_changing: std::sync::atomic::AtomicBool,
     pub manual_curseforge_downloads: ManualCurseforgeDownloadSession,
 }
 
@@ -586,14 +593,16 @@ impl BackendState {
                 existing.rewatch_directories(&mut self.file_watching.write());
 
                 let _ = self.send.send(existing.create_modify_message());
-                let group_id = crate::save_groups::group_id_for_saves_path(
-                    &existing.saves_path,
-                    &self.directories.save_groups_dir,
-                )
-                .unwrap_or_else(|error| {
-                    log::warn!("Unable to determine save group for {:?}: {error}", existing.root_path);
-                    None
-                });
+                let config = existing.configuration.get();
+                let group_id = if config.shared_data_group_migrated {
+                    config.shared_data_group
+                } else {
+                    crate::save_groups::group_id_for_saves_path(&existing.saves_path, &self.directories.save_groups_dir)
+                        .unwrap_or_else(|error| {
+                            log::warn!("Unable to determine save group for {:?}: {error}", existing.root_path);
+                            None
+                        })
+                };
                 self.send.send(MessageToFrontend::InstanceSaveGroupUpdated {
                     id: existing.id,
                     group_id,
@@ -609,12 +618,16 @@ impl BackendState {
             let generation = instance_state.instances_generation;
             instance_state.instances_generation = instance_state.instances_generation.wrapping_add(1);
 
-            let save_group_id =
+            let config = instance.configuration.get();
+            let save_group_id = if config.shared_data_group_migrated {
+                config.shared_data_group
+            } else {
                 crate::save_groups::group_id_for_saves_path(&instance.saves_path, &self.directories.save_groups_dir)
                     .unwrap_or_else(|error| {
                         log::warn!("Unable to determine save group for {:?}: {error}", instance.root_path);
                         None
-                    });
+                    })
+            };
 
             let instance = instance_state.instances.insert(move |index| {
                 let instance_id = InstanceID { index, generation };
@@ -771,6 +784,7 @@ impl BackendState {
         let mut any_process_alive = false;
 
         let mut instance_state = self.instance_state.write();
+        let mut shared_files_to_publish = Vec::new();
         for instance in instance_state.instances.iter_mut() {
             let status_before = instance.status();
             let mut killed = false;
@@ -1059,6 +1073,9 @@ impl BackendState {
                 }
             }
 
+            if status_before != InstanceStatus::NotRunning && instance.status() == InstanceStatus::NotRunning {
+                shared_files_to_publish.push(instance.id);
+            }
             if killed || instance.status() != status_before {
                 instance.update_session();
                 self.send.send(instance.create_modify_message());
@@ -1077,6 +1094,28 @@ impl BackendState {
             any_process_alive |= !instance.processes.is_empty()
                 || !instance.closing_processes.is_empty()
                 || instance.aot_create.is_some();
+        }
+        for id in shared_files_to_publish {
+            let mut active_roots = Vec::new();
+            for other in instance_state
+                .instances
+                .iter()
+                .filter(|i| i.id != id && i.status() != InstanceStatus::NotRunning)
+            {
+                match crate::shared_data::active_folder_roots(&other.root_path) {
+                    Ok(roots) if !roots.is_empty() => active_roots.extend(roots),
+                    _ => {
+                        active_roots.push(self.directories.synced_dir.to_path_buf());
+                        active_roots.push(self.directories.save_groups_dir.to_path_buf());
+                    },
+                }
+            }
+            if let Some(instance) = instance_state.instances.get(id) {
+                if let Err(error) = crate::sharing_backend::publish_finished(instance, &self.directories, &active_roots)
+                {
+                    log::warn!("Unable to publish finished-instance shared files: {error}");
+                }
+            }
         }
         any_process_alive |= !self.aot_create_requests.lock().is_empty();
 
@@ -1306,16 +1345,16 @@ impl BackendState {
         let probe = crate::prelaunch_attribution::PrelaunchAttribution::from_environment(modal_action.probe_key());
         let prelaunch_span = probe.begin("prelaunch", None, false);
         if prelaunch_span.is_none() {
-            self.apply_syncing_to_instance(id);
             self.prelaunch_setup_mods(id, modal_action).await;
+            self.prepare_sharing_for_launch(id, modal_action);
             return probe;
         }
 
-        let sync_span = probe.begin("sync", Some("prelaunch"), false);
-        self.apply_syncing_to_instance(id);
-        probe.finish(sync_span, crate::prelaunch_attribution::SpanCounters::default());
-
         self.prelaunch_setup_mods_attributed(id, modal_action, &probe).await;
+
+        let sync_span = probe.begin("sync", Some("prelaunch"), false);
+        self.prepare_sharing_for_launch(id, modal_action);
+        probe.finish(sync_span, crate::prelaunch_attribution::SpanCounters::default());
 
         probe.finish(prelaunch_span, crate::prelaunch_attribution::SpanCounters::default());
         probe.complete_required_observations();
@@ -1324,23 +1363,9 @@ impl BackendState {
     }
 
     pub fn apply_syncing_to_instance(&self, id: InstanceID) {
-        let mut instances = self.instance_state.write();
-
-        let (disable, path) = if let Some(instance) = instances.instances.get_mut(id) {
-            (instance.configuration.get().disable_file_syncing, instance.dot_minecraft_path.clone())
-        } else {
-            return;
-        };
-
-        if disable {
-            crate::syncing::apply_to_instance(&SyncTargets::default(), &self.directories, path, &mut instances);
-        } else {
-            crate::syncing::apply_to_instance(
-                &self.config.lock().get().sync_targets,
-                &self.directories,
-                path,
-                &mut instances,
-            );
+        if let Err(error) = self.prepare_shared_data(id) {
+            log::warn!("Unable to change shared data: {error}");
+            self.send.send_error("No se ha podido cambiar la sincronización.");
         }
     }
 

@@ -495,6 +495,8 @@ try {
         if ($screen.page -match '^(instance-settings|derived|duplicate|shortcut):') { $instanceReadyMarkers=@('instance-settings-profile-ready','instance-settings-group-ready','instance-artwork-ready','instance-memory-ready') }
         if ($screen.page -match '^(derived|duplicate):') { $instanceReadyMarkers += 'instance-derived-ready' }
         if ($screen.page.StartsWith('shortcut:')) { $instanceReadyMarkers += 'launcher-dialog-ready' }
+        if ($screen.page.StartsWith('groups:') -and $CaptureState -eq 'editing') { $instanceReadyMarkers += 'shared-group-editor-ready' }
+        if ($screen.page.StartsWith('global-sharing:')) { $instanceReadyMarkers += 'instance-global-sharing-ready' }
         if ($screen.page -match '^instance-overwrites:') { $instanceReadyMarkers=@('instance-overwrites-ready') }
         if ($screen.page -match '^instance-(logs|crashes):') { $instanceReadyMarkers=@('instance-log-ready') }
         if ($screen.page -match '^instance-changelog:') { $instanceReadyMarkers=@('instance-changelog-ready','instance-stone-ready') }
@@ -508,7 +510,7 @@ try {
             if (-not (Select-String -LiteralPath $log -SimpleMatch $ready -Quiet -ErrorAction SilentlyContinue)) { throw "Instance capture did not settle: $instanceMarker" }
         }
         $captureHandle=$proc.MainWindowHandle
-        $script:expectWindowControls = $screen.page -notin @('news-profiles','news-changelog','skins-import','account-offline','launcher-update') -and $screen.page -notmatch '^(derived|duplicate|delete|export|groups):'
+        $script:expectWindowControls = $screen.page -notin @('news-profiles','news-changelog','skins-import','account-offline','launcher-update') -and $screen.page -notmatch '^(derived|duplicate|delete|export|groups|global-sharing):'
         $script:fixedCaptureWindow=$screen.page -eq 'window-dialog'
         if ($script:fixedCaptureWindow) {
             $ready="window-dialog-ready pid=$($proc.Id)"
@@ -620,7 +622,7 @@ try {
                 Save-Window (Join-Path $outputPath (($screen.file -replace '\.png$', '') + "-$part.png")) $proc.MainWindowHandle $proc.Id
             }
         }
-        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page.StartsWith('add-local-') -or $screen.page.StartsWith('add-profile-') -or $screen.page -in @('skins','skins-url','skins-copy','skins-import','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news','window-dialog') -or $screen.page -match '^(instance-|derived:|duplicate:|update:|delete:|export:|groups:|shortcut:)') {
+        if ($LauncherScreens -or $screen.page.StartsWith('launcher-') -or $screen.page.StartsWith('add-local-') -or $screen.page.StartsWith('add-profile-') -or $screen.page -in @('skins','skins-url','skins-copy','skins-import','account-offline','add-instance','add-server','add-local') -or $screen.page -in @('components','home-news','window-dialog') -or $screen.page -match '^(instance-|derived:|duplicate:|update:|delete:|export:|groups:|global-sharing:|shortcut:)') {
             # Target the verified capture window, so a foreground change cannot
             # send a key to the user's editor or another application.
             if (-not [CaptureWindow]::PostMessage($captureHandle, 0x100, [IntPtr]9, [IntPtr]0x000f0001)) { throw 'Cannot send capture Tab keydown' }

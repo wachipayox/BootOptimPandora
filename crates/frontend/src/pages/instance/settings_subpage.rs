@@ -1587,7 +1587,7 @@ impl InstanceSettingsSubpage {
     fn render_actions_content(&mut self, _cx: &mut Context<Self>) -> AnyElement {
         let worlds = settings_panel_caption(
             "Mundos compartidos",
-            "Comparte la carpeta saves con otras instancias mediante un grupo local.",
+            "Las instancias de un grupo comparten lo que actives en sus ajustes.",
         )
         .when_some(self.save_group.as_ref(), |d, group| {
             d.child(
@@ -1601,6 +1601,11 @@ impl InstanceSettingsSubpage {
             let id = self.instance_id;
             let backend = self.backend_handle.clone();
             move |_, window, cx| crate::modals::save_groups::open_save_groups(id, backend.clone(), window, cx)
+        }))
+        .child(DesignButton::new("manage-instance-global-sharing").label("Gestionar global").on_click({
+            let id = self.instance_id;
+            let backend = self.backend_handle.clone();
+            move |_, window, cx| crate::modals::global_sharing::open(id, backend.clone(), window, cx)
         }));
         let mut inherited = settings_panel("Perfil heredado");
         let parent = self

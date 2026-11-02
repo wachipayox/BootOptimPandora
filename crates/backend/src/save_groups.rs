@@ -16,6 +16,20 @@ use crate::{BackendState, instance::Instance};
 struct SaveGroupRecord {
     id: Uuid,
     name: String,
+    #[serde(default = "schema::shared_data::group_defaults")]
+    targets: schema::backend_config::SyncTargets,
+}
+
+pub(crate) fn group_settings(base: &Path, id: Uuid) -> Result<crate::shared_data::Group, String> {
+    let (record, _) = load_records(base)?
+        .into_iter()
+        .find(|(record, _)| record.id == id)
+        .ok_or("Save group not found")?;
+    Ok(crate::shared_data::Group {
+        id,
+        name: record.name,
+        targets: record.targets,
+    })
 }
 
 fn record_path(root: &Path) -> PathBuf {
@@ -78,8 +92,10 @@ fn remove_link(path: &Path) -> Result<(), String> {
 }
 
 fn ensure_stopped(instance: &Instance) -> Result<(), String> {
-    if instance.status() != InstanceStatus::NotRunning {
-        Err("Stop this instance before changing its save group".into())
+    if instance.status() != InstanceStatus::NotRunning
+        || instance.launch_keepalive.as_ref().is_some_and(|keepalive| keepalive.is_alive())
+    {
+        Err("Detén las instancias afectadas antes de cambiar lo que comparten.".into())
     } else {
         Ok(())
     }
@@ -211,35 +227,52 @@ fn current_members(
     group_root: &Path,
     except: Option<InstanceID>,
 ) -> Result<Vec<InstanceID>, String> {
-    let expected = fs::canonicalize(group_saves(group_root)).map_err(|e| e.to_string())?;
-    let guard = state.instance_state.read();
+    let id = group_root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or("Invalid group storage")?;
+    let expected = fs::canonicalize(group_saves(group_root)).ok();
+    let mut guard = state.instance_state.write();
     let mut members = Vec::new();
-    for instance in guard.instances.iter() {
-        let id = instance.id;
-        if Some(id) == except {
+    for instance in guard.instances.iter_mut() {
+        if Some(instance.id) == except {
             continue;
         }
-        if is_link(&instance.saves_path) && fs::canonicalize(&instance.saves_path).is_ok_and(|p| p == expected) {
+        let config = instance.configuration.get();
+        let configured = config.shared_data_group == Some(id);
+        let migrated = config.shared_data_group_migrated;
+        let legacy = !migrated
+            && expected.as_ref().is_some_and(|expected| {
+                is_link(&instance.saves_path) && fs::canonicalize(&instance.saves_path).is_ok_and(|p| p == *expected)
+            });
+        if configured || legacy {
             ensure_stopped(instance)?;
-            members.push(id);
+            members.push(instance.id);
         }
     }
     Ok(members)
 }
-
 fn member_count(state: &BackendState, group_root: &Path) -> usize {
-    let Ok(expected) = fs::canonicalize(group_saves(group_root)) else {
-        return 0;
-    };
+    let id = group_root.file_name().and_then(|s| s.to_str()).and_then(|s| Uuid::parse_str(s).ok());
+    let expected = fs::canonicalize(group_saves(group_root)).ok();
     state
         .instance_state
-        .read()
+        .write()
         .instances
-        .iter()
-        .filter(|instance| {
-            is_link(&instance.saves_path) && fs::canonicalize(&instance.saves_path).is_ok_and(|path| path == expected)
+        .iter_mut()
+        .map(|instance| {
+            let config = instance.configuration.get();
+            let configured = id.is_some() && config.shared_data_group == id;
+            let migrated = config.shared_data_group_migrated;
+            let legacy = !migrated
+                && expected.as_ref().is_some_and(|expected| {
+                    is_link(&instance.saves_path)
+                        && fs::canonicalize(&instance.saves_path).is_ok_and(|p| p == *expected)
+                });
+            usize::from(configured || legacy)
         })
-        .count()
+        .sum()
 }
 
 fn rollback_moves(moved: &[(PathBuf, PathBuf)]) -> Vec<String> {
@@ -263,6 +296,10 @@ fn candidate_name(name: &str, source: &str, occupied: &mut std::collections::Has
         suffix += 1;
     }
     candidate
+}
+
+pub(crate) fn merge_worlds_for_sharing(source: &Path, target: &Path, instance_name: &str) -> Result<(), String> {
+    join_contents(source, target, instance_name)
 }
 
 fn join_contents(source: &Path, target: &Path, instance_name: &str) -> Result<(), String> {
@@ -327,11 +364,68 @@ fn join_contents(source: &Path, target: &Path, instance_name: &str) -> Result<()
 }
 
 impl BackendState {
+    pub(crate) fn shared_group_for_instance(
+        &self,
+        id: InstanceID,
+    ) -> Result<Option<crate::shared_data::Group>, String> {
+        let groups = load_records(&self.directories.save_groups_dir)?;
+        let mut instances = self.instance_state.write();
+        let instance = instances.instances.get_mut(id).ok_or("Unknown instance")?;
+        let config = instance.configuration.get();
+        let configured = config.shared_data_group;
+        let migrated = config.shared_data_group_migrated;
+        let selected = if migrated {
+            configured
+        } else {
+            configured.or(group_for_link(&instance.saves_path, &groups)?)
+        };
+        if !migrated || configured != selected {
+            instance.configuration.modify(|c| {
+                c.shared_data_group = selected;
+                c.shared_data_group_migrated = true;
+            });
+        }
+        Ok(selected.and_then(|id| {
+            groups.into_iter().find(|(g, _)| g.id == id).map(|(g, _)| crate::shared_data::Group {
+                id: g.id,
+                name: g.name,
+                targets: g.targets,
+            })
+        }))
+    }
+    pub fn set_save_group_targets(
+        &self,
+        group_id: Uuid,
+        targets: schema::backend_config::SyncTargets,
+    ) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
+        crate::shared_data::validate_targets(&targets).map_err(|e| e.to_string())?;
+        let root = self.directories.save_groups_dir.join(group_id.to_string());
+        let members = current_members(self, &root, None)?;
+        let mut record: SaveGroupRecord = crate::fs::read_json(&record_path(&root)).map_err(|e| e.to_string())?;
+        if record.id != group_id || is_link(&root) || is_link(&record_path(&root)) {
+            return Err("Unsafe save group record".into());
+        }
+        let storage_guard =
+            crate::shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
+        record.targets = targets;
+        crate::fs::write_safe(&record_path(&root), &serde_json::to_vec_pretty(&record).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        drop(storage_guard);
+        for member in members {
+            self.prepare_shared_data(member)?;
+        }
+        Ok(())
+    }
     pub fn rename_save_group(&self, group_id: Uuid, name: String) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
+        let _storage_guard =
+            crate::shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
         rename_group_record(&self.directories.save_groups_dir, group_id, &name)
     }
 
     pub fn list_save_groups(&self, id: InstanceID) -> Result<Vec<SaveGroupSummary>, String> {
+        let configured = self.shared_group_for_instance(id)?.map(|g| g.id);
         let saves = self
             .instance_state
             .read()
@@ -341,8 +435,9 @@ impl BackendState {
             .saves_path
             .to_path_buf();
         let groups = load_records(&self.directories.save_groups_dir)?;
-        let mut selected = group_for_link(&saves, &groups)?;
+        let mut selected = configured;
         if let Some(group_id) = selected
+            && is_link(&saves)
             && fs::canonicalize(&saves).is_err()
         {
             let status = self.instance_state.read().instances.get(id).ok_or("Unknown instance")?.status();
@@ -360,15 +455,24 @@ impl BackendState {
                 name: record.name,
                 member_count: member_count(self, &root),
                 selected: selected == Some(record.id),
+                targets: record.targets,
             })
             .collect())
     }
 
     pub fn create_save_group(&self, id: InstanceID, name: String) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
+        if self.shared_group_for_instance(id)?.is_some() {
+            return Err("This instance already belongs to a save group".into());
+        }
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
             return Err("Group name must contain 1 to 80 characters".into());
         }
+        // Detach any retired global saves link before the legacy world mover runs.
+        self.prepare_shared_data(id)?;
+        let storage_guard =
+            crate::shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
         let (saves, _) = instance_paths(self, id)?;
         validate_plain_saves(&saves)?;
         let groups = load_records(&self.directories.save_groups_dir)?;
@@ -379,6 +483,7 @@ impl BackendState {
         let record = SaveGroupRecord {
             id: Uuid::new_v4(),
             name: name.to_owned(),
+            targets: schema::shared_data::group_defaults(),
         };
         let root = self.directories.save_groups_dir.join(record.id.to_string());
         fs::create_dir(&root).map_err(|e| e.to_string())?;
@@ -414,10 +519,38 @@ impl BackendState {
                     .map_or("original saves state restored".to_owned(), |e| format!("rollback needs attention: {e}"))
             ));
         }
-        Ok(())
+        self.instance_state
+            .write()
+            .instances
+            .get_mut(id)
+            .ok_or("Unknown instance")?
+            .configuration
+            .modify(|c| c.shared_data_group = Some(record.id));
+        drop(storage_guard);
+        self.prepare_shared_data(id)
     }
 
     pub fn join_save_group(&self, id: InstanceID, group_id: Uuid) -> Result<(), String> {
+        let _change = self.begin_shared_change()?;
+        if self.shared_group_for_instance(id)?.is_some() {
+            return Err("This instance already belongs to a group".into());
+        }
+        let settings = group_settings(&self.directories.save_groups_dir, group_id)?;
+        if !settings.targets.folders.contains("saves") {
+            let root = self.directories.save_groups_dir.join(group_id.to_string());
+            let _ = current_members(self, &root, Some(id))?;
+            self.instance_state
+                .write()
+                .instances
+                .get_mut(id)
+                .ok_or("Unknown instance")?
+                .configuration
+                .modify(|c| c.shared_data_group = Some(group_id));
+            return self.prepare_shared_data(id);
+        }
+        self.prepare_shared_data(id)?;
+        let storage_guard =
+            crate::shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
         let (saves, instance_name) = instance_paths(self, id)?;
         validate_plain_saves(&saves)?;
         let groups = load_records(&self.directories.save_groups_dir)?;
@@ -450,31 +583,40 @@ impl BackendState {
                 "{error}. The worlds already moved into the group and remain safe there; rejoin after fixing the link."
             ));
         }
-        Ok(())
+        self.instance_state
+            .write()
+            .instances
+            .get_mut(id)
+            .ok_or("Unknown instance")?
+            .configuration
+            .modify(|c| c.shared_data_group = Some(group_id));
+        drop(storage_guard);
+        self.prepare_shared_data(id)
     }
 
     pub fn leave_save_group(&self, id: InstanceID) -> Result<(), String> {
-        let (saves, _) = instance_paths(self, id)?;
-        let groups = load_records(&self.directories.save_groups_dir)?;
-        let group_id = group_for_link(&saves, &groups)?.ok_or("This instance is not in a save group")?;
-        let (_, root) = groups
-            .into_iter()
-            .find(|(record, _)| record.id == group_id)
-            .ok_or("Save group not found")?;
+        let _change = self.begin_shared_change()?;
+        let group = self.shared_group_for_instance(id)?.ok_or("This instance is not in a save group")?;
+        let root = self.directories.save_groups_dir.join(group.id.to_string());
         let others = current_members(self, &root, Some(id))?;
-        remove_link(&saves).map_err(|e| format!("Unable to detach this instance from its save group: {e}"))?;
-        if others.is_empty() {
-            if let Err(error) = fs::rename(group_saves(&root), &saves) {
-                let _ = make_link(&group_saves(&root), &saves);
-                return Err(format!("Unable to return group worlds to the last instance: {error}"));
-            }
-            fs::remove_dir_all(root)
-                .map_err(|e| format!("Worlds were returned, but empty group metadata remains: {e}"))?;
-        } else {
-            fs::create_dir(&saves)
-                .map_err(|e| format!("Detached from group, but unable to create empty local saves folder: {e}"))?;
+        let (saves, _) = instance_paths(self, id)?;
+        self.prepare_shared_data(id)?;
+        let storage_guard =
+            crate::shared_storage::lock(&self.directories.root_launcher_dir).map_err(|e| e.to_string())?;
+        if !others.is_empty() && crate::shared_storage::targeting(&saves, &group_saves(&root)) {
+            remove_link(&saves).map_err(|e| e.to_string())?;
+            fs::create_dir(&saves).map_err(|e| e.to_string())?;
         }
-        Ok(())
+        self.instance_state
+            .write()
+            .instances
+            .get_mut(id)
+            .ok_or("Unknown instance")?
+            .configuration
+            .modify(|c| c.shared_data_group = None);
+        // Empty groups retain their store and recovery copies; no group data is deleted on leave.
+        drop(storage_guard);
+        self.prepare_shared_data(id)
     }
 }
 
@@ -493,8 +635,10 @@ fn rename_group_record(base: &Path, group_id: Uuid, name: &str) -> Result<(), St
     if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
         return Err("Group name must contain 1 to 80 characters".into());
     }
-    let (mut record, root) = load_records(base)?.into_iter()
-        .find(|(record, _)| record.id == group_id).ok_or("Save group not found")?;
+    let (mut record, root) = load_records(base)?
+        .into_iter()
+        .find(|(record, _)| record.id == group_id)
+        .ok_or("Save group not found")?;
     record.name = name.to_owned();
     let bytes = serde_json::to_vec_pretty(&record).map_err(|e| e.to_string())?;
     crate::fs::write_safe(&record_path(&root), &bytes).map_err(|e| format!("Unable to rename save group: {e}"))
@@ -510,7 +654,16 @@ mod rename_tests {
         let root = base.join(id.to_string());
         fs::create_dir_all(group_saves(&root).join("world")).unwrap();
         fs::write(group_saves(&root).join("world/level.dat"), b"unchanged-world").unwrap();
-        fs::write(record_path(&root), serde_json::to_vec(&SaveGroupRecord { id, name: "Old".into() }).unwrap()).unwrap();
+        fs::write(
+            record_path(&root),
+            serde_json::to_vec(&SaveGroupRecord {
+                id,
+                name: "Old".into(),
+                targets: schema::shared_data::group_defaults(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
         rename_group_record(&base, id, "  New group  ").unwrap();
         let record = &load_records(&base).unwrap()[0].0;
         assert_eq!(record.id, id);

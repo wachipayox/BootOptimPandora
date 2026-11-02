@@ -147,29 +147,55 @@ impl BackendState {
             return;
         }
         match message {
+            MessageToBackend::GetInstanceGlobalSharing { id, channel } => {
+                let _ = channel.send(self.instance_global_sharing(id));
+            },
+            MessageToBackend::SetInstanceGlobalSharing {
+                id,
+                configuration,
+                channel,
+            } => {
+                let result = self.set_instance_global_sharing(id, configuration);
+                self.send.send(MessageToFrontend::SharedPathsChanged);
+                let _ = channel.send(result);
+            },
             MessageToBackend::GetSaveGroups { id, channel } => {
                 let _ = channel.send(crate::BackendState::list_save_groups(self, id));
+            },
+            MessageToBackend::SetSaveGroupTargets {
+                group_id,
+                targets,
+                channel,
+            } => {
+                let result = self.set_save_group_targets(group_id, targets);
+                self.send.send(MessageToFrontend::SharedPathsChanged);
+                let _ = channel.send(result);
             },
             MessageToBackend::RenameSaveGroup {
                 group_id,
                 name,
                 channel,
             } => {
-                let _ = channel.send(self.rename_save_group(group_id, name));
+                let result = self.rename_save_group(group_id, name);
+                self.send.send(MessageToFrontend::SharedPathsChanged);
+                let _ = channel.send(result);
             },
             MessageToBackend::CreateSaveGroup { id, name, channel } => {
                 let result = crate::BackendState::create_save_group(self, id, name);
                 refresh_instance_saves(self, id, result.is_ok());
+                self.send.send(MessageToFrontend::SharedPathsChanged);
                 let _ = channel.send(result);
             },
             MessageToBackend::JoinSaveGroup { id, group_id, channel } => {
                 let result = crate::BackendState::join_save_group(self, id, group_id);
                 refresh_instance_saves(self, id, result.is_ok());
+                self.send.send(MessageToFrontend::SharedPathsChanged);
                 let _ = channel.send(result);
             },
             MessageToBackend::LeaveSaveGroup { id, channel } => {
                 let result = crate::BackendState::leave_save_group(self, id);
                 refresh_instance_saves(self, id, result.is_ok());
+                self.send.send(MessageToFrontend::SharedPathsChanged);
                 let _ = channel.send(result);
             },
             MessageToBackend::RequestMetadata { request, force_reload } => {
@@ -1662,57 +1688,21 @@ impl BackendState {
                 _ = channel.send(result);
             },
             MessageToBackend::GetSyncState { channel } => {
-                let result = crate::syncing::get_sync_state(
-                    &self.config.lock().get().sync_targets,
-                    &mut *self.instance_state.write(),
-                    &self.directories,
-                );
-
-                match result {
-                    Ok(state) => {
-                        _ = channel.send(state);
-                    },
-                    Err(error) => {
-                        self.send.send_error(format!("Error while getting sync state: {error}"));
-                    },
-                }
+                let _ = channel.send(crate::syncing::get_sync_state(self));
             },
             MessageToBackend::SetSyncing { target, is_file, value } => {
-                let mut write = self.config.lock();
-
-                let result = if value {
-                    crate::syncing::enable_all(&target, is_file, &mut *self.instance_state.write(), &self.directories)
-                } else {
-                    crate::syncing::disable_all(&target, is_file, &self.directories).map(|_| true)
-                };
-
-                match result {
-                    Ok(success) => {
-                        if !success {
-                            self.send.send_error("Unable to enable syncing");
-                            return;
-                        }
-                    },
-                    Err(error) => {
-                        self.send.send_error(format!("Error while enabling syncing: {error}"));
-                        return;
-                    },
+                let result = self.set_shared_global(target.to_string(), is_file, value);
+                self.send.send(MessageToFrontend::SharedPathsChanged);
+                if let Err(error) = result {
+                    log::warn!("Unable to change global shared data: {error}");
+                    self.send.send_error(
+                        if error == "Detén las instancias afectadas antes de cambiar lo que comparten." {
+                            error
+                        } else {
+                            "No se ha podido cambiar la sincronización.".to_owned()
+                        },
+                    );
                 }
-
-                write.modify(|config| {
-                    let (set, other_set) = if is_file {
-                        (&mut config.sync_targets.files, &mut config.sync_targets.folders)
-                    } else {
-                        (&mut config.sync_targets.folders, &mut config.sync_targets.files)
-                    };
-
-                    other_set.remove(&target);
-                    if value {
-                        _ = set.insert(target);
-                    } else {
-                        set.remove(&target);
-                    }
-                });
             },
             MessageToBackend::GetBackendConfiguration { channel } => {
                 _ = channel.send(self.config.lock().get().clone());
@@ -1827,6 +1817,12 @@ impl BackendState {
                 tokio::task::spawn(async move {
                     let result = backend.load_global_catalog().await;
                     let _ = channel.send(result);
+                });
+            },
+            MessageToBackend::GetSharedProfilePaths { id, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = channel.send(backend.shared_profile_paths(id));
                 });
             },
             MessageToBackend::GetProfileOverwrites { id, channel } => {
@@ -2911,6 +2907,10 @@ impl BackendState {
                 return;
             }
 
+            if self.shared_data_changing.load(Ordering::Acquire) {
+                modal_action.set_finished_with_error("No se ha podido cambiar la sincronización.".into());
+                return;
+            }
             instance.launch_keepalive = Some(keepalive.create_handle());
 
             self.send.send(MessageToFrontend::MoveInstanceToTop { id });
@@ -3444,16 +3444,14 @@ pub(crate) fn refresh_instance_saves(state: &Arc<BackendState>, id: InstanceID, 
     if !changed {
         return;
     }
-    let saves_path = state.instance_state.read().instances.get(id).map(|instance| instance.saves_path.clone());
-    let Some(saves_path) = saves_path else {
-        return;
-    };
     if let Some(instance) = state.instance_state.write().instances.get_mut(id) {
         instance.mark_all_dirty(state, true);
     }
-    let group_id = crate::save_groups::group_id_for_saves_path(&saves_path, &state.directories.save_groups_dir)
+    let group_id = state
+        .shared_group_for_instance(id)
+        .map(|group| group.map(|g| g.id))
         .unwrap_or_else(|error| {
-            log::warn!("Unable to refresh save group indicator for {id:?}: {error}");
+            log::warn!("Unable to refresh independent group membership for {id:?}: {error}");
             None
         });
     state.send.send(MessageToFrontend::InstanceSaveGroupUpdated { id, group_id });

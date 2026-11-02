@@ -18,7 +18,7 @@ use bridge::{
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, Disableable, Icon, StyledExt, WindowExt,
-    button::{Button, DropdownButton},
+    button::{Button, ButtonVariants, DropdownButton},
     h_flex,
     input::{InputEvent, InputState, Textarea, TextareaState},
     menu::{ContextMenuExt, PopupMenuItem},
@@ -31,6 +31,7 @@ pub struct InstanceOverwritesSubpage {
     backend: BackendHandle,
     report: Option<Result<ProfileOverwritesReport, String>>,
     expanded: BTreeSet<String>,
+    shared_expanded: bool,
     selected: Option<String>,
     text: Option<Result<ProfileTextFile, String>>,
     ancestor: Option<Result<ProfileAncestorText, String>>,
@@ -50,6 +51,8 @@ pub struct InstanceOverwritesSubpage {
     busy: bool,
     _load: Task<()>,
     _policy_check: Task<()>,
+    _shared_read: Task<()>,
+    shared_revision: u64,
     _read: Task<()>,
     _save: Task<()>,
 }
@@ -290,6 +293,7 @@ impl InstanceOverwritesSubpage {
             backend,
             report: None,
             expanded: BTreeSet::new(),
+            shared_expanded: false,
             selected: None,
             text: None,
             ancestor: None,
@@ -309,6 +313,8 @@ impl InstanceOverwritesSubpage {
             busy: false,
             _load: Task::ready(()),
             _policy_check: Task::ready(()),
+            _shared_read: Task::ready(()),
+            shared_revision: cx.try_global::<crate::processor::SharedPathsRevision>().map_or(0, |r| r.0),
             _read: Task::ready(()),
             _save: Task::ready(()),
         };
@@ -333,6 +339,11 @@ impl InstanceOverwritesSubpage {
             let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
             _ = page.update_in(cx, |page, window, cx| {
                 page.report = Some(result);
+                page.refresh_shared_paths(window, cx);
+                #[cfg(feature = "ui-capture")]
+                if std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("expanded") {
+                    page.shared_expanded = true;
+                }
                 if let Some(path) = page.selected.clone() {
                     page.select(path, window, cx);
                 } else if std::env::var("WBOMBO_UI_CAPTURE_PAGE")
@@ -357,7 +368,26 @@ impl InstanceOverwritesSubpage {
         cx.notify();
     }
 
+    fn refresh_shared_paths(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (channel, receive) = tokio::sync::oneshot::channel();
+        self.backend.send(MessageToBackend::GetSharedProfilePaths {
+            id: self.instance,
+            channel,
+        });
+        self._shared_read = cx.spawn_in(window, async move |page, cx| {
+            if let Ok(Ok(paths)) = receive.await {
+                _ = page.update_in(cx, |page, _, cx| {
+                    if let Some(Ok(report)) = &mut page.report {
+                        report.shared_paths = paths;
+                    }
+                    cx.notify();
+                });
+            }
+        });
+    }
+
     pub(crate) fn on_reenter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_shared_paths(window, cx);
         let (channel, receive) = tokio::sync::oneshot::channel();
         self.backend.send(MessageToBackend::GetBackendConfiguration { channel });
         self._policy_check = cx.spawn_in(window, async move |page, cx| {
@@ -893,7 +923,12 @@ fn can_restore(change: OverwriteChange) -> bool {
 }
 
 impl Render for InstanceOverwritesSubpage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let revision = cx.try_global::<crate::processor::SharedPathsRevision>().map_or(0, |r| r.0);
+        if self.shared_revision != revision {
+            self.shared_revision = revision;
+            self.refresh_shared_paths(window, cx);
+        }
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
         let secondary = cx.theme().secondary;
@@ -1298,8 +1333,81 @@ impl Render for InstanceOverwritesSubpage {
                 if let Some(notice) = &self.notice {
                     details = details.child(div().text_sm().child(notice.clone()));
                 }
+                let shared_rows = report
+                    .shared_paths
+                    .iter()
+                    .map(|route| {
+                        let owner = route
+                            .group
+                            .as_ref()
+                            .map(|name| format!("Compartido con el grupo {name}"))
+                            .unwrap_or_else(|| "Compartido globalmente".to_owned());
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_3()
+                            .p_2()
+                            .border_b_1()
+                            .border_color(border)
+                            .child(
+                                v_flex()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .child(div().text_sm().child(route.path.clone()))
+                                    .child(div().text_xs().text_color(muted).child(owner)),
+                            )
+                            .when_some(route.conflict.as_ref(), |row, path| {
+                                row.child(
+                                    v_flex()
+                                        .max_w(px(320.))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().warning)
+                                                .child("Conflicto con herencia"),
+                                        )
+                                        .child(div().text_xs().text_color(muted).child(path.clone())),
+                                )
+                            })
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>();
                 let mut section = v_flex()
                     .gap_3()
+                    .when(!shared_rows.is_empty(), |section| {
+                        section.child(
+                            v_flex()
+                                .flex_shrink_0()
+                                .child(
+                                    DesignButton::new("toggle-shared-paths")
+                                        .ghost()
+                                        .w_full()
+                                        .justify_start()
+                                        .aria_label("Rutas compartidas")
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .items_center()
+                                                .child(
+                                                    Icon::new(if self.shared_expanded {
+                                                        PandoraIcon::ChevronDown
+                                                    } else {
+                                                        PandoraIcon::ChevronRight
+                                                    })
+                                                    .size(px(12.)),
+                                                )
+                                                .child("Rutas compartidas"),
+                                        )
+                                        .on_click(cx.listener(|page, _, _, cx| {
+                                            page.shared_expanded = !page.shared_expanded;
+                                            cx.notify();
+                                        })),
+                                )
+                                .when(self.shared_expanded, |list| {
+                                    list.child(v_flex().max_h(px(160.)).overflow_y_scrollbar().children(shared_rows))
+                                }),
+                        )
+                    })
                     .flex_1()
                     .min_h_0()
                     .child(h_flex().gap_3().flex_1().min_h_0().child(explorer).child(details));

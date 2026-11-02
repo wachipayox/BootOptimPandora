@@ -86,7 +86,22 @@ pub struct ExportOptions {
     pub curseforge: ExportCurseforgeOptions,
 }
 
+#[derive(Clone, Debug)]
+pub struct InstanceGlobalSharingSummary {
+    pub global: schema::backend_config::SyncTargets,
+    pub configuration: schema::shared_data::InstanceGlobalSharing,
+}
+
 pub enum MessageToBackend {
+    GetInstanceGlobalSharing {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<InstanceGlobalSharingSummary, String>>,
+    },
+    SetInstanceGlobalSharing {
+        id: InstanceID,
+        configuration: schema::shared_data::InstanceGlobalSharing,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     GetSaveGroups {
         id: InstanceID,
         channel: tokio::sync::oneshot::Sender<Result<Vec<SaveGroupSummary>, String>>,
@@ -103,6 +118,11 @@ pub enum MessageToBackend {
     },
     LeaveSaveGroup {
         id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    SetSaveGroupTargets {
+        group_id: uuid::Uuid,
+        targets: schema::backend_config::SyncTargets,
         channel: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
     RenameSaveGroup {
@@ -373,6 +393,10 @@ pub enum MessageToBackend {
     GetGlobalProfiles {
         channel: tokio::sync::oneshot::Sender<Result<Vec<GlobalProfileSummary>, String>>,
     },
+    GetSharedProfilePaths {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<Vec<crate::profile_overwrites::SharedProfilePath>, String>>,
+    },
     GetProfileOverwrites {
         id: InstanceID,
         channel: tokio::sync::oneshot::Sender<Result<crate::profile_overwrites::ProfileOverwritesReport, String>>,
@@ -569,6 +593,7 @@ pub struct SaveGroupSummary {
     pub name: String,
     pub member_count: usize,
     pub selected: bool,
+    pub targets: schema::backend_config::SyncTargets,
 }
 
 /// State of an instance's JDK 25 AOT cache, as the instance settings show it.
@@ -661,6 +686,7 @@ pub enum MessageToFrontend {
         accounts: Arc<[Account]>,
         selected_account: Option<Uuid>,
     },
+    SharedPathsChanged,
     Refresh,
     Quit,
     PrepareLauncherRestart,

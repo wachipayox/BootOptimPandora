@@ -21,6 +21,10 @@ use crate::{
     interface_config::InterfaceConfig,
 };
 
+#[derive(Default)]
+pub(crate) struct SharedPathsRevision(pub u64);
+impl gpui::Global for SharedPathsRevision {}
+
 pub struct Processor {
     data: DataEntities,
     main_window_handle: Option<AnyWindowHandle>,
@@ -220,6 +224,13 @@ impl Processor {
                     }
                     window.push_notification(notification, cx);
                 });
+            },
+            MessageToFrontend::SharedPathsChanged => {
+                let revision = cx.try_global::<SharedPathsRevision>().map_or(1, |r| r.0.wrapping_add(1));
+                cx.set_global(SharedPathsRevision(revision));
+                if let Some(handle) = self.main_window_handle {
+                    _ = handle.update(cx, |_, window, _| window.refresh());
+                }
             },
             MessageToFrontend::Refresh => {
                 let Some(handle) = self.main_window_handle else {

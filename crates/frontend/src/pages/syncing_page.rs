@@ -92,13 +92,14 @@ impl SyncingPage {
             cannot_sync_count = 0;
             enabled = false;
         }
-        let disabled = !enabled && cannot_sync_count > 0;
         let is_loading = self.loading.contains(&name);
 
         let backend_handle = self.backend_handle.clone();
         let target_name = name.clone();
-        let switch = design::YesNo::new(name.clone()).disabled(disabled).checked(enabled).on_click(cx.listener(
-            move |page, value, _, cx| {
+        let switch = design::YesNo::new(name.clone())
+            .disabled(is_loading)
+            .checked(enabled)
+            .on_click(cx.listener(move |page, value, _, cx| {
                 backend_handle.send(MessageToBackend::SetSyncing {
                     target: target_name.clone(),
                     is_file,
@@ -109,8 +110,7 @@ impl SyncingPage {
                     page.pending.insert(target_name.clone());
                     page.update_sync_state(cx);
                 }
-            },
-        ));
+            }));
         let mut title = v_flex().flex_1().min_w_0().child(label);
         if (enabled || synced_count > 0) && !is_file {
             title = title.child(
@@ -137,9 +137,7 @@ impl SyncingPage {
                     .text_color(warning)
                     .child(status.clone()),
             );
-            let tooltip = format!(
-                "{status}\nLa ruta ya existe en {cannot_sync_count} instancias. Haz una copia antes de sincronizarla.\n{names}"
-            );
+            let tooltip = format!("{status}\n{names}");
             warning_button = Some(
                 Button::new(SharedString::from(format!("sync-warning-{name}")))
                     .ghost()
@@ -188,35 +186,23 @@ impl Render for SyncingPage {
             + sync_state.targets.keys().filter(|name| !NAMED_SYNC_TARGETS.contains(&***name)).count();
         let groups: &[(&str, &[(&str, &str, bool)])] = &[
             (
-                "Archivos",
-                &[
-                    ("options.txt", "options.txt", true),
-                    ("servers.dat", "servers.dat", true),
-                    ("command_history.txt", "command_history.txt", true),
-                    ("hotbar.nbt", "hotbar.nbt", true),
-                ],
-            ),
-            (
                 "Carpetas",
                 &[
-                    ("saves", "Mundos (saves)", false),
-                    ("config", "config", false),
                     ("screenshots", "Capturas", false),
-                    ("resourcepacks", "Paquetes de recursos", false),
-                    ("downloads", "Recursos de servidor (downloads)", false),
-                    ("shaderpacks", "Shaders", false),
+                    (".analogaudio", ".analogaudio", false),
+                    ("schematics", "schematics", false),
+                    (".sable", ".sable", false),
                 ],
             ),
             (
                 "Mods",
                 &[
                     ("Distant_Horizons_server_data", "Distant Horizons", false),
-                    ("xaero", "Xaero's Minimap", false),
+                    (".voxy", "Voxy", false),
                     ("journeymap", "JourneyMap", false),
                     ("flashback", "Flashback", false),
+                    ("xaero", "Xaero's Minimap", false),
                     (".bobby", "Bobby", false),
-                    (".voxy", "Voxy", false),
-                    ("schematics", "Litematica", false),
                 ],
             ),
         ];
@@ -293,35 +279,31 @@ impl Render for SyncingPage {
                 }),
             ));
         }
-        v_flex().w_full().p(px(24.)).gap(px(20.)).text_size(px(13.))
-            .child(h_flex().w_full().gap(px(12.)).justify_between()
-                .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(format!("Comparte archivos y carpetas entre todos tus instancias. {enabled} de {count} sincronizados.")))
-                .child(design::DesignButton::new("open-sync-folder").ghost().label("Abrir carpeta sincronizada")
-                    .on_click(move |_,w,c|crate::open_folder(&sync_folder,w,c))))
-            .child(columns).child(custom).child(actions)
-            .child(div().text_size(px(11.)).text_color(rgb(theme::INK_DISABLED))
-                .child("Si una instancia ya tiene esa carpeta, se avisa para que hagas copia antes. «Desactivar sincronización» en el propio instancia lo excluye."))
+        v_flex()
+            .w_full()
+            .p(px(24.))
+            .gap(px(20.))
+            .text_size(px(13.))
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap(px(12.))
+                    .justify_between()
+                    .child(div().text_size(px(12.)).text_color(rgb(theme::INK_MUTED)).child(format!(
+                        "Comparte archivos y carpetas entre todos tus instancias. {enabled} de {count} sincronizados."
+                    )))
+                    .child(
+                        design::DesignButton::new("open-sync-folder")
+                            .ghost()
+                            .label("Abrir carpeta sincronizada")
+                            .on_click(move |_, w, c| crate::open_folder(&sync_folder, w, c)),
+                    ),
+            )
+            .child(columns)
+            .child(custom)
+            .child(actions)
     }
 }
 
-static NAMED_SYNC_TARGETS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    HashSet::from([
-        "options.txt",
-        "servers.dat",
-        "command_history.txt",
-        "hotbar.nbt",
-        "saves",
-        "config",
-        "screenshots",
-        "resourcepacks",
-        "downloads",
-        "shaderpacks",
-        "flashback",
-        "Distant_Horizons_server_data",
-        ".voxy",
-        "xaero",
-        "journeymap",
-        ".bobby",
-        "schematics",
-    ])
-});
+static NAMED_SYNC_TARGETS: Lazy<HashSet<&'static str>> =
+    Lazy::new(|| schema::shared_data::GLOBAL_FOLDERS.iter().copied().collect());

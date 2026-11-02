@@ -46,6 +46,7 @@ pub enum OverwriteChange {
 #[derive(Clone, Debug)]
 pub struct ProfileOverwritesReport {
     pub ignored_paths: Vec<String>,
+    pub shared_paths: Vec<SharedProfilePath>,
     pub files: Vec<ProfileFile>,
     pub local_parent: Option<String>,
     pub local_changes: Vec<ProfileOverwrite>,
@@ -54,4 +55,11 @@ pub struct ProfileOverwritesReport {
     pub global_changes: Vec<ProfileOverwrite>,
     pub global_error: Option<String>,
     pub skipped_entries: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct SharedProfilePath {
+    pub path: String,
+    pub group: Option<String>,
+    pub conflict: Option<String>,
 }

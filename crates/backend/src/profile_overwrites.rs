@@ -177,6 +177,24 @@ impl BackendState {
         })
     }
 
+    pub(crate) fn shared_profile_paths(
+        &self,
+        id: InstanceID,
+    ) -> Result<Vec<bridge::profile_overwrites::SharedProfilePath>, String> {
+        Ok(self
+            .shared_routes_for_instance(id)?
+            .into_iter()
+            .map(|route| bridge::profile_overwrites::SharedProfilePath {
+                path: route.path,
+                group: match route.scope {
+                    crate::shared_data::Scope::Global => None,
+                    crate::shared_data::Scope::Group { name, .. } => Some(name),
+                },
+                conflict: route.conflict,
+            })
+            .collect())
+    }
+
     pub(crate) async fn profile_overwrites_report(&self, id: InstanceID) -> Result<ProfileOverwritesReport, String> {
         let (root, minecraft) = {
             let state = self.instance_state.read();
@@ -188,6 +206,7 @@ impl BackendState {
         let ignored = self.config.lock().get().ignored_profile_paths.clone();
         let mut report = ProfileOverwritesReport {
             ignored_paths: ignored.0.clone(),
+            shared_paths: self.shared_profile_paths(id)?,
             files: Vec::new(),
             local_parent: None,
             local_changes: Vec::new(),
@@ -202,6 +221,13 @@ impl BackendState {
                 .await
                 .map_err(|error| error.to_string())??;
             report.files = file_summaries(&files);
+            for file in &mut report.files {
+                if report.shared_paths.iter().any(|route| {
+                    route.conflict.is_none() && schema::shared_data::contains_path(&route.path, false, &file.path)
+                }) {
+                    file.editable = false;
+                }
+            }
             report.skipped_entries = skipped;
             return Ok(report);
         };
@@ -232,6 +258,17 @@ impl BackendState {
             }
         }
 
+        // Disk enumeration and verified remote metadata are independent. Neither runs on the render thread.
+        let local_parent_path = local_parent.map(|(_, path)| path);
+        let scan_ignored = ignored.clone();
+        let scanned = tokio::task::spawn_blocking(move || {
+            let (child, mut skipped) = scan_tree(&minecraft, &scan_ignored)?;
+            let parent = local_parent_path.map(|parent| scan_tree(&parent, &scan_ignored)).transpose()?;
+            if let Some((_, count)) = &parent {
+                skipped += count;
+            }
+            Ok::<_, String>((child, parent.map(|(files, _)| files), skipped))
+        });
         let global_pin = branch.applied_revision.or(branch.lineage.global_ancestor);
         let signed = if let Some(pin) = global_pin {
             report.global_profile = Some(format!("{} · {}", pin.profile_id, pin.revision_id));
@@ -266,13 +303,10 @@ impl BackendState {
             None
         };
 
-        let local_parent_path = local_parent.map(|(_, path)| path);
+        let (child, parent, skipped) = scanned.await.map_err(|error| error.to_string())??;
         let compared = tokio::task::spawn_blocking(move || {
             let mut hashes = HashMap::new();
-            let (child, mut skipped) = scan_tree(&minecraft, &ignored)?;
-            let local_changes = if let Some(parent) = local_parent_path {
-                let (parent, parent_skipped) = scan_tree(&parent, &ignored)?;
-                skipped += parent_skipped;
+            let local_changes = if let Some(parent) = parent {
                 compare_local(&child, &parent, &mut hashes)?
             } else {
                 Vec::new()
@@ -323,8 +357,13 @@ impl BackendState {
             }
             (instance.root_path.to_path_buf(), instance.dot_minecraft_path.to_path_buf())
         };
+        let shared_owner_root = self.directories.root_launcher_dir.clone();
         tokio::task::spawn_blocking(move || {
+            let _sharing_lock = crate::shared_storage::lock(&shared_owner_root).map_err(|e| e.to_string())?;
             let _guard = profile_edit_lock(&root)?;
+            if crate::shared_data::active_shared_path(&root, &canonical_mod_path(&path)).map_err(|e| e.to_string())? {
+                return Err("Shared personal paths must be changed through their sharing owner".into());
+            }
             save_text(&minecraft, &path, &contents, &expected_sha256)
         })
         .await
@@ -340,8 +379,13 @@ impl BackendState {
             }
             (instance.root_path.to_path_buf(), instance.dot_minecraft_path.to_path_buf())
         };
+        let shared_owner_root = self.directories.root_launcher_dir.clone();
         tokio::task::spawn_blocking(move || {
+            let _sharing_lock = crate::shared_storage::lock(&shared_owner_root).map_err(|e| e.to_string())?;
             let _guard = profile_edit_lock(&root)?;
+            if crate::shared_data::active_shared_path(&root, &canonical_mod_path(&path)).map_err(|e| e.to_string())? {
+                return Err("Shared personal paths must be changed through their sharing owner".into());
+            }
             toggle_mod(&minecraft, &path)
         })
         .await
@@ -400,8 +444,13 @@ impl BackendState {
                 RestoreInput::Global(file, relative)
             },
         };
+        let shared_owner_root = self.directories.root_launcher_dir.clone();
         tokio::task::spawn_blocking(move || {
+            let _sharing_lock = crate::shared_storage::lock(&shared_owner_root).map_err(|e| e.to_string())?;
             let _child_lock = profile_edit_lock(&root)?;
+            if crate::shared_data::active_shared_path(&root, &canonical).map_err(|e| e.to_string())? {
+                return Err("Shared personal paths must be changed through their sharing owner".into());
+            }
             match input {
                 RestoreInput::Local(parent_root, parent_minecraft) => {
                     let _parent_lock = profile_edit_lock(&parent_root)?;
@@ -718,13 +767,20 @@ fn scan_tree(root: &Path, ignored: &IgnoredProfilePaths) -> Result<(BTreeMap<Str
             {
                 continue;
             }
-            #[cfg(windows)]
-            if junction::exists(&path).unwrap_or(false) {
+            let kind = entry.file_type().map_err(|error| error.to_string())?;
+            if kind.is_symlink() {
                 skipped += 1;
                 continue;
             }
-            let kind = entry.file_type().map_err(|error| error.to_string())?;
-            if kind.is_symlink() {
+            let metadata = entry
+                .metadata()
+                .map_err(|error| format!("Unable to inspect {relative_for_filter}: {error}"))?;
+            #[cfg(windows)]
+            if {
+                use std::os::windows::fs::MetadataExt;
+                // Only reparse points can be junctions. Ordinary files do not need a handle query.
+                metadata.file_attributes() & 0x400 != 0 && junction::exists(&path).unwrap_or(false)
+            } {
                 skipped += 1;
                 continue;
             }
@@ -746,7 +802,6 @@ fn scan_tree(root: &Path, ignored: &IgnoredProfilePaths) -> Result<(BTreeMap<Str
                 continue;
             }
             let canonical = canonical_mod_path(&relative);
-            let metadata = entry.metadata().map_err(|error| format!("Unable to inspect {relative}: {error}"))?;
             if files
                 .insert(
                     canonical.clone(),
@@ -892,4 +947,190 @@ fn file_hash(path: &Path, hashes: &mut HashMap<PathBuf, String>) -> Result<Strin
         },
     );
     Ok(digest)
+}
+
+#[cfg(test)]
+mod comparison_tests {
+    use super::*;
+
+    fn fixture() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("pandora-overwrites-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn scan_keeps_hash_comparison_and_skips_linked_and_ignored_data() {
+        let root = fixture();
+        let child = root.join("child");
+        let parent = root.join("parent");
+        fs::create_dir_all(child.join("config")).unwrap();
+        fs::create_dir_all(parent.join("config")).unwrap();
+        fs::create_dir_all(child.join("saves")).unwrap();
+        fs::write(child.join("saves/ignored.txt"), b"world").unwrap();
+        fs::write(child.join("config/same-size.txt"), b"aaaa").unwrap();
+        fs::write(parent.join("config/same-size.txt"), b"bbbb").unwrap();
+        fs::write(child.join("config/ignored.txt"), b"ignored").unwrap();
+        fs::create_dir_all(root.join("outside")).unwrap();
+        fs::write(root.join("outside/not-local.txt"), b"external").unwrap();
+        #[cfg(windows)]
+        junction::create(root.join("outside"), child.join("linked")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("outside"), child.join("linked")).unwrap();
+        let ignored = IgnoredProfilePaths(vec!["config/ignored.txt".into()]);
+        let (current, skipped) = scan_tree(&child, &ignored).unwrap();
+        assert_eq!(skipped, 1);
+        assert_eq!(current.len(), 1);
+        let (base, _) = scan_tree(&parent, &ignored).unwrap();
+        let changes = compare_local(&current, &base, &mut HashMap::new()).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].change, OverwriteChange::Modified);
+        assert_eq!(changes[0].path, "config/same-size.txt");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // Local component benchmark; not a pack launch or an end-to-end UI latency claim.
+    #[test]
+    #[ignore = "explicit local filesystem benchmark"]
+    fn benchmark_scan_matches_previous_implementation() {
+        let root = fixture();
+        for folder in 0..20 {
+            let directory = root.join(format!("config/folder-{folder}"));
+            fs::create_dir_all(&directory).unwrap();
+            for file in 0..100 {
+                fs::write(directory.join(format!("file-{file}.txt")), b"fixture").unwrap();
+            }
+        }
+        let ignored = IgnoredProfilePaths::default();
+        for iteration in 0..6 {
+            let run = |old: bool| {
+                let start = std::time::Instant::now();
+                let (files, skipped) = if old {
+                    baseline_scan_tree(&root, &ignored)
+                } else {
+                    scan_tree(&root, &ignored)
+                }
+                .unwrap();
+                let elapsed = start.elapsed();
+                assert_eq!(files.len(), 2000);
+                assert_eq!(skipped, 0);
+                let summary: Vec<_> =
+                    files.iter().map(|(path, entry)| (path.clone(), entry.size, entry.disabled)).collect();
+                (elapsed, summary)
+            };
+            let (before, after) = if iteration % 2 == 0 {
+                (run(true), run(false))
+            } else {
+                let after = run(false);
+                (run(true), after)
+            };
+            assert_eq!(before.1, after.1);
+            println!(
+                "scan iteration={iteration} files=2000 old_ms={:.3} new_ms={:.3}",
+                before.0.as_secs_f64() * 1000.,
+                after.0.as_secs_f64() * 1000.
+            );
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn baseline_scan_tree(
+        root: &Path,
+        ignored: &IgnoredProfilePaths,
+    ) -> Result<(BTreeMap<String, FileEntry>, usize), String> {
+        if !root.exists() {
+            return Ok((BTreeMap::new(), 0));
+        }
+        if !root.is_dir() {
+            return Err(format!("Modpack directory is not a folder: {}", root.display()));
+        }
+        let mut pending = vec![root.to_path_buf()];
+        let mut files = BTreeMap::new();
+        let mut skipped = 0;
+        while let Some(directory) = pending.pop() {
+            for entry in
+                fs::read_dir(&directory).map_err(|error| format!("Unable to read {}: {error}", directory.display()))?
+            {
+                let entry = entry.map_err(|error| error.to_string())?;
+                let path = entry.path();
+                let relative_for_filter = path
+                    .strip_prefix(root)
+                    .map_err(|error| error.to_string())?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if ignored.contains(&relative_for_filter) {
+                    continue;
+                }
+                if directory == root
+                    && matches!(
+                        entry.file_name().to_string_lossy().to_ascii_lowercase().as_str(),
+                        "saves"
+                            | "logs"
+                            | "crash-reports"
+                            | "screenshots"
+                            | "session.lock"
+                            | "usercache.json"
+                            | "usernamecache.json"
+                            | "realms_persistence.json"
+                            | ".mixin.out"
+                            | "unilog"
+                            | "assets"
+                            | "libraries"
+                            | "versions"
+                            | "natives"
+                            | "runtime"
+                            | "cache"
+                            | "caches"
+                            | "downloads"
+                            | "backups"
+                    )
+                {
+                    continue;
+                }
+                #[cfg(windows)]
+                if junction::exists(&path).unwrap_or(false) {
+                    skipped += 1;
+                    continue;
+                }
+                let kind = entry.file_type().map_err(|error| error.to_string())?;
+                if kind.is_symlink() {
+                    skipped += 1;
+                    continue;
+                }
+                if kind.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                if !kind.is_file() {
+                    skipped += 1;
+                    continue;
+                }
+                let Some(relative) = path.strip_prefix(root).map_err(|error| error.to_string())?.to_str() else {
+                    skipped += 1;
+                    continue;
+                };
+                let relative = relative.replace('\\', "/");
+                if crate::profile_branch::validate_profile_relative_path(&relative).is_err() {
+                    skipped += 1;
+                    continue;
+                }
+                let canonical = canonical_mod_path(&relative);
+                let metadata = entry.metadata().map_err(|error| format!("Unable to inspect {relative}: {error}"))?;
+                if files
+                    .insert(
+                        canonical.clone(),
+                        FileEntry {
+                            path,
+                            size: metadata.len(),
+                            disabled: canonical != relative,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(format!("Both enabled and disabled variants exist for {canonical}"));
+                }
+            }
+        }
+        Ok((files, skipped))
+    }
 }

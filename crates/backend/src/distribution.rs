@@ -662,6 +662,7 @@ impl DistributionClient {
             Some((modal_action, overall_progress)),
             false,
             &IgnoredProfilePaths(Vec::new()),
+            None,
         )
         .await
     }
@@ -686,6 +687,7 @@ impl DistributionClient {
             None,
             false,
             &IgnoredProfilePaths(Vec::new()),
+            None,
         )
         .await
     }
@@ -710,6 +712,7 @@ impl DistributionClient {
             None,
             true,
             &IgnoredProfilePaths(Vec::new()),
+            Some(target),
         )
         .await
     }
@@ -747,6 +750,7 @@ impl DistributionClient {
         progress: Option<(&ModalAction, &ProgressTracker)>,
         metadata_only: bool,
         ignored_paths: &IgnoredProfilePaths,
+        mut verified_target: Option<VerifiedRevision>,
     ) -> Result<ResolvedGlobalProfile, DistributionError> {
         let mut chain = Vec::<VerifiedRevision>::new();
         let mut next = Some((
@@ -762,7 +766,10 @@ impl DistributionClient {
                     "revision ancestry is cyclic or exceeds the depth limit".into(),
                 ));
             }
-            let verified = self.fetch_revision(&next_profile, &next_revision, &next_digest, sequence).await?;
+            let verified = match verified_target.take() {
+                Some(verified) => verified,
+                None => self.fetch_revision(&next_profile, &next_revision, &next_digest, sequence).await?,
+            };
             next =
                 verified.manifest.base.as_ref().map(|base| {
                     (base.profile_id.clone(), base.revision_id.clone(), base.manifest_sha256.clone(), None)
@@ -1850,6 +1857,7 @@ impl crate::BackendState {
                 progress,
                 false,
                 &ignored_paths,
+                None,
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -1968,6 +1976,105 @@ fn validate_game_identity(minecraft: &str, loader_version: &str) -> Result<(), S
 #[cfg(test)]
 mod trusted_release_key_tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn metadata_resolution_fetches_each_signed_revision_once_and_rejects_bad_parent() {
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        let key = Ed25519KeyPair::from_seed_unchecked(&[41; 32]).unwrap();
+        let make_manifest = |profile: &str, revision: &str, base: serde_json::Value| {
+            serde_json::json!({
+                "schema_version": 1,
+                "revision": { "id": revision, "sequence": 1, "created_at": "2026-11-02T00:00:00Z" },
+                "profile": { "id": profile, "name": "Fixture", "official": false },
+                "game": { "minecraft": "1.21.1", "neoforge": "21.1.248" },
+                "base": base,
+                "permissions": { "derive_local": true, "mods": { "add": true, "remove": true },
+                    "configs": { "override_enforced": true, "override_default_once": true }, "max_inheritance_depth": 8 }
+            })
+        };
+        let parent = make_manifest("profile_parent", "rev_parent", serde_json::Value::Null);
+        let parent_hash = hex::encode(Sha256::digest(serde_json::to_vec(&parent).unwrap()));
+        let child = make_manifest(
+            "profile_child",
+            "rev_child",
+            serde_json::json!({
+                "profile_id": "profile_parent", "revision_id": "rev_parent", "manifest_sha256": parent_hash
+            }),
+        );
+        let child_hash = hex::encode(Sha256::digest(serde_json::to_vec(&child).unwrap()));
+        let envelope = |manifest: serde_json::Value| {
+            let canonical = serde_json::to_vec(&manifest).unwrap();
+            serde_json::json!({ "schema_version": 1, "protocol_version": 1,
+                "envelope": { "canonicalization": "RFC8785-JCS", "manifest_sha256": hex::encode(Sha256::digest(&canonical)),
+                    "manifest": manifest, "signature": { "key_id": "fixture", "algorithm": "Ed25519",
+                        "value": URL_SAFE_NO_PAD.encode(key.sign(&canonical).as_ref()) } } })
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let bad_parent = Arc::new(AtomicBool::new(false));
+        let stop = done.clone();
+        let corrupt = bad_parent.clone();
+        let child_body = envelope(child);
+        let parent_body = envelope(parent);
+        let server = thread::spawn(move || {
+            let mut paths = Vec::new();
+            while !stop.load(Ordering::SeqCst) {
+                let (mut socket, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(2));
+                        continue;
+                    },
+                    Err(e) => panic!("{e}"),
+                };
+                socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                let mut request = [0u8; 4096];
+                let count = socket.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..count]);
+                let path = request.split_whitespace().nth(1).unwrap().to_owned();
+                let mut body = match path.as_str() {
+                    "/v1/profiles/profile_child/revisions/rev_child" => child_body.clone(),
+                    "/v1/profiles/profile_parent/revisions/rev_parent" => parent_body.clone(),
+                    _ => panic!("Unexpected metadata request {path}"),
+                };
+                if path.contains("profile_parent") && corrupt.load(Ordering::SeqCst) {
+                    body["envelope"]["signature"]["value"] = URL_SAFE_NO_PAD.encode([0u8; 64]).into();
+                }
+                paths.push(path);
+                let bytes = serde_json::to_vec(&body).unwrap();
+                write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len())
+                    .unwrap();
+                socket.write_all(&bytes).unwrap();
+            }
+            paths
+        });
+        let client = DistributionClient {
+            client: Client::new(),
+            base_url: Url::parse(&format!("http://{address}/")).unwrap(),
+            trusted_keys: BTreeMap::from([("fixture".into(), key.public_key().as_ref().try_into().unwrap())]),
+            server_keys: Arc::new(tokio::sync::OnceCell::new()),
+        };
+        let pin = GlobalRevisionPin {
+            profile_id: "profile_child".into(),
+            revision_id: "rev_child".into(),
+            manifest_sha256: child_hash,
+        };
+        let result = client.resolve_profile_metadata(&pin).await;
+        bad_parent.store(true, Ordering::SeqCst);
+        let rejected = client.resolve_profile_metadata(&pin).await;
+        done.store(true, Ordering::SeqCst);
+        let paths = server.join().unwrap();
+        assert_eq!(result.unwrap().pin, pin);
+        assert!(matches!(rejected, Err(DistributionError::InvalidSignature)));
+        assert_eq!(paths.len(), 4, "one request per pinned revision, including the rejected run");
+        assert_eq!(paths.iter().filter(|p| p.contains("profile_child")).count(), 2);
+        assert_eq!(paths.iter().filter(|p| p.contains("profile_parent")).count(), 2);
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn object_downloads_are_bounded_verified_and_cached() {
