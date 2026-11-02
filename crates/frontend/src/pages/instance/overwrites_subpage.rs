@@ -18,7 +18,7 @@ use bridge::{
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, Disableable, Icon, StyledExt, WindowExt,
-    button::{Button, DropdownButton},
+    button::{Button, ButtonVariants, DropdownButton},
     h_flex,
     input::{InputEvent, InputState, Textarea, TextareaState},
     menu::{ContextMenuExt, PopupMenuItem},

@@ -6,7 +6,7 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, StyledExt, WindowExt,
+    ActiveTheme, Disableable, WindowExt,
     button::{Button, ButtonVariants},
     dialog::Dialog,
     h_flex, v_flex,
