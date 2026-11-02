@@ -657,6 +657,56 @@ mod tests {
         }
     }
     #[test]
+    fn per_instance_global_override_detaches_only_that_instance_and_can_follow_global_again() {
+        let f = Fixture::new();
+        let ignored = IgnoredProfilePaths::default();
+        let mut global = SyncTargets::default();
+        global.folders.insert("screenshots".into());
+        fs::create_dir_all(f.minecraft.join("screenshots")).unwrap();
+        fs::write(f.minecraft.join("screenshots/shared.png"), b"shared").unwrap();
+        apply(&f.context(&global, None, &ignored)).unwrap();
+        let second = f.directories.instances_dir.join("second");
+        let minecraft = second.join(".minecraft");
+        fs::create_dir_all(minecraft.join("screenshots")).unwrap();
+        fs::write(minecraft.join("screenshots/personal.png"), b"personal").unwrap();
+        let mut choices = schema::shared_data::InstanceGlobalSharing::default();
+        choices.enabled = true;
+        choices.choices.insert("screenshots".into(), false);
+        let selected = schema::shared_data::effective_global(&global, &choices, false);
+        let context = Context {
+            root: &second,
+            minecraft: &minecraft,
+            directories: &f.directories,
+            global: &selected,
+            previous: None,
+            group: None,
+            ignored: &ignored,
+        };
+        apply(&context).unwrap();
+        assert!(!storage::is_link(&minecraft.join("screenshots")));
+        assert!(storage::is_link(&f.minecraft.join("screenshots")));
+        assert_eq!(fs::read(minecraft.join("screenshots/personal.png")).unwrap(), b"personal");
+        choices.choices.clear(); // G: use the live global selection.
+        let selected = schema::shared_data::effective_global(&global, &choices, false);
+        apply(&Context {
+            global: &selected,
+            ..context
+        })
+        .unwrap();
+        assert!(storage::is_link(&minecraft.join("screenshots")));
+        assert_eq!(fs::read(f.minecraft.join("screenshots/personal.png")).unwrap(), b"personal");
+        choices.choices.insert("screenshots".into(), false);
+        let selected = schema::shared_data::effective_global(&global, &choices, false);
+        apply(&Context {
+            global: &selected,
+            ..context
+        })
+        .unwrap();
+        fs::write(minecraft.join("screenshots/shared.png"), b"independent").unwrap();
+        assert_eq!(fs::read(f.minecraft.join("screenshots/shared.png")).unwrap(), b"shared");
+        assert!(global.folders.contains("screenshots"));
+    }
+    #[test]
     fn launcher_control_routes_are_rejected_in_portable_case() {
         for path in [
             ".pandora-layout-v1",
