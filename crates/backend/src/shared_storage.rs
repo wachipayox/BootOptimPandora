@@ -459,6 +459,25 @@ mod tests {
         assert_eq!(fs::read(foreign.join("keep")).unwrap(), b"safe");
     }
     #[test]
+    fn deleting_an_instance_does_not_follow_links_to_shared_stores() {
+        let t = Temp::new();
+        let instance = t.0.join("instances/fixture");
+        let minecraft = instance.join(".minecraft");
+        let global = t.0.join("synced/screenshots");
+        let group = t.0.join("save-groups/fixture/saves");
+        fs::create_dir_all(&minecraft).unwrap();
+        fs::create_dir_all(&global).unwrap();
+        fs::create_dir_all(group.join("World")).unwrap();
+        fs::write(global.join("capture.png"), b"global-data").unwrap();
+        fs::write(group.join("World/level.dat"), b"world-data").unwrap();
+        attach_folder(&minecraft.join("screenshots"), &global, &instance.join("recovery")).unwrap();
+        attach_folder(&minecraft.join("saves"), &group, &instance.join("recovery")).unwrap();
+        // The same operation used by GUI deletion, with sibling canonical stores.
+        fs::remove_dir_all(&instance).unwrap();
+        assert_eq!(fs::read(global.join("capture.png")).unwrap(), b"global-data");
+        assert_eq!(fs::read(group.join("World/level.dat")).unwrap(), b"world-data");
+    }
+    #[test]
     fn storage_lock_is_exclusive_and_released_by_its_handle() {
         let t = Temp::new();
         let guard = lock(&t.0).unwrap();

@@ -83,12 +83,14 @@ pub fn inherited_operation_active(id: InstanceID) -> bool {
     bridge::inherited_operations::is_active(id)
 }
 
-fn begin_inherited_operation(id: InstanceID, cx: &mut App) -> bool {
-    let inserted = bridge::inherited_operations::try_begin(id);
-    if inserted && matches!(InterfaceConfig::get(cx).main_page, PageType::InstancePage { .. }) {
-        InterfaceConfig::get_mut(cx).instance_subpage = InstanceSubpageType::Quickplay;
-    }
-    inserted
+/// Checking and awaiting the user's decision retain their page. Only a dispatched
+/// update owns the Home progress surface and locks the instance tabs.
+pub fn inherited_update_applying(id: InstanceID) -> bool {
+    HOME_UPDATES.lock().contains_key(&id)
+}
+
+fn begin_inherited_operation(id: InstanceID, _cx: &mut App) -> bool {
+    bridge::inherited_operations::try_begin(id)
 }
 
 fn finish_inherited_operation(id: InstanceID, window: &mut Window) {

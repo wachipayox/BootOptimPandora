@@ -206,7 +206,7 @@ impl InstancePage {
 }
 impl Render for InstancePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let updating = root::inherited_operation_active(self.instance.read(cx).id);
+        let updating = root::inherited_update_applying(self.instance.read(cx).id);
         let desired = InterfaceConfig::get(cx).instance_subpage;
         // Play and update progress belong to Home. Defer the navigation until
         // this entity's render borrow has ended.
