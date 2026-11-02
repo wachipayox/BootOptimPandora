@@ -68,7 +68,7 @@ impl BackendState {
         id: InstanceID,
         target_revision: Option<&GlobalRevisionPin>,
     ) -> Result<ProfileBranchSnapshot, ProfileLayoutServiceError> {
-        self.with_stopped_profile_layout(id, |layout| {
+        self.with_stopped_profile_layout(id, false, |layout| {
             let branch = layout.branch_manifest()?;
             let status = layout.status().clone();
             Ok(ProfileBranchSnapshot {
@@ -156,7 +156,7 @@ impl BackendState {
         id: InstanceID,
         lineage: ProfileLineage,
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
-        self.with_stopped_profile_layout(id, move |layout| layout.configure_branch_lineage(lineage))
+        self.with_stopped_profile_layout(id, false, move |layout| layout.configure_branch_lineage(lineage))
     }
 
     /// Apply a verified effective revision-history delta. Unchanged destinations are not observed.
@@ -165,6 +165,7 @@ impl BackendState {
         id: InstanceID,
         delta: &ProfileRevisionDelta,
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        let _change = self.begin_shared_change().map_err(ProfileLayoutServiceError::SharedData)?;
         let mut protected: Vec<String> = delta
             .changes
             .iter()
@@ -186,7 +187,7 @@ impl BackendState {
         self.ensure_shared_profile_isolation_safe(id, &protected)
             .map_err(ProfileLayoutServiceError::SharedData)?;
         self.prepare_shared_data(id).map_err(ProfileLayoutServiceError::SharedData)?;
-        self.with_stopped_profile_layout(id, |layout| layout.reconcile_revision_delta(delta))
+        self.with_stopped_profile_layout(id, true, |layout| layout.reconcile_revision_delta(delta))
     }
 
     /// Explicit full managed-tree parity. Purely local profiles are rejected by the layout layer.
@@ -197,6 +198,7 @@ impl BackendState {
         effective: &[EffectiveProfileEntry],
         config_settings: &[crate::distribution::ManifestConfigSetting],
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        let _change = self.begin_shared_change().map_err(ProfileLayoutServiceError::SharedData)?;
         let mut protected: Vec<String> = effective
             .iter()
             .filter(|e| e.metadata.policy == crate::profile_branch::ProfileFilePolicy::Enforced)
@@ -206,7 +208,7 @@ impl BackendState {
         self.ensure_shared_profile_isolation_safe(id, &protected)
             .map_err(ProfileLayoutServiceError::SharedData)?;
         self.prepare_shared_data(id).map_err(ProfileLayoutServiceError::SharedData)?;
-        self.with_stopped_profile_layout(id, |layout| layout.repair_modpack(effective, config_settings))
+        self.with_stopped_profile_layout(id, true, |layout| layout.repair_modpack(effective, config_settings))
     }
 
     /// Legacy full desired-set seam retained for callers that have not moved to revision deltas.
@@ -216,18 +218,20 @@ impl BackendState {
         id: InstanceID,
         desired: &[DesiredManagedFile],
     ) -> Result<ReconcileOutcome, ProfileLayoutServiceError> {
+        let _change = self.begin_shared_change().map_err(ProfileLayoutServiceError::SharedData)?;
         self.prepare_shared_data(id).map_err(ProfileLayoutServiceError::SharedData)?;
         self.ensure_shared_profile_isolation_safe(
             id,
             &desired.iter().map(|entry| entry.path.clone()).collect::<Vec<_>>(),
         )
         .map_err(ProfileLayoutServiceError::SharedData)?;
-        self.with_stopped_profile_layout(id, |layout| layout.reconcile(desired))
+        self.with_stopped_profile_layout(id, true, |layout| layout.reconcile(desired))
     }
 
     fn with_stopped_profile_layout<T>(
         &self,
         id: InstanceID,
+        refresh_watches: bool,
         action: impl FnOnce(&mut PersistentProfileLayout) -> Result<T, ProfileLayoutFlowError>,
     ) -> Result<T, ProfileLayoutServiceError> {
         // Sharing changes and profile reconciliation must not race while a known
@@ -267,7 +271,9 @@ impl BackendState {
         let result = action(&mut layout);
         // A revision can isolate a newly enforced path after the earlier sharing
         // preparation. Refresh link-sensitive watches even after a recoverable error.
-        instance.rewatch_directories(&mut self.file_watching.write());
+        if refresh_watches {
+            instance.rewatch_directories(&mut self.file_watching.write());
+        }
         Ok(result?)
     }
 }
