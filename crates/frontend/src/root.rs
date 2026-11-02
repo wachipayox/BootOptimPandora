@@ -119,6 +119,11 @@ pub fn update_inherited_files(id: InstanceID, data: &DataEntities, window: &mut 
     cx.spawn(async move |cx| {
         let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
         tracker.set_finished(bridge::modal_action::ProgressTrackerFinishType::Normal);
+        if modal.has_requested_cancel() {
+            modal.set_finished();
+            _ = cx.update_window(handle, |_, window, _| finish_inherited_operation(id, window));
+            return;
+        }
         match result {
             Ok(updates) => {
                 modal.set_finished();
