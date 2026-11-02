@@ -1991,7 +1991,7 @@ mod trusted_release_key_tests {
                 "profile": { "id": profile, "name": "Fixture", "official": false },
                 "game": { "minecraft": "1.21.1", "neoforge": "21.1.248" },
                 "base": base,
-                "permissions": { "mods": { "add": true, "remove": true },
+                "permissions": { "derive_local": true, "mods": { "add": true, "remove": true },
                     "configs": { "override_enforced": true, "override_default_once": true }, "max_inheritance_depth": 8 }
             })
         };
