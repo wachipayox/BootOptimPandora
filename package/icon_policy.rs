@@ -2,7 +2,14 @@
 use std::env;
 
 pub fn stable_version(version: &str) -> bool {
-    let core = version.split('+').next().unwrap_or("");
+    let (core, metadata) = version.split_once('+').map_or((version, None), |(core, metadata)| (core, Some(metadata)));
+    if metadata.is_some_and(|value| {
+        value
+            .split('.')
+            .any(|part| part.is_empty() || !part.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-'))
+    }) {
+        return false;
+    }
     let parts: Vec<_> = core.split('.').collect();
     parts.len() == 3
         && parts.iter().all(|part| {

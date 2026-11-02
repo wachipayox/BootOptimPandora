@@ -27,7 +27,7 @@ env -u CARGO_PACKAGER_SIGN_PRIVATE_KEY cargo packager --config '{'\
 '  "resources": [],'\
 '  "authors": ["Moulberry"],'\
 '  "binaries": [{ "path": "PandoraLauncher-Linux-x86_64", "main": true }],'\
-'  "icons": ["'"$icon_root"'/windows_icons/icon_16x16.png", "'"$icon_root"'/windows_icons/icon_32x32.png", "'"$icon_root"'/windows_icons/icon_48x48.png", "'"$icon_root"'/windows_icons/icon_256x256.png"]'\
+'  "icons": ["'"$icon_root"'/windows_icons/icon_16x16.png", "'"$icon_root"'/windows_icons/icon_32x32.png", "'"$icon_root"'/windows_icons/icon_48x48.png", "'"$icon_root"'/windows_icons/icon_256x256.png", "'"$icon_root"'/windows_icons/icon_512x512.png"]'\
 '}'
 
 mv -f dist/PandoraLauncher-Linux-x86_64 dist/PandoraLauncher-Linux-x86_64-Portable
