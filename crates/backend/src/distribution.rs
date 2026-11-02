@@ -662,6 +662,7 @@ impl DistributionClient {
             Some((modal_action, overall_progress)),
             false,
             &IgnoredProfilePaths(Vec::new()),
+            None,
         )
         .await
     }
@@ -686,6 +687,7 @@ impl DistributionClient {
             None,
             false,
             &IgnoredProfilePaths(Vec::new()),
+            None,
         )
         .await
     }
@@ -710,6 +712,7 @@ impl DistributionClient {
             None,
             true,
             &IgnoredProfilePaths(Vec::new()),
+            Some(target),
         )
         .await
     }
@@ -747,6 +750,7 @@ impl DistributionClient {
         progress: Option<(&ModalAction, &ProgressTracker)>,
         metadata_only: bool,
         ignored_paths: &IgnoredProfilePaths,
+        mut verified_target: Option<VerifiedRevision>,
     ) -> Result<ResolvedGlobalProfile, DistributionError> {
         let mut chain = Vec::<VerifiedRevision>::new();
         let mut next = Some((
@@ -762,7 +766,10 @@ impl DistributionClient {
                     "revision ancestry is cyclic or exceeds the depth limit".into(),
                 ));
             }
-            let verified = self.fetch_revision(&next_profile, &next_revision, &next_digest, sequence).await?;
+            let verified = match verified_target.take() {
+                Some(verified) => verified,
+                None => self.fetch_revision(&next_profile, &next_revision, &next_digest, sequence).await?,
+            };
             next =
                 verified.manifest.base.as_ref().map(|base| {
                     (base.profile_id.clone(), base.revision_id.clone(), base.manifest_sha256.clone(), None)
@@ -1850,6 +1857,7 @@ impl crate::BackendState {
                 progress,
                 false,
                 &ignored_paths,
+                None,
             )
             .await
             .map_err(|error| error.to_string())?;

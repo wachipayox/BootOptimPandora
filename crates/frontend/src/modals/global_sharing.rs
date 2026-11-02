@@ -120,7 +120,7 @@ impl GlobalSharingModal {
                     } else {
                         model.global.folders.contains(path.as_str())
                     };
-                    let choice = enabled.then(|| model.configuration.choices.get(path).copied()).flatten();
+                    let choice = model.configuration.choices.get(path).copied();
                     let mut controls = h_flex().flex_shrink_0();
                     for (index, value, label) in [
                         (0usize, Some(false), "NO"),
@@ -129,7 +129,9 @@ impl GlobalSharingModal {
                     ] {
                         let selected = choice == value;
                         let selected_global = selected && value.is_none();
-                        let color: Hsla = if selected_global {
+                        let color: Hsla = if !enabled {
+                            rgb(theme::INK_MUTED).into()
+                        } else if selected_global {
                             cx.theme().warning
                         } else if selected {
                             rgb(theme::ACCENT_TEXT).into()
@@ -138,7 +140,13 @@ impl GlobalSharingModal {
                         };
                         let mut yellow = cx.theme().warning;
                         yellow.a = 0.14;
-                        let background: Hsla = if selected_global {
+                        let background: Hsla = if !enabled {
+                            if selected {
+                                rgba(0xffffff14).into()
+                            } else {
+                                rgba(0xffffff04).into()
+                            }
+                        } else if selected_global {
                             yellow
                         } else if selected {
                             rgba(0x16445366).into()
@@ -172,7 +180,13 @@ impl GlobalSharingModal {
                             .gap_3()
                             .items_center()
                             .justify_between()
-                            .child(div().min_w_0().flex_1().child(path.clone()))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .when(!enabled, |row| row.text_color(rgb(theme::INK_MUTED)))
+                                    .child(path.clone()),
+                            )
                             .child(controls),
                     );
                 }

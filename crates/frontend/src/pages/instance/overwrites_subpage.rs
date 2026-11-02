@@ -51,6 +51,8 @@ pub struct InstanceOverwritesSubpage {
     busy: bool,
     _load: Task<()>,
     _policy_check: Task<()>,
+    _shared_read: Task<()>,
+    shared_revision: u64,
     _read: Task<()>,
     _save: Task<()>,
 }
@@ -311,6 +313,8 @@ impl InstanceOverwritesSubpage {
             busy: false,
             _load: Task::ready(()),
             _policy_check: Task::ready(()),
+            _shared_read: Task::ready(()),
+            shared_revision: cx.try_global::<crate::processor::SharedPathsRevision>().map_or(0, |r| r.0),
             _read: Task::ready(()),
             _save: Task::ready(()),
         };
@@ -335,6 +339,7 @@ impl InstanceOverwritesSubpage {
             let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
             _ = page.update_in(cx, |page, window, cx| {
                 page.report = Some(result);
+                page.refresh_shared_paths(window, cx);
                 #[cfg(feature = "ui-capture")]
                 if std::env::var("WBOMBO_UI_CAPTURE_STATE").as_deref() == Ok("expanded") {
                     page.shared_expanded = true;
@@ -363,7 +368,26 @@ impl InstanceOverwritesSubpage {
         cx.notify();
     }
 
+    fn refresh_shared_paths(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (channel, receive) = tokio::sync::oneshot::channel();
+        self.backend.send(MessageToBackend::GetSharedProfilePaths {
+            id: self.instance,
+            channel,
+        });
+        self._shared_read = cx.spawn_in(window, async move |page, cx| {
+            if let Ok(Ok(paths)) = receive.await {
+                _ = page.update_in(cx, |page, _, cx| {
+                    if let Some(Ok(report)) = &mut page.report {
+                        report.shared_paths = paths;
+                    }
+                    cx.notify();
+                });
+            }
+        });
+    }
+
     pub(crate) fn on_reenter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_shared_paths(window, cx);
         let (channel, receive) = tokio::sync::oneshot::channel();
         self.backend.send(MessageToBackend::GetBackendConfiguration { channel });
         self._policy_check = cx.spawn_in(window, async move |page, cx| {
@@ -899,7 +923,12 @@ fn can_restore(change: OverwriteChange) -> bool {
 }
 
 impl Render for InstanceOverwritesSubpage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let revision = cx.try_global::<crate::processor::SharedPathsRevision>().map_or(0, |r| r.0);
+        if self.shared_revision != revision {
+            self.shared_revision = revision;
+            self.refresh_shared_paths(window, cx);
+        }
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
         let secondary = cx.theme().secondary;

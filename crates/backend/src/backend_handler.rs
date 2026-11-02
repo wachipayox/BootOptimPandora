@@ -155,7 +155,9 @@ impl BackendState {
                 configuration,
                 channel,
             } => {
-                let _ = channel.send(self.set_instance_global_sharing(id, configuration));
+                let result = self.set_instance_global_sharing(id, configuration);
+                self.send.send(MessageToFrontend::SharedPathsChanged);
+                let _ = channel.send(result);
             },
             MessageToBackend::GetSaveGroups { id, channel } => {
                 let _ = channel.send(crate::BackendState::list_save_groups(self, id));
@@ -165,28 +167,35 @@ impl BackendState {
                 targets,
                 channel,
             } => {
-                let _ = channel.send(self.set_save_group_targets(group_id, targets));
+                let result = self.set_save_group_targets(group_id, targets);
+                self.send.send(MessageToFrontend::SharedPathsChanged);
+                let _ = channel.send(result);
             },
             MessageToBackend::RenameSaveGroup {
                 group_id,
                 name,
                 channel,
             } => {
-                let _ = channel.send(self.rename_save_group(group_id, name));
+                let result = self.rename_save_group(group_id, name);
+                self.send.send(MessageToFrontend::SharedPathsChanged);
+                let _ = channel.send(result);
             },
             MessageToBackend::CreateSaveGroup { id, name, channel } => {
                 let result = crate::BackendState::create_save_group(self, id, name);
                 refresh_instance_saves(self, id, result.is_ok());
+                self.send.send(MessageToFrontend::SharedPathsChanged);
                 let _ = channel.send(result);
             },
             MessageToBackend::JoinSaveGroup { id, group_id, channel } => {
                 let result = crate::BackendState::join_save_group(self, id, group_id);
                 refresh_instance_saves(self, id, result.is_ok());
+                self.send.send(MessageToFrontend::SharedPathsChanged);
                 let _ = channel.send(result);
             },
             MessageToBackend::LeaveSaveGroup { id, channel } => {
                 let result = crate::BackendState::leave_save_group(self, id);
                 refresh_instance_saves(self, id, result.is_ok());
+                self.send.send(MessageToFrontend::SharedPathsChanged);
                 let _ = channel.send(result);
             },
             MessageToBackend::RequestMetadata { request, force_reload } => {
@@ -1682,7 +1691,9 @@ impl BackendState {
                 let _ = channel.send(crate::syncing::get_sync_state(self));
             },
             MessageToBackend::SetSyncing { target, is_file, value } => {
-                if let Err(error) = self.set_shared_global(target.to_string(), is_file, value) {
+                let result = self.set_shared_global(target.to_string(), is_file, value);
+                self.send.send(MessageToFrontend::SharedPathsChanged);
+                if let Err(error) = result {
                     log::warn!("Unable to change global shared data: {error}");
                     self.send.send_error(
                         if error == "Detén las instancias afectadas antes de cambiar lo que comparten." {
@@ -1806,6 +1817,12 @@ impl BackendState {
                 tokio::task::spawn(async move {
                     let result = backend.load_global_catalog().await;
                     let _ = channel.send(result);
+                });
+            },
+            MessageToBackend::GetSharedProfilePaths { id, channel } => {
+                let backend = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = channel.send(backend.shared_profile_paths(id));
                 });
             },
             MessageToBackend::GetProfileOverwrites { id, channel } => {

@@ -393,6 +393,10 @@ pub enum MessageToBackend {
     GetGlobalProfiles {
         channel: tokio::sync::oneshot::Sender<Result<Vec<GlobalProfileSummary>, String>>,
     },
+    GetSharedProfilePaths {
+        id: InstanceID,
+        channel: tokio::sync::oneshot::Sender<Result<Vec<crate::profile_overwrites::SharedProfilePath>, String>>,
+    },
     GetProfileOverwrites {
         id: InstanceID,
         channel: tokio::sync::oneshot::Sender<Result<crate::profile_overwrites::ProfileOverwritesReport, String>>,
@@ -682,6 +686,7 @@ pub enum MessageToFrontend {
         accounts: Arc<[Account]>,
         selected_account: Option<Uuid>,
     },
+    SharedPathsChanged,
     Refresh,
     Quit,
     PrepareLauncherRestart,
