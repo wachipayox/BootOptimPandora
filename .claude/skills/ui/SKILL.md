@@ -143,3 +143,11 @@ then opens its actual route editor. Capture waits for the backend group summary.
 This persists fixture membership/data: retain it only in the isolated runtime and
 clean up the owned fixture afterwards. It does not simulate clicks or prove
 mouse interaction with the switches.
+
+
+`global-sharing:agente-274-…` opens the real per-instance global-sharing dialog.
+The normal capture shows the saved master/choices. `-CaptureState editing`
+only presents a cosmetic enabled master with explicit NO/SÍ examples; it does
+not persist choices or prove Save. The script waits for its backend catalog.
+For `instance-overwrites:…`, `-CaptureState expanded` opens the shared-path
+section; ordinary entry keeps it collapsed.

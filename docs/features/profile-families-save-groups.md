@@ -50,12 +50,22 @@ routes remain and later user changes are preserved. Removed predefined routes
 are materialized locally when the instance next prepares sharing. Startup only
 migrates configuration metadata, without walking instance contents.
 
+Instance settings also expose **Gestionar global**. Its master switch defaults
+to off. With overrides on, each catalog route chooses NO, G(SÍ)/G(NO), or SÍ;
+G follows the current global value and uses the warning/yellow treatment. Turning
+the master off preserves dormant choices and resumes global defaults. The dialog
+cannot introduce a route that is not offered globally. Existing blanket opt-outs
+are represented as explicit NO choices and are normalized when saved.
+
 Each group's settings independently select files and folders, including custom
 relative paths. Defaults are `saves`, `config/litematica`, `Sable-Schematics`,
 `music_sheets`, `command_history.txt`, and `hotbar.nbt`. Membership is stored in
 instance configuration, independently of whether `saves` is enabled. Existing
 legacy saves links are adopted once. Empty groups retain their storage when the
-last member leaves, so recovery copies and unselected data are not deleted.
+last member leaves, so shared data and unselected group routes are not deleted.
+Deleting the last instance does not collect either shared store. Per-instance
+recovery copies are different: they live inside the instance directory and are
+removed if that entire instance is deleted.
 
 Group routes take precedence over overlapping global routes. A folder containing
 any enforced inherited path is excluded from sharing in that instance; shared
@@ -77,6 +87,10 @@ not require reading an entire modpack. Ownership receipts live outside
 `.minecraft` and ordinary duplication does not copy them.
 
 ## Inherited update flow
+
+Checking for inherited changes retains the current instance page, including a
+check started from instance settings. Only a confirmed update dispatched for
+application uses Home's update surface; no-op and cancelled checks stay put.
 
 Starting an instance now shows a short update check before the game launch
 pipeline. The check compares the committed generation of every local ancestor,

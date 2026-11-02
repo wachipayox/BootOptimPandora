@@ -113,8 +113,8 @@ local parent has been deleted, its section explains that the comparison cannot
 be made; the installed child itself remains usable.
 
 
-Shared-data ownership is listed above the file comparison: global or the named
-local group. A route containing an enforced inherited file is marked as an
+Shared-data ownership is behind **Rutas compartidas**, collapsed by default,
+above the file comparison: global or the named local group. A route containing an enforced inherited file is marked as an
 inheritance conflict and materialized locally before profile reconciliation;
 the common store is preserved. Personal shared routes cannot be edited,
 restored, or toggled through Overwrites. Group settings determine their contents
