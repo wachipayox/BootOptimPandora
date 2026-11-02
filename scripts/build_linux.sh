@@ -8,6 +8,7 @@ fi
 
 version=${1#v}
 export PANDORA_RELEASE_VERSION=$version
+icon_root=$(bash scripts/package_icon_root.sh)
 
 sudo apt-get update --yes && sudo apt-get install --yes libssl-dev libdbus-1-dev libx11-xcb1 libxkbcommon-x11-dev pkg-config libseccomp-dev libfontconfig-dev libudev-dev
 cargo build --release --frozen --target x86_64-unknown-linux-gnu
@@ -26,7 +27,7 @@ env -u CARGO_PACKAGER_SIGN_PRIVATE_KEY cargo packager --config '{'\
 '  "resources": [],'\
 '  "authors": ["Moulberry"],'\
 '  "binaries": [{ "path": "PandoraLauncher-Linux-x86_64", "main": true }],'\
-'  "icons": ["package/windows_icons/icon_16x16.png", "package/windows_icons/icon_32x32.png", "package/windows_icons/icon_48x48.png", "package/windows_icons/icon_256x256.png"]'\
+'  "icons": ["'"$icon_root"'/windows_icons/icon_16x16.png", "'"$icon_root"'/windows_icons/icon_32x32.png", "'"$icon_root"'/windows_icons/icon_48x48.png", "'"$icon_root"'/windows_icons/icon_256x256.png"]'\
 '}'
 
 mv -f dist/PandoraLauncher-Linux-x86_64 dist/PandoraLauncher-Linux-x86_64-Portable

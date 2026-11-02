@@ -8,13 +8,14 @@ fi
 
 version=${1#v}
 export PANDORA_RELEASE_VERSION=$version
+icon_root=$(bash scripts/package_icon_root.sh)
 
 cargo build --release --frozen --target x86_64-pc-windows-msvc
 strip target/x86_64-pc-windows-msvc/release/pandora_launcher.exe
 
 mkdir -p dist
 
-mv target/x86_64-pc-windows-msvc/release/pandora_launcher dist/PandoraLauncher-Windows-x86_64.exe
+cp target/x86_64-pc-windows-msvc/release/pandora_launcher.exe dist/PandoraLauncher-Windows-x86_64.exe
 
 cargo install cargo-packager
 env -u CARGO_PACKAGER_SIGN_PRIVATE_KEY cargo packager --config '{'\
@@ -26,7 +27,7 @@ env -u CARGO_PACKAGER_SIGN_PRIVATE_KEY cargo packager --config '{'\
 '  "resources": [],'\
 '  "authors": ["Moulberry"],'\
 '  "binaries": [{ "path": "PandoraLauncher-Windows-x86_64.exe", "main": true }],'\
-'  "icons": ["package/windows.ico"]'\
+'  "icons": ["'"$icon_root"'/windows.ico"]'\
 '}'
 
 mv -f dist/PandoraLauncher-Windows-x86_64.exe dist/PandoraLauncher-Windows-x86_64-Portable.exe

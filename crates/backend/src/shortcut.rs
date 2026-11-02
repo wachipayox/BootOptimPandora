@@ -23,11 +23,11 @@ use std::{
 pub fn prepare_icon(root: &Path, choice: ShortcutIconChoice) -> Result<PathBuf, ShortcutError> {
     if matches!(choice, ShortcutIconChoice::Launcher) {
         #[cfg(target_os = "windows")]
-        let bytes = include_bytes!("../../../package/windows.ico").as_slice();
+        let bytes = schema::app_icon::ICO;
         #[cfg(target_os = "macos")]
-        let bytes = include_bytes!("../../../package/mac.icns").as_slice();
+        let bytes = schema::app_icon::ICNS;
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        let bytes = include_bytes!("../../../package/windows_icons/icon_256x256.png").as_slice();
+        let bytes = schema::app_icon::PNG;
         return cache_icon(root, bytes);
     }
     let bytes = match choice {
