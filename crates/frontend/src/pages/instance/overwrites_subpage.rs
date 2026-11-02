@@ -1352,6 +1352,8 @@ impl Render for InstanceOverwritesSubpage {
                                 .child(
                                     DesignButton::new("toggle-shared-paths")
                                         .ghost()
+                                        .w_full()
+                                        .justify_start()
                                         .aria_label("Rutas compartidas")
                                         .child(
                                             h_flex()
