@@ -348,7 +348,9 @@ pub fn open_main_window(
         .open_window(
             WindowOptions {
                 app_id: Some("PandoraLauncher".into()),
-                icon: image::load_from_memory(schema::app_icon::PNG).ok().map(|image| image.into_rgba8()),
+                icon: image::load_from_memory(schema::app_icon::PNG)
+                    .ok()
+                    .map(|image| std::sync::Arc::new(image.into_rgba8())),
                 window_min_size: Some(size(px(MIN_WIDTH), px(MIN_HEIGHT))),
                 manual_resize_constraints: Some(resize_constraints),
                 titlebar: Some(TitlebarOptions {
