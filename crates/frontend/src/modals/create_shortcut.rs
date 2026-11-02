@@ -289,10 +289,7 @@ pub fn open(instance: Entity<InstanceEntry>, backend: BackendHandle, window: &mu
         #[allow(unused_mut)]
         let mut dialog = ShortcutDialog {
             instance,
-            launcher_icon: Arc::new(Image::from_bytes(
-                ImageFormat::Png,
-                include_bytes!("../../../../package/windows_icons/icon_256x256.png").to_vec(),
-            )),
+            launcher_icon: Arc::new(Image::from_bytes(ImageFormat::Png, schema::app_icon::PNG.to_vec())),
             backend,
             choice: 0,
             custom: None,

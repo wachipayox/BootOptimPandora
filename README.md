@@ -240,3 +240,30 @@ prevents the animation or interface from opening.
 
 UI capture instructions are in the [UI workflow](.claude/skills/ui/SKILL.md).
 Investigation decisions and evidence are indexed in [research records](docs/research/README.md).
+
+### Official application icons
+
+The approved ICO and 1024 px PNG sources are in `package/icon-sources/`.
+The original SVG and its font are not redistributed or used for rendering.
+With Python and Pillow 10.0.0 installed, run
+`python package/generate_icons.py` (or add `--check` to verify reproducibility).
+This creates both palettes, PNG sizes 16–512 and PNG-backed ICNS containers.
+The approved multi-size ICO files are copied byte-for-byte.
+
+`package/icon_policy.rs` is the shared selection rule for Cargo and packaging:
+only a release-profile build with a stable `PANDORA_RELEASE_VERSION` uses the
+black cube. Debug, unversioned optimized builds, prerelease/nightly versions,
+and CI branch/PR builds use blue. A CI release tag may use black only when its
+tag matches the stable release version. CI does not become a release merely
+because it passes `--release`. Cargo tracks all policy inputs automatically.
+The shell packaging scripts run the same Rust policy to select their icons;
+shortcuts use the schema crate's matching compile-time asset.
+
+For the first public release use `PANDORA_RELEASE_VERSION=1.0.0`; ordinary
+non-portable executables must not contain `portable` in their filename.
+
+On Windows, `scripts/verify_app_icon.ps1 -Executable <exe> -ExpectedIco <ico>`
+compares native PE icon frames at 16, 32 and 256 px against the approved ICO.
+`-Output <directory>` saves extracted frames and diagnostic light/dark composites;
+these are not desktop screenshots. `-WindowHandle <HWND>` additionally checks
+WM_GETICON/the window class icon. Branch CI verifies the development resource.

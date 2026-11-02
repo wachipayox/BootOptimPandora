@@ -49,11 +49,21 @@ jobs:
       - name: Install mold linker
         uses: rui314/setup-mold@v1
 
+      - name: Test application icon build policy
+        run: |
+          rustc --edition 2024 --test package/icon_policy.rs -o app-icon-policy-tests.exe
+          ./app-icon-policy-tests.exe
+
       - name: Run build command
         env:
           WBOMBO_DISTRIBUTION_DEFAULT_URL: ${{ secrets.WBOMBO_DISTRIBUTION_DEFAULT_URL }}
           WBOMBO_COMMUNITY_DISCORD_URL: ${{ secrets.WBOMBO_COMMUNITY_DISCORD_URL }}
         run: cargo build --release --frozen --target ${{ matrix.platform.target }}
+
+      - name: Verify branch CI executable uses development icons
+        if: matrix.platform.os_name == 'Windows-x86_64'
+        shell: pwsh
+        run: ./scripts/verify_app_icon.ps1 -Executable target/${{ matrix.platform.target }}/release/pandora_launcher.exe -ExpectedIco package/development/windows.ico
 
       - name: Name Windows artifact with short SHA
         id: short_sha
