@@ -261,3 +261,9 @@ shortcuts use the schema crate's matching compile-time asset.
 
 For the first public release use `PANDORA_RELEASE_VERSION=1.0.0`; ordinary
 non-portable executables must not contain `portable` in their filename.
+
+On Windows, `scripts/verify_app_icon.ps1 -Executable <exe> -ExpectedIco <ico>`
+compares native PE icon frames at 16, 32 and 256 px against the approved ICO.
+`-Output <directory>` saves extracted frames and diagnostic light/dark composites;
+these are not desktop screenshots. `-WindowHandle <HWND>` additionally checks
+WM_GETICON/the window class icon. Branch CI verifies the development resource.
