@@ -564,7 +564,18 @@ impl CurseforgeSearchPage {
                     .text_color(theme.muted_foreground)
                     .child(crate::compact_download_count(hit.download_count));
 
-                let primary_action = self.get_primary_action(hit.id, cx);
+                let disabled = crate::modals::reinstall_disabled::original(
+                    &self.data,
+                    self.install_for,
+                    &ContentSource::CurseforgeProject { project_id: hit.id },
+                    cx,
+                );
+                let primary_action = if disabled.is_some() {
+                    PrimaryAction::Install
+                } else {
+                    self.get_primary_action(hit.id, cx)
+                };
+                let show_disabled = disabled.is_some();
 
                 let install_button = Button::new(("install", index))
                     .label(primary_action.text())
@@ -579,6 +590,26 @@ impl CurseforgeSearchPage {
 
                         move |_, window, cx| {
                             cx.stop_propagation();
+                            if let Some(original) = disabled.clone() {
+                                let data = data.clone();
+                                let hit = hit.clone();
+                                crate::modals::reinstall_disabled::confirm(
+                                    original,
+                                    window,
+                                    cx,
+                                    move |replace, window, cx| {
+                                        crate::modals::curseforge_install::open_with_replacement(
+                                            hit.clone(),
+                                            install_for,
+                                            &data,
+                                            window,
+                                            cx,
+                                            replace,
+                                        );
+                                    },
+                                );
+                                return;
+                            }
 
                             if hit.class_id.is_some() && hit.class_id != Some(0) {
                                 match primary_action {
@@ -709,7 +740,14 @@ impl CurseforgeSearchPage {
                                     .child(description),
                             ),
                     )
-                    .child(v_flex().items_end().child(downloads).child(install_button));
+                    .child(
+                        v_flex().items_end().child(downloads).child(
+                            h_flex()
+                                .gap(px(6.))
+                                .when(show_disabled, |row| row.child(crate::modals::reinstall_disabled::badge(index)))
+                                .child(install_button),
+                        ),
+                    );
 
                 div().w_full().child(item)
             })
