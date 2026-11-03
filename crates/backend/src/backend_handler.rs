@@ -1095,7 +1095,12 @@ impl BackendState {
                         continue;
                     }
 
-                    _ = std::fs::remove_file(&instance_mod.path);
+                    if let Err(error) = std::fs::remove_file(&instance_mod.path)
+                        && error.kind() != std::io::ErrorKind::NotFound
+                    {
+                        self.send.send_error(format!("Unable to delete mod: {error}"));
+                        continue;
+                    }
 
                     if let Some(aux_path) = crate::fs::pandora_aux_path_for_content(&instance_mod) {
                         _ = std::fs::remove_file(aux_path);
