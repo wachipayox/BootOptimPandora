@@ -54,6 +54,8 @@ pub struct InterfaceConfig {
     #[serde(default)]
     pub startup_seen_version: Option<String>,
     #[serde(default)]
+    pub startup_animation: crate::startup::IntroMode,
+    #[serde(default)]
     pub startup_last_music: Option<String>,
     #[serde(default = "schema::default_true")]
     pub home_general_news: bool,
@@ -326,6 +328,7 @@ impl Default for InterfaceConfig {
             home_instance: None,
             skipped_launcher_version: None,
             startup_seen_version: None,
+            startup_animation: Default::default(),
             startup_last_music: None,
             home_general_news: true,
             home_read_news: Default::default(),

@@ -1328,7 +1328,7 @@ impl Render for HomePage {
             .relative()
             .size_full()
             .min_w_0()
-            .overflow_y_scrollbar()
+            .overflow_y_hidden()
             .child(hero)
             .child(game_bar)
             .when(show_news, |d| d.child(news_section));
