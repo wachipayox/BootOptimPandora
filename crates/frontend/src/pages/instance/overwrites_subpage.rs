@@ -1015,6 +1015,19 @@ impl Render for InstanceOverwritesSubpage {
                         .iter()
                         .find(|change| change.path == comparison)
                         .or_else(|| report.global_changes.iter().find(|change| change.path == comparison));
+                    let disabled = change.is_some_and(|entry| {
+                        matches!(
+                            entry.change,
+                            OverwriteChange::Disabled
+                                | OverwriteChange::ModifiedAndDisabled
+                                | OverwriteChange::AddedDisabled
+                        )
+                    });
+                    let name = if disabled {
+                        name.strip_suffix(".disabled").unwrap_or(&name).to_owned()
+                    } else {
+                        name
+                    };
                     let restore_local = !row.folder
                         && report
                             .local_changes
@@ -1077,18 +1090,16 @@ impl Render for InstanceOverwritesSubpage {
                                     _ => theme::ACCENT,
                                 }))
                                 .child(
-                                    if matches!(
-                                        change.change,
-                                        OverwriteChange::Disabled | OverwriteChange::ModifiedAndDisabled
-                                    ) {
-                                        svg()
-                                            .path("icons/triangle-minus.svg")
-                                            .size(px(14.))
-                                            .text_color(muted)
-                                            .into_any_element()
-                                    } else {
-                                        change_badge(change.change).into_any_element()
-                                    },
+                                    h_flex()
+                                        .gap(px(4.))
+                                        .when(!disabled || change.change == OverwriteChange::AddedDisabled, |badge| {
+                                            badge.child(change_badge(change.change))
+                                        })
+                                        .when(disabled, |badge| {
+                                            badge.child(
+                                                svg().path("icons/triangle-minus.svg").size(px(14.)).text_color(muted),
+                                            )
+                                        }),
                                 ),
                         );
                     }
@@ -1235,16 +1246,18 @@ impl Render for InstanceOverwritesSubpage {
                     if selected_file.is_some() {
                         let reveal = self.entry.read(cx).dot_minecraft_folder.join(path);
                         use super::instance_page::InstanceSubpageType;
+                        let base_name = file_name.strip_suffix(".disabled").unwrap_or(file_name);
+                        let archive = base_name.ends_with(".jar")
+                            || base_name.ends_with(".zip")
+                            || base_name.ends_with(".mrpack");
                         let content_tab = match directory {
-                            "mods" if file_name.ends_with(".jar") || file_name.ends_with(".jar.disabled") => {
-                                Some(InstanceSubpageType::Mods)
-                            },
-                            "resourcepacks" if file_name.ends_with(".zip") => Some(InstanceSubpageType::ResourcePacks),
-                            "shaderpacks" if file_name.ends_with(".zip") => Some(InstanceSubpageType::Shaders),
+                            "mods" if archive => Some(InstanceSubpageType::Mods),
+                            "resourcepacks" if archive => Some(InstanceSubpageType::ResourcePacks),
+                            "shaderpacks" if archive => Some(InstanceSubpageType::Shaders),
                             _ => None,
                         };
                         if let Some(tab) = content_tab {
-                            let name = file_name.trim_end_matches(".disabled").to_owned();
+                            let name = file_name.to_owned();
                             file_actions = file_actions.child(
                                 DesignButton::new("show-overwrite-content")
                                     .label("Ver en Contenido")
