@@ -42,13 +42,13 @@ pub(super) fn audio_fade_due(animation_elapsed: Duration, elapsed: Duration, lim
     animation_elapsed >= INTRO + AUDIO_TAIL - AUDIO_FADE || elapsed >= limit
 }
 
-pub(super) fn intro_kind(existing_install: bool, last_version: Option<&str>, current: &str) -> IntroKind {
-    if last_version == Some(current) {
-        IntroKind::None
-    } else if existing_install {
-        IntroKind::Update
-    } else {
-        IntroKind::FirstInstall
+pub(super) fn intro_kind(mode: super::IntroMode, last_version: Option<&str>, current: &str) -> IntroKind {
+    match mode {
+        super::IntroMode::Always => IntroKind::Update,
+        super::IntroMode::Never => IntroKind::None,
+        super::IntroMode::OnUpdate if last_version.is_none() => IntroKind::FirstInstall,
+        super::IntroMode::OnUpdate if last_version != Some(current) => IntroKind::Update,
+        super::IntroMode::OnUpdate => IntroKind::None,
     }
 }
 
@@ -72,6 +72,7 @@ pub(super) fn choose_track<'a>(tracks: &'a [String], last: Option<&str>, random:
 
 #[cfg(test)]
 mod tests {
+    use super::super::IntroMode;
     use super::{IntroKind, audio_fade_due, choose_track, initial_size, intro_kind, may_reveal};
     use std::time::Duration;
     #[test]
@@ -84,10 +85,11 @@ mod tests {
 
     #[test]
     fn only_new_install_and_changed_versions_have_intro() {
-        assert_eq!(intro_kind(false, None, "1"), IntroKind::FirstInstall);
-        assert_eq!(intro_kind(true, None, "1"), IntroKind::Update);
-        assert_eq!(intro_kind(true, Some("0"), "1"), IntroKind::Update);
-        assert_eq!(intro_kind(true, Some("1"), "1"), IntroKind::None);
+        assert_eq!(intro_kind(IntroMode::OnUpdate, None, "1"), IntroKind::FirstInstall);
+        assert_eq!(intro_kind(IntroMode::OnUpdate, Some("0"), "1"), IntroKind::Update);
+        assert_eq!(intro_kind(IntroMode::OnUpdate, Some("1"), "1"), IntroKind::None);
+        assert_eq!(intro_kind(IntroMode::Always, Some("1"), "1"), IntroKind::Update);
+        assert_eq!(intro_kind(IntroMode::Never, None, "1"), IntroKind::None);
     }
 
     #[test]

@@ -4,6 +4,14 @@ mod geometry;
 mod policy;
 pub(crate) mod vector;
 
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub(crate) enum IntroMode {
+    Always,
+    #[default]
+    OnUpdate,
+    Never,
+}
+
 use crate::interface_config::InterfaceConfig;
 use gpui::{prelude::*, *};
 use policy::{INTRO, IntroKind, TRANSITION, audio_fade_due, intro_kind, may_reveal, preload_limit};
@@ -79,7 +87,11 @@ impl Controller {
         let existing = session.existing_install;
         let process_started = session.process_started;
         let version = option_env!("PANDORA_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-        let kind = intro_kind(existing, InterfaceConfig::get(cx).startup_seen_version.as_deref(), version);
+        let kind = policy::intro_kind(
+            InterfaceConfig::get(cx).startup_animation,
+            InterfaceConfig::get(cx).startup_seen_version.as_deref(),
+            version,
+        );
         let mut tracks: Vec<String> = crate::Assets::iter()
             .filter(|p| p.starts_with("splash-music/") && p.ends_with(".ogg"))
             .map(|p| p.to_string())
