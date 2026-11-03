@@ -28,6 +28,7 @@ use gpui_component::{
 
 pub struct InstanceOverwritesSubpage {
     instance: InstanceID,
+    entry: Entity<InstanceEntry>,
     backend: BackendHandle,
     report: Option<Result<ProfileOverwritesReport, String>>,
     expanded: BTreeSet<String>,
@@ -56,6 +57,9 @@ pub struct InstanceOverwritesSubpage {
     _read: Task<()>,
     _save: Task<()>,
 }
+
+pub(super) struct ShowContent(pub super::instance_page::InstanceSubpageType, pub String);
+impl EventEmitter<ShowContent> for InstanceOverwritesSubpage {}
 
 struct TreeRow {
     path: String,
@@ -290,6 +294,7 @@ impl InstanceOverwritesSubpage {
         cx.subscribe(&search, Self::on_search_changed).detach();
         let mut page = Self {
             instance: instance.read(cx).id,
+            entry: instance.clone(),
             backend,
             report: None,
             expanded: BTreeSet::new(),
@@ -1071,7 +1076,20 @@ impl Render for InstanceOverwritesSubpage {
                                     },
                                     _ => theme::ACCENT,
                                 }))
-                                .child(change_badge(change.change)),
+                                .child(
+                                    if matches!(
+                                        change.change,
+                                        OverwriteChange::Disabled | OverwriteChange::ModifiedAndDisabled
+                                    ) {
+                                        svg()
+                                            .path("icons/triangle-minus.svg")
+                                            .size(px(14.))
+                                            .text_color(muted)
+                                            .into_any_element()
+                                    } else {
+                                        change_badge(change.change).into_any_element()
+                                    },
+                                ),
                         );
                     }
                     if selected {
@@ -1214,6 +1232,51 @@ impl Render for InstanceOverwritesSubpage {
                         None
                     };
                     let mut file_actions = h_flex().w_full().items_center().gap(px(8.));
+                    if selected_file.is_some() {
+                        let reveal = self.entry.read(cx).dot_minecraft_folder.join(path);
+                        use super::instance_page::InstanceSubpageType;
+                        let content_tab = match directory {
+                            "mods" if file_name.ends_with(".jar") || file_name.ends_with(".jar.disabled") => {
+                                Some(InstanceSubpageType::Mods)
+                            },
+                            "resourcepacks" if file_name.ends_with(".zip") => Some(InstanceSubpageType::ResourcePacks),
+                            "shaderpacks" if file_name.ends_with(".zip") => Some(InstanceSubpageType::Shaders),
+                            _ => None,
+                        };
+                        if let Some(tab) = content_tab {
+                            let name = file_name.trim_end_matches(".disabled").to_owned();
+                            file_actions = file_actions.child(
+                                DesignButton::new("show-overwrite-content")
+                                    .label("Ver en Contenido")
+                                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(ShowContent(tab, name.clone())))),
+                            );
+                        }
+                        file_actions = file_actions.child(
+                            DesignButton::new("reveal-overwrite").label("Ver en el explorador").on_click(
+                                move |_, window, cx| {
+                                    if !reveal.is_file() {
+                                        return;
+                                    }
+                                    #[cfg(windows)]
+                                    {
+                                        let _ = (window, cx);
+                                        let mut selection = std::ffi::OsString::from("/select,");
+                                        selection.push(&reveal);
+                                        if let Err(error) =
+                                            std::process::Command::new("explorer.exe").arg(selection).spawn()
+                                        {
+                                            log::warn!("Failed to reveal profile file: {error}");
+                                        }
+                                    }
+                                    #[cfg(not(windows))]
+                                    if let Some(parent) = reveal.parent() {
+                                        crate::open_folder(parent, window, cx);
+                                    }
+                                },
+                            ),
+                        );
+                    }
+
                     if let Some(source) = restore_source {
                         let restore_path = path.clone();
                         file_actions = file_actions.child(
@@ -1454,8 +1517,8 @@ fn format_size(size: u64) -> String {
 
 fn change_badge(change: OverwriteChange) -> &'static str {
     match change {
-        OverwriteChange::Added | OverwriteChange::AddedDisabled => "Añadido",
-        OverwriteChange::Removed => "Eliminado",
+        OverwriteChange::Added | OverwriteChange::AddedDisabled => "+",
+        OverwriteChange::Removed => "−",
         OverwriteChange::Disabled | OverwriteChange::ModifiedAndDisabled => "Desactivado",
         OverwriteChange::Enabled | OverwriteChange::ModifiedAndEnabled => "Activado",
         OverwriteChange::Modified => "Modificado",

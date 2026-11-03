@@ -72,6 +72,7 @@ struct InstallDialog {
     loader_select_state: Option<Entity<SelectState<Vec<SharedString>>>>,
     single_loader_set: Option<EnumSet<ModrinthLoader>>,
     install_dependencies: bool,
+    replace_disabled: Option<Arc<std::path::Path>>,
 
     mod_version_select_state: Option<Entity<SelectState<SearchableVec<ModVersionItem>>>>,
 }
@@ -84,6 +85,19 @@ pub fn open(
     data: &DataEntities,
     window: &mut Window,
     cx: &mut App,
+) {
+    open_with_replacement(name, project_id, project_type, install_for, data, window, cx, None);
+}
+
+pub(crate) fn open_with_replacement(
+    name: SharedString,
+    project_id: Arc<str>,
+    project_type: ModrinthProjectType,
+    install_for: Option<InstanceID>,
+    data: &DataEntities,
+    window: &mut Window,
+    cx: &mut App,
+    replace_disabled: Option<Arc<std::path::Path>>,
 ) {
     let project_versions = FrontendMetadata::request(
         &data.metadata,
@@ -104,7 +118,16 @@ pub fn open(
             let name = name.clone();
             let _subscription = window.observe(&project_versions, cx, move |_, window, cx| {
                 window.close_all_dialogs(cx);
-                open(name.clone(), project_id.clone(), project_type, install_for, &data, window, cx);
+                open_with_replacement(
+                    name.clone(),
+                    project_id.clone(),
+                    project_type,
+                    install_for,
+                    &data,
+                    window,
+                    cx,
+                    replace_disabled.clone(),
+                );
             });
             window.open_dialog(cx, move |dialog, _, _| {
                 let _ = &_subscription;
@@ -219,6 +242,7 @@ pub fn open(
                     last_selected_minecraft_version: None,
                     single_loader_set: None,
                     install_dependencies: true,
+                    replace_disabled: replace_disabled.clone(),
                     mod_version_select_state: None,
                     last_selected_loader: None,
                 };
@@ -281,6 +305,7 @@ pub fn open(
                     last_selected_minecraft_version: None,
                     single_loader_set: None,
                     install_dependencies: true,
+                    replace_disabled: replace_disabled.clone(),
                     mod_version_select_state: None,
                     last_selected_loader: None,
                 };
@@ -295,7 +320,16 @@ pub fn open(
                     alive.await_notification().await;
                     _ = cx.update(|window, cx| {
                         window.close_all_dialogs(cx);
-                        open(name.clone(), project_id.clone(), project_type, install_for, &data, window, cx);
+                        open_with_replacement(
+                            name.clone(),
+                            project_id.clone(),
+                            project_type,
+                            install_for,
+                            &data,
+                            window,
+                            cx,
+                            replace_disabled.clone(),
+                        );
                     });
                 })
             } else {
@@ -513,7 +547,7 @@ impl InstallDialog {
                     };
 
                     files.push(ContentInstallFile {
-                        replace_old: None,
+                        replace_old: this.replace_disabled.clone(),
                         path: bridge::install::ContentInstallPath::Safe(path),
                         download: ContentDownload::Url {
                             url: install_file.url.clone(),

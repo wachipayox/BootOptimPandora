@@ -612,7 +612,20 @@ impl ModrinthSearchPage {
                     }
                 };
 
-                let primary_action = self.get_primary_action(&hit.project_id, cx);
+                let disabled = crate::modals::reinstall_disabled::original(
+                    &self.data,
+                    self.install_for,
+                    &ContentSource::ModrinthProject {
+                        project_id: hit.project_id.clone(),
+                    },
+                    cx,
+                );
+                let primary_action = if disabled.is_some() {
+                    PrimaryAction::Install
+                } else {
+                    self.get_primary_action(&hit.project_id, cx)
+                };
+                let show_disabled = disabled.is_some();
 
                 let install_button = Button::new(("install", index))
                     .label(primary_action.text())
@@ -629,6 +642,29 @@ impl ModrinthSearchPage {
 
                         move |_, window, cx| {
                             cx.stop_propagation();
+                            if let Some(original) = disabled.clone() {
+                                let data = data.clone();
+                                let name = name.clone();
+                                let project_id = project_id.clone();
+                                crate::modals::reinstall_disabled::confirm(
+                                    original,
+                                    window,
+                                    cx,
+                                    move |replace, window, cx| {
+                                        crate::modals::modrinth_install::open_with_replacement(
+                                            name.clone(),
+                                            project_id.clone(),
+                                            project_type,
+                                            install_for,
+                                            &data,
+                                            window,
+                                            cx,
+                                            replace,
+                                        );
+                                    },
+                                );
+                                return;
+                            }
 
                             if project_type != ModrinthProjectType::Other {
                                 primary_action.perform(
@@ -696,7 +732,14 @@ impl ModrinthSearchPage {
                                     .child(description),
                             ),
                     )
-                    .child(v_flex().items_end().child(downloads).child(install_button));
+                    .child(
+                        v_flex().items_end().child(downloads).child(
+                            h_flex()
+                                .gap(px(6.))
+                                .when(show_disabled, |row| row.child(crate::modals::reinstall_disabled::badge(index)))
+                                .child(install_button),
+                        ),
+                    );
 
                 div().w_full().child(item)
             })
