@@ -119,6 +119,11 @@ pub fn start(
             theme::init(cx);
             pages::news::init(cx);
             InterfaceConfig::init(cx, launcher_dir.join("interface.json").into());
+            {
+                let config = InterfaceConfig::get_mut(cx);
+                config.main_page = ui::PageType::Instances;
+                config.page_path = [].into();
+            }
             startup::init(existing_install, allow_startup, process_started, cx);
 
             t::set_lang(&InterfaceConfig::get(cx).language);
