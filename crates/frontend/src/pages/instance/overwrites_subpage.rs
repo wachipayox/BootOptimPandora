@@ -23,6 +23,7 @@ use gpui_component::{
     input::{InputEvent, InputState, Textarea, TextareaState},
     menu::{ContextMenuExt, PopupMenuItem},
     scroll::{ScrollableElement, Scrollbar},
+    tooltip::Tooltip,
     v_flex,
 };
 
@@ -848,6 +849,64 @@ impl InstanceOverwritesSubpage {
         cx.notify();
     }
 
+    fn confirm_delete(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        let entity = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let entity = entity.clone();
+            let delete_path = path.clone();
+            design::dialog(dialog)
+                .title(design::dialog_title("Eliminar archivo"))
+                .child(div().child(path.clone()))
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            design::action_button("cancel-delete-file", "Cancelar", design::ButtonAction::Secondary)
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            design::action_button("confirm-delete-file", "Eliminar", design::ButtonAction::Danger)
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ =
+                                        entity.update(cx, |page, cx| page.delete_file(delete_path.clone(), window, cx));
+                                }),
+                        ),
+                )
+        });
+    }
+
+    fn delete_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        let (channel, receive) = tokio::sync::oneshot::channel();
+        self.backend.send(MessageToBackend::DeleteProfileFile {
+            id: self.instance,
+            path,
+            channel,
+        });
+        self.busy = true;
+        self.notice = None;
+        self._save = cx.spawn_in(window, async move |page, cx| {
+            let result = receive.await.unwrap_or_else(|_| Err("Launcher backend stopped".into()));
+            let _ = page.update_in(cx, |page, window, cx| {
+                page.busy = false;
+                match result {
+                    Ok(()) => {
+                        page.selected = None;
+                        page.text = None;
+                        page.reload(window, cx);
+                    },
+                    Err(error) => page.notice = Some(overwrite_error("No se ha podido eliminar el archivo.", &error)),
+                }
+                cx.notify();
+            });
+        });
+        cx.notify();
+    }
+
     fn confirm_restore(&mut self, path: String, source: RestoreSource, window: &mut Window, cx: &mut Context<Self>) {
         let label = match source {
             RestoreSource::LocalParent => "Restaurar desde madre local",
@@ -1097,7 +1156,17 @@ impl Render for InstanceOverwritesSubpage {
                                         })
                                         .when(disabled, |badge| {
                                             badge.child(
-                                                svg().path("icons/triangle-minus.svg").size(px(14.)).text_color(muted),
+                                                div()
+                                                    .id("disabled-file-badge")
+                                                    .tooltip(|window, cx| {
+                                                        Tooltip::new("Archivo deshabilitado").build(window, cx)
+                                                    })
+                                                    .child(
+                                                        svg()
+                                                            .path("icons/triangle-minus.svg")
+                                                            .size(px(14.))
+                                                            .text_color(muted),
+                                                    ),
                                             )
                                         }),
                                 ),
@@ -1244,7 +1313,11 @@ impl Render for InstanceOverwritesSubpage {
                     };
                     let mut file_actions = h_flex().w_full().items_center().gap(px(8.));
                     if selected_file.is_some() {
-                        let reveal = self.entry.read(cx).dot_minecraft_folder.join(path);
+                        let reveal = self
+                            .entry
+                            .read(cx)
+                            .dot_minecraft_folder
+                            .join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
                         use super::instance_page::InstanceSubpageType;
                         let base_name = file_name.strip_suffix(".disabled").unwrap_or(file_name);
                         let archive = base_name.ends_with(".jar")
@@ -1273,13 +1346,14 @@ impl Render for InstanceOverwritesSubpage {
                                     #[cfg(windows)]
                                     {
                                         let _ = (window, cx);
-                                        let mut selection = std::ffi::OsString::from("/select,");
-                                        selection.push(&reveal);
-                                        if let Err(error) =
-                                            std::process::Command::new("explorer.exe").arg(selection).spawn()
-                                        {
-                                            log::warn!("Failed to reveal profile file: {error}");
-                                        }
+                                        std::thread::spawn({
+                                            let reveal = reveal.clone();
+                                            move || {
+                                                if let Err(error) = select_in_explorer(&reveal) {
+                                                    log::warn!("Failed to reveal profile file: {error}");
+                                                }
+                                            }
+                                        });
                                     }
                                     #[cfg(not(windows))]
                                     if let Some(parent) = reveal.parent() {
@@ -1287,6 +1361,15 @@ impl Render for InstanceOverwritesSubpage {
                                     }
                                 },
                             ),
+                        );
+                        let delete_path = path.clone();
+                        file_actions = file_actions.child(
+                            DesignButton::new("delete-overwrite")
+                                .label("Eliminar archivo")
+                                .disabled(self.busy)
+                                .on_click(cx.listener(move |page, _, window, cx| {
+                                    page.confirm_delete(delete_path.clone(), window, cx);
+                                })),
                         );
                     }
 
@@ -1553,4 +1636,27 @@ fn overwrite_error(message: &str, detail: &str) -> String {
         .join(" ");
     log::warn!("Instance overwrite operation failed: {detail}");
     message.to_owned()
+}
+
+#[cfg(windows)]
+fn select_in_explorer(path: &std::path::Path) -> windows::core::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::{
+        Win32::{
+            System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize, IBindCtx},
+            UI::Shell::{SHOpenFolderAndSelectItems, SHParseDisplayName},
+        },
+        core::PCWSTR,
+    };
+    let path: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    // This runs on a dedicated thread. The Shell owns neither the COM apartment nor the PIDL.
+    unsafe {
+        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
+        let mut item = std::ptr::null_mut();
+        let result = SHParseDisplayName(PCWSTR(path.as_ptr()), None::<&IBindCtx>, &mut item, 0, None)
+            .and_then(|()| SHOpenFolderAndSelectItems(item, None, 0));
+        CoTaskMemFree(Some(item.cast()));
+        CoUninitialize();
+        result
+    }
 }

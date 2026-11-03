@@ -44,6 +44,7 @@ pub struct SkinsPage {
     account_capes: FxHashMap<Uuid, AccountCapesResult>,
     pending_login: Option<ModalAction>,
     applying_to_account: Option<Uuid>,
+    preview_account: Option<Uuid>,
     request_account_skin: Option<Task<()>>,
     selected_skin: UniqueBytes,
     selected_cape: Option<(Uuid, Arc<str>)>,
@@ -59,6 +60,11 @@ pub struct SkinsPage {
     skin_thumbnail_cache: Entity<SkinThumbnailCache>,
 }
 
+#[derive(Default)]
+struct AppearanceCache(FxHashMap<Uuid, (AccountSkinResult, AccountCapesResult)>);
+
+impl Global for AppearanceCache {}
+
 static DEFAULT_SKIN: Lazy<UniqueBytes> =
     Lazy::new(|| UniqueBytes::new(include_bytes!("../../../../assets/images/default_skin.png")));
 
@@ -71,6 +77,7 @@ impl SkinsPage {
             account_capes: FxHashMap::default(),
             pending_login: None,
             applying_to_account: None,
+            preview_account: None,
             request_account_skin: None,
             selected_skin: DEFAULT_SKIN.clone(),
             selected_cape: None,
@@ -117,65 +124,77 @@ impl SkinsPage {
     fn request_account_skin(&mut self, uuid: Uuid, cx: &mut Context<Self>) {
         self.pending_login = None;
 
+        if self.applying_to_account != Some(uuid) {
+            if let Some((skin, capes)) =
+                cx.try_global::<AppearanceCache>().and_then(|cache| cache.0.get(&uuid)).cloned()
+            {
+                self.set_account_appearance(uuid, skin, capes, cx);
+                return;
+            }
+        } else if cx.try_global::<AppearanceCache>().is_some() {
+            cx.global_mut::<AppearanceCache>().0.remove(&uuid);
+        }
+
         let (send, recv) = tokio::sync::oneshot::channel();
-        self.data.backend_handle.send(MessageToBackend::GetAccountSkin {
+        let (send_capes, recv_capes) = tokio::sync::oneshot::channel();
+        self.data.backend_handle.send(MessageToBackend::GetAccountAppearance {
             account: uuid,
-            result: send,
-        });
-        let (send2, recv2) = tokio::sync::oneshot::channel();
-        self.data.backend_handle.send(MessageToBackend::GetAccountCapes {
-            account: uuid,
-            result: send2,
+            skin: send,
+            capes: send_capes,
         });
 
         self.request_account_skin = Some(cx.spawn(async move |page, cx| {
-            let skin_result = recv.await;
-            let capes_result = recv2.await;
-
+            let skin = recv.await.unwrap_or(AccountSkinResult::UnableToLoadSkin);
+            let capes = recv_capes.await.unwrap_or(AccountCapesResult::NeedsLogin);
             let _ = page.update(cx, move |page, cx| {
-                // Handle skin result
-                let mut new_skin = None;
-                if let Ok(skin_result) = skin_result {
-                    if let AccountSkinResult::Success { skin, variant } = &skin_result {
-                        if let Some(skin) = skin.clone() {
-                            page.selected_skin = skin.clone();
-                            new_skin = Some((skin, *variant));
-                        }
+                if matches!(skin, AccountSkinResult::Success { .. })
+                    && matches!(capes, AccountCapesResult::Success { .. })
+                {
+                    if cx.try_global::<AppearanceCache>().is_none() {
+                        cx.set_global(AppearanceCache::default());
                     }
-                    page.account_skins.insert(uuid, skin_result);
+                    cx.global_mut::<AppearanceCache>().0.insert(uuid, (skin.clone(), capes.clone()));
                 }
-
-                // Handle cape result
-                page.active_cape = None;
-                page.selected_cape = None;
-                page.pending_apply_cape = false;
-                if let Ok(capes_result) = capes_result {
-                    if let AccountCapesResult::Success { capes } = &capes_result {
-                        for cape in capes {
-                            if cape.state == SkinState::Active {
-                                page.active_cape = Some((cape.id, cape.url.clone()));
-                                page.selected_cape = page.active_cape.clone();
-                                page.pending_apply_cape = true;
-                                break;
-                            }
-                        }
-                    }
-                    page.account_capes.insert(uuid, capes_result);
-                }
-
-                // Update model widget
-                page.player_model_widget.update(cx, |widget, cx| {
-                    if let Some((skin, variant)) = new_skin {
-                        widget.set_skin_and_cape(cx, skin, variant, None);
-                    } else {
-                        widget.set_cape(cx, None);
-                    }
-                });
+                page.set_account_appearance(uuid, skin, capes, cx);
                 page.applying_to_account = None;
                 page.request_account_skin = None;
                 cx.notify();
             });
         }));
+    }
+
+    fn set_account_appearance(
+        &mut self,
+        uuid: Uuid,
+        skin: AccountSkinResult,
+        capes: AccountCapesResult,
+        cx: &mut Context<Self>,
+    ) {
+        self.account_skins.insert(uuid, skin.clone());
+        self.account_capes.insert(uuid, capes.clone());
+        if self.data.accounts.read(cx).selected_account.as_ref().map(|account| account.uuid) != Some(uuid) {
+            return;
+        }
+        self.preview_account = Some(uuid);
+        let (skin, variant) = match skin {
+            AccountSkinResult::Success {
+                skin: Some(skin),
+                variant,
+            } => (skin, variant),
+            _ => (DEFAULT_SKIN.clone(), SkinVariant::Classic),
+        };
+        self.active_cape = match capes {
+            AccountCapesResult::Success { capes } => capes
+                .into_iter()
+                .find(|cape| cape.state == SkinState::Active)
+                .map(|cape| (cape.id, cape.url)),
+            AccountCapesResult::NeedsLogin => None,
+        };
+        self.selected_cape = self.active_cape.clone();
+        self.pending_apply_cape = self.selected_cape.is_some();
+        self.selected_skin = skin.clone();
+        self.player_model_widget
+            .update(cx, |widget, cx| widget.set_skin_and_cape(cx, skin, variant, None));
     }
 
     fn has_pending_login(&self) -> bool {
@@ -236,6 +255,17 @@ impl SkinsPage {
                     )
                     .into_any_element();
             } else {
+                if self.preview_account != Some(uuid) {
+                    if let Some((skin, capes)) = self
+                        .account_skins
+                        .get(&uuid)
+                        .cloned()
+                        .zip(self.account_capes.get(&uuid).cloned())
+                        .or_else(|| cx.try_global::<AppearanceCache>().and_then(|cache| cache.0.get(&uuid)).cloned())
+                    {
+                        self.set_account_appearance(uuid, skin, capes, cx);
+                    }
+                }
                 match self.account_skins.get(&uuid) {
                     Some(AccountSkinResult::Success { skin, variant }) => {
                         active_skin = skin.clone();

@@ -392,6 +392,29 @@ impl BackendState {
         .map_err(|error| error.to_string())?
     }
 
+    pub(crate) async fn delete_profile_file(&self, id: InstanceID, path: String) -> Result<(), String> {
+        let (root, minecraft) = {
+            let state = self.instance_state.read();
+            let instance = state.instances.get(id).ok_or("Instance is no longer available")?;
+            if instance.status() != InstanceStatus::NotRunning {
+                return Err("Close the game before deleting files.".into());
+            }
+            (instance.root_path.to_path_buf(), instance.dot_minecraft_path.to_path_buf())
+        };
+        let shared_owner_root = self.directories.root_launcher_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            let _sharing_lock = crate::shared_storage::lock(&shared_owner_root).map_err(|e| e.to_string())?;
+            let _guard = profile_edit_lock(&root)?;
+            if crate::shared_data::active_shared_path(&root, &canonical_mod_path(&path)).map_err(|e| e.to_string())? {
+                return Err("Shared personal paths must be changed through their sharing owner".into());
+            }
+            let file = checked_file_path(&minecraft, &path)?;
+            fs::remove_file(file).map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+
     pub(crate) async fn restore_profile_file(
         &self,
         id: InstanceID,
