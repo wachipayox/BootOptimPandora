@@ -310,7 +310,7 @@ impl ContentListDelegate {
         let backend = self.backend_handle.clone();
         let title = summary.filename.clone();
         let delete_title = title.clone();
-        let delete = std::rc::Rc::new(cx.listener(move |list, click: &ClickEvent, window, cx| {
+        let delete = std::rc::Rc::new(cx.listener(move |list, _: &ClickEvent, window, cx| {
             cx.stop_propagation();
             let delegate = list.delegate();
             let content_ids = if delegate.is_selected(element_id) {
@@ -324,7 +324,7 @@ impl ContentListDelegate {
                 vec![content_id]
             };
             let backend = delegate.backend_handle.clone();
-            if InterfaceConfig::get(cx).quick_delete_mods && click.modifiers().shift {
+            if InterfaceConfig::get(cx).quick_delete_mods && window.modifiers().shift {
                 backend.send(MessageToBackend::DeleteContent { id, content_ids });
                 return;
             }
