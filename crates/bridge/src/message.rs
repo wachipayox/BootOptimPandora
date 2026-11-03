@@ -424,6 +424,11 @@ pub enum MessageToBackend {
         path: String,
         channel: tokio::sync::oneshot::Sender<Result<String, String>>,
     },
+    DeleteProfileFile {
+        id: InstanceID,
+        path: String,
+        channel: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     RestoreProfileFile {
         id: InstanceID,
         path: String,
@@ -518,9 +523,10 @@ pub enum MessageToBackend {
         import_job: ImportFromOtherLauncherJob,
         modal_action: ModalAction,
     },
-    GetAccountSkin {
+    GetAccountAppearance {
         account: Uuid,
-        result: tokio::sync::oneshot::Sender<AccountSkinResult>,
+        skin: tokio::sync::oneshot::Sender<AccountSkinResult>,
+        capes: tokio::sync::oneshot::Sender<AccountCapesResult>,
     },
     SetAccountSkin {
         account: Uuid,
@@ -554,10 +560,6 @@ pub enum MessageToBackend {
     },
     CancelAotOptimization {
         id: Option<InstanceID>,
-    },
-    GetAccountCapes {
-        account: Uuid,
-        result: tokio::sync::oneshot::Sender<AccountCapesResult>,
     },
     SetAccountCape {
         account: Uuid,

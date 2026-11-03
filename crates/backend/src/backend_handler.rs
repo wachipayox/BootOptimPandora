@@ -1871,6 +1871,12 @@ impl BackendState {
                     let _ = channel.send(backend.toggle_profile_mod(id, path).await);
                 });
             },
+            MessageToBackend::DeleteProfileFile { id, path, channel } => {
+                let backend = self.clone();
+                self.spawn_launcher_task(async move {
+                    let _ = channel.send(backend.delete_profile_file(id, path).await);
+                });
+            },
             MessageToBackend::RestoreProfileFile {
                 id,
                 path,
@@ -2399,23 +2405,23 @@ impl BackendState {
             } => {
                 crate::launcher_import::import_from_other_launcher(self, launcher, import_job, modal_action).await;
             },
-            MessageToBackend::GetAccountSkin { account, result } => {
+            MessageToBackend::GetAccountAppearance { account, skin, capes } => {
                 let backend = self.clone();
                 tokio::task::spawn(async move {
-                    let Some(account) = backend.get_minecraft_profile(account).await else {
-                        log::warn!("Skins: could not get the Minecraft profile for {account}; asking to sign in");
-                        _ = result.send(AccountSkinResult::NeedsLogin);
+                    let Some(profile) = backend.get_minecraft_profile(account).await else {
+                        let _ = skin.send(AccountSkinResult::NeedsLogin);
+                        let _ = capes.send(AccountCapesResult::NeedsLogin);
                         return;
                     };
-
-                    if let Some(skin) = account.active_skin() {
-                        SkinManager::frontend_request(&backend, skin.url.clone(), skin.variant, result);
+                    if let Some(active) = profile.active_skin() {
+                        SkinManager::frontend_request(&backend, active.url.clone(), active.variant, skin);
                     } else {
-                        _ = result.send(AccountSkinResult::Success {
+                        let _ = skin.send(AccountSkinResult::Success {
                             skin: None,
                             variant: SkinVariant::Classic,
                         });
                     }
+                    let _ = capes.send(AccountCapesResult::Success { capes: profile.capes });
                 });
             },
             MessageToBackend::SetAccountSkin { account, skin, variant } => {
@@ -2475,18 +2481,6 @@ impl BackendState {
                         .write()
                         .insert(account, CachedMinecraftProfile::new(profile));
                 }
-            },
-            MessageToBackend::GetAccountCapes { account, result } => {
-                let backend = self.clone();
-                tokio::task::spawn(async move {
-                    let Some(account) = backend.get_minecraft_profile(account).await else {
-                        log::warn!("Capes: could not get the Minecraft profile for {account}; asking to sign in");
-                        _ = result.send(AccountCapesResult::NeedsLogin);
-                        return;
-                    };
-
-                    _ = result.send(AccountCapesResult::Success { capes: account.capes });
-                });
             },
             MessageToBackend::SetAccountCape { account, cape } => {
                 let Some((_, access_token)) = self.noninteractive_login_flow(account).await else {
