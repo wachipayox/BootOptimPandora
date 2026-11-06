@@ -486,7 +486,7 @@ impl SkinsPage {
         let radius = theme.radius;
         let list_active_border: Hsla = rgb(crate::theme::ACCENT_TEXT).into();
         let secondary_skeleton = theme.secondary_foreground.opacity(0.5);
-        let mut library = v_flex().flex_1().min_w_0().w_full().text_size(px(13.)).content_start().items_start();
+        let mut library = v_flex().min_w_0().w_full().text_size(px(13.)).content_start().items_start();
         let skin_library = self.data.use_skin_library(cx).cloned();
         let sort_descending = InterfaceConfig::get(cx).skin_list_sort_desc;
         let skin_library_iter = skin_library.iter().flat_map(|l| {
@@ -890,8 +890,8 @@ impl SkinsPage {
                 )
             })));
 
+        // The whole right column scrolls (capes and skins together); see render().
         library
-            .overflow_y_scrollbar()
             .drag_over(|style, _: &ExternalPaths, _, cx| style.bg(cx.theme().accent.opacity(0.5)))
             .on_drop(cx.listener(|page, paths: &ExternalPaths, _window, _cx| {
                 for path in paths.paths() {
@@ -952,14 +952,18 @@ impl Render for SkinsPage {
                     .min_h_0()
                     .gap(px(24.))
                     .child(div().w(px(400.)).h_full().flex_shrink_0().child(self.player_model_widget.clone()))
+                    // One scroll area for capes and skins: in a short window
+                    // the capes alone can fill the column.
                     .child(
                         v_flex()
+                            .id("skins-right-column")
                             .flex_1()
                             .min_w_0()
                             .h_full()
                             .gap(px(16.))
                             .child(cape_library)
-                            .child(self.render_skin_library(active_skin.clone(), active_skin_variant, cx)),
+                            .child(self.render_skin_library(active_skin.clone(), active_skin_variant, cx))
+                            .overflow_y_scrollbar(),
                     ),
             )
             .overflow_hidden();
