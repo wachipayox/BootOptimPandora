@@ -20,7 +20,7 @@ use crate::{
 };
 use bridge::{handle::BackendHandle, instance::InstanceID};
 use gpui::{prelude::*, *};
-use gpui_component::{Disableable, h_flex, scroll::ScrollableElement, v_flex};
+use gpui_component::{Disableable, h_flex, v_flex};
 use serde::{Deserialize, Serialize};
 
 pub struct InstancePage {
@@ -179,14 +179,33 @@ impl InstancePage {
                 },
             )));
         }
+        // Same layout as Home's tabs: a flex row keeps the tabs at their own
+        // width so they overflow; the wheel scrolls them horizontally.
+        let tab_scroll = window.use_keyed_state("instance-tab-scroll", cx, |_, _| ScrollHandle::new());
+        let tab_scroll = tab_scroll.read(cx).clone();
         header = header.child(
             div()
+                .relative()
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .overflow_x_scrollbar()
-                .scrollbar_width(px(4.))
-                .child(tabs),
+                .child(
+                    h_flex()
+                        .id("instance-tabs")
+                        .size_full()
+                        .overflow_x_scroll()
+                        .track_scroll(&tab_scroll)
+                        .child(tabs),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(6.))
+                        .child(design::tab_scrollbar(&tab_scroll, false)),
+                ),
         );
         if selected != InstanceSubpageType::Quickplay {
             let instance = self.instance.read(cx).clone();

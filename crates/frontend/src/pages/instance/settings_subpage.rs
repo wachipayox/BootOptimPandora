@@ -1109,17 +1109,40 @@ impl InstanceSettingsSubpage {
         let version_row = v_flex()
             .gap(px(10.))
             .child(
-                h_flex().w_full().gap(px(10.)).child(div().flex_1().child(version)).child(
-                    DesignButton::new("edit-instance-version")
-                        .tooltip("Versión")
-                        .w(px(28.))
-                        .h(px(28.))
-                        .child(Icon::new(PandoraIcon::Pencil).size(px(14.)))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.editing_version = !this.editing_version;
-                            cx.notify();
-                        })),
-                ),
+                // In a narrow window the version text truncates and the
+                // pencil keeps its place inside the card.
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .id("instance-version-label")
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .tooltip({
+                                let version = version.clone();
+                                move |window, cx| {
+                                    gpui_component::tooltip::Tooltip::new(version.clone()).build(window, cx)
+                                }
+                            })
+                            .child(version),
+                    )
+                    .child(
+                        DesignButton::new("edit-instance-version")
+                            .tooltip("Versión")
+                            .flex_shrink_0()
+                            .w(px(28.))
+                            .h(px(28.))
+                            .child(Icon::new(PandoraIcon::Pencil).size(px(14.)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.editing_version = !this.editing_version;
+                                cx.notify();
+                            })),
+                    ),
             )
             .when(self.editing_version, |d| d.child(version_content));
         basic_content = basic_content
