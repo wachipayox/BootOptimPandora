@@ -1,6 +1,7 @@
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 
+pub mod app_icon;
 pub mod assets_index;
 pub mod auxiliary;
 pub mod backend_config;
