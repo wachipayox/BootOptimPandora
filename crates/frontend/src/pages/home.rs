@@ -14,7 +14,12 @@ use bridge::{
     serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{Disableable, WindowExt, h_flex, input::InputState, scroll::ScrollableElement, v_flex};
+use gpui_component::{
+    Disableable, WindowExt, h_flex,
+    input::InputState,
+    scroll::{Scrollbar, ScrollbarAxis},
+    v_flex,
+};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -895,7 +900,32 @@ impl Render for HomePage {
                 )));
             }
         }
-        header = header.child(div().flex_1().min_w_0().h_full().overflow_x_scrollbar().child(tabs));
+        let tab_scroll = window.use_keyed_state("home-tab-scroll", cx, |_, _| ScrollHandle::new());
+        let tab_scroll = tab_scroll.read(cx).clone();
+        header = header.child(
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .child(
+                    div()
+                        .id("home-tabs")
+                        .size_full()
+                        .overflow_x_scroll()
+                        .track_scroll(&tab_scroll)
+                        .child(tabs),
+                )
+                .child(div().absolute().bottom_0().left_0().right_0().h(px(4.)).child(
+                    Scrollbar::new(&tab_scroll).axis(ScrollbarAxis::Horizontal).styles(|styles| {
+                        styles
+                            .track(|style| style.bg(transparent_black()))
+                            .thumb(|style| style.bg(rgba(0xffffff45)))
+                            .thumb_hover(|style| style.bg(rgba(0xffffff70)))
+                            .thumb_active(|style| style.bg(rgba(0xffffff90)))
+                    }),
+                )),
+        );
         if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
             use crate::component::generic_title_bar::WindowControl;
             header = header.child(
@@ -1328,7 +1358,8 @@ impl Render for HomePage {
             .relative()
             .size_full()
             .min_w_0()
-            .overflow_y_hidden()
+            .id("home-content-scroll")
+            .overflow_y_scroll()
             .child(hero)
             .child(game_bar)
             .when(show_news, |d| d.child(news_section));

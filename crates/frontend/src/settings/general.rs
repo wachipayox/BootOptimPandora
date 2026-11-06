@@ -24,6 +24,12 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                         ..Default::default()
                     },
                     SettingItem {
+                        title: || "Animación de arranque",
+                        description: || "Al actualizar también incluye la primera apertura",
+                        widget: create_intro_mode_dropdown(window, cx),
+                        ..Default::default()
+                    },
+                    SettingItem {
                         title: || "Borrado rápido de mods",
                         description: || "Mayús+clic en borrar no pide confirmación",
                         widget: SettingItemWidget::Switch(
