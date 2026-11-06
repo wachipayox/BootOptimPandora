@@ -54,7 +54,9 @@ ManifestSupportedOS Win10
 !define REF_TRACK 0x1A1616
 
 Name "${PRODUCTNAME}"
-BrandingText "${PRODUCTNAME} ${VERSION}"
+; Windows draws the disabled branding label embossed, which looks smudged on
+; the dark frame; the version is on the welcome page instead.
+BrandingText " "
 OutFile "${OUTFILE}"
 RequestExecutionLevel user
 ShowInstDetails hide
@@ -172,7 +174,7 @@ Function ${UN}DarkFrame
   StrCpy $R9 $HWNDPARENT
   Call ${UN}DarkChildren
   GetDlgItem $R8 $HWNDPARENT 1028
-  SetCtlColors $R8 /BRANDING ${C_MUTED} ${C_PANEL}
+  SetCtlColors $R8 ${C_MUTED} ${C_PANEL}
   ; 1256 is the light "etched" twin of the branding text.
   GetDlgItem $R8 $HWNDPARENT 1256
   ShowWindow $R8 ${SW_HIDE}
@@ -281,8 +283,8 @@ Var PassiveMode
 !insertmacro MUI_UNPAGE_CONFIRM
 !define MUI_PAGE_HEADER_TEXT "$(uninstallingTitle)"
 !define MUI_PAGE_HEADER_SUBTEXT "$(uninstallingSubtitle)"
-!define MUI_UNINSTFILESPAGE_FINISHHEADER_TEXT "$(uninstalledTitle)"
-!define MUI_UNINSTFILESPAGE_FINISHHEADER_SUBTEXT "$(uninstalledSubtitle)"
+!define MUI_INSTFILESPAGE_FINISHHEADER_TEXT "$(uninstalledTitle)"
+!define MUI_INSTFILESPAGE_FINISHHEADER_SUBTEXT "$(uninstalledSubtitle)"
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW un.DarkPage
 !insertmacro MUI_UNPAGE_INSTFILES
 
@@ -354,11 +356,21 @@ FunctionEnd
 
 Function WelcomeShow
   Call DarkPage
+  ; Welcome/finish pages are their own nsDialogs window, not the inner page.
+  StrCpy $R9 $mui.WelcomePage
+  SetCtlColors $R9 ${C_INK} ${C_PANEL}
+  Call DarkChildren
   !insertmacro EXACT_SIDEBAR $mui.WelcomePage.Image $mui.WelcomePage.Image.Bitmap
 FunctionEnd
 
 Function FinishShow
   Call DarkPage
+  StrCpy $R9 $mui.FinishPage
+  SetCtlColors $R9 ${C_INK} ${C_PANEL}
+  Call DarkChildren
+  ; Nothing to go back to once the files are installed.
+  GetDlgItem $R8 $HWNDPARENT 3
+  ShowWindow $R8 ${SW_HIDE}
   !insertmacro EXACT_SIDEBAR $mui.FinishPage.Image $mui.FinishPage.Image.Bitmap
   ; On an upgrade keep the user's earlier choice about the desktop shortcut.
   ${If} $Upgrading == 1

@@ -55,7 +55,7 @@ foreach ($round in 'instalación limpia', 'reinstalación encima') {
     Check (Test-Path -LiteralPath $startMenu) "$round crea el acceso del menú Inicio"
     Check (Test-Path -LiteralPath $desktop) "$round crea el acceso del escritorio"
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($startMenu)
-    Check ($link.TargetPath -eq $exe) "$round: el acceso apunta al exe instalado"
+    Check ($link.TargetPath -eq $exe) "${round}: el acceso apunta al exe instalado"
 }
 Check ((Test-Path -LiteralPath $data) -eq $dataExisted) 'el instalador no crea ni borra los datos del launcher'
 
