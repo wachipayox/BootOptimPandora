@@ -4,13 +4,7 @@ mod geometry;
 mod policy;
 pub(crate) mod vector;
 
-#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
-pub(crate) enum IntroMode {
-    Always,
-    #[default]
-    OnUpdate,
-    Never,
-}
+pub(crate) use crate::interface_config::IntroMode;
 
 use crate::interface_config::InterfaceConfig;
 use gpui::{prelude::*, *};
@@ -87,8 +81,9 @@ impl Controller {
         let existing = session.existing_install;
         let process_started = session.process_started;
         let version = option_env!("PANDORA_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-        let kind = policy::intro_kind(
+        let kind = intro_kind(
             InterfaceConfig::get(cx).startup_animation,
+            existing,
             InterfaceConfig::get(cx).startup_seen_version.as_deref(),
             version,
         );

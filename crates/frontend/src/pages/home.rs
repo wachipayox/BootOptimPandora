@@ -17,7 +17,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     Disableable, WindowExt, h_flex,
     input::InputState,
-    scroll::{Scrollbar, ScrollbarAxis},
+    scroll::{Scrollbar, ScrollbarAxis, ScrollbarThumbStyle},
     v_flex,
 };
 use std::{
@@ -916,13 +916,25 @@ impl Render for HomePage {
                         .track_scroll(&tab_scroll)
                         .child(tabs),
                 )
-                .child(div().absolute().bottom_0().left_0().right_0().h(px(4.)).child(
+                // Thin glass thumb over the artwork: no track, low-alpha white,
+                // slightly stronger only while hovered or dragged.
+                .child(div().absolute().bottom_0().left_0().right_0().h(px(6.)).child(
                     Scrollbar::new(&tab_scroll).axis(ScrollbarAxis::Horizontal).styles(|styles| {
+                        let glass = |style: ScrollbarThumbStyle, alpha: u32, width: f32| {
+                            style
+                                .bg(rgba(0xffffff00 | alpha))
+                                .width(px(width))
+                                .inset(px(1.5))
+                                .radius(px(1.5))
+                                .min_length(px(32.))
+                        };
                         styles
-                            .track(|style| style.bg(transparent_black()))
-                            .thumb(|style| style.bg(rgba(0xffffff45)))
-                            .thumb_hover(|style| style.bg(rgba(0xffffff70)))
-                            .thumb_active(|style| style.bg(rgba(0xffffff90)))
+                            .track(|style| style.bg(transparent_black()).width(px(6.)))
+                            .track_hover(|style| style.bg(transparent_black()))
+                            .track_active(|style| style.bg(transparent_black()))
+                            .thumb(|style| glass(style, 0x26, 2.))
+                            .thumb_hover(|style| glass(style, 0x4d, 3.))
+                            .thumb_active(|style| glass(style, 0x66, 3.))
                     }),
                 )),
         );
@@ -1181,6 +1193,7 @@ impl Render for HomePage {
             h_flex()
                 .h(px(84.))
                 .w_full()
+                .flex_shrink_0()
                 .px(px(24.))
                 .gap(px(16.))
                 .items_center()
@@ -1258,7 +1271,7 @@ impl Render for HomePage {
             .cloned()
             .collect::<Vec<_>>();
         let show_news = instance.is_some() || !news.is_empty() || !self.news_loaded;
-        let mut news_section = v_flex().px(px(24.)).pt(px(18.)).gap(px(12.)).child(
+        let mut news_section = v_flex().flex_shrink_0().px(px(24.)).pt(px(18.)).pb(px(24.)).gap(px(12.)).child(
             h_flex()
                 .h(px(24.))
                 .justify_between()
