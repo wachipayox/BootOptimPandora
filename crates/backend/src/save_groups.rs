@@ -75,7 +75,9 @@ fn remove_link(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
         if junction::exists(path).unwrap_or(false) {
-            junction::delete(path).map_err(|e| e.to_string())
+            // junction::delete only clears the reparse point and leaves an empty
+            // directory behind. Remove the link entry itself, without its target.
+            fs::remove_dir(path).map_err(|e| e.to_string())
         } else {
             fs::remove_file(path).map_err(|e| e.to_string())
         }
@@ -647,6 +649,22 @@ fn rename_group_record(base: &Path, group_id: Uuid, name: &str) -> Result<(), St
 #[cfg(test)]
 mod rename_tests {
     use super::*;
+    #[test]
+    fn removing_group_link_frees_its_path_without_touching_worlds() {
+        let base = std::env::temp_dir().join(format!("pandora-group-unlink-{}", Uuid::new_v4()));
+        let target = base.join("group/saves");
+        let link = base.join("instance/saves");
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        fs::write(target.join("level.dat"), b"world").unwrap();
+        make_link(&target, &link).unwrap();
+        remove_link(&link).unwrap();
+        let removed = fs::symlink_metadata(&link).is_err();
+        assert_eq!(fs::read(target.join("level.dat")).unwrap(), b"world");
+        fs::remove_dir_all(&base).unwrap();
+        assert!(removed, "unlink must remove the directory entry, not only its reparse point");
+    }
+
     #[test]
     fn rename_preserves_identity_storage_and_worlds_and_rejects_invalid_names() {
         let base = std::env::temp_dir().join(format!("save-group-rename-{}", Uuid::new_v4()));

@@ -161,7 +161,9 @@ fn link_directory(target: &Path, local: &Path) -> io::Result<()> {
 fn unlink_directory(local: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
-        junction::delete(local)
+        // RemoveDirectory unlinks a directory junction without traversing its target.
+        // Clearing just the reparse point would leave a colliding empty directory.
+        fs::remove_dir(local)
     }
     #[cfg(unix)]
     {

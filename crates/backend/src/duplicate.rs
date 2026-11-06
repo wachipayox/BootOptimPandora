@@ -705,6 +705,96 @@ mod tests {
     }
 
     #[test]
+    fn local_child_with_shared_litematica_keeps_group_link_out_of_inheritance() {
+        use crate::shared_data::{Context, Group};
+        use schema::{backend_config::SyncTargets, ignored_profile_paths::IgnoredProfilePaths};
+        let source = TestRoot::new("shared-source", true);
+        let destination = TestRoot::new("shared-child", false);
+        let store = TestRoot::new("shared-stores", false);
+        let directories = crate::directories::LauncherDirectories::new(store.0.clone());
+        let minecraft = source.0.join(".minecraft");
+        let ignored = IgnoredProfilePaths::normalized(Vec::new()).unwrap();
+        let global = SyncTargets::default();
+        let mut group = Group {
+            id: Uuid::new_v4(),
+            name: "fixture".into(),
+            targets: SyncTargets::default(),
+        };
+        group.targets.folders.insert("config/litematica".into());
+        fs::create_dir_all(directories.save_groups_dir.join(group.id.to_string())).unwrap();
+        fs::create_dir_all(minecraft.join("config/litematica")).unwrap();
+        fs::write(minecraft.join("config/litematica/settings.json"), b"personal").unwrap();
+        fs::write(minecraft.join("config/pack.json"), b"pack").unwrap();
+        let context = Context {
+            root: &source.0,
+            minecraft: &minecraft,
+            directories: &directories,
+            global: &global,
+            previous: None,
+            group: Some(&group),
+            ignored: &ignored,
+        };
+        crate::shared_data::apply(&context).unwrap();
+        let mut parent_layout = PersistentProfileLayout::open(&source.0).unwrap();
+        parent_layout.reconcile(&[]).unwrap();
+        let parent_uuid = parent_layout.profile_uuid();
+        let parent_branch = parent_layout.branch_manifest().unwrap();
+        drop(parent_layout);
+        let clone_source = prepare_profile_clone_source(&source.0).unwrap();
+        let clone_destination = begin_profile_clone_destination(&destination.0, &clone_source, true).unwrap();
+        duplicate_with_content_library(
+            &source.0,
+            &destination.0,
+            &directories.content_library_dir,
+            &directories.save_groups_dir,
+            true,
+            &|_, _| {},
+            &|| Ok(()),
+        )
+        .unwrap();
+        clone_destination.finish().unwrap();
+        let mut child_layout = PersistentProfileLayout::open(&destination.0).unwrap();
+        let child_branch = child_layout.branch_manifest().unwrap();
+        let entries = crate::local_profile::snapshot_parent_tree_filtered(
+            &minecraft,
+            parent_uuid,
+            &parent_branch,
+            Some(&child_branch.entries),
+            &ignored,
+        )
+        .unwrap();
+        let delta = crate::local_profile::local_parent_delta(
+            &child_branch,
+            parent_uuid,
+            &parent_branch.lineage,
+            None,
+            &[],
+            &[],
+            entries,
+        )
+        .unwrap();
+        child_layout.initialize_local_child_branch(&delta).unwrap();
+        let child_branch = child_layout.branch_manifest().unwrap();
+        assert!(child_branch.entries.contains_key("config/pack.json"));
+        assert!(!child_branch.entries.keys().any(|path| path.starts_with("config/litematica")));
+        let child_minecraft = destination.0.join(".minecraft");
+        crate::shared_data::apply(&Context {
+            root: &destination.0,
+            minecraft: &child_minecraft,
+            ..context
+        })
+        .unwrap();
+        assert!(crate::shared_storage::is_link(&child_minecraft.join("config/litematica")));
+        assert_eq!(fs::read(child_minecraft.join("config/litematica/settings.json")).unwrap(), b"personal");
+        assert_eq!(fs::read(child_minecraft.join("config/pack.json")).unwrap(), b"pack");
+        // Updating the group leaves the parent's inheritable pack snapshot unchanged.
+        fs::write(child_minecraft.join("config/litematica/settings.json"), b"changed personal").unwrap();
+        assert_eq!(fs::read(minecraft.join("config/litematica/settings.json")).unwrap(), b"changed personal");
+        drop(child_layout);
+        drop(clone_source);
+    }
+
+    #[test]
     fn derived_branch_icon_reuse_hue_rotation_and_opt_out_are_child_only() {
         let parent = TestRoot::new("icon-parent", false);
         let child = TestRoot::new("icon-child", false);
