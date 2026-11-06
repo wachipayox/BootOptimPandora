@@ -71,6 +71,7 @@ struct InstallDialog {
     loader_select_state: Option<Entity<SelectState<Vec<SharedString>>>>,
     single_loader_set: Option<EnumSet<CurseforgeModLoaderType>>,
     install_dependencies: bool,
+    replace_disabled: Option<Arc<std::path::Path>>,
 
     mod_version_select_state: Option<Entity<SelectState<SearchableVec<ModVersionItem>>>>,
     mod_versions_retry_task: Task<()>,
@@ -82,6 +83,17 @@ pub fn open(
     data: &DataEntities,
     window: &mut Window,
     cx: &mut App,
+) {
+    open_with_replacement(hit, install_for, data, window, cx, None);
+}
+
+pub(crate) fn open_with_replacement(
+    hit: CurseforgeHit,
+    install_for: Option<InstanceID>,
+    data: &DataEntities,
+    window: &mut Window,
+    cx: &mut App,
+    replace_disabled: Option<Arc<std::path::Path>>,
 ) {
     let name = SharedString::new(hit.name.clone());
     let title: SharedString = t::instance::content::install::title(&hit.name).into();
@@ -167,6 +179,7 @@ pub fn open(
             last_selected_minecraft_version: None,
             single_loader_set: None,
             install_dependencies: true,
+            replace_disabled: replace_disabled.clone(),
             mod_version_select_state: None,
             last_selected_loader: None,
             mod_versions_retry_task: Task::ready(()),
@@ -227,6 +240,7 @@ pub fn open(
             last_selected_minecraft_version: None,
             single_loader_set: None,
             install_dependencies: true,
+            replace_disabled: replace_disabled.clone(),
             mod_version_select_state: None,
             last_selected_loader: None,
             mod_versions_retry_task: Task::ready(()),
@@ -436,7 +450,7 @@ impl InstallDialog {
                     };
 
                     files.push(ContentInstallFile {
-                        replace_old: None,
+                        replace_old: this.replace_disabled.clone(),
                         path: bridge::install::ContentInstallPath::Safe(path),
                         download: ContentDownload::Url {
                             url: download_url,

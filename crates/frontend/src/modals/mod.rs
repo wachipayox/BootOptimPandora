@@ -22,3 +22,5 @@ pub mod windows_security;
 pub mod skin_import;
 
 pub mod global_sharing;
+
+pub(crate) mod reinstall_disabled;

@@ -9,8 +9,10 @@ use crate::{
     game_output::GameOutputRoot,
     interface_config::InterfaceConfig,
     pages::instance::{
-        content_subpage::InstanceContentSubpage, logs_subpage::InstanceLogsSubpage,
-        overwrites_subpage::InstanceOverwritesSubpage, quickplay_subpage::InstanceQuickplaySubpage,
+        content_subpage::InstanceContentSubpage,
+        logs_subpage::InstanceLogsSubpage,
+        overwrites_subpage::{InstanceOverwritesSubpage, ShowContent},
+        quickplay_subpage::InstanceQuickplaySubpage,
         settings_subpage::InstanceSettingsSubpage,
     },
     root, theme,
@@ -45,6 +47,9 @@ impl InstancePage {
             InstanceSubpage::Overwrites(p) => Some(p.clone()),
             _ => None,
         };
+        if let Some(page) = &overwrites_subpage {
+            Self::observe_overwrite_navigation(page, window, cx);
+        }
         let (send, receive) = tokio::sync::oneshot::channel();
         data.backend_handle.send(bridge::message::MessageToBackend::GetInstanceProfileInfo {
             id: instance_id,
@@ -74,6 +79,28 @@ impl InstancePage {
             overwrites_subpage,
         }
     }
+    fn observe_overwrite_navigation(
+        page: &Entity<InstanceOverwritesSubpage>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(page, window, |this, _, event: &ShowContent, window, cx| {
+            let ShowContent(tab, filename) = event;
+            if let Some(page) = tab.create(&this.instance, &this.data, this.data.backend_handle.clone(), window, cx) {
+                if let InstanceSubpage::Mods(content)
+                | InstanceSubpage::ResourcePacks(content)
+                | InstanceSubpage::Shaders(content) = &page
+                {
+                    content.update(cx, |content, cx| content.show_file(filename, window, cx));
+                }
+                InterfaceConfig::get_mut(cx).instance_subpage = *tab;
+                this.subpage = page;
+                cx.notify();
+            }
+        })
+        .detach();
+    }
+
     fn header(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let name = self.instance.read(cx).name.clone();
         let selected = self.subpage.page_type();
@@ -265,6 +292,9 @@ impl Render for InstancePage {
             if let Some(page) = page {
                 self.subpage = page;
                 if let InstanceSubpage::Overwrites(p) = &self.subpage {
+                    if self.overwrites_subpage.is_none() {
+                        Self::observe_overwrite_navigation(p, window, cx);
+                    }
                     self.overwrites_subpage = Some(p.clone());
                 }
             } else {

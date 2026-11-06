@@ -17,7 +17,7 @@ use bridge::{
 };
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, IndexPath, Sizable,
+    ActiveTheme, Disableable, IndexPath, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     list::{ListDelegate, ListItem, ListState},
@@ -33,7 +33,7 @@ use strum::IntoEnumIterator;
 use ustr::Ustr;
 
 use crate::{
-    component::design::{DesignButton, YesNo},
+    component::design::{self, ButtonAction, DesignButton, YesNo},
     entity::DataEntities,
     icon::PandoraIcon,
     interface_config::{InstanceContentSortKey, InterfaceConfig},
@@ -101,7 +101,6 @@ pub struct ContentListDelegate {
     searched: Option<Vec<SummaryOrChild>>,
     children: Vec<Vec<ContentEntryChild>>,
     expanded: Arc<AtomicUsize>,
-    confirming_delete: Arc<Mutex<FxHashSet<u64>>>,
     updating: Arc<Mutex<FxHashSet<u64>>>,
     last_query: SharedString,
     selected: FxHashSet<u64>,
@@ -135,7 +134,6 @@ impl ContentListDelegate {
             searched: None,
             children: Vec::new(),
             expanded: Arc::new(AtomicUsize::new(0)),
-            confirming_delete: Default::default(),
             updating,
             last_query: SharedString::new_static(""),
             selected: FxHashSet::default(),
@@ -311,33 +309,54 @@ impl ContentListDelegate {
         let can_unpack = summary.content_summary.extra.modpack_files().is_some();
         let backend = self.backend_handle.clone();
         let title = summary.filename.clone();
-        let confirmed = self.confirming_delete.lock().contains(&element_id);
-        let delete = std::rc::Rc::new(cx.listener(move |list, click: &ClickEvent, _, c| {
-            c.stop_propagation();
-            let delegate = list.delegate_mut();
-            if confirmed || (InterfaceConfig::get(c).quick_delete_mods && click.modifiers().shift) {
-                let ids = if delegate.is_selected(element_id) {
-                    delegate
-                        .content
-                        .iter()
-                        .filter(|item| delegate.is_selected(item.filename_hash))
-                        .map(|item| item.id)
-                        .collect()
-                } else {
-                    vec![content_id]
-                };
-                delegate.backend_handle.send(MessageToBackend::DeleteContent { id, content_ids: ids });
+        let delete_title = title.clone();
+        let delete = std::rc::Rc::new(cx.listener(move |list, _: &ClickEvent, window, cx| {
+            cx.stop_propagation();
+            let delegate = list.delegate();
+            let content_ids = if delegate.is_selected(element_id) {
+                delegate
+                    .content
+                    .iter()
+                    .filter(|item| delegate.is_selected(item.filename_hash))
+                    .map(|item| item.id)
+                    .collect()
             } else {
-                let mut confirmation = delegate.confirming_delete.lock();
-                confirmation.clear();
-                if delegate.is_selected(element_id) {
-                    confirmation.extend(&delegate.selected);
-                    confirmation.extend(&delegate.selected_range);
-                } else {
-                    confirmation.insert(element_id);
-                }
+                vec![content_id]
+            };
+            let backend = delegate.backend_handle.clone();
+            if InterfaceConfig::get(cx).quick_delete_mods && window.modifiers().shift {
+                backend.send(MessageToBackend::DeleteContent { id, content_ids });
+                return;
             }
-            c.notify();
+            let title = if content_ids.len() == 1 {
+                delete_title.clone()
+            } else {
+                "Eliminar".into()
+            };
+            window.open_dialog(cx, move |dialog, _, _| {
+                let backend = backend.clone();
+                let content_ids = content_ids.clone();
+                design::dialog(dialog).title(design::dialog_title(title.clone())).footer(
+                    h_flex()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(
+                            design::action_button("cancel-delete-content", "Cancelar", ButtonAction::Secondary)
+                                .on_click(|_, w, c| w.close_dialog(c)),
+                        )
+                        .child(
+                            design::action_button("confirm-delete-content", "Eliminar", ButtonAction::Danger).on_click(
+                                move |_, w, c| {
+                                    backend.send(MessageToBackend::DeleteContent {
+                                        id,
+                                        content_ids: content_ids.clone(),
+                                    });
+                                    w.close_dialog(c);
+                                },
+                            ),
+                        ),
+                )
+            });
         }));
         let more = Button::new(("content-more", element_id))
             .ghost()
@@ -368,11 +387,7 @@ impl ContentListDelegate {
                 menu.separator()
                     .item(
                         PopupMenuItem::new("Eliminar")
-                            .icon(if confirmed {
-                                PandoraIcon::Check
-                            } else {
-                                PandoraIcon::Trash2
-                            })
+                            .icon(PandoraIcon::Trash2)
                             .on_click(move |e, w, c| delete(e, w, c)),
                     )
                     .min_w(px(190.))
@@ -484,7 +499,6 @@ impl ContentListDelegate {
                 cx.stop_propagation();
                 if click.standard_click() {
                     let delegate = this.delegate_mut();
-                    delegate.confirming_delete.lock().clear();
                     if click.modifiers().shift
                         && let Some(from) = delegate.last_clicked_non_range
                     {
@@ -936,7 +950,6 @@ impl ContentListDelegate {
         self.content = mods.clone();
         self.children = children;
         self.searched = None;
-        self.confirming_delete.lock().clear();
         if last_mods_len != self.content.len() {
             self.expanded.store(0, Ordering::Release);
         }
@@ -991,7 +1004,6 @@ impl ContentListDelegate {
         self.selected.clear();
         self.selected_range.clear();
         self.last_clicked_non_range = None;
-        self.confirming_delete.lock().clear();
     }
 
     pub fn select_all(&mut self) {

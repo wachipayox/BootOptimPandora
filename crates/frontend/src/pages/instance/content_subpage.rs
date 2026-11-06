@@ -153,6 +153,11 @@ impl ContentType {
 }
 
 impl InstanceContentSubpage {
+    pub(super) fn show_file(&mut self, filename: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.update(cx, |input, cx| input.set_value(filename.to_owned(), window, cx));
+        self.content_list.update(cx, |list, cx| list.set_query(filename, window, cx));
+    }
+
     pub fn new(
         instance: &Entity<InstanceEntry>,
         content_type: ContentType,
