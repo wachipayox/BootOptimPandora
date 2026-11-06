@@ -902,12 +902,22 @@ impl Render for HomePage {
         }
         let tab_scroll = window.use_keyed_state("home-tab-scroll", cx, |_, _| ScrollHandle::new());
         let tab_scroll = tab_scroll.read(cx).clone();
+        let wheel_scroll = tab_scroll.clone();
         header = header.child(
             div()
+                .id("home-tabs-area")
                 .relative()
                 .flex_1()
                 .min_w_0()
                 .h_full()
+                // Wheel events reach every hitbox under the pointer; once the
+                // tabs (painted later) have scrolled, keep Home's vertical
+                // scroll underneath the header from moving too.
+                .on_scroll_wheel(move |_, _, cx| {
+                    if wheel_scroll.max_offset().x > px(0.) {
+                        cx.stop_propagation();
+                    }
+                })
                 // A flex row lets the non-shrinking tabs keep their own width,
                 // so the content can overflow and actually scroll (a block
                 // child would be clamped to the viewport width).
