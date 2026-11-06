@@ -5,6 +5,7 @@ mod policy;
 pub(crate) mod vector;
 
 pub(crate) use crate::interface_config::IntroMode;
+pub(crate) use policy::skips_intro;
 
 use crate::interface_config::InterfaceConfig;
 use gpui::{prelude::*, *};
@@ -239,7 +240,7 @@ impl Controller {
                     .font_family(crate::theme::SANS)
                     .text_size(px(12.))
                     .text_color(rgb(0xa9a9b2))
-                    .child("Clic o Esc para saltar"),
+                    .child("Esc o Espacio para saltar"),
             );
             if self.kind == IntroKind::Update {
                 layer = layer.child(
@@ -282,7 +283,7 @@ pub(crate) fn capture_frame(window: &mut Window) -> Option<AnyElement> {
                 .font_family(crate::theme::SANS)
                 .text_size(px(12.))
                 .text_color(rgb(0xa9a9b2))
-                .child("Clic o Esc para saltar"),
+                .child("Esc o Espacio para saltar"),
         );
     }
     Some(frame.into_any_element())

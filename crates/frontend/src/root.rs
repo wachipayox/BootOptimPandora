@@ -268,16 +268,8 @@ impl Render for LauncherRoot {
                 .size_full()
                 .occlude()
                 .child(layer)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        if let Some(startup) = &mut this.startup {
-                            startup.skip();
-                        }
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
-                );
+                // Clicks are swallowed but do not skip: only Esc or Space do.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
             // Dialogs, sheets and popovers use deferred drawing. A normal
             // sibling painted last still ends up below them; put the splash
             // above every deferred UI layer until its fade has completed.
@@ -305,7 +297,7 @@ impl Render for LauncherRoot {
             .track_focus(&self.focus_handle)
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if let Some(startup) = &mut this.startup {
-                    if event.keystroke.key == "escape" {
+                    if crate::startup::skips_intro(&event.keystroke.key) {
                         startup.skip();
                         cx.notify();
                     }
