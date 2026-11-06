@@ -14,12 +14,7 @@ use bridge::{
     serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{
-    Disableable, WindowExt, h_flex,
-    input::InputState,
-    scroll::{Scrollbar, ScrollbarAxis, ScrollbarMode, ScrollbarThumbStyle},
-    v_flex,
-};
+use gpui_component::{Disableable, WindowExt, h_flex, input::InputState, v_flex};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -929,31 +924,14 @@ impl Render for HomePage {
                         .track_scroll(&tab_scroll)
                         .child(tabs),
                 )
-                // Thin glass thumb over the artwork, always shown while the tabs
-                // overflow: no track, low-alpha white, stronger while hovered/dragged.
                 .child(
-                    div().absolute().bottom_0().left_0().right_0().h(px(6.)).child(
-                        Scrollbar::new(&tab_scroll)
-                            .axis(ScrollbarAxis::Horizontal)
-                            .mode(ScrollbarMode::Always)
-                            .styles(|styles| {
-                                let glass = |style: ScrollbarThumbStyle, alpha: u32, width: f32| {
-                                    style
-                                        .bg(rgba(0xffffff00 | alpha))
-                                        .width(px(width))
-                                        .inset(px(1.5))
-                                        .radius(px(1.5))
-                                        .min_length(px(32.))
-                                };
-                                styles
-                                    .track(|style| style.bg(transparent_black()).width(px(6.)))
-                                    .track_hover(|style| style.bg(transparent_black()))
-                                    .track_active(|style| style.bg(transparent_black()))
-                                    .thumb(|style| glass(style, 0x26, 2.))
-                                    .thumb_hover(|style| glass(style, 0x4d, 3.))
-                                    .thumb_active(|style| glass(style, 0x66, 3.))
-                            }),
-                    ),
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(6.))
+                        .child(design::tab_scrollbar(&tab_scroll, true)),
                 ),
         );
         if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {

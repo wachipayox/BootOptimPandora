@@ -429,6 +429,34 @@ pub fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: 
         )
 }
 
+/// Thin horizontal scrollbar for a row of tabs: no track, a 2 px thumb that
+/// grows to 3 px while hovered or dragged. `glass` paints translucent white
+/// for tabs over artwork; otherwise the theme's own thumb colour is kept so
+/// it stays visible on dark surfaces.
+pub fn tab_scrollbar(handle: &ScrollHandle, glass: bool) -> gpui_component::scroll::Scrollbar {
+    use gpui_component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarMode, ScrollbarThumbStyle};
+    let thumb = move |style: ScrollbarThumbStyle, alpha: u32, width: f32| {
+        style
+            .when(glass, |style| style.bg(rgba(0xffffff00 | alpha)))
+            .width(px(width))
+            .inset(px(1.5))
+            .radius(px(1.5))
+            .min_length(px(32.))
+    };
+    Scrollbar::new(handle)
+        .axis(ScrollbarAxis::Horizontal)
+        .mode(ScrollbarMode::Always)
+        .styles(move |styles| {
+            styles
+                .track(|style| style.bg(transparent_black()).width(px(6.)))
+                .track_hover(|style| style.bg(transparent_black()))
+                .track_active(|style| style.bg(transparent_black()))
+                .thumb(|style| thumb(style, 0x26, 2.))
+                .thumb_hover(|style| thumb(style, 0x4d, 3.))
+                .thumb_active(|style| thumb(style, 0x66, 3.))
+        })
+}
+
 pub fn tab(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> DesignButton {
     let label = label.into();
     DesignButton::new(id)
