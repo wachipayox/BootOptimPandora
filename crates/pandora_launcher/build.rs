@@ -19,6 +19,12 @@ fn windows() {
     res.set_icon(root.join(selected).to_str().unwrap());
     res.set("ProductName", "Wachiland Launcher");
     res.set("FileDescription", "Wachiland Launcher");
+    // Publisher metadata shown by Windows (file properties, SmartScreen and
+    // Defender reports). Keep CompanyName equal to the code-signing subject.
+    res.set("CompanyName", "Wachiland Elite");
+    res.set("LegalCopyright", "Wachiland Elite. Basado en Pandora Launcher de Moulberry (MIT).");
+    res.set("InternalName", "WachilandLauncher");
+    res.set("OriginalFilename", "WachilandLauncher.exe");
     if let Ok(version) = std::env::var("PANDORA_RELEASE_VERSION") {
         res.set("ProductVersion", &version);
         res.set("FileVersion", &version);
