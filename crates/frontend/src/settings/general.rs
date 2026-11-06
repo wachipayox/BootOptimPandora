@@ -5,9 +5,8 @@ use gpui_component::select::{Select, SelectEvent};
 
 use crate::{
     component::named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem, SearchableNamedDropdown},
-    interface_config::{InterfaceConfig, LiveGameOutputDisplay},
+    interface_config::{InterfaceConfig, IntroMode, LiveGameOutputDisplay},
     settings::{SettingGroup, SettingItem, SettingItemWidget, SettingPage},
-    startup::IntroMode,
 };
 
 pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
