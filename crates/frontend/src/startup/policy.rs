@@ -64,6 +64,11 @@ pub(super) fn intro_kind(
     }
 }
 
+/// Only Esc or Space skip the intro; mouse clicks do not.
+pub(crate) fn skips_intro(key: &str) -> bool {
+    matches!(key, "escape" | "space")
+}
+
 pub(super) fn may_reveal(
     elapsed: Duration,
     animation_elapsed: Duration,
@@ -85,7 +90,7 @@ pub(super) fn choose_track<'a>(tracks: &'a [String], last: Option<&str>, random:
 #[cfg(test)]
 mod tests {
     use super::super::IntroMode;
-    use super::{IntroKind, audio_fade_due, choose_track, initial_size, intro_kind, may_reveal};
+    use super::{IntroKind, audio_fade_due, choose_track, initial_size, intro_kind, may_reveal, skips_intro};
     use std::time::Duration;
     #[test]
     fn recommended_client_size_uses_physical_pixels_and_keeps_the_existing_minimum() {
@@ -106,6 +111,8 @@ mod tests {
         assert_eq!(intro_kind(IntroMode::Never, false, None, "1"), IntroKind::None);
         assert_eq!(intro_kind(IntroMode::Never, true, Some("0"), "1"), IntroKind::None);
         assert_eq!(IntroMode::default(), IntroMode::OnUpdate);
+        assert!(skips_intro("escape") && skips_intro("space"));
+        assert!(!skips_intro("enter") && !skips_intro("a"));
         // Earlier review builds already wrote this spelling to interface.json.
         assert_eq!(serde_json::to_string(&IntroMode::OnUpdate).unwrap(), "\"OnUpdate\"");
     }
