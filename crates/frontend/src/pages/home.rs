@@ -14,7 +14,12 @@ use bridge::{
     serial::AtomicOptionSerial,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{Disableable, WindowExt, h_flex, input::InputState, scroll::ScrollableElement, v_flex};
+use gpui_component::{
+    Disableable, WindowExt, h_flex,
+    input::InputState,
+    scroll::{Scrollbar, ScrollbarAxis, ScrollbarMode, ScrollbarThumbStyle},
+    v_flex,
+};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -895,7 +900,62 @@ impl Render for HomePage {
                 )));
             }
         }
-        header = header.child(div().flex_1().min_w_0().h_full().overflow_x_scrollbar().child(tabs));
+        let tab_scroll = window.use_keyed_state("home-tab-scroll", cx, |_, _| ScrollHandle::new());
+        let tab_scroll = tab_scroll.read(cx).clone();
+        let wheel_scroll = tab_scroll.clone();
+        header = header.child(
+            div()
+                .id("home-tabs-area")
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                // Wheel events reach every hitbox under the pointer; once the
+                // tabs (painted later) have scrolled, keep Home's vertical
+                // scroll underneath the header from moving too.
+                .on_scroll_wheel(move |_, _, cx| {
+                    if wheel_scroll.max_offset().x > px(0.) {
+                        cx.stop_propagation();
+                    }
+                })
+                // A flex row lets the non-shrinking tabs keep their own width,
+                // so the content can overflow and actually scroll (a block
+                // child would be clamped to the viewport width).
+                .child(
+                    h_flex()
+                        .id("home-tabs")
+                        .size_full()
+                        .overflow_x_scroll()
+                        .track_scroll(&tab_scroll)
+                        .child(tabs),
+                )
+                // Thin glass thumb over the artwork, always shown while the tabs
+                // overflow: no track, low-alpha white, stronger while hovered/dragged.
+                .child(
+                    div().absolute().bottom_0().left_0().right_0().h(px(6.)).child(
+                        Scrollbar::new(&tab_scroll)
+                            .axis(ScrollbarAxis::Horizontal)
+                            .mode(ScrollbarMode::Always)
+                            .styles(|styles| {
+                                let glass = |style: ScrollbarThumbStyle, alpha: u32, width: f32| {
+                                    style
+                                        .bg(rgba(0xffffff00 | alpha))
+                                        .width(px(width))
+                                        .inset(px(1.5))
+                                        .radius(px(1.5))
+                                        .min_length(px(32.))
+                                };
+                                styles
+                                    .track(|style| style.bg(transparent_black()).width(px(6.)))
+                                    .track_hover(|style| style.bg(transparent_black()))
+                                    .track_active(|style| style.bg(transparent_black()))
+                                    .thumb(|style| glass(style, 0x26, 2.))
+                                    .thumb_hover(|style| glass(style, 0x4d, 3.))
+                                    .thumb_active(|style| glass(style, 0x66, 3.))
+                            }),
+                    ),
+                ),
+        );
         if crate::root::should_render_custom_titlebar() && !cfg!(target_os = "macos") {
             use crate::component::generic_title_bar::WindowControl;
             header = header.child(
@@ -1151,6 +1211,7 @@ impl Render for HomePage {
             h_flex()
                 .h(px(84.))
                 .w_full()
+                .flex_shrink_0()
                 .px(px(24.))
                 .gap(px(16.))
                 .items_center()
@@ -1228,7 +1289,7 @@ impl Render for HomePage {
             .cloned()
             .collect::<Vec<_>>();
         let show_news = instance.is_some() || !news.is_empty() || !self.news_loaded;
-        let mut news_section = v_flex().px(px(24.)).pt(px(18.)).gap(px(12.)).child(
+        let mut news_section = v_flex().flex_shrink_0().px(px(24.)).pt(px(18.)).pb(px(24.)).gap(px(12.)).child(
             h_flex()
                 .h(px(24.))
                 .justify_between()
@@ -1328,7 +1389,8 @@ impl Render for HomePage {
             .relative()
             .size_full()
             .min_w_0()
-            .overflow_y_scrollbar()
+            .id("home-content-scroll")
+            .overflow_y_scroll()
             .child(hero)
             .child(game_bar)
             .when(show_news, |d| d.child(news_section));

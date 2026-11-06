@@ -152,7 +152,15 @@ impl InstancePage {
                 },
             )));
         }
-        header = header.child(div().flex_1().min_w_0().h_full().overflow_x_scrollbar().child(tabs));
+        header = header.child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .overflow_x_scrollbar()
+                .scrollbar_width(px(4.))
+                .child(tabs),
+        );
         if selected != InstanceSubpageType::Quickplay {
             let instance = self.instance.read(cx).clone();
             #[allow(unused_mut)]

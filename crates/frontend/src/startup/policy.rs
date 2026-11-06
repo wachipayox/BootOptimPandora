@@ -42,14 +42,31 @@ pub(super) fn audio_fade_due(animation_elapsed: Duration, elapsed: Duration, lim
     animation_elapsed >= INTRO + AUDIO_TAIL - AUDIO_FADE || elapsed >= limit
 }
 
-pub(super) fn intro_kind(existing_install: bool, last_version: Option<&str>, current: &str) -> IntroKind {
-    if last_version == Some(current) {
-        IntroKind::None
-    } else if existing_install {
-        IntroKind::Update
-    } else {
-        IntroKind::FirstInstall
+/// `OnUpdate` (the default) also covers the first launch on this device: no
+/// version has been recorded yet. `Always` replays the intro on every launch but
+/// only labels it as an update when the version actually changed.
+pub(super) fn intro_kind(
+    mode: super::IntroMode,
+    existing_install: bool,
+    last_version: Option<&str>,
+    current: &str,
+) -> IntroKind {
+    let changed = match last_version {
+        Some(last) if last == current => None,
+        Some(_) => Some(IntroKind::Update),
+        None if existing_install => Some(IntroKind::Update),
+        None => Some(IntroKind::FirstInstall),
+    };
+    match mode {
+        super::IntroMode::Never => IntroKind::None,
+        super::IntroMode::OnUpdate => changed.unwrap_or(IntroKind::None),
+        super::IntroMode::Always => changed.unwrap_or(IntroKind::FirstInstall),
     }
+}
+
+/// Only Esc or Space skip the intro; mouse clicks do not.
+pub(crate) fn skips_intro(key: &str) -> bool {
+    matches!(key, "escape" | "space")
 }
 
 pub(super) fn may_reveal(
@@ -72,7 +89,8 @@ pub(super) fn choose_track<'a>(tracks: &'a [String], last: Option<&str>, random:
 
 #[cfg(test)]
 mod tests {
-    use super::{IntroKind, audio_fade_due, choose_track, initial_size, intro_kind, may_reveal};
+    use super::super::IntroMode;
+    use super::{IntroKind, audio_fade_due, choose_track, initial_size, intro_kind, may_reveal, skips_intro};
     use std::time::Duration;
     #[test]
     fn recommended_client_size_uses_physical_pixels_and_keeps_the_existing_minimum() {
@@ -83,11 +101,20 @@ mod tests {
     }
 
     #[test]
-    fn only_new_install_and_changed_versions_have_intro() {
-        assert_eq!(intro_kind(false, None, "1"), IntroKind::FirstInstall);
-        assert_eq!(intro_kind(true, None, "1"), IntroKind::Update);
-        assert_eq!(intro_kind(true, Some("0"), "1"), IntroKind::Update);
-        assert_eq!(intro_kind(true, Some("1"), "1"), IntroKind::None);
+    fn intro_follows_mode_and_version() {
+        assert_eq!(intro_kind(IntroMode::OnUpdate, false, None, "1"), IntroKind::FirstInstall);
+        assert_eq!(intro_kind(IntroMode::OnUpdate, true, None, "1"), IntroKind::Update);
+        assert_eq!(intro_kind(IntroMode::OnUpdate, true, Some("0"), "1"), IntroKind::Update);
+        assert_eq!(intro_kind(IntroMode::OnUpdate, true, Some("1"), "1"), IntroKind::None);
+        assert_eq!(intro_kind(IntroMode::Always, true, Some("1"), "1"), IntroKind::FirstInstall);
+        assert_eq!(intro_kind(IntroMode::Always, true, Some("0"), "1"), IntroKind::Update);
+        assert_eq!(intro_kind(IntroMode::Never, false, None, "1"), IntroKind::None);
+        assert_eq!(intro_kind(IntroMode::Never, true, Some("0"), "1"), IntroKind::None);
+        assert_eq!(IntroMode::default(), IntroMode::OnUpdate);
+        assert!(skips_intro("escape") && skips_intro("space"));
+        assert!(!skips_intro("enter") && !skips_intro("a"));
+        // Earlier review builds already wrote this spelling to interface.json.
+        assert_eq!(serde_json::to_string(&IntroMode::OnUpdate).unwrap(), "\"OnUpdate\"");
     }
 
     #[test]

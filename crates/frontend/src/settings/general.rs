@@ -5,7 +5,7 @@ use gpui_component::select::{Select, SelectEvent};
 
 use crate::{
     component::named_dropdown::{DropdownName, NamedDropdown, NamedDropdownItem, SearchableNamedDropdown},
-    interface_config::{InterfaceConfig, LiveGameOutputDisplay},
+    interface_config::{InterfaceConfig, IntroMode, LiveGameOutputDisplay},
     settings::{SettingGroup, SettingItem, SettingItemWidget, SettingPage},
 };
 
@@ -20,6 +20,12 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                         title: || "Idioma",
                         description: || "",
                         widget: create_language_dropdown(window, cx),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: || "Animación de arranque",
+                        description: || "Al actualizar también incluye la primera apertura",
+                        widget: create_intro_mode_dropdown(window, cx),
                         ..Default::default()
                     },
                     SettingItem {
@@ -167,6 +173,39 @@ fn create_live_game_output_dropdown(window: &mut Window, cx: &mut App) -> Settin
             .rounded(px(0.))
             .text_size(px(13.))
             .menu_width(px(200.0))
+            .into_any_element()
+    }))
+}
+
+fn create_intro_mode_dropdown(window: &mut Window, cx: &mut App) -> SettingItemWidget {
+    let options = vec![
+        NamedDropdownItem {
+            name: DropdownName::new("Siempre"),
+            item: IntroMode::Always,
+        },
+        NamedDropdownItem {
+            name: DropdownName::new("Al actualizar"),
+            item: IntroMode::OnUpdate,
+        },
+        NamedDropdownItem {
+            name: DropdownName::new("Nunca"),
+            item: IntroMode::Never,
+        },
+    ];
+    let dropdown = NamedDropdown::create_and_select(options, InterfaceConfig::get(cx).startup_animation, window, cx);
+    cx.subscribe(&dropdown, |_, event: &SelectEvent<_>, cx| {
+        if let SelectEvent::Confirm(Some(value)) = event {
+            InterfaceConfig::get_mut(cx).startup_animation = *value;
+        }
+    })
+    .detach();
+    SettingItemWidget::Any(Rc::new(move |_, _| {
+        Select::new(&dropdown)
+            .h(px(32.))
+            .bg(rgb(crate::theme::PANEL_SUNKEN))
+            .rounded(px(0.))
+            .text_size(px(13.))
+            .menu_width(px(200.))
             .into_any_element()
     }))
 }

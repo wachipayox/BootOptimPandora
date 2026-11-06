@@ -4,6 +4,9 @@ mod geometry;
 mod policy;
 pub(crate) mod vector;
 
+pub(crate) use crate::interface_config::IntroMode;
+pub(crate) use policy::skips_intro;
+
 use crate::interface_config::InterfaceConfig;
 use gpui::{prelude::*, *};
 use policy::{INTRO, IntroKind, TRANSITION, audio_fade_due, intro_kind, may_reveal, preload_limit};
@@ -79,7 +82,12 @@ impl Controller {
         let existing = session.existing_install;
         let process_started = session.process_started;
         let version = option_env!("PANDORA_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-        let kind = intro_kind(existing, InterfaceConfig::get(cx).startup_seen_version.as_deref(), version);
+        let kind = intro_kind(
+            InterfaceConfig::get(cx).startup_animation,
+            existing,
+            InterfaceConfig::get(cx).startup_seen_version.as_deref(),
+            version,
+        );
         let mut tracks: Vec<String> = crate::Assets::iter()
             .filter(|p| p.starts_with("splash-music/") && p.ends_with(".ogg"))
             .map(|p| p.to_string())
@@ -232,7 +240,7 @@ impl Controller {
                     .font_family(crate::theme::SANS)
                     .text_size(px(12.))
                     .text_color(rgb(0xa9a9b2))
-                    .child("Clic o Esc para saltar"),
+                    .child("Esc o Espacio para saltar"),
             );
             if self.kind == IntroKind::Update {
                 layer = layer.child(
@@ -275,7 +283,7 @@ pub(crate) fn capture_frame(window: &mut Window) -> Option<AnyElement> {
                 .font_family(crate::theme::SANS)
                 .text_size(px(12.))
                 .text_color(rgb(0xa9a9b2))
-                .child("Clic o Esc para saltar"),
+                .child("Esc o Espacio para saltar"),
         );
     }
     Some(frame.into_any_element())

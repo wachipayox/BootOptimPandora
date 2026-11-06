@@ -54,6 +54,8 @@ pub struct InterfaceConfig {
     #[serde(default)]
     pub startup_seen_version: Option<String>,
     #[serde(default)]
+    pub startup_animation: IntroMode,
+    #[serde(default)]
     pub startup_last_music: Option<String>,
     #[serde(default = "schema::default_true")]
     pub home_general_news: bool,
@@ -211,6 +213,16 @@ impl InterfaceConfig {
     }
 }
 
+/// When the startup intro plays. `OnUpdate` also covers the first launch on a
+/// device. Serialized names are kept as written by earlier review builds.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum IntroMode {
+    Always,
+    #[default]
+    OnUpdate,
+    Never,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, strum::EnumIter)]
 #[serde(rename_all = "lowercase")]
 pub enum LiveGameOutputDisplay {
@@ -326,6 +338,7 @@ impl Default for InterfaceConfig {
             home_instance: None,
             skipped_launcher_version: None,
             startup_seen_version: None,
+            startup_animation: Default::default(),
             startup_last_music: None,
             home_general_news: true,
             home_read_news: Default::default(),
