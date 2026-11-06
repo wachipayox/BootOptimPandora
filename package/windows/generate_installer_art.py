@@ -84,7 +84,7 @@ def sidebar(scale: float) -> Image.Image:
     spaced_text(draw, w, 242 * u, "LAUNCHER", ImageFont.truetype(str(SEMI), round(13 * u)), ACCENT, 4.8 * u)
     line_w = 30 * u
     draw.rectangle(((w - line_w) / 2, 271 * u, (w + line_w) / 2, 271 * u + max(1, round(u))), fill=ACCENT)
-    spaced_text(draw, w, 352 * u, "Wachiland Elite", ImageFont.truetype(str(SEMI), round(10 * u)), MUTED, 0.6 * u)
+    spaced_text(draw, w, 352 * u, "INSTALADOR", ImageFont.truetype(str(SEMI), round(10 * u)), MUTED, 0.6 * u)
     return base.convert("RGB")
 
 
