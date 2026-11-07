@@ -243,6 +243,7 @@ Var PassiveMode
 ; Migration from another launcher's folder (see "Migration" below).
 Var MigrateWanted
 Var MigrateDir
+Var MigrateDirShown
 Var MigrateVoxy
 Var MigrateResult
 Var MigrateCheck
@@ -390,6 +391,23 @@ Function WelcomeShow
   !insertmacro EXACT_SIDEBAR $mui.WelcomePage.Image $mui.WelcomePage.Image.Bitmap
 FunctionEnd
 
+!macro CONTROL_RECT CONTROL PARENT
+  ; Pushes nothing; leaves the control's rectangle in $R2..$R5 (left, top,
+  ; right, bottom) in its parent's client coordinates.
+  System::Call '*(i, i, i, i) p .R1'
+  System::Call 'user32::GetWindowRect(p ${CONTROL}, p R1)'
+  System::Call 'user32::MapWindowPoints(p 0, p ${PARENT}, p R1, i 2)'
+  System::Call '*$R1(i .R2, i .R3, i .R4, i .R5)'
+  System::Free $R1
+!macroend
+
+!macro SHIFT_DOWN CONTROL PARENT DELTA
+  !insertmacro CONTROL_RECT ${CONTROL} ${PARENT}
+  IntOp $R3 $R3 + ${DELTA}
+  ; SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+  System::Call 'user32::SetWindowPos(p ${CONTROL}, p 0, i R2, i R3, i 0, i 0, i 0x15)'
+!macroend
+
 Function FinishShow
   Call DarkPage
   StrCpy $R9 $mui.FinishPage
@@ -409,7 +427,21 @@ Function FinishShow
   ${ElseIf} $MigrateResult == "failed"
     ${NSD_SetText} $mui.FinishPage.Text "$(finishTextMigrationFailed)"
   ${EndIf}
+  ${If} $MigrateResult != ""
+    ; The migration text is longer than MUI's 40 dialog units: make the label
+    ; 2.5 times as tall and move the two check boxes down by the difference.
+    !insertmacro CONTROL_RECT $mui.FinishPage.Text $mui.FinishPage
+    IntOp $R6 $R5 - $R3
+    IntOp $R7 $R6 * 5
+    IntOp $R7 $R7 / 2
+    IntOp $R8 $R4 - $R2
+    System::Call 'user32::SetWindowPos(p $mui.FinishPage.Text, p 0, i R2, i R3, i R8, i R7, i 0x14)'
+    IntOp $R9 $R7 - $R6
+    !insertmacro SHIFT_DOWN $mui.FinishPage.Run $mui.FinishPage $R9
+    !insertmacro SHIFT_DOWN $mui.FinishPage.ShowReadme $mui.FinishPage $R9
+  ${EndIf}
 FunctionEnd
+
 
 ; ---------------------------------------------------------------------------
 ; Migration: copy the player's Wachiland Elite folder from another launcher
@@ -614,6 +646,14 @@ Section Migrate
   ${If} $R0 == 0
     StrCpy $MigrateResult "ok"
     DetailPrint "$(migrateDone)"
+    ; Shown on the finish page, which has room for about 55 characters a line.
+    StrCpy $MigrateDirShown $MigrateDir
+    StrLen $R1 "$APPDATA\"
+    StrCpy $R2 $MigrateDir $R1
+    ${If} $R2 == "$APPDATA\"
+      StrCpy $R2 $MigrateDir "" $R1
+      StrCpy $MigrateDirShown "AppData\Roaming\$R2"
+    ${EndIf}
   ${Else}
     StrCpy $MigrateResult "failed"
     DetailPrint "$(migrateFailedLog) ($R0)"

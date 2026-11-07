@@ -4,7 +4,7 @@
 #
 # Signing is optional and pluggable: scripts/sign_windows.ps1 signs the launcher,
 # the uninstaller and the installer when a signing secret is configured, and
-# prints a warning otherwise. See docs/windows-installer.md.
+# prints a warning otherwise. See docs/features/windows-installer.md.
 set -e
 
 if [ -z "$1" ]; then

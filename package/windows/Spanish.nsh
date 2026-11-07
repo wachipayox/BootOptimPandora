@@ -1,5 +1,5 @@
 ﻿; Spanish text for package/windows/installer.nsi ($R6 holds the installed version,
-; $MigrateDir the player's old folder).
+; $MigrateDirShown the player's old folder).
 LangString welcomeTitle ${LANG_SPANISH} "Te damos la bienvenida a ${PRODUCTNAME}"
 LangString welcomeText ${LANG_SPANISH} "Vamos a instalar ${PRODUCTNAME} ${VERSION} para tu usuario de Windows. No hacen falta permisos de administrador.$\r$\n$\r$\nTus instancias, mundos y ajustes se guardan aparte: instalar, actualizar o desinstalar el launcher no los toca.$\r$\n$\r$\nPulsa Siguiente para continuar."
 LangString directoryText ${LANG_SPANISH} "${PRODUCTNAME} se instalará en esta carpeta. Elige una de tu usuario: el launcher se actualiza solo y necesita poder escribir en ella."
@@ -33,12 +33,12 @@ LangString migrateCheck ${LANG_SPANISH} "Migrar mi carpeta de Wachiland Elite"
 LangString migrateFolder ${LANG_SPANISH} "Carpeta del launcher anterior (suele estar en AppData\Roaming):"
 LangString migrateBrowse ${LANG_SPANISH} "Examinar…"
 LangString migrateBrowseTitle ${LANG_SPANISH} "Elige tu carpeta de Wachiland Elite (la que tiene saves, mods y config)"
-LangString migrateVoxy ${LANG_SPANISH} "Copiar también los datos de Voxy (.voxy). Ocupan mucho y se regeneran jugando."
+LangString migrateVoxy ${LANG_SPANISH} "Copiar también Voxy (.voxy): ocupa mucho y se regenera jugando."
 LangString migrateWarning ${LANG_SPANISH} "Solo se copia: tu carpeta original no se modifica ni se borra. Necesitas espacio libre para la copia; el modpack se descarga desde el servidor, reutilizando los archivos que ya tengas."
 LangString migrateNotFound ${LANG_SPANISH} "Esa carpeta no parece de Minecraft: no tiene options.txt ni saves. Elige la carpeta de Wachiland Elite de tu launcher anterior."
 LangString migrateRunning ${LANG_SPANISH} "Migrando tu carpeta de Wachiland Elite…"
 LangString migrateDone ${LANG_SPANISH} "Migración completada."
 LangString migrateFailedLog ${LANG_SPANISH} "No se ha podido migrar la carpeta"
 LangString migrateFailed ${LANG_SPANISH} "${PRODUCTNAME} está instalado, pero no se ha podido migrar tu carpeta (¿sin conexión con el servidor?). No se ha copiado nada y tu carpeta original está intacta.$\r$\n$\r$\nVuelve a ejecutar el instalador para intentarlo otra vez."
-LangString finishTextMigrated ${LANG_SPANISH} "Ya puedes abrir ${PRODUCTNAME} desde el menú Inicio. Tu instancia de Wachiland Elite está lista con tus mundos y ajustes.$\r$\n$\r$\nNo se han borrado los archivos originales. Para ahorrar espacio, bórralos en:$\r$\n$MigrateDir"
+LangString finishTextMigrated ${LANG_SPANISH} "Ya puedes abrir ${PRODUCTNAME} desde el menú Inicio. Tu instancia de Wachiland Elite está lista con tus mundos y ajustes.$\r$\n$\r$\nNo se han borrado los archivos originales. Para ahorrar espacio, bórralos en:$\r$\n$MigrateDirShown"
 LangString finishTextMigrationFailed ${LANG_SPANISH} "Ya puedes abrir ${PRODUCTNAME} desde el menú Inicio.$\r$\n$\r$\nNo se ha podido migrar tu carpeta y no se ha copiado nada. Vuelve a ejecutar el instalador para intentarlo otra vez."

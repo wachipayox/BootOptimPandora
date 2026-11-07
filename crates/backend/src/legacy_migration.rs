@@ -50,18 +50,70 @@ const REPLACES_DEFAULTS: &[&str] = &["options.txt", "servers.dat"];
 const ADDED_CONTENT: &[&str] = &["resourcepacks", "shaderpacks"];
 const MODS_REPORT: &str = "mods-del-launcher-anterior.txt";
 
+/// One progress line on stdout. The installer reads a pipe with `nsExec`, which
+/// decodes the Windows ANSI code page, so a pipe gets that encoding; a console
+/// gets UTF-8 as usual.
 fn say(line: impl AsRef<str>) {
+    use std::io::IsTerminal;
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{}", line.as_ref());
+    let line = format!(
+        "{}
+",
+        line.as_ref()
+    );
+    #[cfg(windows)]
+    if !stdout.is_terminal() {
+        let _ = stdout.write_all(&to_ansi(&line));
+        let _ = stdout.flush();
+        return;
+    }
+    let _ = stdout.write_all(line.as_bytes());
     let _ = stdout.flush();
+}
+
+#[cfg(windows)]
+fn to_ansi(text: &str) -> Vec<u8> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn WideCharToMultiByte(
+            code_page: u32,
+            flags: u32,
+            wide: *const u16,
+            wide_len: i32,
+            out: *mut u8,
+            out_len: i32,
+            default_char: *const u8,
+            used_default: *mut i32,
+        ) -> i32;
+    }
+    const CP_ACP: u32 = 0;
+    let wide: Vec<u16> = text.encode_utf16().collect();
+    let Ok(wide_len) = i32::try_from(wide.len()) else {
+        return text.as_bytes().to_vec();
+    };
+    let null = std::ptr::null_mut();
+    // SAFETY: lengths match the buffers; a null output buffer only asks for the size.
+    let size =
+        unsafe { WideCharToMultiByte(CP_ACP, 0, wide.as_ptr(), wide_len, null, 0, std::ptr::null(), null.cast()) };
+    if size <= 0 {
+        return text.as_bytes().to_vec();
+    }
+    let mut out = vec![0u8; size as usize];
+    let written = unsafe {
+        WideCharToMultiByte(CP_ACP, 0, wide.as_ptr(), wide_len, out.as_mut_ptr(), size, std::ptr::null(), null.cast())
+    };
+    out.truncate(written.max(0) as usize);
+    out
 }
 
 fn megabytes(bytes: u64) -> String {
     let mb = bytes as f64 / 1_048_576.0;
     if mb >= 1024.0 {
         format!("{:.1} GB", mb / 1024.0).replace('.', ",")
-    } else {
+    } else if mb >= 1.0 {
         format!("{mb:.0} MB")
+    } else {
+        "menos de 1 MB".into()
     }
 }
 
@@ -447,7 +499,12 @@ fn copy_player_data(
     if let Ok(entries) = std::fs::read_dir(source.join("mods")) {
         let mut added: Vec<String> = entries
             .flatten()
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|file| {
+                let lower = file.to_ascii_lowercase();
+                lower.ends_with(".jar") || lower.ends_with(".jar.disabled")
+            })
             .filter(|file| {
                 let relative = format!("mods/{file}");
                 !old_pack.contains(&relative) && !profile_paths.contains(&relative)
@@ -496,6 +553,7 @@ mod tests {
         write(&source.join("config/jei/jei-client.ini"), "not copied");
         write(&source.join("mods/pack.jar"), "pack");
         write(&source.join("mods/extra.jar"), "mine");
+        write(&source.join("mods/.connector/cache.bin"), "not a mod");
         write(&source.join("resourcepacks/pack.zip"), "pack");
         write(&source.join("resourcepacks/mine.zip"), "mine");
         write(&source.join("shaderpacks/Shader/a.txt"), "mine");
@@ -524,7 +582,7 @@ mod tests {
         assert!(!dot.join(".voxy").exists());
         assert_eq!(std::fs::read_to_string(dot.join("options.txt")).unwrap(), "version:3955\nfov:0.5\n");
         let report = std::fs::read_to_string(dot.join(MODS_REPORT)).unwrap();
-        assert!(report.contains("extra.jar") && !report.contains("pack.jar"));
+        assert!(report.contains("extra.jar") && !report.contains("pack.jar") && !report.contains(".connector"));
         // The source is untouched.
         assert!(source.join("mods/extra.jar").is_file());
     }
