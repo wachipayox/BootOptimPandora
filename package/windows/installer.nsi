@@ -240,6 +240,19 @@ FunctionEnd
 ; Installer pages
 Var Upgrading
 Var PassiveMode
+; Migration from another launcher's folder (see "Migration" below).
+Var MigrateWanted
+Var MigrateDir
+Var MigrateVoxy
+Var MigrateResult
+Var MigrateCheck
+Var MigrateField
+Var MigrateBrowse
+Var MigrateVoxyCheck
+
+; The global profile that a migrated folder becomes an instance of.
+!define MIGRATION_PROFILE "profile_wachiland-elite"
+!define MIGRATION_NAME "Wachiland Elite"
 
 !define MUI_WELCOMEPAGE_TITLE "$(welcomeTitle)"
 !define MUI_WELCOMEPAGE_TEXT "$(welcomeText)"
@@ -254,6 +267,8 @@ Var PassiveMode
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipDirectory
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW DarkPage
 !insertmacro MUI_PAGE_DIRECTORY
+
+Page custom MigrationShow MigrationLeave
 
 !define MUI_PAGE_HEADER_TEXT "$(installingTitle)"
 !define MUI_PAGE_HEADER_SUBTEXT "$(installingSubtitle)"
@@ -305,6 +320,18 @@ Function .onInit
   SetRegView 64
   Call ExtractArt
   !insertmacro ART_FILES side sidebar
+
+  ; /MIGRATE=<folder> [/MIGRATEVOXY] migrate without the page (silent installs).
+  ${GetOptions} $CMDLINE "/MIGRATE=" $R0
+  ${IfNot} ${Errors}
+  ${AndIf} $R0 != ""
+    StrCpy $MigrateDir $R0
+    StrCpy $MigrateWanted 1
+  ${EndIf}
+  ${GetOptions} $CMDLINE "/MIGRATEVOXY" $R0
+  ${IfNot} ${Errors}
+    StrCpy $MigrateVoxy 1
+  ${EndIf}
 
   StrCpy $Upgrading 0
   ReadRegStr $R0 HKCU "${MANUPRODUCTKEY}" ""
@@ -377,6 +404,134 @@ Function FinishShow
   ${AndIfNot} ${FileExists} "$DESKTOP\${PRODUCTNAME}.lnk"
     SendMessage $mui.FinishPage.ShowReadme ${BM_SETCHECK} ${BST_UNCHECKED} 0
   ${EndIf}
+  ${If} $MigrateResult == "ok"
+    ${NSD_SetText} $mui.FinishPage.Text "$(finishTextMigrated)"
+  ${ElseIf} $MigrateResult == "failed"
+    ${NSD_SetText} $mui.FinishPage.Text "$(finishTextMigrationFailed)"
+  ${EndIf}
+FunctionEnd
+
+; ---------------------------------------------------------------------------
+; Migration: copy the player's Wachiland Elite folder from another launcher
+; into a new instance of the global profile. The launcher does the work
+; (--migrate-legacy): it verifies the signed profile, reuses the pack files the
+; player already has, creates the instance like the GUI and then copies only
+; player data. The old folder is only read.
+Function FindLegacyFolder
+  ${If} $MigrateDir != ""
+    Return
+  ${EndIf}
+  ${If} ${FileExists} "$APPDATA\.minecraft_wachilandelite\automodpack\modpacks\*Wachiland*"
+    StrCpy $MigrateDir "$APPDATA\.minecraft_wachilandelite"
+    Return
+  ${EndIf}
+  ; Players' folders have different names: take the first one in AppData with
+  ; an AutoModpack Wachiland modpack.
+  FindFirst $R0 $R1 "$APPDATA\*"
+  ${DoWhile} $R1 != ""
+    ${If} $R1 != "."
+    ${AndIf} $R1 != ".."
+    ${AndIf} ${FileExists} "$APPDATA\$R1\automodpack\modpacks\*Wachiland*"
+      StrCpy $MigrateDir "$APPDATA\$R1"
+      ${Break}
+    ${EndIf}
+    FindNext $R0 $R1
+  ${Loop}
+  FindClose $R0
+FunctionEnd
+
+Function MigrationShow
+  ${IfThen} $PassiveMode == 1 ${|} Abort ${|}
+  !insertmacro MUI_HEADER_TEXT "$(migrateTitle)" "$(migrateSubtitle)"
+  Call FindLegacyFolder
+  nsDialogs::Create 1018
+  Pop $R5
+  ${If} $R5 == error
+    Abort
+  ${EndIf}
+  ${NSD_CreateLabel} 0 0 100% 44u "$(migrateText)"
+  Pop $R0
+  ${NSD_CreateCheckbox} 0 48u 100% 12u "$(migrateCheck)"
+  Pop $MigrateCheck
+  ${NSD_OnClick} $MigrateCheck MigrationClick
+  ${NSD_CreateLabel} 12u 64u 88% 10u "$(migrateFolder)"
+  Pop $R0
+  ${NSD_CreateText} 12u 76u 66% 13u "$MigrateDir"
+  Pop $MigrateField
+  ${NSD_CreateButton} 80% 75u 20% 15u "$(migrateBrowse)"
+  Pop $MigrateBrowse
+  ${NSD_OnClick} $MigrateBrowse MigrationBrowse
+  ${NSD_CreateCheckbox} 12u 94u 88% 12u "$(migrateVoxy)"
+  Pop $MigrateVoxyCheck
+  ${NSD_CreateLabel} 0 112u 100% 26u "$(migrateWarning)"
+  Pop $R0
+  ${If} $MigrateWanted == 1
+    ${NSD_Check} $MigrateCheck
+  ${EndIf}
+  ${If} $MigrateVoxy == 1
+    ${NSD_Check} $MigrateVoxyCheck
+  ${EndIf}
+  Call DarkPage
+  StrCpy $R9 $R5
+  SetCtlColors $R9 ${C_INK} ${C_PANEL}
+  Call DarkChildren
+  ; The warning in the accent colour, like the launcher's notices.
+  SetCtlColors $R0 F5CE5B ${C_PANEL}
+  Call MigrationEnable
+  nsDialogs::Show
+FunctionEnd
+
+Function MigrationClick
+  Pop $R0
+  Call MigrationEnable
+FunctionEnd
+
+Function MigrationEnable
+  ${NSD_GetState} $MigrateCheck $R1
+  ${If} $R1 == ${BST_CHECKED}
+    StrCpy $R1 1
+  ${Else}
+    StrCpy $R1 0
+  ${EndIf}
+  EnableWindow $MigrateField $R1
+  EnableWindow $MigrateBrowse $R1
+  EnableWindow $MigrateVoxyCheck $R1
+FunctionEnd
+
+Function MigrationBrowse
+  Pop $R0
+  ; Always opens in AppData, where the old launchers keep their folders.
+  nsDialogs::SelectFolderDialog "$(migrateBrowseTitle)" "$APPDATA"
+  Pop $R0
+  ${If} $R0 != "error"
+  ${AndIf} $R0 != ""
+    ${NSD_SetText} $MigrateField $R0
+  ${EndIf}
+FunctionEnd
+
+Function MigrationLeave
+  ${NSD_GetText} $MigrateField $MigrateDir
+  ; A trailing backslash would escape the closing quote on the command line.
+  ${Do}
+    StrCpy $R0 $MigrateDir 1 -1
+    ${If} $R0 != "\"
+      ${Break}
+    ${EndIf}
+    StrCpy $MigrateDir $MigrateDir -1
+  ${Loop}
+  StrCpy $MigrateWanted 0
+  ${NSD_GetState} $MigrateCheck $R0
+  ${If} $R0 == ${BST_CHECKED}
+    ${IfNot} ${FileExists} "$MigrateDir\options.txt"
+    ${AndIfNot} ${FileExists} "$MigrateDir\saves\*.*"
+      MessageBox MB_OK|MB_ICONEXCLAMATION "$(migrateNotFound)"
+      Abort
+    ${EndIf}
+    StrCpy $MigrateWanted 1
+  ${EndIf}
+  StrCpy $MigrateVoxy 0
+  ${NSD_GetState} $MigrateVoxyCheck $R0
+  ${IfThen} $R0 == ${BST_CHECKED} ${|} StrCpy $MigrateVoxy 1 ${|}
 FunctionEnd
 
 !macro CheckIfAppIsRunning
@@ -444,6 +599,29 @@ Section Install
       Call CreateDesktopShortcut
   shortcuts_done:
   ${IfThen} $PassiveMode == 1 ${|} SetAutoClose true ${|}
+SectionEnd
+
+Section Migrate
+  ${If} $MigrateWanted != 1
+    Return
+  ${EndIf}
+  SetDetailsView show
+  DetailPrint "$(migrateRunning)"
+  StrCpy $R1 ""
+  ${IfThen} $MigrateVoxy == 1 ${|} StrCpy $R1 " --migrate-voxy" ${|}
+  nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --migrate-legacy "$MigrateDir" --from-profile ${MIGRATION_PROFILE} --migrate-name "${MIGRATION_NAME}"$R1'
+  Pop $R0
+  ${If} $R0 == 0
+    StrCpy $MigrateResult "ok"
+    DetailPrint "$(migrateDone)"
+  ${Else}
+    StrCpy $MigrateResult "failed"
+    DetailPrint "$(migrateFailedLog) ($R0)"
+    ${IfNot} ${Silent}
+    ${AndIf} $PassiveMode != 1
+      MessageBox MB_OK|MB_ICONEXCLAMATION "$(migrateFailed)"
+    ${EndIf}
+  ${EndIf}
 SectionEnd
 
 Function .onInstSuccess

@@ -55,6 +55,12 @@ pub async fn run(backend: &Arc<BackendState>, command: CliInstanceCommand) -> Cl
         } => create(backend, &name, &profile_id, &revision).await,
         CliInstanceCommand::Update { name, revision } => update(backend, &name, &revision).await,
         CliInstanceCommand::Delete { name, confirm } => delete(backend, &name, &confirm),
+        CliInstanceCommand::Migrate {
+            source,
+            name,
+            profile_id,
+            include_voxy,
+        } => crate::legacy_migration::migrate(backend, &source, &name, &profile_id, include_voxy).await,
     };
     for line in &outcome.lines {
         log::info!("{line}");
@@ -62,7 +68,7 @@ pub async fn run(backend: &Arc<BackendState>, command: CliInstanceCommand) -> Cl
     outcome
 }
 
-fn done(lines: Vec<String>) -> CliStartOutcome {
+pub(crate) fn done(lines: Vec<String>) -> CliStartOutcome {
     CliStartOutcome { lines, exit_code: 0 }
 }
 
@@ -73,7 +79,7 @@ fn stop(exit_code: u8, line: String) -> CliStartOutcome {
     }
 }
 
-fn text(value: &str) -> String {
+pub(crate) fn text(value: &str) -> String {
     value.replace(['\r', '\n'], " ")
 }
 
@@ -81,14 +87,14 @@ fn not_found(name: &str) -> CliStartOutcome {
     stop(EXIT_INSTANCE_NOT_FOUND, format!("{PREFIX} INSTANCE-NOT-FOUND name={}", text(name)))
 }
 
-fn failed(verb: &str, name: &str, reason: &str) -> CliStartOutcome {
+pub(crate) fn failed(verb: &str, name: &str, reason: &str) -> CliStartOutcome {
     stop(
         EXIT_OPERATION_FAILED,
         format!("{PREFIX} {verb} instance={} reason={}", text(name), text(reason)),
     )
 }
 
-fn refused(name: &str, reason: &str) -> CliStartOutcome {
+pub(crate) fn refused(name: &str, reason: &str) -> CliStartOutcome {
     stop(EXIT_REFUSED, format!("{PREFIX} REFUSED instance={} reason={}", text(name), reason))
 }
 
@@ -156,17 +162,17 @@ async fn resolve_revision(
 
 // ---- finding instances ------------------------------------------------------------------------------
 
-struct Found {
-    id: InstanceID,
+pub(crate) struct Found {
+    pub(crate) id: InstanceID,
     name: String,
-    root: Arc<Path>,
-    dot_minecraft: Arc<Path>,
+    pub(crate) root: Arc<Path>,
+    pub(crate) dot_minecraft: Arc<Path>,
     configuration: schema::instance::InstanceConfiguration,
     busy: bool,
 }
 
 /// Same lookup as the command-line Start: the exact name, then a case-insensitive match.
-fn find(backend: &BackendState, name: &str) -> Option<Found> {
+pub(crate) fn find(backend: &BackendState, name: &str) -> Option<Found> {
     // `Persistent::get` needs `&mut`, so the lookup holds the write lock for a moment.
     let mut state = backend.instance_state.write();
     let mut found = None;

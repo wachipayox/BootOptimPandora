@@ -57,6 +57,24 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                 searched_items: None,
             },
             SettingGroup {
+                title: Some(|| "Minecraft"),
+                items: vec![SettingItem {
+                    title: || "Ajustes de Minecraft globales",
+                    description: || {
+                        "Vídeo, sonido y controles iguales en todas las instancias, adaptados a su versión y loader"
+                    },
+                    widget: SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
+                        crate::component::design::YesNo::new("global-options")
+                            .checked(backend.global_options)
+                            .on_click(cx.listener(|root, value: &bool, _, cx| root.set_global_options(*value, cx)))
+                            .into_any_element()
+                    })),
+                    ..Default::default()
+                }]
+                .into(),
+                searched_items: None,
+            },
+            SettingGroup {
                 title: Some(|| "Privacidad"),
                 items: vec![
                     SettingItem {

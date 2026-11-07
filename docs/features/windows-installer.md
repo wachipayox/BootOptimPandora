@@ -60,6 +60,49 @@ Explicit IDs would split the pinned icon from the running window.
 Silent use: `/S` for a fully silent run, `/P` for passive mode. Both create the
 desktop shortcut unless `/NS` is passed, and `/R` starts the launcher afterwards.
 
+## Migration from another launcher
+
+An optional page after the folder page offers to migrate the player's
+Wachiland Elite folder from another launcher. It is unticked by default. It
+suggests the first folder in `%APPDATA%` with an AutoModpack `*Wachiland*`
+modpack, and "Examinar…" always opens in `%APPDATA%`, because every player's
+folder has a different name. The page says that the folder is only copied. A
+`.voxy` box (unticked) adds the Voxy level-of-detail data.
+
+After installing, the installer runs the launcher headless:
+
+```
+WachilandLauncher.exe --migrate-legacy <folder> --from-profile profile_wachiland-elite --migrate-name "Wachiland Elite" [--migrate-voxy]
+```
+
+`crates/backend/src/legacy_migration.rs` then:
+
+1. Takes the revision the launcher itself installs (the `stable` channel, or the
+   latest one), and copies pack files the player already has (same path, size
+   and SHA-256 as the signed objects) into the download cache.
+2. Creates the instance exactly like the GUI. It belongs to the player, not to
+   the command line, so `--delete-instance` cannot remove it. Copying player files
+   first would turn pack paths into local files that never update.
+3. Copies only: worlds (one by one; a name taken gets "(migrado)"),
+   `screenshots`, `xaero`, `journeymap`, `schematics`, `Sable-Schematics`,
+   `music_sheets`, `replay_recordings`, `config/litematica`, `options.txt`,
+   `servers.dat`, `hotbar.nbt`, `command_history.txt`, and the resource packs and
+   shaders the player added (in neither the old AutoModpack list nor the new
+   profile). Mods and other configs are not copied; the mods the player had added
+   are listed in `.minecraft/mods-del-launcher-anterior.txt`.
+4. Makes the old `options.txt` the [global Minecraft settings](global-minecraft-settings.md)
+   and turns them on.
+
+If the profile cannot be installed (no connection…), the half-made instance is
+removed and nothing is copied. The finish page then says so; otherwise it
+reminds the player that the old folder was not deleted and where it is.
+
+The command-line run creates `config.json` without opening a window. A
+`first-open-pending` marker keeps the first window's intro the first-install
+one.
+
+Silent use: `/MIGRATE=<folder>` and `/MIGRATEVOXY`.
+
 ## Code signing
 
 `scripts/sign_windows.ps1 <file>` signs:

@@ -2226,6 +2226,33 @@ impl BackendState {
                 });
                 crate::update::spawn_update_check(self, false);
             },
+            MessageToBackend::SetGlobalOptions { enabled } => {
+                self.config.lock().modify(|backend_config| {
+                    backend_config.global_options = enabled;
+                });
+            },
+            MessageToBackend::SetInstanceGlobalOptions { id, enabled } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.global_options_disabled = !enabled;
+                    });
+                    self.send.send(instance.create_modify_message());
+                }
+            },
+            MessageToBackend::UseInstanceOptionsAsGlobal { id } => {
+                let found = self.instance_state.read().instances.get(id).map(|instance| {
+                    (instance.dot_minecraft_path.join("options.txt"), instance.name.to_string())
+                });
+                if let Some((options, name)) = found {
+                    match crate::global_options::import(&self.directories.root_launcher_dir, &options, &name) {
+                        Ok(_) => self.send.send_success(format!("Los ajustes de Minecraft de {name} son ahora los globales.")),
+                        Err(error) => {
+                            log::warn!("Unable to import Minecraft settings from {name}: {error}");
+                            self.send.send_error("No se han podido copiar los ajustes de esta instancia. Arráncala una vez primero.");
+                        },
+                    }
+                }
+            },
             MessageToBackend::SetProxyPassword { password } => {
                 match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
                     Ok(storage) => {
@@ -2957,6 +2984,9 @@ impl BackendState {
             return;
         }
         modal_action.clear_trackers();
+
+        // One small file; the game reads it on start.
+        self.apply_global_options_before_launch(&root_path, &dot_minecraft, &configuration);
 
         // Signed profile JVM options persisted at the last profile update; reading them is a single
         // metadata read with no tree walk. A damaged state launches without them.

@@ -785,6 +785,7 @@ impl BackendState {
 
         let mut instance_state = self.instance_state.write();
         let mut shared_files_to_publish = Vec::new();
+        let mut finished_global_options = Vec::new();
         for instance in instance_state.instances.iter_mut() {
             let status_before = instance.status();
             let mut killed = false;
@@ -1075,6 +1076,11 @@ impl BackendState {
 
             if status_before != InstanceStatus::NotRunning && instance.status() == InstanceStatus::NotRunning {
                 shared_files_to_publish.push(instance.id);
+                finished_global_options.push((
+                    instance.root_path.clone(),
+                    instance.dot_minecraft_path.clone(),
+                    instance.configuration.get().clone(),
+                ));
             }
             if killed || instance.status() != status_before {
                 instance.update_session();
@@ -1118,6 +1124,23 @@ impl BackendState {
             }
         }
         any_process_alive |= !self.aot_create_requests.lock().is_empty();
+        drop(instance_state);
+
+        // Read outside the instance lock: the config lock is taken first elsewhere.
+        finished_global_options.retain(|(_, _, configuration)| self.global_options_apply_to(configuration));
+        // A few small files; done before quitting is allowed so no change is lost.
+        for (root, dot_minecraft, configuration) in finished_global_options {
+            crate::global_options::after_exit(
+                &self.directories.root_launcher_dir,
+                &self.directories.libraries_dir,
+                &crate::global_options::Target {
+                    root: &root,
+                    dot_minecraft: &dot_minecraft,
+                    minecraft_version: configuration.minecraft_version.as_str(),
+                    loader: configuration.loader,
+                },
+            );
+        }
 
         self.quit_coordinator.set_can_quit(!any_process_alive);
     }
@@ -1360,6 +1383,43 @@ impl BackendState {
         probe.complete_required_observations();
         probe.mark_endpoint();
         probe
+    }
+
+    /// Whether the launcher-wide Minecraft settings manage this instance's
+    /// `options.txt`. A file shared through the sync targets is left to that.
+    pub(crate) fn global_options_apply_to(&self, configuration: &schema::instance::InstanceConfiguration) -> bool {
+        let mut config = self.config.lock();
+        let config = config.get();
+        if !config.global_options || configuration.global_options_disabled {
+            return false;
+        }
+        let shared = schema::shared_data::effective_global(
+            &config.sync_targets,
+            &configuration.global_sharing,
+            configuration.disable_file_syncing,
+        );
+        !shared.files.iter().any(|file| file.eq_ignore_ascii_case("options.txt"))
+    }
+
+    pub(crate) fn apply_global_options_before_launch(
+        &self,
+        root: &std::path::Path,
+        dot_minecraft: &std::path::Path,
+        configuration: &schema::instance::InstanceConfiguration,
+    ) {
+        if !self.global_options_apply_to(configuration) {
+            return;
+        }
+        crate::global_options::before_launch(
+            &self.directories.root_launcher_dir,
+            &self.directories.libraries_dir,
+            &crate::global_options::Target {
+                root,
+                dot_minecraft,
+                minecraft_version: configuration.minecraft_version.as_str(),
+                loader: configuration.loader,
+            },
+        );
     }
 
     pub fn apply_syncing_to_instance(&self, id: InstanceID) {
