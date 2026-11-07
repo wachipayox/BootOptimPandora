@@ -962,8 +962,11 @@ impl Launcher {
                 let mut command = std::process::Command::new(java_path);
 
                 command.current_dir(&forge_temp);
-                command.stdin(Stdio::inherit());
-                command.stdout(Stdio::inherit());
+                // Processors list every class they touch on stdout. A GUI launcher has nowhere to show it,
+                // and a command-line run (the installer's migration log) would drown in it; errors stay on
+                // stderr.
+                command.stdin(Stdio::null());
+                command.stdout(Stdio::null());
                 command.stderr(Stdio::inherit());
 
                 command.arg("-cp");

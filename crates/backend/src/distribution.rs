@@ -1466,7 +1466,7 @@ fn valid_config_setting(setting: &ManifestConfigSetting) -> bool {
     }
 }
 
-fn verify_file(path: &Path, expected_digest: &str, expected_size: u64) -> Result<bool, io::Error> {
+pub(crate) fn verify_file(path: &Path, expected_digest: &str, expected_size: u64) -> Result<bool, io::Error> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_file() || metadata.len() != expected_size {
         return Ok(false);
@@ -1484,7 +1484,7 @@ fn verify_file(path: &Path, expected_digest: &str, expected_size: u64) -> Result
     Ok(hex::encode(hasher.finalize()) == expected_digest)
 }
 
-fn verified_cache_path(object: &ManifestObjectRef, cache_root: &Path) -> Result<Option<PathBuf>, DistributionError> {
+pub(crate) fn verified_cache_path(object: &ManifestObjectRef, cache_root: &Path) -> Result<Option<PathBuf>, DistributionError> {
     if !valid_digest(&object.sha256) || object.size > MAX_OBJECT_BYTES {
         return Err(DistributionError::InvalidResponse("invalid or oversized object reference".into()));
     }

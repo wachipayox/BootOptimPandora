@@ -80,6 +80,35 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Package Windows installer
+        if: matrix.platform.os_name == 'Windows-x86_64'
+        shell: bash
+        env:
+          LAUNCHER_EXE: target/${{ matrix.platform.target }}/release/pandora_launcher.exe
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          AZURE_ARTIFACT_SIGNING_PROFILE: ${{ secrets.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          WINDOWS_SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+        run: bash scripts/build_windows.sh "0.0.${{ github.run_number }}"
+
+      - name: Check installer and launcher metadata
+        if: matrix.platform.os_name == 'Windows-x86_64'
+        shell: pwsh
+        run: ./scripts/verify_windows_installer.ps1 -Installer dist/WachilandLauncher-Windows-x86_64-Setup.exe -Launcher dist/WachilandLauncher-Windows-x86_64-Portable.exe
+
+      - name: Upload Windows installer artifact
+        if: matrix.platform.os_name == 'Windows-x86_64' && (github.event_name == 'pull_request' || github.ref_name == 'agent/integration-current')
+        uses: actions/upload-artifact@v4
+        with:
+          name: wachiland-installer-windows-x86_64-${{ steps.short_sha.outputs.sha }}
+          path: dist/WachilandLauncher-Windows-x86_64-Setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Check optional Windows framebuffer capture
         if: matrix.platform.os_name == 'Windows-x86_64'
         run: cargo check --release -p pandora_launcher --features ui-capture --frozen --target ${{ matrix.platform.target }}

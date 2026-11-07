@@ -113,6 +113,22 @@ impl SettingsRoot {
         self.update_backend_configuration(cx);
     }
 
+    pub fn set_global_options(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.actual_backend_config.is_some() {
+            self.on_receive_backend_config = if self.temp_backend_config.is_some() {
+                OnReceiveBackendConfig::RequestAgainThenClearTemp
+            } else {
+                OnReceiveBackendConfig::ClearTemp
+            };
+            let pending = self
+                .temp_backend_config
+                .get_or_insert_with(|| self.actual_backend_config.clone().unwrap());
+            pending.global_options = enabled;
+        }
+        self.backend_handle.send(MessageToBackend::SetGlobalOptions { enabled });
+        self.update_backend_configuration(cx);
+    }
+
     fn set_ignored_profile_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) -> bool {
         let paths = match IgnoredProfilePaths::normalized(paths) {
             Ok(paths) => paths,

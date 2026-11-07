@@ -40,11 +40,12 @@ impl From<InternalDefenderProcessAction> for command::DefenderProcessAction {
 #[command(group = clap::ArgGroup::new("start_request").args(["run_instance", "run_instance_normal"]))]
 #[command(
     group = clap::ArgGroup::new("instance_command")
-        .args(["list_instances", "instance_info", "create_instance", "update_instance", "delete_instance"])
+        .args(["list_instances", "instance_info", "create_instance", "update_instance", "delete_instance", "migrate_legacy"])
         .conflicts_with("start_request")
 )]
 #[command(group = clap::ArgGroup::new("revision_target").args(["create_instance", "update_instance"]))]
 #[command(group = clap::ArgGroup::new("json_target").args(["list_instances", "instance_info"]))]
+#[command(group = clap::ArgGroup::new("profile_target").args(["create_instance", "migrate_legacy"]))]
 struct Cli {
     /// Open the launcher and launch an instance with full asset verification
     #[arg(long, conflicts_with = "run_instance_normal")]
@@ -70,9 +71,19 @@ struct Cli {
     /// Create an instance of a global profile (needs --from-profile) and exit
     #[arg(long, value_name = "NAME", requires = "from_profile")]
     create_instance: Option<String>,
-    /// With --create-instance: the global profile id, for example profile_wachiland-elite-beta
-    #[arg(long, value_name = "PROFILE_ID", requires = "create_instance")]
+    /// With --create-instance or --migrate-legacy: the global profile id, for example profile_wachiland-elite-beta
+    #[arg(long, value_name = "PROFILE_ID", requires = "profile_target")]
     from_profile: Option<String>,
+    /// Copy a player's folder from another launcher into a new instance of --from-profile and exit.
+    /// The source is only read. Used by the Windows installer.
+    #[arg(long, value_name = "FOLDER", requires = "from_profile", hide = true)]
+    migrate_legacy: Option<std::path::PathBuf>,
+    /// With --migrate-legacy: the new instance's name
+    #[arg(long, value_name = "NAME", requires = "migrate_legacy", default_value = "Wachiland Elite", hide = true)]
+    migrate_name: String,
+    /// With --migrate-legacy: also copy the Voxy level-of-detail data (.voxy)
+    #[arg(long, requires = "migrate_legacy", hide = true)]
+    migrate_voxy: bool,
     /// Update an instance without starting it, like "Update and start" without the start, and exit
     #[arg(long, value_name = "NAME")]
     update_instance: Option<String>,
@@ -135,9 +146,19 @@ fn main() {
     };
 
     let launcher_dir = data_dir.join("WachilandLauncher");
-    let existing_install = launcher_dir.join("config.json").is_file() || launcher_dir.join("interface.json").is_file();
+    // A command-line run on a fresh data folder (the installer's migration) writes config.json and
+    // interface.json without the player ever seeing the launcher. Remember that, so the first window
+    // still gets the first-install intro rather than the update one.
+    let first_open_pending = launcher_dir.join("first-open-pending");
+    let has_config = launcher_dir.join("config.json").is_file() || launcher_dir.join("interface.json").is_file();
+    let existing_install = has_config && !first_open_pending.is_file();
     let allow_startup = !instance_command && cli.run_instance.is_none() && cli.run_instance_normal.is_none();
     _ = std::fs::create_dir_all(&launcher_dir);
+    if instance_command && !has_config {
+        _ = std::fs::write(&first_open_pending, b"");
+    } else if allow_startup && first_open_pending.is_file() {
+        _ = std::fs::remove_file(&first_open_pending);
+    }
     _ = std::env::set_current_dir(&launcher_dir);
 
     let socket = launcher_dir.join("launcher.sock");
@@ -673,6 +694,14 @@ fn cli_instance_command(cli: &Cli) -> Option<bridge::message::CliInstanceCommand
         return Some(CliInstanceCommand::Update {
             name: name.clone(),
             revision: cli.revision.clone().unwrap_or_default(),
+        });
+    }
+    if let Some(source) = &cli.migrate_legacy {
+        return Some(CliInstanceCommand::Migrate {
+            source: source.clone(),
+            name: cli.migrate_name.clone(),
+            profile_id: cli.from_profile.clone()?,
+            include_voxy: cli.migrate_voxy,
         });
     }
     if let Some(name) = &cli.delete_instance {

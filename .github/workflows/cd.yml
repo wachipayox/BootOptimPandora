@@ -55,6 +55,16 @@ jobs:
           PANDORA_DISTRIBUTION: official
           WBOMBO_DISTRIBUTION_DEFAULT_URL: ${{ secrets.WBOMBO_DISTRIBUTION_DEFAULT_URL }}
           WBOMBO_COMMUNITY_DISCORD_URL: ${{ secrets.WBOMBO_COMMUNITY_DISCORD_URL }}
+          # Optional Authenticode identity for the Windows exe, uninstaller and
+          # installer (docs/features/windows-installer.md).
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          AZURE_ARTIFACT_SIGNING_PROFILE: ${{ secrets.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          WINDOWS_SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
         run: ${{ matrix.platform.buildscript }} ${{ github.ref_name }}
         shell: bash
 

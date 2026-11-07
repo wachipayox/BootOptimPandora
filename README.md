@@ -48,6 +48,16 @@ Windows installs an EXE; Linux accepts AppImage/ELF; macOS uses `.app.tar.gz`. A
 
 Legacy GitHub update manifests produced by packaging scripts are not read by this client. This implementation does not publish Distribution releases.
 
+## Windows installer
+
+`scripts/build_windows.sh <version>` builds a per-user NSIS installer (`%LOCALAPPDATA%\Programs\Wachiland Launcher`, no UAC) next to the portable exe; the in-place updater keeps working because the install folder is user-writable and launcher data stays in `%APPDATA%\WachilandLauncher`. Authenticode signing is optional and comes only from CI secrets. Details: [docs/features/windows-installer.md](docs/features/windows-installer.md).
+
+The installer can also migrate a player's Wachiland Elite folder from another launcher (only copying it) into a new instance of the global profile.
+
+## Global Minecraft settings
+
+Optional launcher-wide `options.txt` settings, written into each instance in the format of its Minecraft version and loader before it starts, and kept when the player changes them in game. Details: [docs/features/global-minecraft-settings.md](docs/features/global-minecraft-settings.md).
+
 ## Features
 - (Optional) sandboxing, to prevent mods from harming your system
 - Cross-instance file syncing (options, saves, etc.) (https://youtu.be/wb5EY2VsMKg)

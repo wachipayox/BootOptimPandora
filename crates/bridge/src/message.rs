@@ -500,6 +500,19 @@ pub enum MessageToBackend {
     SetLauncherChannel {
         channel: schema::backend_config::LauncherChannel,
     },
+    /// Launcher-wide Minecraft settings (`options.txt`) on or off.
+    SetGlobalOptions {
+        enabled: bool,
+    },
+    /// Whether one instance follows the launcher-wide Minecraft settings.
+    SetInstanceGlobalOptions {
+        id: InstanceID,
+        enabled: bool,
+    },
+    /// Replaces the launcher-wide Minecraft settings with this instance's.
+    UseInstanceOptionsAsGlobal {
+        id: InstanceID,
+    },
     SetProxyPassword {
         password: String,
     },
@@ -1037,6 +1050,14 @@ pub enum CliInstanceCommand {
     Delete {
         name: String,
         confirm: String,
+    },
+    /// Copies a player's folder from another launcher into a new instance of a
+    /// global profile (the Windows installer's migration step).
+    Migrate {
+        source: std::path::PathBuf,
+        name: String,
+        profile_id: String,
+        include_voxy: bool,
     },
 }
 
