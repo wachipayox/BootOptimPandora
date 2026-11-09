@@ -57,6 +57,7 @@ pub enum PageType {
     },
     Import,
     Syncing,
+    GlobalOptions,
     ModrinthProject {
         project_id: SharedString,
         project_title: SharedString,
@@ -90,6 +91,7 @@ impl PageType {
             },
             PageType::Import => t::import::label().into(),
             PageType::Syncing => t::instance::sync::label().into(),
+            PageType::GlobalOptions => "Ajustes de Minecraft globales".into(),
             PageType::ModrinthProject { project_title, .. } => project_title.clone(),
             PageType::InstancePage { name } => {
                 InstanceEntries::find_title_by_name(&data.instances, name, cx).unwrap_or_else(|| name.clone())
@@ -109,6 +111,7 @@ pub enum LauncherPage {
     Curseforge(Entity<CurseforgeSearchPage>),
     Import(Entity<ImportPage>),
     Syncing(Entity<SyncingPage>),
+    GlobalOptions(Entity<crate::pages::global_options_page::GlobalOptionsPage>),
     ModrinthProject(Entity<ModrinthProjectPage>),
     InstancePage(Entity<InstancePage>),
 }
@@ -148,6 +151,7 @@ impl LauncherPage {
             LauncherPage::Curseforge(entity) => process(entity, window, cx),
             LauncherPage::Import(entity) => process(entity, window, cx),
             LauncherPage::Syncing(entity) => process(entity, window, cx),
+            LauncherPage::GlobalOptions(entity) => process(entity, window, cx),
             LauncherPage::ModrinthProject(entity) => process(entity, window, cx),
             LauncherPage::InstancePage(_) => unreachable!(),
         };
@@ -193,6 +197,19 @@ impl LauncherPage {
                             )
                             .on_click(|_, _, c| crate::root::set_browser_manual_view(true, c)),
                         ),
+                )
+                .into_any_element()
+        } else if config.main_page == PageType::GlobalOptions {
+            v_flex()
+                .w_full()
+                .flex_shrink_0()
+                .child(crate::component::design::page_header("LAUNCHER", window))
+                .child(
+                    h_flex().px(px(20.)).border_b_1().border_color(rgba(0xffffff0b)).child(
+                        crate::component::design::tab("global-options-tab", "Ajustes de Minecraft globales", true)
+                            .h(px(32.))
+                            .px(px(2.)),
+                    ),
                 )
                 .into_any_element()
         } else if config.main_page == PageType::Syncing {
@@ -419,6 +436,9 @@ impl LauncherUI {
             },
             PageType::Import => Ok(LauncherPage::Import(cx.new(|cx| ImportPage::new(data, window, cx)))),
             PageType::Syncing => Ok(LauncherPage::Syncing(cx.new(|cx| SyncingPage::new(data, window, cx)))),
+            PageType::GlobalOptions => Ok(LauncherPage::GlobalOptions(
+                cx.new(|cx| crate::pages::global_options_page::GlobalOptionsPage::new(data, window, cx)),
+            )),
             PageType::ModrinthProject {
                 project_id,
                 install_for,

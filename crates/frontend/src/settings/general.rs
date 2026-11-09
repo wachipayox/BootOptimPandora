@@ -57,20 +57,55 @@ pub(super) fn create_page(window: &mut Window, cx: &mut App) -> SettingPage {
                 searched_items: None,
             },
             SettingGroup {
-                title: Some(|| "Minecraft"),
-                items: vec![SettingItem {
-                    title: || "Ajustes de Minecraft globales",
-                    description: || {
-                        "Vídeo, sonido y controles iguales en todas las instancias, adaptados a su versión y loader"
+                title: Some(|| "Sincronización"),
+                items: vec![
+                    SettingItem {
+                        widget: SettingItemWidget::AnyWide(Rc::new(|_, _| {
+                            crate::component::design::DesignButton::new("open-synchronization")
+                                .label("Sincronización")
+                                .on_click(|_, w, c| {
+                                    crate::root::switch_page(
+                                        crate::ui::PageType::Syncing,
+                                        &[crate::ui::PageType::LauncherSettings],
+                                        w,
+                                        c,
+                                    )
+                                })
+                                .into_any_element()
+                        })),
+                        ..Default::default()
                     },
-                    widget: SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
-                        crate::component::design::YesNo::new("global-options")
-                            .checked(backend.global_options)
-                            .on_click(cx.listener(|root, value: &bool, _, cx| root.set_global_options(*value, cx)))
-                            .into_any_element()
-                    })),
-                    ..Default::default()
-                }]
+                    SettingItem {
+                        title: || "Ajustes de Minecraft globales",
+                        description: || "Las instancias nuevas se crean con tus ajustes de vídeo, sonido y controles",
+                        widget: SettingItemWidget::Backend(Rc::new(|backend, _, cx| {
+                            crate::component::design::YesNo::new("global-options")
+                                .checked(!backend.global_options_disabled)
+                                .on_click(cx.listener(|root, value: &bool, _, cx| root.set_global_options(*value, cx)))
+                                .into_any_element()
+                        })),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        widget: SettingItemWidget::BackendWide(Rc::new(|backend, _, _, _| {
+                            if backend.global_options_disabled {
+                                return gpui::div().into_any_element();
+                            }
+                            crate::component::design::DesignButton::new("manage-global-options")
+                                .label("Gestionar")
+                                .on_click(|_, w, c| {
+                                    crate::root::switch_page(
+                                        crate::ui::PageType::GlobalOptions,
+                                        &[crate::ui::PageType::LauncherSettings],
+                                        w,
+                                        c,
+                                    )
+                                })
+                                .into_any_element()
+                        })),
+                        ..Default::default()
+                    },
+                ]
                 .into(),
                 searched_items: None,
             },

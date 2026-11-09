@@ -146,14 +146,15 @@ pub struct InstanceConfiguration {
         skip_serializing_if = "crate::skip_if_default"
     )]
     pub created_by_cli: bool,
-    /// Keep this instance's `options.txt` out of the launcher-wide Minecraft
-    /// settings (`schema::global_options`).
+    /// Created with the launcher-wide Minecraft settings still to be copied into its
+    /// `options.txt` (`schema::global_options`). Cleared once they are, before its first start
+    /// or, for a Minecraft version whose format is not known yet, when its first game exits.
     #[serde(
         default,
         deserialize_with = "crate::try_deserialize",
         skip_serializing_if = "crate::skip_if_default"
     )]
-    pub global_options_disabled: bool,
+    pub global_options_pending: bool,
 }
 
 impl InstanceConfiguration {
@@ -184,7 +185,7 @@ impl InstanceConfiguration {
             show_shader_tab: false,
             sandbox: false, // todo: for now, off by default. In the future, turn this on by default
             created_by_cli: false,
-            global_options_disabled: false,
+            global_options_pending: false,
         }
     }
 }

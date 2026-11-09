@@ -500,14 +500,26 @@ pub enum MessageToBackend {
     SetLauncherChannel {
         channel: schema::backend_config::LauncherChannel,
     },
-    /// Launcher-wide Minecraft settings (`options.txt`) on or off.
+    /// Whether new instances get the launcher-wide Minecraft settings (`options.txt`).
     SetGlobalOptions {
         enabled: bool,
     },
-    /// Whether one instance follows the launcher-wide Minecraft settings.
-    SetInstanceGlobalOptions {
+    GetGlobalOptions {
+        channel: tokio::sync::oneshot::Sender<GlobalOptionsSummary>,
+    },
+    /// Sets one launcher-wide Minecraft setting (canonical key and value); `None` forgets it.
+    SetGlobalOption {
+        key: String,
+        value: Option<String>,
+    },
+    /// Whether one launcher-wide Minecraft setting is copied into new instances.
+    SetGlobalOptionSynced {
+        key: String,
+        synced: bool,
+    },
+    /// Overwrites this instance's `options.txt` with the launcher-wide Minecraft settings.
+    CopyGlobalOptionsToInstance {
         id: InstanceID,
-        enabled: bool,
     },
     /// Replaces the launcher-wide Minecraft settings with this instance's.
     UseInstanceOptionsAsGlobal {
@@ -1014,6 +1026,14 @@ pub enum CliUpdatePolicy {
     Update,
     /// `--no-update`: start the installed files unchanged.
     NoUpdate,
+}
+
+/// The launcher-wide Minecraft settings, as the settings page edits them.
+#[derive(Debug, Clone, Default)]
+pub struct GlobalOptionsSummary {
+    pub values: std::collections::BTreeMap<String, String>,
+    pub excluded: std::collections::BTreeSet<String>,
+    pub source: Option<String>,
 }
 
 /// Which revision of a global profile a command-line create or update uses.

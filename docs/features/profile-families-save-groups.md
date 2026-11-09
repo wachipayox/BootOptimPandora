@@ -44,8 +44,10 @@ automatic grouping against a live catalog require the local launcher check.
 
 Global synchronization defaults to ten folders: `screenshots`,
 `Distant_Horizons_server_data`, `.voxy`, `journeymap`, `flashback`, `xaero`,
-`.bobby`, `.analogaudio`, `schematics`, and `.sable`. There are no predefined
-global files. Existing configurations receive the new selection once; custom
+`.bobby`, `.analogaudio`, `schematics`, and `.sable`, and one file:
+`ponders_watched.json` (Create's watched Ponder scenes, a list of ids that
+every Create version reads safely). Existing configurations receive each new
+selection once (defaults version 2 added the file); custom
 routes remain and later user changes are preserved. Removed predefined routes
 are materialized locally when the instance next prepares sharing. Startup only
 migrates configuration metadata, without walking instance contents.

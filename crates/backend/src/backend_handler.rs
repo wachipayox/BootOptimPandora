@@ -2228,15 +2228,60 @@ impl BackendState {
             },
             MessageToBackend::SetGlobalOptions { enabled } => {
                 self.config.lock().modify(|backend_config| {
-                    backend_config.global_options = enabled;
+                    backend_config.global_options_disabled = !enabled;
                 });
             },
-            MessageToBackend::SetInstanceGlobalOptions { id, enabled } => {
-                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    instance.configuration.modify(|configuration| {
-                        configuration.global_options_disabled = !enabled;
-                    });
-                    self.send.send(instance.create_modify_message());
+            MessageToBackend::GetGlobalOptions { channel } => {
+                let store = crate::global_options::load_store(&self.directories.root_launcher_dir);
+                let _ = channel.send(bridge::message::GlobalOptionsSummary {
+                    values: store.values,
+                    excluded: store.excluded,
+                    source: store.source,
+                });
+            },
+            MessageToBackend::SetGlobalOption { key, value } => {
+                if let Err(error) =
+                    crate::global_options::set_value(&self.directories.root_launcher_dir, &key, value.as_deref())
+                {
+                    log::warn!("Unable to save a global Minecraft setting: {error}");
+                    self.send.send_error("No se ha podido guardar el ajuste.");
+                }
+            },
+            MessageToBackend::SetGlobalOptionSynced { key, synced } => {
+                if let Err(error) = crate::global_options::set_synced(&self.directories.root_launcher_dir, &key, synced) {
+                    log::warn!("Unable to save a global Minecraft setting: {error}");
+                    self.send.send_error("No se ha podido guardar el ajuste.");
+                }
+            },
+            MessageToBackend::CopyGlobalOptionsToInstance { id } => {
+                let found = self.instance_state.write().instances.get_mut(id).map(|instance| {
+                    (instance.dot_minecraft_path.clone(), instance.configuration.get().clone(), instance.name.to_string())
+                });
+                if let Some((dot_minecraft, configuration, name)) = found {
+                    let result = crate::global_options::copy_into(
+                        &self.directories.root_launcher_dir,
+                        &self.directories.libraries_dir,
+                        &crate::global_options::Target {
+                            dot_minecraft: &dot_minecraft,
+                            minecraft_version: configuration.minecraft_version.as_str(),
+                            loader: configuration.loader,
+                        },
+                    );
+                    match result {
+                        Ok(schema::global_options::ApplyOutcome::NeedsDataVersion) => {
+                            self.send.send_error("Arranca esta instancia una vez y vuelve a intentarlo.");
+                        },
+                        Ok(_) => {
+                            if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                                instance.configuration.modify(|configuration| configuration.global_options_pending = false);
+                            }
+                            self.send.send_success(format!("Los ajustes de Minecraft globales se han copiado a {name}."));
+                        },
+                        Err(error) => {
+                            log::warn!("Unable to copy global Minecraft settings into {name}: {error}");
+                            self.send.send_error("No se han podido copiar los ajustes globales.");
+                        },
+                    }
                 }
             },
             MessageToBackend::UseInstanceOptionsAsGlobal { id } => {
@@ -2985,8 +3030,8 @@ impl BackendState {
         }
         modal_action.clear_trackers();
 
-        // One small file; the game reads it on start.
-        self.apply_global_options_before_launch(&root_path, &dot_minecraft, &configuration);
+        // A new instance gets the launcher-wide Minecraft settings once, before its first start.
+        self.copy_pending_global_options(id, &dot_minecraft, &configuration);
 
         // Signed profile JVM options persisted at the last profile update; reading them is a single
         // metadata read with no tree walk. A damaged state launches without them.

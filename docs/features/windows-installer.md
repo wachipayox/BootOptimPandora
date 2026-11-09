@@ -86,12 +86,13 @@ WachilandLauncher.exe --migrate-legacy <folder> --from-profile profile_wachiland
 3. Copies only: worlds (one by one; a name taken gets "(migrado)"),
    `screenshots`, `xaero`, `journeymap`, `schematics`, `Sable-Schematics`,
    `music_sheets`, `replay_recordings`, `config/litematica`, `options.txt`,
-   `servers.dat`, `hotbar.nbt`, `command_history.txt`, and the resource packs and
+   `servers.dat`, `hotbar.nbt`, `command_history.txt`, `ponders_watched.json`
+   (merged into the globally synced list), and the resource packs and
    shaders the player added (in neither the old AutoModpack list nor the new
    profile). Mods and other configs are not copied; the mods the player had added
    are listed in `.minecraft/mods-del-launcher-anterior.txt`.
-4. Makes the old `options.txt` the [global Minecraft settings](global-minecraft-settings.md)
-   and turns them on.
+4. Makes the old `options.txt` the [global Minecraft settings](global-minecraft-settings.md),
+   which new instances are created with, and turns them on.
 
 If the profile cannot be installed (no connection…), the half-made instance is
 removed and nothing is copied. The finish page then says so; otherwise it

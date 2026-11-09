@@ -41,15 +41,14 @@ pub struct BackendConfig {
         deserialize_with = "crate::try_deserialize"
     )]
     pub channel: LauncherChannel,
-    /// Launcher-wide Minecraft settings, adapted into each instance's
-    /// `options.txt` (`crate::global_options`). Off until the player turns it
-    /// on or the installer migrates an old launcher folder.
+    /// Launcher-wide Minecraft settings (`crate::global_options`) are copied into each new
+    /// instance's `options.txt`. On unless the player turns them off.
     #[serde(
         default,
         skip_serializing_if = "crate::skip_if_default",
         deserialize_with = "crate::try_deserialize"
     )]
-    pub global_options: bool,
+    pub global_options_disabled: bool,
 }
 
 /// `player` (default) shows the published profiles. `developer` also shows the test profiles

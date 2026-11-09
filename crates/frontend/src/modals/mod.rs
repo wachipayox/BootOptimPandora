@@ -8,6 +8,7 @@ pub mod delete_instance;
 pub mod duplicate_instance;
 pub mod export_instance;
 pub mod generic;
+pub mod global_options;
 pub mod global_profiles;
 pub mod manual_curseforge_downloads;
 pub mod modrinth_install;

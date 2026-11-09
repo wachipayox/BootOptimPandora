@@ -93,7 +93,11 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           WINDOWS_SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
           WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
-        run: bash scripts/build_windows.sh "0.0.${{ github.run_number }}"
+        # The installer silently refuses to replace a newer launcher, so it carries the exe's own
+        # version (Cargo's on branch builds); otherwise the reinstall check below is refused.
+        run: |
+          version=$(pwsh -NoProfile -Command "(Get-Item '$LAUNCHER_EXE').VersionInfo.ProductVersion")
+          bash scripts/build_windows.sh "$version"
 
       - name: Check installer and launcher metadata
         if: matrix.platform.os_name == 'Windows-x86_64'

@@ -44,8 +44,17 @@ const FOLDERS: &[&str] = &[
     "config/litematica",
 ];
 /// Player files. The first two replace the profile's first-run defaults.
-const FILES: &[&str] = &["options.txt", "servers.dat", "hotbar.nbt", "command_history.txt"];
+const FILES: &[&str] = &[
+    "options.txt",
+    "servers.dat",
+    "hotbar.nbt",
+    "command_history.txt",
+    PONDERS,
+];
 const REPLACES_DEFAULTS: &[&str] = &["options.txt", "servers.dat"];
+/// Create's watched Ponder scenes: a JSON list shared by every instance (a global sync file), so
+/// the old list is merged into whatever the launcher already has.
+const PONDERS: &str = "ponders_watched.json";
 /// Only what the player added on top of the old pack.
 const ADDED_CONTENT: &[&str] = &["resourcepacks", "shaderpacks"];
 const MODS_REPORT: &str = "mods-del-launcher-anterior.txt";
@@ -403,7 +412,7 @@ pub async fn migrate(
     if old_options.is_file() {
         match crate::global_options::import(&backend.directories.root_launcher_dir, &old_options, &instance_name) {
             Ok(count) => {
-                backend.config.lock().modify(|config| config.global_options = true);
+                backend.config.lock().modify(|config| config.global_options_disabled = false);
                 say(format!("Tus ajustes de Minecraft ({count}) son ahora los globales del launcher."));
             },
             Err(error) => log::warn!("Migration could not import options.txt: {error}"),
@@ -416,6 +425,34 @@ pub async fn migrate(
         target.revision_id,
         text(&source.to_string_lossy()),
     )])
+}
+
+/// Writes into `to` the union of two JSON string lists, keeping `to`'s order first. A file that is
+/// not such a list is left alone. Returns the bytes written.
+fn merge_json_list(from: &Path, to: &Path) -> std::io::Result<u64> {
+    let read = |path: &Path| -> Option<Vec<String>> {
+        let bytes = std::fs::read(path).ok()?;
+        serde_json::from_slice::<Vec<String>>(&bytes).ok()
+    };
+    let Some(old) = read(from) else {
+        return Ok(0);
+    };
+    let mut merged = if to.exists() {
+        match read(to) {
+            Some(list) => list,
+            None => return Ok(0),
+        }
+    } else {
+        Vec::new()
+    };
+    for entry in old {
+        if !merged.contains(&entry) {
+            merged.push(entry);
+        }
+    }
+    let bytes = serde_json::to_vec(&merged)?;
+    std::fs::write(to, &bytes)?;
+    Ok(bytes.len() as u64)
 }
 
 /// Upper bound of what [`copy_player_data`] copies.
@@ -466,7 +503,9 @@ fn copy_player_data(
             continue;
         }
         let to = dot_minecraft.join(file);
-        if REPLACES_DEFAULTS.contains(file) {
+        if *file == PONDERS {
+            copied += merge_json_list(&from, &to)?;
+        } else if REPLACES_DEFAULTS.contains(file) {
             copied += std::fs::copy(&from, &to)?;
         } else {
             copied += copy_missing(&from, &to)?;
@@ -558,6 +597,7 @@ mod tests {
         write(&source.join("resourcepacks/mine.zip"), "mine");
         write(&source.join("shaderpacks/Shader/a.txt"), "mine");
         write(&source.join("options.txt"), "version:3955\nfov:0.5\n");
+        write(&source.join("ponders_watched.json"), r#"["create:fan","create:belt"]"#);
         write(&source.join(".voxy/a"), "lod");
         write(
             &source.join("automodpack/modpacks/W/automodpack-content.json"),
@@ -567,6 +607,7 @@ mod tests {
         write(&dot.join("saves/Mundo/level.dat"), "group world");
         write(&dot.join("options.txt"), "version:3955\nfov:0.0\n");
         write(&dot.join("mods/pack.jar"), "pack");
+        write(&dot.join("ponders_watched.json"), r#"["create:belt","create:gearbox"]"#);
 
         let profile: BTreeSet<String> = ["mods/pack.jar".to_string(), "options.txt".to_string()].into();
         copy_player_data(&source, &dot, &profile, false).unwrap();
@@ -581,6 +622,10 @@ mod tests {
         assert!(dot.join("shaderpacks/Shader/a.txt").is_file());
         assert!(!dot.join(".voxy").exists());
         assert_eq!(std::fs::read_to_string(dot.join("options.txt")).unwrap(), "version:3955\nfov:0.5\n");
+        assert_eq!(
+            std::fs::read_to_string(dot.join("ponders_watched.json")).unwrap(),
+            r#"["create:belt","create:gearbox","create:fan"]"#
+        );
         let report = std::fs::read_to_string(dot.join(MODS_REPORT)).unwrap();
         assert!(report.contains("extra.jar") && !report.contains("pack.jar") && !report.contains(".connector"));
         // The source is untouched.

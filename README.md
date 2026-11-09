@@ -56,7 +56,7 @@ The installer can also migrate a player's Wachiland Elite folder from another la
 
 ## Global Minecraft settings
 
-Optional launcher-wide `options.txt` settings, written into each instance in the format of its Minecraft version and loader before it starts, and kept when the player changes them in game. Details: [docs/features/global-minecraft-settings.md](docs/features/global-minecraft-settings.md).
+Launcher-wide `options.txt` settings that new instances are created with, in the format of their Minecraft version and loader; afterwards each instance keeps its own. Edited in Launcher settings › Sincronización. Details: [docs/features/global-minecraft-settings.md](docs/features/global-minecraft-settings.md).
 
 ## Features
 - (Optional) sandboxing, to prevent mods from harming your system

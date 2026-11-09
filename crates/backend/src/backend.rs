@@ -1076,11 +1076,13 @@ impl BackendState {
 
             if status_before != InstanceStatus::NotRunning && instance.status() == InstanceStatus::NotRunning {
                 shared_files_to_publish.push(instance.id);
-                finished_global_options.push((
-                    instance.root_path.clone(),
-                    instance.dot_minecraft_path.clone(),
-                    instance.configuration.get().clone(),
-                ));
+                if instance.configuration.get().global_options_pending {
+                    finished_global_options.push((
+                        instance.id,
+                        instance.dot_minecraft_path.clone(),
+                        instance.configuration.get().clone(),
+                    ));
+                }
             }
             if killed || instance.status() != status_before {
                 instance.update_session();
@@ -1126,20 +1128,10 @@ impl BackendState {
         any_process_alive |= !self.aot_create_requests.lock().is_empty();
         drop(instance_state);
 
-        // Read outside the instance lock: the config lock is taken first elsewhere.
-        finished_global_options.retain(|(_, _, configuration)| self.global_options_apply_to(configuration));
-        // A few small files; done before quitting is allowed so no change is lost.
-        for (root, dot_minecraft, configuration) in finished_global_options {
-            crate::global_options::after_exit(
-                &self.directories.root_launcher_dir,
-                &self.directories.libraries_dir,
-                &crate::global_options::Target {
-                    root: &root,
-                    dot_minecraft: &dot_minecraft,
-                    minecraft_version: configuration.minecraft_version.as_str(),
-                    loader: configuration.loader,
-                },
-            );
+        // An instance whose format was unknown before its first start: the game has written its
+        // options.txt now. Outside the instance lock, which the copy takes to clear the mark.
+        for (id, dot_minecraft, configuration) in finished_global_options {
+            self.copy_pending_global_options(id, &dot_minecraft, &configuration);
         }
 
         self.quit_coordinator.set_can_quit(!any_process_alive);
@@ -1385,41 +1377,47 @@ impl BackendState {
         probe
     }
 
-    /// Whether the launcher-wide Minecraft settings manage this instance's
-    /// `options.txt`. A file shared through the sync targets is left to that.
-    pub(crate) fn global_options_apply_to(&self, configuration: &schema::instance::InstanceConfiguration) -> bool {
-        let mut config = self.config.lock();
-        let config = config.get();
-        if !config.global_options || configuration.global_options_disabled {
-            return false;
-        }
-        let shared = schema::shared_data::effective_global(
-            &config.sync_targets,
-            &configuration.global_sharing,
-            configuration.disable_file_syncing,
-        );
-        !shared.files.iter().any(|file| file.eq_ignore_ascii_case("options.txt"))
+    pub(crate) fn global_options_enabled(&self) -> bool {
+        !self.config.lock().get().global_options_disabled
     }
 
-    pub(crate) fn apply_global_options_before_launch(
+    /// Copies the launcher-wide Minecraft settings into an instance still marked for them, and
+    /// clears the mark once its format was known.
+    pub(crate) fn copy_pending_global_options(
         &self,
-        root: &std::path::Path,
+        id: InstanceID,
         dot_minecraft: &std::path::Path,
         configuration: &schema::instance::InstanceConfiguration,
     ) {
-        if !self.global_options_apply_to(configuration) {
+        if !configuration.global_options_pending {
             return;
         }
-        crate::global_options::before_launch(
-            &self.directories.root_launcher_dir,
-            &self.directories.libraries_dir,
-            &crate::global_options::Target {
-                root,
-                dot_minecraft,
-                minecraft_version: configuration.minecraft_version.as_str(),
-                loader: configuration.loader,
-            },
-        );
+        let done = if !self.global_options_enabled() {
+            true
+        } else {
+            match crate::global_options::copy_into(
+                &self.directories.root_launcher_dir,
+                &self.directories.libraries_dir,
+                &crate::global_options::Target {
+                    dot_minecraft,
+                    minecraft_version: configuration.minecraft_version.as_str(),
+                    loader: configuration.loader,
+                },
+            ) {
+                Ok(schema::global_options::ApplyOutcome::NeedsDataVersion) => false,
+                Ok(outcome) => {
+                    log::info!("Copied global Minecraft settings into a new instance: {outcome:?}");
+                    true
+                },
+                Err(error) => {
+                    log::warn!("Unable to copy global Minecraft settings: {error}");
+                    false
+                },
+            }
+        };
+        if done && let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            instance.configuration.modify(|configuration| configuration.global_options_pending = false);
+        }
     }
 
     pub fn apply_syncing_to_instance(&self, id: InstanceID) {
@@ -1980,7 +1978,7 @@ impl BackendState {
         }
 
         return self
-            .create_instance_impl(&name, version, loader, icon, false, None)
+            .create_instance_impl(&name, version, loader, icon, false, None, false)
             .await
             .map(|(path, _)| path);
     }
@@ -1993,7 +1991,8 @@ impl BackendState {
         loader_version: Option<&str>,
         icon: Option<EmbeddedOrRaw>,
     ) -> Option<PathBuf> {
-        self.create_instance_impl(name, version, loader, icon, true, loader_version)
+        // A new instance from scratch starts with the launcher-wide Minecraft settings.
+        self.create_instance_impl(name, version, loader, icon, true, loader_version, true)
             .await
             .map(|(path, _)| path)
     }
@@ -2022,7 +2021,8 @@ impl BackendState {
                 }
             }
         }
-        self.create_instance_impl(&name, version, loader, None, false, loader_version).await
+        // So does a new instance of a global profile.
+        self.create_instance_impl(&name, version, loader, None, false, loader_version, true).await
     }
 
     async fn create_instance_impl(
@@ -2033,6 +2033,7 @@ impl BackendState {
         icon: Option<EmbeddedOrRaw>,
         publish_after_provision: bool,
         loader_version: Option<&str>,
+        global_options: bool,
     ) -> Option<(PathBuf, bool)> {
         log::info!("Creating instance {name}");
         if !crate::fs::is_single_component_path_str(&name) {
@@ -2072,6 +2073,9 @@ impl BackendState {
 
         let mut instance_info = InstanceConfiguration::new(version.into(), loader);
         instance_info.preferred_loader_version = loader_version.map(Into::into);
+        instance_info.global_options_pending = global_options
+            && self.global_options_enabled()
+            && crate::global_options::has_settings(&self.directories.root_launcher_dir);
 
         match icon {
             Some(EmbeddedOrRaw::Embedded(e)) => {

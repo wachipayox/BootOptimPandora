@@ -1,40 +1,57 @@
 # Global Minecraft settings
 
-One set of Minecraft settings (`options.txt`: video, sound, controls,
-accessibility, skin parts…) for every instance. Unlike the old shared
-`options.txt`, the file is never shared: each instance keeps its own, and the
-launcher rewrites the global settings into it in the format that its Minecraft
-version and loader expect.
+One set of Minecraft settings (`options.txt`: video, sound, mouse, chat,
+accessibility, skin parts, language and key bindings). **New instances are
+created with them**, adapted to their Minecraft version and loader. After that,
+each instance keeps its own `options.txt`: nothing is synced back and existing
+instances are never rewritten on their own.
 
-It is off by default. It is turned on by the launcher setting "Ajustes de
-Minecraft globales", or by the installer's migration, which takes the old
-launcher's `options.txt` as the global settings. An instance can opt out in its
-settings ("Usar los ajustes de Minecraft globales"), which also has "Usar los
-ajustes de esta instancia como globales". An instance whose `options.txt` is in
-the sync targets is left to the syncing.
+New instances means those created from scratch ("Nuevo") or from a global
+profile (the carousel and `--create-instance`). Duplicated, imported and child
+instances already bring their settings and are left alone.
+
+## Where
+
+- Launcher settings › General › Sincronización:
+  - "Ajustes de Minecraft globales": on by default. Off, new instances start
+    with Minecraft's or the profile's defaults.
+  - "Gestionar": opens the editor (`pages/global_options_page.rs`). It has
+    sections for video, sound, mouse and movement, chat, accessibility, skin,
+    and language and game, plus key bindings (vanilla by category, mods by
+    namespace, set by pressing the key or mouse button, Ctrl/Shift/Alt
+    included) and "Otros ajustes" (read-only). Every setting has a "Copiar"
+    switch; off, new instances keep their own value. Settings never set show
+    Minecraft's default.
+- Instance settings › Archivos compartidos › "Gestionar opciones globales"
+  (`modals/global_options.rs`), both after a confirmation:
+  - "Copiar los ajustes globales a esta instancia" overwrites its `options.txt`
+    now.
+  - "Usar los ajustes de esta instancia como globales" replaces the global
+    settings (the "Copiar" switches are kept).
+- The installer's migration makes the old launcher's `options.txt` the global
+  settings.
+
+With no global settings yet, nothing is copied.
 
 ## Flow
 
-| When | What |
-|---|---|
-| Before the game starts | Changes made while the launcher was not watching are kept, then the global settings are written into `.minecraft/options.txt`. What the file looks like afterwards is saved in `<instance>/.pandora-global-options-v1.json`. |
-| When the game exits | Every setting the player changed since then becomes global, and the instance is brought up to date again. |
-| Empty global settings | The first instance started fills them, so turning the feature on keeps the player's settings. |
+The store is `<launcher>/global_options.json` (`values`, `excluded`, `source`).
+Creating an instance marks it `global_options_pending` in `info_v1.json` when
+the feature is on and there is something to copy. Before its first start the
+settings are written into `.minecraft/options.txt` and the mark is cleared. For
+a Minecraft version that has never been used in the launcher and a profile
+without its own `options.txt`, the format is not known yet: the copy then happens
+when that first game exits.
 
-Only settings that were there when the launcher last applied are compared. Keys
-that appear later (a new mod's key bindings, defaults the game writes) are not
-preferences and stay local until the player changes them.
-
-The store is `<launcher>/global_options.json`. Logic: `schema::global_options`
-(format, tests) and `crates/backend/src/global_options.rs` (hooks, store).
+Logic: `schema::global_options` (formats, tests) and
+`crates/backend/src/global_options.rs` (store, copy).
 
 ## Formats
 
 The canonical form is the modern one. The target's format is detected from its
 own file first (which key it already uses and how its value looks); its data
-version (`version:` line) is the fallback. A new instance without an
-`options.txt` gets the data version from its client jar (`version.json`), or
-waits until the game has written the file once.
+version (`version:` line) is the fallback, and then the client jar's
+`version.json`.
 
 | Setting | Detected forms |
 |---|---|

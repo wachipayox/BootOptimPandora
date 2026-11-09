@@ -1210,47 +1210,6 @@ impl InstanceSettingsSubpage {
         basic_content.into_any_element()
     }
 
-    /// Whether this instance follows the launcher-wide Minecraft settings, and a
-    /// way to make its own settings the global ones.
-    fn render_global_options_setting(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
-        let enabled = !self.instance.read(cx).configuration.global_options_disabled;
-        v_flex()
-            .gap(px(12.))
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .gap(px(12.))
-                    .child(
-                        v_flex().flex_1().gap(px(3.)).child("Usar los ajustes de Minecraft globales").child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(rgb(theme::INK_MUTED))
-                                .child("Si están activados en los ajustes del launcher"),
-                        ),
-                    )
-                    .child(YesNo::new("global-options").checked(enabled).on_click(cx.listener(
-                        |this, value: &bool, _, cx| {
-                            this.backend_handle.send(MessageToBackend::SetInstanceGlobalOptions {
-                                id: this.instance_id,
-                                enabled: *value,
-                            });
-                            cx.notify();
-                        },
-                    ))),
-            )
-            .child(
-                DesignButton::new("use-options-as-global")
-                    .label("Usar los ajustes de esta instancia como globales")
-                    .h(px(28.))
-                    .on_click(cx.listener(|this, _, _, _| {
-                        this.backend_handle
-                            .send(MessageToBackend::UseInstanceOptionsAsGlobal { id: this.instance_id });
-                    })),
-            )
-            .into_any_element()
-    }
-
     /// "Optimize launch (Java 25 AOT cache)": on by default; shows what the cache is doing in plain
     /// words, and why the launcher turned the option off.
     fn render_aot_cache_setting(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
@@ -1445,7 +1404,6 @@ impl InstanceSettingsSubpage {
             .when(automatic_java == Some(25) && !jvm_binary_enabled, |d| {
                 d.child(self.render_aot_cache_setting(cx))
             })
-            .child(self.render_global_options_setting(cx))
             .child(
                 DesignButton::new("advanced-settings")
                     .label("Ajustes avanzados")
@@ -1651,7 +1609,7 @@ impl InstanceSettingsSubpage {
     }
     fn render_actions_content(&mut self, _cx: &mut Context<Self>) -> AnyElement {
         let worlds = settings_panel_caption(
-            "Mundos compartidos",
+            "Archivos compartidos",
             "Las instancias de un grupo comparten lo que actives en sus ajustes.",
         )
         .when_some(self.save_group.as_ref(), |d, group| {
@@ -1662,16 +1620,33 @@ impl InstanceSettingsSubpage {
                     .child(format!("Grupo: {} ({} instancias)", group.name, group.member_count)),
             )
         })
-        .child(DesignButton::new("manage-save-groups").label("Gestionar grupo").on_click({
-            let id = self.instance_id;
-            let backend = self.backend_handle.clone();
-            move |_, window, cx| crate::modals::save_groups::open_save_groups(id, backend.clone(), window, cx)
-        }))
-        .child(DesignButton::new("manage-instance-global-sharing").label("Gestionar global").on_click({
-            let id = self.instance_id;
-            let backend = self.backend_handle.clone();
-            move |_, window, cx| crate::modals::global_sharing::open(id, backend.clone(), window, cx)
-        }));
+        .child(
+            DesignButton::new("manage-save-groups")
+                .child(action_label(PandoraIcon::Users, "Gestionar grupo"))
+                .on_click({
+                    let id = self.instance_id;
+                    let backend = self.backend_handle.clone();
+                    move |_, window, cx| crate::modals::save_groups::open_save_groups(id, backend.clone(), window, cx)
+                }),
+        )
+        .child(
+            DesignButton::new("manage-instance-global-sharing")
+                .child(action_label(PandoraIcon::Globe, "Gestionar global"))
+                .on_click({
+                    let id = self.instance_id;
+                    let backend = self.backend_handle.clone();
+                    move |_, window, cx| crate::modals::global_sharing::open(id, backend.clone(), window, cx)
+                }),
+        )
+        .child(
+            DesignButton::new("manage-instance-global-options")
+                .child(action_label(PandoraIcon::SlidersVertical, "Gestionar opciones globales"))
+                .on_click({
+                    let id = self.instance_id;
+                    let backend = self.backend_handle.clone();
+                    move |_, window, cx| crate::modals::global_options::open(id, backend.clone(), window, cx)
+                }),
+        );
         let mut inherited = settings_panel("Perfil heredado");
         let parent = self
             .profile_info

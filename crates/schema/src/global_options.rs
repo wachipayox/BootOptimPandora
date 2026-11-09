@@ -1,8 +1,9 @@
-//! Launcher-wide Minecraft settings (`options.txt`) adapted to each instance.
+//! Launcher-wide Minecraft settings (`options.txt`) copied into new instances.
 //!
 //! Unlike a shared file, the global settings are stored in one canonical form
-//! and rewritten into each instance's own `options.txt` in the format that its
-//! Minecraft version and loader expect. The format of a setting is detected from
+//! and written into a new instance's own `options.txt` in the format that its
+//! Minecraft version and loader expect; from then on the instance's file is its
+//! own. The format of a setting is detected from
 //! the target file first (the key it already uses and how its value looks), and
 //! only falls back to the data version when the target does not have the key.
 //!
@@ -374,16 +375,6 @@ pub fn apply(
     }
 }
 
-/// Settings the player changed in an instance since `applied` was recorded.
-/// Keys that were not there when the settings were applied (a mod added later,
-/// defaults written by the game) are not preferences and are ignored.
-pub fn changes_since(file: &OptionsText, applied: &Canonical) -> Canonical {
-    capture(file)
-        .into_iter()
-        .filter(|(key, value)| applied.get(key).is_some_and(|old| old != value))
-        .collect()
-}
-
 const LWJGL2_KEYS: &[(i32, &str)] = &[
     (0, "key.keyboard.unknown"),
     (1, "key.keyboard.escape"),
@@ -608,16 +599,5 @@ mod tests {
         let mut old = OptionsText::parse("version:1343\ngamma:0.5\n");
         apply(&mut old, &global, Loader::Vanilla, None);
         assert_eq!(old.get("gamma"), Some("5.0"));
-    }
-
-    #[test]
-    fn only_preferences_present_at_apply_time_are_reported() {
-        let applied = global();
-        let mut file = OptionsText::parse(MODERN_NEOFORGE);
-        file.set("fov", "0.25");
-        file.set("key_key.newmod.action", "key.keyboard.k");
-        let changes = changes_since(&file, &applied);
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes["fov"], "0.25");
     }
 }
