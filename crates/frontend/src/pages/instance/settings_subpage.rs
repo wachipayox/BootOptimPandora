@@ -1622,7 +1622,8 @@ impl InstanceSettingsSubpage {
         })
         .child(
             DesignButton::new("manage-save-groups")
-                .child(action_label(PandoraIcon::Users, "Gestionar grupo"))
+                .label("Gestionar grupo")
+                .child(Icon::new(PandoraIcon::Users).size(px(14.)))
                 .on_click({
                     let id = self.instance_id;
                     let backend = self.backend_handle.clone();
@@ -1631,7 +1632,8 @@ impl InstanceSettingsSubpage {
         )
         .child(
             DesignButton::new("manage-instance-global-sharing")
-                .child(action_label(PandoraIcon::Globe, "Gestionar global"))
+                .label("Gestionar global")
+                .child(Icon::new(PandoraIcon::Globe).size(px(14.)))
                 .on_click({
                     let id = self.instance_id;
                     let backend = self.backend_handle.clone();
@@ -1640,7 +1642,8 @@ impl InstanceSettingsSubpage {
         )
         .child(
             DesignButton::new("manage-instance-global-options")
-                .child(action_label(PandoraIcon::SlidersVertical, "Gestionar opciones globales"))
+                .label("Gestionar opciones globales")
+                .child(Icon::new(PandoraIcon::SlidersVertical).size(px(14.)))
                 .on_click({
                     let id = self.instance_id;
                     let backend = self.backend_handle.clone();

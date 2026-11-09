@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use bridge::instance::InstanceID;
+use gpui_component::button::ButtonVariants as _;
 use gpui::{prelude::*, *};
 use gpui_component::{WindowExt, h_flex, scroll::ScrollableElement, v_flex};
 use rustc_hash::FxHashMap;
@@ -205,11 +206,36 @@ impl LauncherPage {
                 .flex_shrink_0()
                 .child(crate::component::design::page_header("LAUNCHER", window))
                 .child(
-                    h_flex().px(px(20.)).border_b_1().border_color(rgba(0xffffff0b)).child(
-                        crate::component::design::tab("global-options-tab", "Ajustes de Minecraft globales", true)
-                            .h(px(32.))
-                            .px(px(2.)),
-                    ),
+                    h_flex()
+                        .px(px(20.))
+                        .gap(px(20.))
+                        .items_center()
+                        .border_b_1()
+                        .border_color(rgba(0xffffff0b))
+                        .child(
+                            crate::component::design::DesignButton::new("global-options-back")
+                                .ghost()
+                                .h(px(32.))
+                                .px(px(8.))
+                                .child(
+                                    h_flex()
+                                        .gap(px(6.))
+                                        .items_center()
+                                        .child(
+                                            gpui_component::Icon::new(crate::icon::PandoraIcon::ArrowLeft)
+                                                .size(px(14.)),
+                                        )
+                                        .child("Ajustes"),
+                                )
+                                .on_click(|_, w, c| {
+                                    crate::root::switch_page(PageType::LauncherSettings, &[], w, c)
+                                }),
+                        )
+                        .child(
+                            crate::component::design::tab("global-options-tab", "Ajustes de Minecraft globales", true)
+                                .h(px(32.))
+                                .px(px(2.)),
+                        ),
                 )
                 .into_any_element()
         } else if config.main_page == PageType::Syncing {

@@ -374,17 +374,23 @@ fn known_key(key: &str) -> bool {
 }
 
 /// "jei" for `key_key.jei.showRecipe`, "create" for `key_create.keyinfo.toolmenu`,
-/// "xaero" for `key_gui.xaero_open_map`.
+/// "xaero" for `key_gui.xaero_open_map`, "copycats" for `key_keyinfo.copycats.fill_copycat`.
 fn mod_of(key: &str) -> String {
+    // Skip the generic words mods put before their own id.
+    const GENERIC: &[&str] = &[
+        "key",
+        "keys",
+        "gui",
+        "keyinfo",
+        "keybind",
+        "keybinding",
+        "keybindings",
+        "keymapping",
+    ];
     let id = key.trim_start_matches("key_");
-    let id = id.strip_prefix("key.").unwrap_or(id);
-    let id = id.strip_prefix("gui.").unwrap_or(id);
-    let first = id.split(['.', '_', ' ']).next().unwrap_or(id);
-    if first.is_empty() {
-        "otros".into()
-    } else {
-        first.to_lowercase()
-    }
+    id.split(['.', '_', ' '])
+        .find(|part| !part.is_empty() && !GENERIC.contains(&part.to_lowercase().as_str()))
+        .map_or_else(|| "otros".into(), str::to_lowercase)
 }
 
 /// A readable name for a mod's key binding id.
