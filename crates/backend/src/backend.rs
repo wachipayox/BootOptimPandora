@@ -845,20 +845,23 @@ impl BackendState {
                         aot_cache::ExitAction::Nothing | aot_cache::ExitAction::Discarded => {},
                     }
                 }
-                let Some(index) = instance.java25_starts.iter().position(|(started_pid, _)| *started_pid == pid) else {
+                let Some(index) =
+                    instance.profile_java_starts.iter().position(|(started_pid, _, _)| *started_pid == pid)
+                else {
                     continue;
                 };
-                let (_, started) = instance.java25_starts.swap_remove(index);
+                let (_, started, major) = instance.profile_java_starts.swap_remove(index);
                 if retried_without_cache {
                     continue;
                 }
                 if let Some(reason) = java_default::early_exit_reason(exit_code, lived(started)) {
-                    java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), &reason);
+                    java_default::log_fallback(major, &reason);
                     let recorded_unix_secs = SystemTime::now()
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .map_or(0, |elapsed| elapsed.as_secs());
                     instance.configuration.modify(|configuration| {
-                        configuration.java25_fallback = Some(schema::instance::Java25Fallback {
+                        configuration.java_fallback = Some(schema::instance::JavaFallback {
+                            major,
                             reason,
                             recorded_unix_secs,
                         });
@@ -866,7 +869,7 @@ impl BackendState {
                 }
             }
             let running: Vec<u32> = instance.processes.iter().map(|process| process.id()).collect();
-            instance.java25_starts.retain(|(pid, _)| running.contains(pid));
+            instance.profile_java_starts.retain(|(pid, _, _)| running.contains(pid));
 
             let mut closed: Vec<(u32, Option<i32>)> = Vec::new();
             instance.closing_processes.retain_mut(|(process, _)| match process.try_wait() {
@@ -968,7 +971,7 @@ impl BackendState {
                 .aot_runs
                 .iter()
                 .map(|(pid, _)| *pid)
-                .chain(instance.java25_starts.iter().map(|(pid, _)| *pid))
+                .chain(instance.profile_java_starts.iter().map(|(pid, _, _)| *pid))
                 .chain(instance.aot_retry_probe.as_ref().map(|(pid, _, _)| *pid))
                 .filter(|pid| alive.contains(pid) && !instance.jvm_error_dialogs.contains(pid))
                 .collect();
@@ -1381,6 +1384,46 @@ impl BackendState {
         !self.config.lock().get().global_options_disabled
     }
 
+    /// The Java runtimes Mojang's manifest offers for this platform, newest major first, and
+    /// whether the launcher already downloaded each. Empty when the manifest cannot be read.
+    pub(crate) async fn java_runtimes(&self) -> Vec<bridge::message::JavaRuntimeChoice> {
+        let platform = crate::launch::java_runtime_platform();
+        let runtimes = match self.meta.fetch(crate::metadata::items::MojangJavaRuntimesMetadataItem).await {
+            Ok(runtimes) => runtimes,
+            Err(error) => {
+                log::warn!("Could not read the Java runtimes manifest: {error:?}");
+                return Vec::new();
+            },
+        };
+        let Some(runtime_platform) = runtimes.platforms.get(&platform) else {
+            return Vec::new();
+        };
+        let mut choices: Vec<_> = runtime_platform
+            .components
+            .iter()
+            .filter(|(name, _)| crate::fs::is_single_component_path_str(name.as_str()))
+            .filter_map(|(name, components)| {
+                let version = components.first()?.version.name;
+                let major = crate::launch::java_default::major_version(version.as_str())?;
+                let installed = self
+                    .directories
+                    .runtime_base_dir
+                    .join(name.as_str())
+                    .join(platform.as_str())
+                    .join("manifest.json")
+                    .is_file();
+                Some(bridge::message::JavaRuntimeChoice {
+                    component: *name,
+                    major,
+                    version,
+                    installed,
+                })
+            })
+            .collect();
+        choices.sort_by(|a, b| b.major.cmp(&a.major).then_with(|| a.component.as_str().cmp(b.component.as_str())));
+        choices
+    }
+
     /// Copies the launcher-wide Minecraft settings into an instance still marked for them, and
     /// clears the mark once its format was known.
     pub(crate) fn copy_pending_global_options(
@@ -1416,7 +1459,9 @@ impl BackendState {
             }
         };
         if done && let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-            instance.configuration.modify(|configuration| configuration.global_options_pending = false);
+            instance
+                .configuration
+                .modify(|configuration| configuration.global_options_pending = false);
         }
     }
 

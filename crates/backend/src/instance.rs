@@ -67,9 +67,9 @@ pub struct Instance {
     pub launch_keepalive: Option<KeepAliveHandle>,
     pub processes: Vec<PandoraProcess>,
     pub closing_processes: Vec<(PandoraProcess, Instant)>,
-    /// Java 25 game starts still tracked by process id, with their start time. Used to decide
-    /// whether an early error exit should record a Java 25 fallback.
-    pub java25_starts: Vec<(u32, Instant)>,
+    /// Game starts with the Java the profile recommends, by process id, with their start time and
+    /// that Java major. Used to decide whether an early error exit should record a fallback.
+    pub profile_java_starts: Vec<(u32, Instant, u32)>,
     /// Game processes started with a JDK 25 AOT cache flag (`-XX:AOTCache` or
     /// `-XX:AOTCacheOutput`), by process id.
     pub aot_runs: Vec<(u32, crate::launch::aot_cache::ActiveRun)>,
@@ -1088,7 +1088,7 @@ impl Instance {
             launch_keepalive: None,
             processes: Vec::new(),
             closing_processes: Vec::new(),
-            java25_starts: Vec::new(),
+            profile_java_starts: Vec::new(),
             aot_runs: Vec::new(),
             aot_skip_next_start: None,
             aot_retry_probe: None,

@@ -42,6 +42,7 @@ mod prelaunch_attribution;
 #[cfg(test)]
 mod prelaunch_mods_probe;
 pub mod profile_branch;
+pub mod profile_java;
 pub mod profile_layout_flow;
 mod profile_layout_identity;
 mod profile_layout_ownership;

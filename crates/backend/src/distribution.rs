@@ -196,6 +196,9 @@ pub struct ManifestProfile {
     pub id: String,
     pub name: String,
     pub official: bool,
+    /// Which Java the launcher uses, per platform (`crate::profile_java`). Optional in schemas 1-4.
+    #[serde(default, deserialize_with = "crate::profile_java::present")]
+    pub java_runtime: Option<crate::profile_java::ManifestJavaRuntime>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -381,6 +384,8 @@ pub struct ResolvedGlobalProfile {
     pub config_settings: Vec<ManifestConfigSetting>,
     /// Effective JVM options (schema 3) in declaration order.
     pub jvm_options: Vec<ManifestJvmOption>,
+    /// The Java major the profile chain recommends on PC, or `None` for Mojang's Java.
+    pub java_major: Option<u32>,
 }
 
 impl ResolvedGlobalProfile {
@@ -618,6 +623,7 @@ impl DistributionClient {
         verify_release_signature(keys, &envelope.signature.key_id, &canonical, &envelope.signature.value)?;
         if !(1..=4).contains(&manifest.schema_version)
             || !manifest.game.validate_for_schema(manifest.schema_version)
+            || manifest.profile.java_runtime.as_ref().is_some_and(|java| !java.is_valid())
             || manifest.profile.id != profile_id
             || manifest.revision.id != revision_id
             || manifest.revision.sequence <= 0
@@ -806,6 +812,15 @@ impl DistributionClient {
             None => None,
         };
         let minecraft_version = target.manifest.game.minecraft.clone();
+        // Java on PC: the first revision from the target to the root that names `pc`; else Mojang.
+        let java_major = crate::profile_java::resolve(
+            chain.iter().map(|revision| {
+                (revision.manifest.profile.id.as_str(), revision.manifest.profile.java_runtime.as_ref())
+            }),
+            crate::profile_java::Platform::Pc,
+        )
+        .0
+        .profile_major();
         let (loader_kind, loader_version) = target.manifest.game.resolved_loader();
         let (loader, loader_version) = (loader_kind.loader(), loader_version.to_owned());
 
@@ -1119,6 +1134,7 @@ impl DistributionClient {
             objects_by_path,
             config_settings: config_settings.into_values().collect(),
             jvm_options,
+            java_major,
         })
     }
 
@@ -1484,7 +1500,10 @@ pub(crate) fn verify_file(path: &Path, expected_digest: &str, expected_size: u64
     Ok(hex::encode(hasher.finalize()) == expected_digest)
 }
 
-pub(crate) fn verified_cache_path(object: &ManifestObjectRef, cache_root: &Path) -> Result<Option<PathBuf>, DistributionError> {
+pub(crate) fn verified_cache_path(
+    object: &ManifestObjectRef,
+    cache_root: &Path,
+) -> Result<Option<PathBuf>, DistributionError> {
     if !valid_digest(&object.sha256) || object.size > MAX_OBJECT_BYTES {
         return Err(DistributionError::InvalidResponse("invalid or oversized object reference".into()));
     }
@@ -1748,6 +1767,7 @@ impl crate::BackendState {
                     target_revision: Some(resolved.pin),
                     config_settings: resolved.config_settings,
                     jvm_options: resolved.jvm_options,
+                    java_major: resolved.java_major,
                     changes,
                 },
             )
@@ -1863,6 +1883,7 @@ impl crate::BackendState {
             .map_err(|error| error.to_string())?;
 
         let jvm_options = resolved.jvm_options;
+        let java_major = resolved.java_major;
         let config_settings = resolved
             .config_settings
             .into_iter()
@@ -1946,6 +1967,7 @@ impl crate::BackendState {
                     target_revision: Some(target_pin),
                     config_settings,
                     jvm_options,
+                    java_major,
                     changes,
                 },
             )

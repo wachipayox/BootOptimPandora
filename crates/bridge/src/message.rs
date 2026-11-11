@@ -212,6 +212,20 @@ pub enum MessageToBackend {
         id: InstanceID,
         jvm_binary: InstanceJvmBinaryConfiguration,
     },
+    /// Pins one of the launcher's Java runtimes for the game of this instance; `None` is automatic.
+    SetInstanceJavaRuntime {
+        id: InstanceID,
+        component: Option<Ustr>,
+    },
+    /// Forgets that the Java the profile recommends failed on this instance, so the next Start
+    /// tries it again.
+    ClearInstanceJavaFallback {
+        id: InstanceID,
+    },
+    /// The launcher's Java runtimes for this platform, newest first.
+    GetJavaRuntimes {
+        channel: tokio::sync::oneshot::Sender<Vec<JavaRuntimeChoice>>,
+    },
     SetInstanceLinuxWrapper {
         id: InstanceID,
         linux_wrapper: InstanceLinuxWrapperConfiguration,
@@ -574,6 +588,11 @@ pub enum MessageToBackend {
     /// "Optimize launch (Java 25 AOT cache)" for one instance. Turning it on clears an automatic
     /// disable; turning it off removes the instance's cache.
     SetInstanceAotCache {
+        id: InstanceID,
+        enabled: bool,
+    },
+    /// "Open mod JARs read-only" for one instance (on by default).
+    SetInstanceZipfsAgent {
         id: InstanceID,
         enabled: bool,
     },
@@ -1026,6 +1045,18 @@ pub enum CliUpdatePolicy {
     Update,
     /// `--no-update`: start the installed files unchanged.
     NoUpdate,
+}
+
+/// One Java runtime the launcher can use, from Mojang's runtime manifest.
+#[derive(Debug, Clone)]
+pub struct JavaRuntimeChoice {
+    /// Mojang component name, such as `java-runtime-epsilon`.
+    pub component: Ustr,
+    pub major: u32,
+    /// Full version name, such as `25.0.1`.
+    pub version: Ustr,
+    /// Already downloaded by the launcher.
+    pub installed: bool,
 }
 
 /// The launcher-wide Minecraft settings, as the settings page edits them.

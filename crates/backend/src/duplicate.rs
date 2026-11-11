@@ -522,6 +522,7 @@ async fn duplicate_instance_inner(
                         parent_branch.applied_revision.clone(),
                         &parent_branch.config_settings,
                         &parent_branch.jvm_options,
+                        parent_branch.java_major,
                         parent_entries,
                     )?;
                     match child_layout.initialize_local_child_branch(&delta).map_err(|error| error.to_string())? {
@@ -770,6 +771,7 @@ mod tests {
             None,
             &[],
             &[],
+            None,
             entries,
         )
         .unwrap();
