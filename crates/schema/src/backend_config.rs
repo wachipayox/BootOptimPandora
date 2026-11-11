@@ -155,11 +155,11 @@ fn default_distribution_base_url() -> String {
 }
 
 fn default_distribution_release_key_id() -> String {
-    "wachiland-release-2026-09".into()
+    launcher_artifact::PINNED_RELEASE_KEY_ID.into()
 }
 
 fn default_distribution_release_public_key() -> String {
-    "q8uG8c8IBO-N7tnRWeKKqpl7pSj6G7FvKuRiCycpYwk".into()
+    launcher_artifact::PINNED_RELEASE_PUBLIC_KEY.into()
 }
 
 fn deserialize_distribution_base_url<'de, D>(deserializer: D) -> Result<String, D::Error>

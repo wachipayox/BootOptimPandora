@@ -2,11 +2,68 @@
 
 `scripts/build_windows.sh <version>` produces, in `dist/`:
 
-- `WachilandLauncher-Windows-x86_64-Setup.exe`: the installer.
-- `WachilandLauncher-Windows-x86_64-Portable.exe`: the same launcher exe. Its
-  name contains "portable", so it keeps its data next to itself.
+- `WachilandLauncher-Windows-x86_64-Setup.exe`: the installer, about 2.3 MB. It
+  does not contain the launcher: it downloads the latest published one (below).
+  The build fails if it reaches 10 MB, Discord's upload limit without Nitro.
+- `WachilandLauncher-Windows-x86_64-Portable.exe`: the launcher exe. Its name
+  contains "portable", so it keeps its data next to itself. This is also the
+  exe to publish as the Windows artifact of a Distribution release.
 
 `LAUNCHER_EXE=<path>` packages an already built exe instead of running Cargo.
+
+## Download
+
+The wizard downloads the launcher while installing, so a setup never goes
+stale and stays small. `crates/setup_fetch` (`wachiland-setup-fetch.exe`, built
+with the size-oriented `setup` profile, about 1.9 MB) runs from `$PLUGINSDIR`:
+
+1. `GET /v1/launcher/pandora/releases?platform=windows-x86_64&channel=player`
+   and takes the newest release.
+2. Verifies it with `crates/launcher_artifact`, the same code as the in-place
+   updater: Ed25519 over the exact statement bytes, with the built-in release
+   key or a key discovered at `/v1/signing-keys` over HTTPS that never gives
+   the built-in id another key; then app, version, platform, size, SHA-256 and
+   the CAS path. Redirects are not followed.
+3. Streams `/v1/objects/sha256/<sha256>` into `WachilandLauncher.exe.wbombo-new-setup.part`
+   next to the installed exe, checks size and SHA-256, and only then renames it.
+   It moves the wizard's progress bar and status line through their window
+   handles, and writes its log lines to the details view.
+
+The origin is `WBOMBO_DISTRIBUTION_DEFAULT_URL`, the launcher's own build-time
+default (a GitHub secret in CI), so the server address is not in the
+repository. A build without it produces a setup that only reports that.
+
+Nothing is installed until the download is verified: the registry, shortcuts
+and uninstaller are written afterwards, and the old exe is swapped out by
+renames that are undone on failure. Exit codes and what the wizard does:
+
+| Code | Meaning | Wizard |
+|---|---|---|
+| 0 | verified exe ready | installs it |
+| 20 | server unreachable or not answering | "Reintentar" / "Cancelar" |
+| 21 | no release published for Windows yet | "Reintentar" / "Cancelar" |
+| 30 | index, signature, size or SHA-256 rejected | error, nothing installed |
+| other | local error, or built without an origin | error, nothing installed |
+
+A cancelled or failed install removes the partial download and, on a new
+install, the empty folder; silent and passive runs exit with code 3.
+
+A downloaded exe carries no Mark-of-the-Web, so only the setup itself goes
+through SmartScreen.
+
+A setup that embeds the launcher is no longer built. It would only help an
+install without internet, and the launcher needs the server anyway to install
+any profile; the portable exe covers that case.
+
+### Testing without the real server
+
+`scripts/test_launcher_release_server.py` (needs `cryptography`) serves one
+synthetic release of a given exe from `https://127.0.0.1`, signed with a
+throwaway key and a throwaway CA, in the modes `ok`, `bad-signature`,
+`bad-hash`, `no-release` and `server-error` (`--rate` slows the download).
+`WBOMBO_SETUP_TEST_ORIGIN` and `WBOMBO_SETUP_TEST_CA` point the setup at it;
+the downloader accepts that origin only on a loopback address.
+`scripts/verify_windows_installer.ps1` runs the whole matrix in CI.
 
 ## Tooling
 
@@ -43,10 +100,12 @@ exe name must not contain "portable", or the data directory would move next to
 the exe.
 
 Running the installer again reuses the recorded folder. It skips the folder
-page, closes a running launcher after asking, and overwrites the exe in place.
-The installed exe may have been updated by the launcher itself, while the
-registry `DisplayVersion` is not updated. So the installer compares against the
-exe's own `FILEVERSION` and asks before replacing a newer launcher.
+page, closes a running launcher after asking, and replaces the exe with the
+downloaded one. `DisplayVersion` and `EstimatedSize` are the downloaded
+release's. The installed exe may have been updated by the launcher itself, while
+the registry `DisplayVersion` is not updated. So the installer compares the
+downloaded version against the exe's own `FILEVERSION` and asks before replacing
+a newer launcher (silent runs refuse).
 
 The uninstaller removes:
 
@@ -108,7 +167,8 @@ Silent use: `/MIGRATE=<folder>` and `/MIGRATEVOXY`.
 
 `scripts/sign_windows.ps1 <file>` signs:
 
-- the launcher exe, before it is embedded;
+- the launcher exe, before it is published;
+- the setup's downloader, before it is embedded;
 - the uninstaller, through `!uninstfinalize`;
 - the installer.
 

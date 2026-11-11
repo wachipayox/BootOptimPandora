@@ -85,6 +85,8 @@ jobs:
         shell: bash
         env:
           LAUNCHER_EXE: target/${{ matrix.platform.target }}/release/pandora_launcher.exe
+          # The installer's downloader takes the launcher's default origin; never in the repo.
+          WBOMBO_DISTRIBUTION_DEFAULT_URL: ${{ secrets.WBOMBO_DISTRIBUTION_DEFAULT_URL }}
           AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
           AZURE_ARTIFACT_SIGNING_PROFILE: ${{ secrets.AZURE_ARTIFACT_SIGNING_PROFILE }}
@@ -93,8 +95,8 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           WINDOWS_SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
           WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
-        # The installer silently refuses to replace a newer launcher, so it carries the exe's own
-        # version (Cargo's on branch builds); otherwise the reinstall check below is refused.
+        # The installer carries the exe's own version (Cargo's on branch builds). It downloads the
+        # launcher; the check below serves this exe from a local test Distribution.
         run: |
           version=$(pwsh -NoProfile -Command "(Get-Item '$LAUNCHER_EXE').VersionInfo.ProductVersion")
           bash scripts/build_windows.sh "$version"
@@ -102,7 +104,9 @@ jobs:
       - name: Check installer and launcher metadata
         if: matrix.platform.os_name == 'Windows-x86_64'
         shell: pwsh
-        run: ./scripts/verify_windows_installer.ps1 -Installer dist/WachilandLauncher-Windows-x86_64-Setup.exe -Launcher dist/WachilandLauncher-Windows-x86_64-Portable.exe
+        run: |
+          python -m pip install --quiet "cryptography==44.0.0"
+          ./scripts/verify_windows_installer.ps1 -Installer dist/WachilandLauncher-Windows-x86_64-Setup.exe -Launcher dist/WachilandLauncher-Windows-x86_64-Portable.exe
 
       - name: Upload Windows installer artifact
         if: matrix.platform.os_name == 'Windows-x86_64' && (github.event_name == 'pull_request' || github.ref_name == 'agent/integration-current')

@@ -437,17 +437,8 @@ struct ServerSigningKeys {
 
 impl ServerSigningKeys {
     fn validated(self, pinned: &BTreeMap<String, [u8; 32]>) -> Result<BTreeMap<String, [u8; 32]>, DistributionError> {
-        if self.schema_version != 1 || self.keys.is_empty() || self.keys.len() > 128 {
-            return Err(DistributionError::InvalidSigningKey);
-        }
-        let mut keys = BTreeMap::new();
-        for (id, encoded) in self.keys {
-            insert_trusted_release_key(&mut keys, &id, &encoded)?;
-            if pinned.get(&id).is_some_and(|expected| keys.get(&id) != Some(expected)) {
-                return Err(DistributionError::InvalidSigningKey);
-            }
-        }
-        Ok(keys)
+        launcher_artifact::validate_key_catalog(self.schema_version, self.keys, pinned)
+            .map_err(|_| DistributionError::InvalidSigningKey)
     }
 }
 
@@ -1332,17 +1323,8 @@ fn insert_trusted_release_key(
     key_id: &str,
     encoded_public: &str,
 ) -> Result<(), DistributionError> {
-    if key_id.is_empty() || key_id.len() > 128 || key_id.trim() != key_id {
-        return Err(DistributionError::InvalidSigningKey);
-    }
-    let key_bytes = URL_SAFE_NO_PAD
-        .decode(encoded_public.trim())
-        .map_err(|_| DistributionError::InvalidSigningKey)?;
-    let key_bytes: [u8; 32] = key_bytes.try_into().map_err(|_| DistributionError::InvalidSigningKey)?;
-    if keys.insert(key_id.to_owned(), key_bytes).is_some() {
-        return Err(DistributionError::InvalidSigningKey);
-    }
-    Ok(())
+    launcher_artifact::insert_trusted_key(keys, key_id, encoded_public)
+        .map_err(|_| DistributionError::InvalidSigningKey)
 }
 
 fn verify_release_signature(

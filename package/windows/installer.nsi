@@ -7,6 +7,10 @@
 ; - upgrades overwrite in place (no uninstall/reinstall page) and compare the
 ;   real exe version, because the launcher's own updater does not rewrite the
 ;   uninstall registry key;
+; - the launcher is not embedded: crates/setup_fetch downloads the latest
+;   `player` release from Distribution and verifies it like the updater
+;   (Ed25519 statement, size, SHA-256) before anything is installed, so the
+;   setup always installs the latest version and stays small;
 ; - launcher data (%APPDATA%\WachilandLauncher) is never touched;
 ; - shortcuts carry no explicit AppUserModelID because the process sets none.
 
@@ -40,6 +44,8 @@ ManifestSupportedOS Win10
 !define MANUPRODUCTKEY "Software\${MANUFACTURER}\${PRODUCTNAME}"
 !define UNINSTALLERSIGNCOMMAND "{{uninstaller_sign_cmd}}"
 !define ESTIMATEDSIZE "{{estimated_size}}"
+; Path of crates/setup_fetch's exe, written in by scripts/build_windows.sh.
+!define SETUPFETCHSRCPATH "@SETUP_FETCH_EXE@"
 
 ; Launcher dark palette (assets/theme/tokens.json). RRGGBB for SetCtlColors,
 ; 0xBBGGRR for Win32 COLORREF messages.
@@ -240,6 +246,11 @@ FunctionEnd
 ; Installer pages
 Var Upgrading
 Var PassiveMode
+; The download (see "Download" below).
+Var InstalledVersion
+Var NewFile
+Var NewVersion
+Var NewSizeKb
 ; Migration from another launcher's folder (see "Migration" below).
 Var MigrateWanted
 Var MigrateDir
@@ -341,23 +352,15 @@ Function .onInit
     StrCpy $INSTDIR $R0
     StrCpy $Upgrading 1
     ; The launcher updates itself in place, so the registry DisplayVersion can
-    ; be stale: compare against the installed executable instead.
+    ; be stale: the installed executable's own version is compared with the
+    ; downloaded one in the Install section.
     ClearErrors
     GetDLLVersion "$R0\${MAINBINARYNAME}.exe" $R1 $R2
     ${IfNot} ${Errors}
       IntOp $R3 $R1 >> 16
       IntOp $R4 $R1 & 0xFFFF
       IntOp $R5 $R2 >> 16
-      StrCpy $R6 "$R3.$R4.$R5"
-      ${VersionCompare} "${VERSION}" $R6 $R7
-      ${If} $R7 == 2
-        ${If} ${Silent}
-          Abort
-        ${EndIf}
-        MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$(newerInstalled)" IDYES newer_accepted
-        Abort
-        newer_accepted:
-      ${EndIf}
+      StrCpy $InstalledVersion "$R3.$R4.$R5"
     ${EndIf}
   ${ElseIf} $INSTDIR == ""
     StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${PRODUCTNAME}"
@@ -590,34 +593,150 @@ FunctionEnd
 {{unescape_newlines preinstall_section}}
 {{/if}}
 
+; ---------------------------------------------------------------------------
+; Download. wachiland-setup-fetch writes the verified exe next to the installed
+; one and the release's version and size to release.ini; it moves the progress
+; bar and status line itself. Exit codes: 0 ready, 20 server unreachable and
+; 21 nothing published yet (both offer Retry), 30 verification failed, other
+; values fatal. Nothing is installed until it succeeds.
+Function DownloadLauncher
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\wachiland-setup-fetch.exe" "${SETUPFETCHSRCPATH}"
+  StrCpy $NewFile "$INSTDIR\${MAINBINARYNAME}.exe.wbombo-new-setup"
+  FindWindow $R1 "#32770" "" $HWNDPARENT
+  GetDlgItem $R2 $R1 1004
+  GetDlgItem $R3 $R1 1006
+  retry:
+    Delete "$PLUGINSDIR\release.ini"
+    nsExec::ExecToLog '"$PLUGINSDIR\wachiland-setup-fetch.exe" --out "$NewFile" --info "$PLUGINSDIR\release.ini" --progress $R2 --status $R3'
+    Pop $R0
+    ${If} $R0 == 0
+      ReadINIStr $NewVersion "$PLUGINSDIR\release.ini" release version
+      ReadINIStr $NewSizeKb "$PLUGINSDIR\release.ini" release size_kb
+      ${If} $NewVersion != ""
+        Return
+      ${EndIf}
+      StrCpy $R0 "release.ini"
+    ${EndIf}
+    ${If} $R0 == 20
+    ${OrIf} $R0 == 21
+      ${If} $R0 == 20
+        StrCpy $R4 "$(downloadUnreachable)"
+      ${Else}
+        StrCpy $R4 "$(downloadNoRelease)"
+      ${EndIf}
+      DetailPrint "$R4"
+      ${IfNot} ${Silent}
+      ${AndIf} $PassiveMode != 1
+        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$R4" IDRETRY retry
+      ${EndIf}
+      Call AbortInstall
+    ${ElseIf} $R0 == 30
+      StrCpy $R4 "$(downloadUnverified)"
+    ${Else}
+      StrCpy $R4 "$(downloadFailed)"
+    ${EndIf}
+    Call FailInstall
+FunctionEnd
+
+; Strips "-pre" and "+build" so VersionCompare sees MAJOR.MINOR.PATCH ($R1 in, $R1 out).
+Function NumericVersion
+  StrCpy $R2 0
+  ${Do}
+    StrCpy $R3 $R1 1 $R2
+    ${If} $R3 == ""
+    ${OrIf} $R3 == "-"
+    ${OrIf} $R3 == "+"
+      ${Break}
+    ${EndIf}
+    IntOp $R2 $R2 + 1
+  ${Loop}
+  StrCpy $R1 $R1 $R2
+FunctionEnd
+
+; Shows $R4 (unless silent or passive), then AbortInstall.
+Function FailInstall
+  DetailPrint "$R4"
+  ${IfNot} ${Silent}
+  ${AndIf} $PassiveMode != 1
+    MessageBox MB_OK|MB_ICONSTOP "$R4"
+  ${EndIf}
+  Call AbortInstall
+FunctionEnd
+
+; Leaves the machine as it was: no download left over and, on a new install, no
+; empty folder. Registry, shortcuts and uninstaller are only written afterwards.
+Function AbortInstall
+  Delete "$NewFile"
+  Delete "$NewFile.part"
+  ; The folder cannot go while it is the installer's working directory.
+  SetOutPath $TEMP
+  ${If} $Upgrading != 1
+    RMDir "$INSTDIR"
+  ${EndIf}
+  DetailPrint "$(downloadAborted)"
+  SetErrorLevel 3
+  Abort
+FunctionEnd
+
 Section Install
   SetOutPath $INSTDIR
   !insertmacro CheckIfAppIsRunning
 
-  File "${MAINBINARYSRCPATH}"
-  {{#each resources_dirs}}
-  CreateDirectory "$INSTDIR\\{{this}}"
-  {{/each}}
-  {{#each resources}}
-  File /a "/oname={{this}}" "{{@key}}"
-  {{/each}}
-  {{#each binaries}}
-  File /a "/oname={{this}}" "{{@key}}"
-  {{/each}}
+  Call DownloadLauncher
+
+  ; Only a developer build can be newer than the latest published release.
+  ${If} $InstalledVersion != ""
+    StrCpy $R1 $NewVersion
+    Call NumericVersion
+    ${VersionCompare} $R1 $InstalledVersion $R7
+    ${If} $R7 == 2
+      ${If} ${Silent}
+      ${OrIf} $PassiveMode == 1
+        Call AbortInstall
+      ${EndIf}
+      MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$(newerInstalled)" IDYES newer_accepted
+      Call AbortInstall
+      newer_accepted:
+    ${EndIf}
+  ${EndIf}
+
+  ; Swap in the verified exe; the previous one comes back if that fails.
+  StrCpy $R5 "$INSTDIR\${MAINBINARYNAME}.exe.wbombo-previous-setup"
+  Delete "$R5"
+  ${If} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+    ClearErrors
+    Rename "$INSTDIR\${MAINBINARYNAME}.exe" "$R5"
+    ${If} ${Errors}
+      StrCpy $R4 "$(replaceFailed)"
+      Call FailInstall
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+  Rename "$NewFile" "$INSTDIR\${MAINBINARYNAME}.exe"
+  ${If} ${Errors}
+    ${If} ${FileExists} "$R5"
+      Rename "$R5" "$INSTDIR\${MAINBINARYNAME}.exe"
+    ${EndIf}
+    StrCpy $R4 "$(replaceFailed)"
+    Call FailInstall
+  ${EndIf}
+  Delete "$R5"
+  DetailPrint "$(installedVersion)"
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
   WriteRegStr HKCU "${MANUPRODUCTKEY}" "" $INSTDIR
 
   WriteRegStr HKCU "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
   WriteRegStr HKCU "${UNINSTKEY}" "DisplayIcon" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\""
-  WriteRegStr HKCU "${UNINSTKEY}" "DisplayVersion" "${VERSION}"
+  WriteRegStr HKCU "${UNINSTKEY}" "DisplayVersion" "$NewVersion"
   WriteRegStr HKCU "${UNINSTKEY}" "Publisher" "${MANUFACTURER}"
   WriteRegStr HKCU "${UNINSTKEY}" "InstallLocation" "$\"$INSTDIR$\""
   WriteRegStr HKCU "${UNINSTKEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
   WriteRegStr HKCU "${UNINSTKEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
   WriteRegDWORD HKCU "${UNINSTKEY}" "NoModify" "1"
   WriteRegDWORD HKCU "${UNINSTKEY}" "NoRepair" "1"
-  WriteRegDWORD HKCU "${UNINSTKEY}" "EstimatedSize" "${ESTIMATEDSIZE}"
+  WriteRegDWORD HKCU "${UNINSTKEY}" "EstimatedSize" "$NewSizeKb"
 
   CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe" 0 SW_SHOWNORMAL "" "${SHORTDESCRIPTION}"
 

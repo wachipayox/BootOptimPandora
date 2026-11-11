@@ -2,6 +2,11 @@
 # Release build for Windows: the launcher exe, a portable copy and the installer.
 # Usage: scripts/build_windows.sh <version>   (e.g. 1.0.0 or v1.0.0)
 #
+# The installer does not embed the launcher: crates/setup_fetch downloads the
+# latest `player` release from Distribution (origin from
+# WBOMBO_DISTRIBUTION_DEFAULT_URL, like the launcher) and verifies it before
+# installing. The launcher exe built here is the one to publish there.
+#
 # Signing is optional and pluggable: scripts/sign_windows.ps1 signs the launcher,
 # the uninstaller and the installer when a signing secret is configured, and
 # prints a warning otherwise. See docs/features/windows-installer.md.
@@ -24,6 +29,7 @@ json_path() {
     echo "${path//\\/\\\\}"
 }
 main_exe=$(json_path target/installer/WachilandLauncher.exe)
+template=$(json_path target/installer/installer.nsi)
 sidebar=$(json_path target/installer/art/installer-sidebar.bmp)
 header=$(json_path target/installer/art/installer-header.bmp)
 sign="powershell -NoProfile -ExecutionPolicy Bypass -File $root/scripts/sign_windows.ps1"
@@ -37,6 +43,18 @@ if [ -z "$built" ]; then
 fi
 
 mkdir -p dist target/installer
+
+# The installer's downloader, built small (profile `setup`) and signed like the rest.
+cargo build --profile setup --frozen --target x86_64-pc-windows-msvc -p setup_fetch
+cp target/x86_64-pc-windows-msvc/setup/wachiland-setup-fetch.exe target/installer/wachiland-setup-fetch.exe
+$sign target/installer/wachiland-setup-fetch.exe
+fetch_exe=$(cygpath -w "$PWD/target/installer/wachiland-setup-fetch.exe" 2>/dev/null || echo "$PWD/target/installer/wachiland-setup-fetch.exe")
+python - "$fetch_exe" <<'PY'
+import sys
+template = open("package/windows/installer.nsi", encoding="utf-8").read()
+assert template.count("@SETUP_FETCH_EXE@") == 1
+open("target/installer/installer.nsi", "w", encoding="utf-8", newline="\n").write(template.replace("@SETUP_FETCH_EXE@", sys.argv[1]))
+PY
 # The installed name must not contain "portable": that word switches the data
 # directory to the exe's folder (crates/pandora_launcher/src/main.rs).
 cp "$built" target/installer/WachilandLauncher.exe
@@ -64,7 +82,7 @@ config=$(cat <<EOF
   "formats": ["nsis"],
   "windows": { "signCommand": "$sign %1", "allowDowngrades": true },
   "nsis": {
-    "template": "$root/package/windows/installer.nsi",
+    "template": "$template",
     "installerIcon": "$root/$icon_root/windows.ico",
     "headerImage": "$header",
     "sidebarImage": "$sidebar",
@@ -84,6 +102,10 @@ env -u CARGO_PACKAGER_SIGN_PRIVATE_KEY cargo packager --config "$config"
 setup="dist/WachilandLauncher-Windows-x86_64-Setup.exe"
 mv -f "dist/WachilandLauncher_${version}_x64-setup.exe" "$setup"
 cp -f target/installer/WachilandLauncher.exe dist/WachilandLauncher-Windows-x86_64-Portable.exe
+# The setup is shared on Discord, whose upload limit without Nitro is 10 MB.
+setup_bytes=$(stat -c %s "$setup")
+echo "instalador: $setup_bytes bytes"
+[ "$setup_bytes" -lt 10000000 ] || { echo "el instalador pasa de 10 MB"; exit 1; }
 # cargo-packager signs the installer itself; this only reports if it did not.
 $sign "$setup"
 
