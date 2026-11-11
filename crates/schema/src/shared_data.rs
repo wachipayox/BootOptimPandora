@@ -13,6 +13,9 @@ pub const GLOBAL_FOLDERS: &[&str] = &[
     "schematics",
     ".sable",
 ];
+/// Create's Ponder keeps the scenes the player has watched here, as a JSON list of ids; ids that a
+/// Create version does not know are ignored, so one list serves every version.
+pub const GLOBAL_FILES: &[&str] = &["ponders_watched.json"];
 pub const GROUP_FILES: &[&str] = &["command_history.txt", "hotbar.nbt"];
 pub const GROUP_FOLDERS: &[&str] = &["saves", "config/litematica", "Sable-Schematics", "music_sheets"];
 pub const RETIRED_GLOBAL_FILES: &[&str] = &["options.txt", "servers.dat", "command_history.txt", "hotbar.nbt"];
@@ -20,7 +23,7 @@ pub const RETIRED_GLOBAL_FOLDERS: &[&str] = &["saves", "config", "resourcepacks"
 
 pub fn global_defaults() -> SyncTargets {
     SyncTargets {
-        files: Default::default(),
+        files: GLOBAL_FILES.iter().map(|s| (*s).into()).collect(),
         folders: GLOBAL_FOLDERS.iter().map(|s| (*s).into()).collect(),
     }
 }
@@ -47,6 +50,7 @@ impl InstanceGlobalSharing {
 pub fn global_catalog(global: &SyncTargets) -> std::collections::BTreeMap<String, bool> {
     let mut result: std::collections::BTreeMap<String, bool> =
         GLOBAL_FOLDERS.iter().map(|p| ((*p).into(), false)).collect();
+    result.extend(GLOBAL_FILES.iter().map(|p| ((*p).into(), true)));
     result.extend(global.folders.iter().map(|p| (p.to_string(), false)));
     result.extend(global.files.iter().map(|p| (p.to_string(), true)));
     result
@@ -77,8 +81,14 @@ pub fn effective_global(global: &SyncTargets, local: &InstanceGlobalSharing, dis
 
 /// Apply once without resetting later user choices or dropping custom routes.
 pub fn migrate_global_defaults(config: &mut crate::backend_config::BackendConfig) -> bool {
-    if config.shared_data_defaults_version >= 1 {
+    if config.shared_data_defaults_version >= 2 {
         return false;
+    }
+    if config.shared_data_defaults_version == 1 {
+        // Version 2 only adds the global files; later user toggles stay authoritative.
+        config.sync_targets.files.extend(GLOBAL_FILES.iter().map(|p| (*p).into()));
+        config.shared_data_defaults_version = 2;
+        return true;
     }
     config.previous_sync_targets = Some(config.sync_targets.clone());
     config
@@ -90,7 +100,8 @@ pub fn migrate_global_defaults(config: &mut crate::backend_config::BackendConfig
         .folders
         .retain(|path| !RETIRED_GLOBAL_FOLDERS.iter().any(|old| old.eq_ignore_ascii_case(path)));
     config.sync_targets.folders.extend(global_defaults().folders);
-    config.shared_data_defaults_version = 1;
+    config.sync_targets.files.extend(global_defaults().files);
+    config.shared_data_defaults_version = 2;
     true
 }
 
@@ -187,11 +198,22 @@ mod tests {
         assert!(config.sync_targets.files.contains("custom.txt"));
         assert!(!config.sync_targets.files.contains("servers.dat"));
         assert!(!config.sync_targets.folders.contains("config"));
+        assert!(config.sync_targets.files.contains("ponders_watched.json"));
         config.sync_targets.folders.remove("screenshots");
         let saved = serde_json::to_vec(&config).unwrap();
         let mut reopened: crate::backend_config::BackendConfig = serde_json::from_slice(&saved).unwrap();
         assert!(!migrate_global_defaults(&mut reopened));
         assert!(!reopened.sync_targets.folders.contains("screenshots"));
+    }
+    #[test]
+    fn version_two_adds_global_files_once() {
+        let mut config = crate::backend_config::BackendConfig::default();
+        config.shared_data_defaults_version = 1;
+        assert!(migrate_global_defaults(&mut config));
+        assert!(config.sync_targets.files.contains("ponders_watched.json"));
+        config.sync_targets.files.remove("ponders_watched.json");
+        assert!(!migrate_global_defaults(&mut config));
+        assert!(!config.sync_targets.files.contains("ponders_watched.json"));
     }
     #[test]
     fn folders_match_segments_and_portable_case_not_similar_names() {

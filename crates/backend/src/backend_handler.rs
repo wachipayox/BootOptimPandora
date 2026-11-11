@@ -487,6 +487,14 @@ impl BackendState {
                 }
                 self.apply_syncing_to_instance(id);
             },
+            MessageToBackend::SetInstanceZipfsAgent { id, enabled } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        // On is the default: store nothing.
+                        configuration.zipfs_agent = (!enabled).then_some(false);
+                    });
+                }
+            },
             MessageToBackend::SetInstanceAotCache { id, enabled } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     instance.configuration.modify(|configuration| {
@@ -600,6 +608,24 @@ impl BackendState {
                         configuration.jvm_binary = Some(jvm_binary);
                     });
                 }
+            },
+            MessageToBackend::SetInstanceJavaRuntime { id, component } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.java_runtime = component;
+                    });
+                }
+            },
+            MessageToBackend::ClearInstanceJavaFallback { id } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| configuration.java_fallback = None);
+                }
+            },
+            MessageToBackend::GetJavaRuntimes { channel } => {
+                let this = self.clone();
+                tokio::spawn(async move {
+                    let _ = channel.send(this.java_runtimes().await);
+                });
             },
             MessageToBackend::SetInstanceLinuxWrapper { id, linux_wrapper } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
@@ -2226,6 +2252,93 @@ impl BackendState {
                 });
                 crate::update::spawn_update_check(self, false);
             },
+            MessageToBackend::SetGlobalOptions { enabled } => {
+                self.config.lock().modify(|backend_config| {
+                    backend_config.global_options_disabled = !enabled;
+                });
+            },
+            MessageToBackend::GetGlobalOptions { channel } => {
+                let store = crate::global_options::load_store(&self.directories.root_launcher_dir);
+                let _ = channel.send(bridge::message::GlobalOptionsSummary {
+                    values: store.values,
+                    excluded: store.excluded,
+                    source: store.source,
+                });
+            },
+            MessageToBackend::SetGlobalOption { key, value } => {
+                if let Err(error) =
+                    crate::global_options::set_value(&self.directories.root_launcher_dir, &key, value.as_deref())
+                {
+                    log::warn!("Unable to save a global Minecraft setting: {error}");
+                    self.send.send_error("No se ha podido guardar el ajuste.");
+                }
+            },
+            MessageToBackend::SetGlobalOptionSynced { key, synced } => {
+                if let Err(error) = crate::global_options::set_synced(&self.directories.root_launcher_dir, &key, synced)
+                {
+                    log::warn!("Unable to save a global Minecraft setting: {error}");
+                    self.send.send_error("No se ha podido guardar el ajuste.");
+                }
+            },
+            MessageToBackend::CopyGlobalOptionsToInstance { id } => {
+                let found = self.instance_state.write().instances.get_mut(id).map(|instance| {
+                    (
+                        instance.dot_minecraft_path.clone(),
+                        instance.configuration.get().clone(),
+                        instance.name.to_string(),
+                    )
+                });
+                if let Some((dot_minecraft, configuration, name)) = found {
+                    let result = crate::global_options::copy_into(
+                        &self.directories.root_launcher_dir,
+                        &self.directories.libraries_dir,
+                        &crate::global_options::Target {
+                            dot_minecraft: &dot_minecraft,
+                            minecraft_version: configuration.minecraft_version.as_str(),
+                            loader: configuration.loader,
+                        },
+                    );
+                    match result {
+                        Ok(schema::global_options::ApplyOutcome::NeedsDataVersion) => {
+                            self.send.send_error("Arranca esta instancia una vez y vuelve a intentarlo.");
+                        },
+                        Ok(_) => {
+                            if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                                instance
+                                    .configuration
+                                    .modify(|configuration| configuration.global_options_pending = false);
+                            }
+                            self.send
+                                .send_success(format!("Los ajustes de Minecraft globales se han copiado a {name}."));
+                        },
+                        Err(error) => {
+                            log::warn!("Unable to copy global Minecraft settings into {name}: {error}");
+                            self.send.send_error("No se han podido copiar los ajustes globales.");
+                        },
+                    }
+                }
+            },
+            MessageToBackend::UseInstanceOptionsAsGlobal { id } => {
+                let found = self
+                    .instance_state
+                    .read()
+                    .instances
+                    .get(id)
+                    .map(|instance| (instance.dot_minecraft_path.join("options.txt"), instance.name.to_string()));
+                if let Some((options, name)) = found {
+                    match crate::global_options::import(&self.directories.root_launcher_dir, &options, &name) {
+                        Ok(_) => self
+                            .send
+                            .send_success(format!("Los ajustes de Minecraft de {name} son ahora los globales.")),
+                        Err(error) => {
+                            log::warn!("Unable to import Minecraft settings from {name}: {error}");
+                            self.send.send_error(
+                                "No se han podido copiar los ajustes de esta instancia. Arráncala una vez primero.",
+                            );
+                        },
+                    }
+                }
+            },
             MessageToBackend::SetProxyPassword { password } => {
                 match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
                     Ok(storage) => {
@@ -2958,65 +3071,89 @@ impl BackendState {
         }
         modal_action.clear_trackers();
 
+        // A new instance gets the launcher-wide Minecraft settings once, before its first start.
+        self.copy_pending_global_options(id, &dot_minecraft, &configuration);
+
         // Signed profile JVM options persisted at the last profile update; reading them is a single
         // metadata read with no tree walk. A damaged state launches without them.
-        let committed_branch = match crate::profile_layout_flow::read_committed_branch(&root_path) {
-            Ok(branch) => branch,
+        let (committed_branch, branch_known) = match crate::profile_layout_flow::read_committed_branch(&root_path) {
+            Ok(branch) => (branch, true),
             Err(error) => {
                 log::warn!(
-                    "[profile-jvm] could not read the profile state, launching without profile JVM options or Java 25: {error}"
+                    "[profile-jvm] could not read the profile state, launching without profile JVM options or the profile's Java: {error}"
                 );
-                None
+                (None, false)
             },
         };
         let profile_jvm_options =
             committed_branch.as_ref().map(|branch| branch.jvm_options.clone()).unwrap_or_default();
 
+        // The Java the profile recommends on PC (`profile.java_runtime`), stored when it was applied.
+        let profile_major = committed_branch.as_ref().and_then(|branch| branch.java_major);
+        let mut configuration = configuration;
+        // A failure record for another major (or with the profile back on Mojang's Java) is dropped.
+        if branch_known
+            && let Some(fallback) = &configuration.java_fallback
+            && java_default::fallback_is_stale(profile_major, fallback.major)
+        {
+            log::info!(
+                "[java-runtime] the profile no longer recommends Java {}: forgetting its failed start",
+                fallback.major
+            );
+            configuration.java_fallback = None;
+            if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                instance.configuration.modify(|configuration| configuration.java_fallback = None);
+            }
+        }
         let java_choice = java_default::choose(&java_default::Inputs {
-            profile_id: committed_branch
-                .as_ref()
-                .and_then(|branch| branch.applied_revision.as_ref())
-                .map(|pin| pin.profile_id.as_str()),
+            profile_major,
             jvm_binary_enabled: configuration.jvm_binary.as_ref().is_some_and(|binary| binary.enabled),
+            runtime_pinned: configuration.java_runtime.is_some(),
             force_external_java: std::env::var_os("FORCE_EXTERNAL_JAVA").is_some(),
-            saved_fallback_reason: configuration.java25_fallback.as_ref().map(|fallback| fallback.reason.as_str()),
+            saved_fallback: configuration
+                .java_fallback
+                .as_ref()
+                .map(|fallback| (fallback.major, fallback.reason.as_str())),
         });
-        let java25 = match java_choice {
-            java_default::Choice::Java25 => true,
-            java_default::Choice::Java21 => false,
-            java_default::Choice::FallbackSaved(reason) => {
-                java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), reason);
-                false
+        let profile_java = match java_choice {
+            java_default::Choice::Profile(major) => Some(major),
+            java_default::Choice::Usual => None,
+            java_default::Choice::FallbackSaved { major, reason } => {
+                java_default::log_fallback(major, &format!("earlier-start-failed ({reason})"));
+                None
             },
         };
 
-        // JDK 25 AOT cache: only Wachiland global profiles. Built from the committed profile state
-        // (revision pin and the stored hashes of the managed mods); no filesystem scan.
+        // JDK 25 AOT cache: any instance; whether the JVM is Java 25 is decided when the command is
+        // built. A profile instance is keyed by its committed state (revision pin and the stored
+        // hashes of the managed mods, no scan); any other instance by one listing of `mods/`.
         let mut aot_retry_reason = None;
-        let aot_request = committed_branch.as_ref().and_then(|branch| {
-            let pin = branch.applied_revision.as_ref()?;
-            if !pin.profile_id.starts_with(java_default::WACHILAND_PROFILE_PREFIX) {
-                return None;
-            }
+        let aot_request = {
+            let pin = committed_branch.as_ref().and_then(|branch| branch.applied_revision.clone());
+            let mods_fingerprint = match committed_branch.as_ref().filter(|_| pin.is_some()) {
+                Some(branch) => aot_cache::mods_fingerprint(&branch.entries),
+                None => aot_cache::mods_dir_fingerprint(&dot_minecraft.join("mods")),
+            };
             let mut instance_state = self.instance_state.write();
-            let instance = instance_state.instances.get_mut(id)?;
-            let other_process_running = !instance.processes.is_empty()
-                || !instance.closing_processes.is_empty()
-                || instance.aot_create.is_some();
-            aot_retry_reason = instance.aot_skip_next_start.take();
-            // A Start resumes an optimization the player postponed (after this game closes).
-            instance.aot_create_postponed = false;
-            instance.aot_check_pending = true;
-            Some(aot_cache::LaunchRequest {
-                instance_root: root_path.to_path_buf(),
-                pin: pin.clone(),
-                mods_fingerprint: aot_cache::mods_fingerprint(&branch.entries),
-                other_process_running,
-                skip_once: aot_retry_reason.is_some(),
-                disabled_by_setting: !instance.configuration.get().aot_cache_enabled(),
-                quick_play: quick_play.clone(),
+            instance_state.instances.get_mut(id).map(|instance| {
+                let other_process_running = !instance.processes.is_empty()
+                    || !instance.closing_processes.is_empty()
+                    || instance.aot_create.is_some();
+                aot_retry_reason = instance.aot_skip_next_start.take();
+                // A Start resumes an optimization the player postponed (after this game closes).
+                instance.aot_create_postponed = false;
+                instance.aot_check_pending = true;
+                aot_cache::LaunchRequest {
+                    instance_root: root_path.to_path_buf(),
+                    pin,
+                    mods_fingerprint,
+                    other_process_running,
+                    skip_once: aot_retry_reason.is_some(),
+                    disabled_by_setting: !instance.configuration.get().aot_cache_enabled(),
+                    quick_play: quick_play.clone(),
+                }
             })
-        });
+        };
 
         let last_world_folder = match quick_play.as_ref() {
             Some(QuickPlayLaunch::Singleplayer(path)) => std::path::Path::new(path)
@@ -3056,7 +3193,7 @@ impl BackendState {
                 &launch_tracker,
                 &modal_action,
                 profile_jvm_options,
-                java25,
+                profile_java,
                 aot_request,
             )
             .await;
@@ -3082,8 +3219,10 @@ impl BackendState {
                 child.stdout.take();
 
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
-                    if java25 && java_major == java_default::JAVA_MAJOR {
-                        instance.java25_starts.push((child.process.id(), Instant::now()));
+                    if let Some(major) = profile_java
+                        && java_major == major
+                    {
+                        instance.profile_java_starts.push((child.process.id(), Instant::now(), major));
                     }
                     if let Some(aot_run) = aot_run {
                         instance.aot_runs.push((child.process.id(), aot_run));

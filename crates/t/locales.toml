@@ -2582,7 +2582,7 @@ en = "Hide"
 en = "Optimize launch (Java 25 AOT cache)"
 
 [instance.aot.setting_help]
-en = "Makes the game reach the main menu a few seconds faster (about 4–9 s in our tests), using about 300 MB of disk for this instance.\n\nThe first game after turning it on, or after a pack or Java update, starts and closes a little slower, and then the launcher spends a few seconds optimizing.\n\nOnly for Wachiland profiles that run on Java 25. Turning it off deletes the cache."
+en = "Makes the game reach the main menu a few seconds faster (about 4–9 s in our tests), using about 300 MB of disk for this instance.\n\nThe first game after turning it on, or after a pack or Java update, starts and closes a little slower, and then the launcher spends a few seconds optimizing.\n\nOnly for instances that run on Java 25. Turning it off deletes the cache."
 
 [instance.aot.state_not_built]
 en = "Not ready yet: your next game prepares it."

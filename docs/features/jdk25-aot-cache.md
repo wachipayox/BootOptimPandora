@@ -1,6 +1,7 @@
 # JDK 25 AOT cache (per instance)
 
-Status: implemented for Wachiland global profiles on PC with Java 25 (PR #104). Research:
+Status: implemented on PC for any instance whose game runs on Java 25 (PR #104; extended beyond
+Wachiland profiles in #150). Research:
 BootOptim `docs/research/jdk25-aot-cache-reopen-2026-10-15.md` (#364) and
 `docs/research/jdk25-aot-cache-pandora-2026-10-16.md`.
 
@@ -91,14 +92,20 @@ nothing, so it does not turn the option off; the next key change retrains.
 `WBOMBO_AOT_CACHE=force-error` adds an invalid `-XX:AOTMode` value to a record/use start so the JVM
 refuses to start: it exercises the automatic turn-off (testing only).
 
+For an instance that follows a global profile, the key uses its committed state (revision pin and
+the stored hashes of the managed mods, no scan). Any other instance uses one listing of `mods/`
+(file name, size and modification time; no file is read), so adding, removing or updating a mod
+retrains it.
+
 ## When it applies
 
 Only when **all** hold; otherwise the start is a plain start:
 
-- the instance's applied revision belongs to a `profile_wachiland-*` global profile;
-- the instance's option is on;
-- the game runs on Java 25 (`release` file says 25; Mojang's `java-runtime-epsilon`);
-- no custom `jvm_binary`, no `FORCE_EXTERNAL_JAVA`, no sandbox, no wrapper command;
+- the instance's option is on (the default);
+- the game JVM is Java 25, read from its own `release` file: the launcher's automatic choice, a
+  runtime pinned with a right click on "Automático", or a custom `jvm_binary` /
+  `FORCE_EXTERNAL_JAVA` of Java 25;
+- no sandbox, no wrapper command;
 - the player's JVM flags do not set `-XX:AOT*`, `-Xshare`, `-XX:SharedArchiveFile` or
   `-XX:ArchiveClassesAtExit`, and the legacy `BOOTOPTIM_LAUNCH_INTERPOSER` AppCDS is off;
 - every launch argument is valid Unicode (it is saved in `run.json` for the create step);
@@ -130,7 +137,7 @@ a SHA-256 over:
 | Exact JDK build | hash of the runtime's `release` file + size of `lib/modules` | 2 small reads |
 | Profile revision | applied revision pin (profile id, revision id, manifest hash) | already read |
 | Mod list | hash of the committed profile entries under `mods/` (path + stored content hash) | none: no scan |
-| Classpath | path, size and mtime of each library jar (the JVM checks the same) | ~100 `stat` |
+| Classpath | path, size and mtime of each library jar (the JVM checks the same) and of each `-javaagent` JAR (a new zipfs agent keeps its path, so only the file shows the change) | ~100 `stat` |
 | VM arguments | every argument before the main class except `-D…` and the cache flags (memory, GC, `-XX`, modules) | none |
 
 If the key changes, only that instance retrains (the old file and a profile for the old key are
@@ -156,7 +163,7 @@ Log lines (always the fixed prefix, filter the launcher log for `[WBOMBO-COMPAT]
 [WBOMBO-COMPAT] ACTIVE project=Pandora mechanism=jdk25-aot-cache mod=java@25.0.1+8-LTS mode=recorded key=… profile_mib=294 write_seconds=17.2
 [WBOMBO-COMPAT] ACTIVE project=Pandora mechanism=jdk25-aot-cache mod=java@25.0.1+8-LTS mode=created key=… size_mib=289 create_seconds=15.1
 [WBOMBO-COMPAT] ACTIVE project=Pandora mechanism=jdk25-aot-cache mod=java@25.0.1+8-LTS mode=use key=0123456789abcdef size_mib=289
-[WBOMBO-COMPAT] FALLBACK project=Pandora mechanism=jdk25-aot-cache mod=java@25.0.1+8-LTS reason=custom-java-binary
+[WBOMBO-COMPAT] FALLBACK project=Pandora mechanism=jdk25-aot-cache mod=java@25.0.1+8-LTS reason=wrapper-command
 [WBOMBO-COMPAT] FALLBACK project=Pandora mechanism=jdk25-aot-cache mod=java@25 reason=option-turned-off (create-failed (exit Some(1) after 3s))
 ```
 

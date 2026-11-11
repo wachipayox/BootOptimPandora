@@ -89,14 +89,33 @@ pub struct InstanceConfiguration {
         skip_serializing_if = "std::collections::BTreeMap::is_empty"
     )]
     pub profile_jvm_options: std::collections::BTreeMap<String, crate::profile_jvm::ProfileJvmOptionChoice>,
-    /// Set when a Java 25 start of a Wachiland global profile exited with an error before it could
-    /// have reached the main menu. Later starts of this instance use Java 21 until it is removed.
+    /// Set when a start with the Java the profile recommends exited with an error before it could
+    /// have reached the main menu. Later starts use Mojang's Java until the profile recommends
+    /// another major (or Mojang's), or the player removes it. Older launchers wrote it as
+    /// `java25_fallback`, always for Java 25.
+    #[serde(
+        default,
+        alias = "java25_fallback",
+        deserialize_with = "crate::try_deserialize",
+        skip_serializing_if = "crate::skip_if_none"
+    )]
+    pub java_fallback: Option<JavaFallback>,
+    /// A Java runtime of the launcher (Mojang component name, such as `java-runtime-epsilon`)
+    /// chosen by the player for the game. `None` means automatic. A custom java.exe still wins.
     #[serde(
         default,
         deserialize_with = "crate::try_deserialize",
         skip_serializing_if = "crate::skip_if_none"
     )]
-    pub java25_fallback: Option<Java25Fallback>,
+    pub java_runtime: Option<Ustr>,
+    /// "Open mod JARs read-only" (zipfs agent) for Forge/NeoForge on Java 25+ on Windows.
+    /// `None` means the default: on.
+    #[serde(
+        default,
+        deserialize_with = "crate::try_deserialize",
+        skip_serializing_if = "crate::skip_if_none"
+    )]
+    pub zipfs_agent: Option<bool>,
     /// "Optimize launch (Java 25 AOT cache)". `None` means the default: on.
     #[serde(
         default,
@@ -146,6 +165,15 @@ pub struct InstanceConfiguration {
         skip_serializing_if = "crate::skip_if_default"
     )]
     pub created_by_cli: bool,
+    /// Created with the launcher-wide Minecraft settings still to be copied into its
+    /// `options.txt` (`schema::global_options`). Cleared once they are, before its first start
+    /// or, for a Minecraft version whose format is not known yet, when its first game exits.
+    #[serde(
+        default,
+        deserialize_with = "crate::try_deserialize",
+        skip_serializing_if = "crate::skip_if_default"
+    )]
+    pub global_options_pending: bool,
 }
 
 impl InstanceConfiguration {
@@ -164,7 +192,9 @@ impl InstanceConfiguration {
             jvm_flags: None,
             jvm_binary: None,
             profile_jvm_options: std::collections::BTreeMap::new(),
-            java25_fallback: None,
+            java_fallback: None,
+            java_runtime: None,
+            zipfs_agent: None,
             aot_cache: None,
             linux_wrapper: None,
             system_libraries: None,
@@ -176,6 +206,7 @@ impl InstanceConfiguration {
             show_shader_tab: false,
             sandbox: false, // todo: for now, off by default. In the future, turn this on by default
             created_by_cli: false,
+            global_options_pending: false,
         }
     }
 }
@@ -385,14 +416,25 @@ impl InstanceConfiguration {
     pub fn aot_cache_enabled(&self) -> bool {
         self.aot_cache.as_ref().is_none_or(|setting| setting.enabled)
     }
+
+    pub fn zipfs_agent_enabled(&self) -> bool {
+        self.zipfs_agent.unwrap_or(true)
+    }
 }
 
-/// Why Java 25 was dropped for this instance. Removing the key from the instance configuration
-/// makes the next Start try Java 25 again.
+/// Why the Java the profile recommends was dropped for this instance. Removing it makes the next
+/// Start try that Java again.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct Java25Fallback {
+pub struct JavaFallback {
+    /// The Java major that failed. Missing in records written as `java25_fallback`: 25.
+    #[serde(default = "java25")]
+    pub major: u32,
     pub reason: String,
     pub recorded_unix_secs: u64,
+}
+
+fn java25() -> u32 {
+    25
 }
 
 fn is_default_jvm_binary_configuration(config: &Option<InstanceJvmBinaryConfiguration>) -> bool {
@@ -558,6 +600,20 @@ impl MemoryRecommendation {
 #[cfg(test)]
 mod memory_recommendation_tests {
     use super::*;
+    #[test]
+    fn an_old_java25_fallback_becomes_a_java_fallback_for_25() {
+        let mut old = serde_json::to_value(InstanceConfiguration::new("1.21.1".into(), Loader::NeoForge)).unwrap();
+        old["java25_fallback"] = serde_json::json!({"reason": "exit-code=1 after 3s", "recorded_unix_secs": 7});
+        let restored: InstanceConfiguration = serde_json::from_value(old).unwrap();
+        let fallback = restored.java_fallback.clone().expect("migrated record");
+        assert_eq!(
+            (fallback.major, fallback.reason.as_str(), fallback.recorded_unix_secs),
+            (25, "exit-code=1 after 3s", 7)
+        );
+        let saved = serde_json::to_value(&restored).unwrap();
+        assert!(saved.get("java25_fallback").is_none());
+        assert_eq!(saved["java_fallback"]["major"], 25);
+    }
     #[test]
     fn home_server_choice_round_trips_and_old_configuration_defaults_to_auto() {
         let mut config = InstanceConfiguration::new("1.21.1".into(), Loader::Vanilla);

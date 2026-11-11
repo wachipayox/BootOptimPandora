@@ -41,6 +41,14 @@ pub struct BackendConfig {
         deserialize_with = "crate::try_deserialize"
     )]
     pub channel: LauncherChannel,
+    /// Launcher-wide Minecraft settings (`crate::global_options`) are copied into each new
+    /// instance's `options.txt`. On unless the player turns them off.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::skip_if_default",
+        deserialize_with = "crate::try_deserialize"
+    )]
+    pub global_options_disabled: bool,
 }
 
 /// `player` (default) shows the published profiles. `developer` also shows the test profiles
@@ -147,11 +155,11 @@ fn default_distribution_base_url() -> String {
 }
 
 fn default_distribution_release_key_id() -> String {
-    "wachiland-release-2026-09".into()
+    launcher_artifact::PINNED_RELEASE_KEY_ID.into()
 }
 
 fn default_distribution_release_public_key() -> String {
-    "q8uG8c8IBO-N7tnRWeKKqpl7pSj6G7FvKuRiCycpYwk".into()
+    launcher_artifact::PINNED_RELEASE_PUBLIC_KEY.into()
 }
 
 fn deserialize_distribution_base_url<'de, D>(deserializer: D) -> Result<String, D::Error>

@@ -146,7 +146,7 @@ impl Launcher {
         launch_tracker: &ProgressTracker,
         modal_action: &ModalAction,
         profile_jvm_options: Vec<schema::profile_jvm::ManifestJvmOption>,
-        java25: bool,
+        profile_java: Option<u32>,
         aot: Option<aot_cache::LaunchRequest>,
     ) -> Result<(PandoraChild, u32, Option<aot_cache::ActiveRun>), LaunchError> {
         let mut instance_info = instance_info;
@@ -204,7 +204,7 @@ impl Launcher {
             &version_info,
             modal_action,
             launch_tracker,
-            java25,
+            profile_java,
         );
         let load_assets_future =
             self.load_assets(&self.meta, http_client, &dot_minecraft_path, &version_info, modal_action, launch_tracker);
@@ -289,6 +289,14 @@ impl Launcher {
                 major_version: java_major,
             }
         };
+        // The real major of the JVM about to start. A custom or forced java.exe was given the version's
+        // major above, so its own `release` file is read instead (no JVM start).
+        let runtime_major = match java_source {
+            profile_jvm::JavaRuntimeSource::Mojang { .. } => java_major,
+            profile_jvm::JavaRuntimeSource::External => aot_cache::jdk_identity(&java_path)
+                .and_then(|(version, _)| aot_cache::runtime_major(&version))
+                .unwrap_or(java_major),
+        };
         let profile_jvm_args = {
             let configuration = instance_info.clone();
             let java_path = java_path.clone();
@@ -311,12 +319,13 @@ impl Launcher {
             })
         };
 
-        // Optional zipfs read-only agent: only with the Java 25 path, on Windows, unless switched off.
+        // Optional zipfs read-only agent: Forge/NeoForge on any Java 25+ on Windows, unless switched off.
         let profile_jvm_args = {
             let mut args = profile_jvm_args;
             args.extend(zipfs_agent::jvm_args(
-                java25,
-                java_major,
+                matches!(instance_info.loader, Loader::Forge | Loader::NeoForge),
+                instance_info.zipfs_agent_enabled(),
+                runtime_major,
                 &self.directories.agents_dir,
                 &dot_minecraft_path.join("logs").join(zipfs_agent::STATUS_FILE_NAME),
                 std::env::var(zipfs_agent::DISABLE_ENV).ok().as_deref(),
@@ -332,8 +341,10 @@ impl Launcher {
             existing.extend(profile_jvm::personal_jvm_args(&instance_info));
             let java_path = java_path.clone();
             let cache_dir = self.directories.root_launcher_dir.clone();
+            // Any Java 25 (automatic, pinned or custom); the probe only adds the flag where the JVM lists it.
+            let g1_java25 = runtime_major == java_default::JAVA_MAJOR;
             let extra = tokio::task::spawn_blocking(move || {
-                g1_heap_sizing::jvm_args(java25, java_major, &java_path, &cache_dir, &existing)
+                g1_heap_sizing::jvm_args(g1_java25, runtime_major, &java_path, &cache_dir, &existing)
             })
             .await
             .unwrap_or_else(|error| {
@@ -666,7 +677,8 @@ impl Launcher {
             &base_version,
             modal_action,
             launch_tracker,
-            false,
+            None,
+            None,
         );
         let load_installer_library_future =
             self.load_libraries(http_client, artifacts, modal_action, launch_tracker, library_mode);
@@ -962,8 +974,11 @@ impl Launcher {
                 let mut command = std::process::Command::new(java_path);
 
                 command.current_dir(&forge_temp);
-                command.stdin(Stdio::inherit());
-                command.stdout(Stdio::inherit());
+                // Processors list every class they touch on stdout. A GUI launcher has nowhere to show it,
+                // and a command-line run (the installer's migration log) would drown in it; errors stay on
+                // stderr.
+                command.stdin(Stdio::null());
+                command.stdout(Stdio::null());
                 command.stderr(Stdio::inherit());
 
                 command.arg("-cp");
@@ -1127,6 +1142,7 @@ impl Launcher {
         Some(mirror.url.clone())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn load_mojang_java_binary(
         &self,
         meta: &MetadataManager,
@@ -1135,8 +1151,10 @@ impl Launcher {
         version_info: &MinecraftVersion,
         modal_action: &ModalAction,
         launch_tracker: &ProgressTracker,
-        java25: bool,
+        profile_java: Option<u32>,
+        pinned: Option<Ustr>,
     ) -> Result<(PathBuf, u32), LoadJavaRuntimeError> {
+        let profile_java = profile_java.filter(|_| pinned.is_none());
         let version_major = version_info.java_version.as_ref().map_or(8, |java| java.major_version);
 
         if let Some(jvm_binary) = &configuration.jvm_binary {
@@ -1178,36 +1196,39 @@ impl Launcher {
             ));
         }
 
-        let mut platform: Ustr = match (std::env::consts::OS, std::env::consts::ARCH) {
-            ("linux", "x86_64") => "linux".into(),
-            ("linux", "x86") => "linux-i386".into(),
-            ("macos", "x86_64") => "mac-os".into(),
-            ("macos", "aarch64") => "mac-os-arm64".into(),
-            ("windows", "aarch64") => "windows-arm64".into(),
-            ("windows", "x86_64") => "windows-x64".into(),
-            ("windows", "x86") => "windows-x86".into(),
-            ("macos", b) => format!("mac-os-{b}").into(),
-            (a, b) => format!("{a}-{b}").into(),
-        };
+        let mut platform = java_runtime_platform();
 
         let runtimes = meta.fetch(MojangJavaRuntimesMetadataItem).await?;
 
-        // Java 25 only when this platform's manifest offers it; otherwise the version's runtime is used.
-        let java25_component = if java25 {
+        // A runtime the player pinned for this instance, when the manifest still has it.
+        let pinned_component = pinned.and_then(|name| {
+            let component = runtimes.platforms.get(&platform)?.components.get(&name)?.first()?;
+            let major = java_default::major_version(component.version.name.as_str())?;
+            Some((name, major))
+        });
+        if let Some(name) = pinned
+            && pinned_component.is_none()
+        {
+            log::warn!("Pinned Java runtime {name} is not in the manifest for {platform}; using the automatic one");
+        }
+
+        // The profile's Java only when this platform's manifest offers that major; otherwise the
+        // version's runtime is used.
+        let profile_component = profile_java.and_then(|major| {
             let found = runtimes
                 .platforms
                 .get(&platform)
-                .and_then(|runtime_platform| java_default::java25_component(&runtime_platform.components))
-                .map(|(name, component)| (name, component.version.name));
+                .and_then(|runtime_platform| java_default::component_for_major(&runtime_platform.components, major))
+                .map(|(name, component)| (name, major, component.version.name));
             if found.is_none() {
-                java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), "manifest-without-java25");
+                java_default::log_fallback(major, "not-in-mojang-manifest");
             }
             found
-        } else {
-            None
-        };
+        });
 
-        let jre_component = if let Some((name, _)) = java25_component {
+        let jre_component = if let Some((name, _)) = pinned_component {
+            name
+        } else if let Some((name, _, _)) = profile_component {
             name
         } else if let Some(java_version) = &version_info.java_version {
             java_version.component
@@ -1271,17 +1292,22 @@ impl Launcher {
         launch_tracker.add_count(1);
 
         let path = result?;
-        match java25_component {
-            Some((_, version_name)) => {
-                java_default::log_active(version_name.as_str());
-                Ok((path, java_default::JAVA_MAJOR))
+        if let Some((name, major)) = pinned_component {
+            log::info!("Using the pinned Java runtime {name} (Java {major})");
+            return Ok((path, major));
+        }
+        match profile_component {
+            Some((_, major, version_name)) => {
+                java_default::log_active(major, version_name.as_str());
+                Ok((path, major))
             },
             None => Ok((path, version_major)),
         }
     }
 
-    /// The game JVM: Java 25 when requested, and Java 21 through the usual path if the Java 25
-    /// runtime cannot be fetched or verified.
+    /// The game JVM: the profile's Java major when requested, and Mojang's Java for the version
+    /// through the usual path if that runtime cannot be fetched or verified. With a runtime the
+    /// player pinned, the caller never requests the profile's Java.
     async fn load_game_java_binary(
         &self,
         meta: &MetadataManager,
@@ -1290,9 +1316,9 @@ impl Launcher {
         version_info: &MinecraftVersion,
         modal_action: &ModalAction,
         launch_tracker: &ProgressTracker,
-        java25: bool,
+        profile_java: Option<u32>,
     ) -> Result<(PathBuf, u32), LoadJavaRuntimeError> {
-        if java25 {
+        if let Some(major) = profile_java {
             match self
                 .load_mojang_java_binary(
                     meta,
@@ -1301,12 +1327,13 @@ impl Launcher {
                     version_info,
                     modal_action,
                     launch_tracker,
-                    true,
+                    Some(major),
+                    None,
                 )
                 .await
             {
                 Ok(binary) => return Ok(binary),
-                Err(_) => java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), "java25-unavailable"),
+                Err(_) => java_default::log_fallback(major, "runtime-unavailable"),
             }
         }
         self.load_mojang_java_binary(
@@ -1316,7 +1343,8 @@ impl Launcher {
             version_info,
             modal_action,
             launch_tracker,
-            false,
+            None,
+            configuration.java_runtime,
         )
         .await
     }
@@ -2885,8 +2913,6 @@ impl LaunchContext {
                     jvm_args: command.args_os(),
                     game_dir: &self.game_dir,
                     path_env: self.game_path_env(),
-                    jvm_binary_enabled: self.configuration.jvm_binary.as_ref().is_some_and(|binary| binary.enabled),
-                    force_external_java: std::env::var_os("FORCE_EXTERNAL_JAVA").is_some(),
                     sandbox: self.configuration.sandbox,
                     wrapper_command: self.configuration.wrapper_command.as_ref().is_some_and(|wrapper| wrapper.enabled),
                 },
@@ -3477,5 +3503,20 @@ mod agent202_library_policy_tests {
         assert_eq!(result.len(), 1);
         assert_eq!(std::fs::read(&path).unwrap(), body);
         let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+/// Mojang's runtime manifest name for this platform.
+pub(crate) fn java_runtime_platform() -> Ustr {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "linux".into(),
+        ("linux", "x86") => "linux-i386".into(),
+        ("macos", "x86_64") => "mac-os".into(),
+        ("macos", "aarch64") => "mac-os-arm64".into(),
+        ("windows", "aarch64") => "windows-arm64".into(),
+        ("windows", "x86_64") => "windows-x64".into(),
+        ("windows", "x86") => "windows-x86".into(),
+        ("macos", b) => format!("mac-os-{b}").into(),
+        (a, b) => format!("{a}-{b}").into(),
     }
 }

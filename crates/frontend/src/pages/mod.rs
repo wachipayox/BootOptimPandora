@@ -1,4 +1,5 @@
 pub mod curseforge_page;
+pub mod global_options_page;
 pub mod import;
 pub mod instance;
 pub mod instances_page;

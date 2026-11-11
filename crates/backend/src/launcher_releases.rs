@@ -7,26 +7,7 @@ use schema::{
 };
 use semver::Version;
 
-#[derive(Deserialize)]
-struct ReleaseIndex {
-    schema_version: u32,
-    app: String,
-    latest: Option<LauncherRelease>,
-    releases: Vec<LauncherRelease>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ArtifactStatement {
-    #[serde(rename = "type")]
-    kind: String,
-    app: String,
-    version: String,
-    platform: String,
-    sha256: String,
-    size: u64,
-    issued_at: String,
-}
+use launcher_artifact::ReleaseIndex;
 
 /// Constructed only after signature, identity and anti-downgrade verification.
 /// Download bytes still require their own digest/length check before installation.
@@ -38,13 +19,23 @@ fn invalid(reason: &str) -> DistributionError {
     DistributionError::InvalidResponse(reason.into())
 }
 
-fn version(value: &str) -> Result<Version, DistributionError> {
-    Version::parse(value).map_err(|_| invalid("invalid launcher SemVer"))
+/// The shared verification (`launcher_artifact`) reports why; the updater keeps its own error type.
+fn shared(error: launcher_artifact::Error) -> DistributionError {
+    match error {
+        launcher_artifact::Error::InvalidIndex(reason) => invalid(reason),
+        launcher_artifact::Error::InvalidSignature => DistributionError::InvalidSignature,
+        launcher_artifact::Error::InvalidSigningKey => DistributionError::InvalidSigningKey,
+        launcher_artifact::Error::InvalidObject => DistributionError::InvalidObject(String::new()),
+    }
 }
 
+fn version(value: &str) -> Result<Version, DistributionError> {
+    launcher_artifact::version(value).map_err(shared)
+}
+
+#[cfg(test)]
 fn newer(candidate: &str, installed: &str) -> Result<bool, DistributionError> {
-    // SemVer build metadata does not contribute to precedence.
-    Ok(version(candidate)?.cmp_precedence(&version(installed)?).is_gt())
+    launcher_artifact::newer(candidate, installed).map_err(shared)
 }
 
 fn without_url(error: DistributionError) -> DistributionError {
@@ -157,25 +148,8 @@ fn validate_index(
     channel: LauncherChannel,
     installed: &str,
 ) -> Result<Vec<LauncherRelease>, DistributionError> {
-    if index.schema_version != 1 || index.app != "pandora" || index.latest.as_ref() != index.releases.first() {
-        return Err(invalid("invalid launcher release index"));
-    }
-    let mut previous: Option<Version> = None;
-    for release in &index.releases {
-        let current = version(&release.version)?;
-        if !newer(&release.version, installed)?
-            || previous.as_ref().is_some_and(|p| !p.cmp_precedence(&current).is_gt())
-            || !matches!(release.channel.as_str(), "player" | "developer")
-            || (channel == LauncherChannel::Player && release.channel != "player")
-            || release.artifact.platform != platform
-            || release.notes.len() > 16_384
-            || chrono::DateTime::parse_from_rfc3339(&release.published_at).is_err()
-        {
-            return Err(invalid("launcher release identity, channel or order mismatch"));
-        }
-        previous = Some(current);
-    }
-    Ok(index.releases)
+    launcher_artifact::validate_index(index, platform, channel == LauncherChannel::Player, Some(installed))
+        .map_err(shared)
 }
 
 fn verify_signature(
@@ -184,49 +158,15 @@ fn verify_signature(
     installed: &str,
     key: &[u8; 32],
 ) -> Result<VerifiedLauncherArtifact, DistributionError> {
-    let artifact = &release.artifact;
-    if !newer(&release.version, installed)?
-        || artifact.platform != platform
-        || artifact.signature.algorithm != "Ed25519"
-        || artifact.statement.len() > 8192
-        || artifact.size == 0
-        || artifact.size > MAX_OBJECT_BYTES
-        || !valid_digest(&artifact.sha256)
-        || artifact.url != format!("/v1/objects/sha256/{}", artifact.sha256)
-    {
-        return Err(DistributionError::InvalidSignature);
-    }
-    let raw = URL_SAFE_NO_PAD
-        .decode(&artifact.statement)
-        .map_err(|_| DistributionError::InvalidSignature)?;
-    let signature = URL_SAFE_NO_PAD
-        .decode(&artifact.signature.value)
-        .map_err(|_| DistributionError::InvalidSignature)?;
-    // Verify the original decoded bytes, never a reserialized statement.
-    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
-        .verify(&raw, &signature)
-        .map_err(|_| DistributionError::InvalidSignature)?;
-    let statement: ArtifactStatement = serde_json::from_slice(&raw).map_err(|_| DistributionError::InvalidSignature)?;
-    if statement.kind != "wbombo.launcher-artifact.v1"
-        || statement.app != "pandora"
-        || statement.version != release.version
-        || statement.platform != platform
-        || statement.sha256 != artifact.sha256
-        || statement.size != artifact.size
-        || chrono::DateTime::parse_from_rfc3339(&statement.issued_at).is_err()
-    {
-        return Err(DistributionError::InvalidSignature);
-    }
+    launcher_artifact::verify_signature(release, platform, Some(installed), key).map_err(shared)?;
     Ok(VerifiedLauncherArtifact {
-        artifact: artifact.clone(),
+        artifact: release.artifact.clone(),
     })
 }
 
 fn verify_download(artifact: &LauncherArtifact, bytes: &[u8]) -> Result<(), DistributionError> {
-    if bytes.len() as u64 != artifact.size || hex::encode(Sha256::digest(bytes)) != artifact.sha256 {
-        return Err(DistributionError::InvalidObject(artifact.sha256.clone()));
-    }
-    Ok(())
+    launcher_artifact::verify_download(artifact, bytes)
+        .map_err(|_| DistributionError::InvalidObject(artifact.sha256.clone()))
 }
 
 #[cfg(test)]
