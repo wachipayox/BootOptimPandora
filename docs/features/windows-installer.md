@@ -6,8 +6,12 @@
   does not contain the launcher: it downloads the latest published one (below).
   The build fails if it reaches 10 MB, Discord's upload limit without Nitro.
 - `WachilandLauncher-Windows-x86_64-Portable.exe`: the launcher exe. Its name
-  contains "portable", so it keeps its data next to itself. This is also the
-  exe to publish as the Windows artifact of a Distribution release.
+  contains "portable", so it keeps its data next to itself; renamed to
+  `WachilandLauncher.exe` it is the normal install. It is byte-identical to
+  `target/installer/WachilandLauncher.exe`, the file to publish as the Windows
+  artifact of a Distribution release: the setup and the updater save it under
+  the installed name, so the uploaded name does not matter. It must be built
+  with `WBOMBO_DISTRIBUTION_DEFAULT_URL`, or a fresh install has no server.
 
 `LAUNCHER_EXE=<path>` packages an already built exe instead of running Cargo.
 
