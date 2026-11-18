@@ -2004,8 +2004,9 @@ impl BackendState {
                 self.spawn_launcher_task(async move {
                     backend.send.send_info("Checking for inherited profile updates".to_owned());
                     let parent_kind = backend
-                        .persistent_profile_branch_status(id, None)
+                        .persistent_profile_branch_status_if_present(id)
                         .ok()
+                        .flatten()
                         .and_then(|snapshot| snapshot.branch.lineage.parent);
                     let result = match parent_kind {
                         Some(crate::profile_branch::ProfileParentRef::GlobalRevision { .. }) => {

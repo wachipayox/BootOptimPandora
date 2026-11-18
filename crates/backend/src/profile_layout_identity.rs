@@ -84,7 +84,11 @@ impl Drop for ProfileLayoutLockGuard {
 
 #[derive(Debug)]
 pub(crate) enum ProfileCloneSource {
-    Legacy,
+    /// Plain local files. `_lock` is held when the source has an identity but no committed layout
+    /// (see [`prepare_profile_clone_source`]), so nobody starts its first transaction mid-copy.
+    Legacy {
+        _lock: Option<ProfileLayoutLockGuard>,
+    },
     Ready {
         manifest: ProfileLayoutManifest,
         _lock: ProfileLayoutLockGuard,
@@ -94,7 +98,7 @@ pub(crate) enum ProfileCloneSource {
 impl ProfileCloneSource {
     pub(crate) fn source_uuid(&self) -> Option<Uuid> {
         match self {
-            Self::Legacy => None,
+            Self::Legacy { .. } => None,
             Self::Ready { manifest, .. } => Some(manifest.profile_uuid),
         }
     }
@@ -147,17 +151,27 @@ fn acquire_existing_profile_lock(instance_root: &Path) -> Result<ProfileLayoutLo
 
 /// Classifies a clone source without mutating/recovering it. A persistent source must be Ready,
 /// transaction-free and hash-proven. The source lock remains held for the entire filesystem copy.
+///
+/// A control folder with a valid identity but no manifest, no journal and no staging, backup or
+/// conflict entries is a local instance: older launchers minted the identity on a read-only status
+/// query. Profile files only reach `.minecraft` through a journaled transaction, and a profile
+/// instance commits its manifest (lineage) before the first one; a transaction that rolled back
+/// with no previous manifest leaves exactly this state with the files restored. So nothing of a
+/// profile was applied, and the files are cloned as plain local content.
 pub(crate) fn prepare_profile_clone_source(instance_root: &Path) -> Result<ProfileCloneSource, ProfileIdentityError> {
     ensure_plain_existing_directory(instance_root)?;
     let control = control_root(instance_root);
     match fs::symlink_metadata(&control) {
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(ProfileCloneSource::Legacy),
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(ProfileCloneSource::Legacy { _lock: None }),
         Err(err) => return Err(err.into()),
         Ok(_) => ensure_plain_existing_directory(&control)?,
     }
 
     let lock = acquire_existing_profile_lock(instance_root)?;
     reject_transaction_evidence(&control)?;
+    if !path_exists_no_follow(&control.join(MANIFEST_FILE))? {
+        return Ok(ProfileCloneSource::Legacy { _lock: Some(lock) });
+    }
     let mut manifest = read_manifest(&control)?;
     if manifest.schema != SCHEMA_VERSION
         || manifest.profile_uuid != lock.profile_uuid()
@@ -251,7 +265,7 @@ pub(crate) fn begin_profile_clone_destination(
     let lock = acquire_lock_for_identity(&control, profile_uuid)?;
 
     let mut ready_manifest = match source {
-        ProfileCloneSource::Legacy => None,
+        ProfileCloneSource::Legacy { .. } => None,
         ProfileCloneSource::Ready { manifest, .. } => Some(ProfileLayoutManifest {
             schema: SCHEMA_VERSION,
             profile_uuid,
@@ -799,7 +813,7 @@ mod tests {
         let source = TestRoot::new("legacy-source");
         let destination = TestRoot::new("legacy-destination");
         let plan = prepare_profile_clone_source(&source.0).unwrap();
-        assert!(matches!(plan, ProfileCloneSource::Legacy));
+        assert!(matches!(plan, ProfileCloneSource::Legacy { .. }));
         let destination_state = begin_profile_clone_destination(&destination.0, &plan, false).unwrap();
         let clone_uuid = destination_state.finish().unwrap();
         assert!(!control_root(&source.0).exists());
@@ -807,6 +821,51 @@ mod tests {
         assert!(!control_root(&destination.0).join(MANIFEST_FILE).exists());
         let identity = load_existing_identity(&control_root(&destination.0)).unwrap();
         assert_eq!(identity.profile_uuid, clone_uuid);
+    }
+
+    #[test]
+    fn profile_layout_identity_only_source_clones_as_local_files() {
+        // What a read-only branch status left on local instances: identity and lock, nothing else.
+        let source = TestRoot::new("identity-only-source");
+        drop(acquire_or_initialize_profile_lock(&source.0).unwrap());
+        assert!(!control_root(&source.0).join(MANIFEST_FILE).exists());
+        let plan = prepare_profile_clone_source(&source.0).unwrap();
+        assert!(matches!(plan, ProfileCloneSource::Legacy { _lock: Some(_) }));
+        assert_eq!(plan.source_uuid(), None);
+        // The source lock is held while the files are copied.
+        assert!(acquire_existing_profile_lock(&source.0).is_err());
+
+        let destination = TestRoot::new("identity-only-destination");
+        let clone = begin_profile_clone_destination(&destination.0, &plan, false).unwrap();
+        let clone_uuid = clone.finish().unwrap();
+        drop(plan);
+        let source_uuid = load_existing_identity(&control_root(&source.0)).unwrap().profile_uuid;
+        assert_ne!(clone_uuid, source_uuid, "the clone gets its own identity");
+        assert!(!control_root(&destination.0).join(MANIFEST_FILE).exists());
+        assert!(acquire_existing_profile_lock(&source.0).is_ok(), "the source lock is released");
+    }
+
+    #[test]
+    fn profile_layout_identity_without_manifest_but_with_a_transaction_is_rejected() {
+        // A first profile transaction in flight (or interrupted): its journal or staged files
+        // decide, so the source is not treated as plain local files.
+        let journal = TestRoot::new("identity-journal-source");
+        drop(acquire_or_initialize_profile_lock(&journal.0).unwrap());
+        fs::write(control_root(&journal.0).join(JOURNAL_FILE), b"{}").unwrap();
+        assert!(matches!(
+            prepare_profile_clone_source(&journal.0),
+            Err(ProfileIdentityError::CloneSourceNotReady(reason)) if reason.contains("journal")
+        ));
+
+        let staged = TestRoot::new("identity-staging-source");
+        drop(acquire_or_initialize_profile_lock(&staged.0).unwrap());
+        let staging = control_root(&staged.0).join("staging").join("tx");
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(staging.join("mod.jar"), b"staged").unwrap();
+        assert!(matches!(
+            prepare_profile_clone_source(&staged.0),
+            Err(ProfileIdentityError::CloneSourceNotReady(reason)) if reason.contains("staging")
+        ));
     }
 
     #[test]

@@ -83,6 +83,23 @@ impl BackendState {
         })
     }
 
+    /// Like [`Self::persistent_profile_branch_status`] for read-only callers: an instance that never had
+    /// profile layout state gives `None` instead of being given an identity.
+    pub fn persistent_profile_branch_status_if_present(
+        &self,
+        id: InstanceID,
+    ) -> Result<Option<ProfileBranchSnapshot>, ProfileLayoutServiceError> {
+        let root = {
+            let instance_state = self.instance_state.read();
+            let instance = instance_state.instances.get(id).ok_or(ProfileLayoutServiceError::MissingInstance)?;
+            instance.root_path.to_path_buf()
+        };
+        if !path_exists_no_follow(&root.join(CONTROL_DIR))? {
+            return Ok(None);
+        }
+        self.persistent_profile_branch_status(id, None).map(Some)
+    }
+
     /// Creates the persistent identity/empty manifest for a legacy local profile on the first
     /// explicit branch operation. It never scans `.minecraft` or hashes its files.
     pub fn ensure_persistent_profile_branch(
