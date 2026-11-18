@@ -817,6 +817,48 @@ mod tests {
     }
 
     #[test]
+    fn local_instance_with_only_an_identity_duplicates_as_plain_files() {
+        // A local instance that an older launcher gave an identity and a lock on a read-only
+        // status query, and nothing else (no manifest, journal or staging).
+        let source = TestRoot::new("identity-only-source", true);
+        let destination = TestRoot::new("identity-only-destination", false);
+        let content_library = TestRoot::new("identity-only-library", false);
+        fs::create_dir_all(source.0.join(".minecraft/mods")).unwrap();
+        fs::write(source.0.join(".minecraft/mods/local.jar"), b"player mod").unwrap();
+        fs::write(source.0.join(".minecraft/options.txt"), b"fov:0.5").unwrap();
+        drop(crate::profile_layout_identity::acquire_or_initialize_profile_lock(&source.0).unwrap());
+        let source_identity = fs::read(source.0.join(CONTROL_DIR_NAME).join("identity.json")).unwrap();
+
+        let clone_source = prepare_profile_clone_source(&source.0).unwrap();
+        assert!(matches!(clone_source, ProfileCloneSource::Legacy { .. }));
+        let clone_destination = begin_profile_clone_destination(&destination.0, &clone_source, false).unwrap();
+        duplicate_with_content_library(
+            &source.0,
+            &destination.0,
+            &content_library.0,
+            &content_library.0,
+            false,
+            &|_, _| {},
+            &|| Ok(()),
+        )
+        .unwrap();
+        clone_destination.finish().unwrap();
+        drop(clone_source);
+
+        assert_eq!(fs::read(destination.0.join(".minecraft/mods/local.jar")).unwrap(), b"player mod");
+        assert_eq!(fs::read(destination.0.join(".minecraft/options.txt")).unwrap(), b"fov:0.5");
+        let clone_identity = fs::read(destination.0.join(CONTROL_DIR_NAME).join("identity.json")).unwrap();
+        assert_ne!(clone_identity, source_identity, "the copy gets its own identity");
+        assert!(!destination.0.join(CONTROL_DIR_NAME).join("manifest.json").exists());
+        assert_eq!(
+            fs::read(source.0.join(CONTROL_DIR_NAME).join("identity.json")).unwrap(),
+            source_identity,
+            "the source is left as it was"
+        );
+        assert!(!source.0.join(CONTROL_DIR_NAME).join("manifest.json").exists());
+    }
+
+    #[test]
     fn profile_layout_ready_duplicate_remints_namespace_and_cannot_use_original_journal() {
         let source = TestRoot::new("ready-source", true);
         let destination = TestRoot::new("ready-destination", false);

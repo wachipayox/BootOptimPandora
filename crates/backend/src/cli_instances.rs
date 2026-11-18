@@ -199,8 +199,9 @@ fn all_names(backend: &BackendState) -> Vec<String> {
 /// The profile the instance descends from and the revision applied to it, from the local branch state only.
 /// `None`s for a local-only or unreadable instance; nothing contacts the server.
 fn profile_facts(backend: &BackendState, id: InstanceID) -> (Option<String>, Option<(String, String)>) {
-    match backend.persistent_profile_branch_status(id, None) {
-        Ok(snapshot) => (
+    match backend.persistent_profile_branch_status_if_present(id) {
+        Ok(None) => (None, None),
+        Ok(Some(snapshot)) => (
             snapshot.branch.lineage.global_ancestor.as_ref().map(|pin| pin.profile_id.clone()),
             snapshot.branch.applied_revision.map(|pin| (pin.revision_id, pin.manifest_sha256)),
         ),
@@ -376,8 +377,8 @@ async fn update_locked(backend: &Arc<BackendState>, found: &Found, revision: &Cl
         // A chosen revision applies to the direct global parent, as a pinned update does.
         let is_global_child = matches!(
             backend
-                .persistent_profile_branch_status(found.id, None)
-                .map(|snapshot| snapshot.branch.lineage.parent),
+                .persistent_profile_branch_status_if_present(found.id)
+                .map(|snapshot| snapshot.and_then(|snapshot| snapshot.branch.lineage.parent)),
             Ok(Some(ProfileParentRef::GlobalRevision { .. }))
         );
         let Some(profile) = profile.filter(|_| is_global_child) else {
