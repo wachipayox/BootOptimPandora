@@ -11,7 +11,8 @@
 ;   `player` release from Distribution and verifies it like the updater
 ;   (Ed25519 statement, size, SHA-256) before anything is installed, so the
 ;   setup always installs the latest version and stays small;
-; - launcher data (%APPDATA%\WachilandLauncher) is never touched;
+; - launcher data (%APPDATA%\WachilandLauncher) is kept unless the player ticks the
+;   uninstaller's "delete data" box (or passes /DELETEDATA to a silent uninstall);
 ; - shortcuts carry no explicit AppUserModelID because the process sets none.
 
 SetCompressor /SOLID lzma
@@ -246,6 +247,8 @@ FunctionEnd
 ; Installer pages
 Var Upgrading
 Var PassiveMode
+Var DeleteData
+Var DeleteDataCheck
 ; The download (see "Download" below).
 Var InstalledVersion
 Var NewFile
@@ -302,6 +305,7 @@ Page custom MigrationShow MigrationLeave
 !insertmacro MUI_PAGE_FINISH
 
 ; Uninstaller pages
+UninstPage custom un.DataShow un.DataLeave
 !define MUI_PAGE_HEADER_TEXT "$(uninstallTitle)"
 !define MUI_PAGE_HEADER_SUBTEXT "$(uninstallSubtitle)"
 !define MUI_UNCONFIRMPAGE_TEXT_TOP "$(uninstallText)"
@@ -813,6 +817,49 @@ Function un.onInit
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
   ${EndIf}
+  ; Launcher data is kept unless asked: the page's box, or /DELETEDATA when silent.
+  StrCpy $DeleteData 0
+  ClearErrors
+  ${GetOptions} $CMDLINE "/DELETEDATA" $R0
+  ${IfNot} ${Errors}
+    StrCpy $DeleteData 1
+  ${EndIf}
+FunctionEnd
+
+Function un.DataShow
+  ${IfThen} $PassiveMode == 1 ${|} Abort ${|}
+  !insertmacro MUI_HEADER_TEXT "$(dataTitle)" "$(dataSubtitle)"
+  nsDialogs::Create 1018
+  Pop $R5
+  ${If} $R5 == error
+    Abort
+  ${EndIf}
+  ${NSD_CreateLabel} 0 0 100% 40u "$(dataText)"
+  Pop $R0
+  ${NSD_CreateCheckbox} 0 46u 100% 12u "$(dataCheck)"
+  Pop $DeleteDataCheck
+  ${NSD_CreateLabel} 12u 62u 88% 30u "$(dataWarning)"
+  Pop $R1
+  ${If} $DeleteData == 1
+    ${NSD_Check} $DeleteDataCheck
+  ${EndIf}
+  Call un.DarkPage
+  StrCpy $R9 $R5
+  SetCtlColors $R9 ${C_INK} ${C_PANEL}
+  Call un.DarkChildren
+  ; The warning in the accent colour, like the launcher's notices.
+  SetCtlColors $R1 F5CE5B ${C_PANEL}
+  nsDialogs::Show
+FunctionEnd
+
+Function un.DataLeave
+  StrCpy $DeleteData 0
+  ${NSD_GetState} $DeleteDataCheck $R0
+  ${If} $R0 == ${BST_CHECKED}
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$(dataConfirm)" IDYES +2
+    Abort
+    StrCpy $DeleteData 1
+  ${EndIf}
 FunctionEnd
 
 Section Uninstall
@@ -840,6 +887,18 @@ Section Uninstall
   DeleteRegKey HKCU "${UNINSTKEY}"
   DeleteRegKey HKCU "${MANUPRODUCTKEY}"
   DeleteRegKey /ifempty HKCU "Software\${MANUFACTURER}"
+
+  ${If} $DeleteData == 1
+  ${AndIf} ${FileExists} "$APPDATA\WachilandLauncher\*.*"
+    DetailPrint "$(dataDeleting)"
+    ; rmdir /s removes junctions (instances link into synced/) without following them, so
+    ; nothing outside this folder is deleted.
+    nsExec::ExecToLog 'cmd.exe /d /c rmdir /s /q "$APPDATA\WachilandLauncher"'
+    Pop $R0
+    ${If} ${FileExists} "$APPDATA\WachilandLauncher\*.*"
+      DetailPrint "$(dataDeleteFailed)"
+    ${EndIf}
+  ${EndIf}
 
   ${IfThen} $PassiveMode == 1 ${|} SetAutoClose true ${|}
 SectionEnd
