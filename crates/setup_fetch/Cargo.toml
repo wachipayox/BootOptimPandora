@@ -1,0 +1,19 @@
+[package]
+name = "setup_fetch"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+# Downloader embedded in the Windows setup: fetches the latest `player` release of the launcher from
+# Distribution and verifies it like the in-place updater (launcher_artifact). docs/features/windows-installer.md
+[[bin]]
+name = "wachiland-setup-fetch"
+path = "src/main.rs"
+
+[dependencies]
+launcher_artifact.workspace = true
+hex.workspace = true
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

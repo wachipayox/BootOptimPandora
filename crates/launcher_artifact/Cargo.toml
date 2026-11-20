@@ -1,0 +1,17 @@
+[package]
+name = "launcher_artifact"
+version.workspace = true
+edition.workspace = true
+
+# Verification of Distribution's signed launcher releases. Shared by the launcher's in-place updater
+# (backend) and the Windows setup's downloader (setup_fetch), so both accept exactly the same releases.
+# Keep it small: the setup links it into an installer that must stay under 10 MB.
+[dependencies]
+base64.workspace = true
+chrono = { version = "0.4.42", default-features = false, features = ["std", "alloc"] }
+hex.workspace = true
+ring.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

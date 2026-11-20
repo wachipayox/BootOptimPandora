@@ -8,7 +8,7 @@ use bridge::{
     handle::BackendHandle,
     instance::InstanceID,
     instance::InstanceStatus,
-    message::{AotCacheSummary, EmbeddedOrRaw, MessageToBackend},
+    message::{AotCacheSummary, EmbeddedOrRaw, JavaRuntimeChoice, MessageToBackend},
     meta::MetadataRequest,
 };
 use gpui::{prelude::*, *};
@@ -17,6 +17,7 @@ use gpui_component::{
     button::ButtonVariants,
     h_flex,
     input::{InputEvent, InputState, Textarea, TextareaState},
+    menu::{ContextMenuExt, PopupMenuItem},
     notification::{Notification, NotificationType},
     scroll::ScrollableElement,
     select::{SearchableVec, Select, SelectEvent, SelectState},
@@ -91,9 +92,13 @@ pub struct InstanceSettingsSubpage {
     jvm_flags_enabled: bool,
     jvm_flags_input_state: Entity<TextareaState>,
     profile_jvm_section: Entity<super::profile_jvm_section::ProfileJvmSection>,
-    runtime_state: (InstanceStatus, ustr::Ustr, Option<schema::instance::Java25Fallback>),
+    runtime_state: (InstanceStatus, ustr::Ustr, Option<schema::instance::JavaFallback>),
     jvm_binary_enabled: bool,
     jvm_binary_path: Option<PathLabel>,
+    /// A launcher Java runtime pinned for this instance (right click on "Automático").
+    java_runtime: Option<ustr::Ustr>,
+    /// The launcher's Java runtimes, loaded once for the right-click menu.
+    java_runtimes: Vec<JavaRuntimeChoice>,
 
     instance_root_label: PathLabel,
 
@@ -137,7 +142,7 @@ impl InstanceSettingsSubpage {
         let runtime_state = (
             entry.status,
             entry.configuration.minecraft_version,
-            entry.configuration.java25_fallback.clone(),
+            entry.configuration.java_fallback.clone(),
         );
         let instance_name = entry.name.clone();
         let loader = entry.configuration.loader;
@@ -153,6 +158,7 @@ impl InstanceSettingsSubpage {
         let wrapper_command = entry.configuration.wrapper_command.clone().unwrap_or_default();
         let jvm_flags = entry.configuration.jvm_flags.clone().unwrap_or_default();
         let jvm_binary = entry.configuration.jvm_binary.clone().unwrap_or_default();
+        let java_runtime = entry.configuration.java_runtime;
         #[cfg(target_os = "linux")]
         let linux_wrapper = entry.configuration.linux_wrapper.unwrap_or_default();
         let system_libraries = entry.configuration.system_libraries.clone().unwrap_or_default();
@@ -268,7 +274,7 @@ impl InstanceSettingsSubpage {
             let runtime_state = (
                 entry.status,
                 entry.configuration.minecraft_version,
-                entry.configuration.java25_fallback.clone(),
+                entry.configuration.java_fallback.clone(),
             );
             if runtime_state != page.runtime_state {
                 page.runtime_state = runtime_state;
@@ -313,6 +319,8 @@ impl InstanceSettingsSubpage {
             runtime_state,
             jvm_binary_enabled: jvm_binary.enabled,
             jvm_binary_path: jvm_binary.path.clone().map(|path| PathLabel::new(path, false)),
+            java_runtime,
+            java_runtimes: Vec::new(),
             override_glfw_enabled: system_libraries.override_glfw,
             override_glfw_path: glfw_path.map(|path| PathLabel::new(path, false)),
             override_openal_enabled: system_libraries.override_openal,
@@ -343,12 +351,45 @@ impl InstanceSettingsSubpage {
         page.update_minecraft_versions(window, cx);
         page.update_loader_versions(window, cx);
         page.refresh_profile_info(cx);
+        page.load_java_runtimes(cx);
 
         page
     }
 }
 
 impl InstanceSettingsSubpage {
+    fn load_java_runtimes(&mut self, cx: &mut Context<Self>) {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        self.backend_handle.send(MessageToBackend::GetJavaRuntimes { channel: send });
+        cx.spawn(async move |this, cx| {
+            if let Ok(runtimes) = receive.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.java_runtimes = runtimes;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Pins a launcher Java runtime (or goes back to automatic) and leaves any custom java.exe.
+    fn set_java_runtime(&mut self, component: Option<ustr::Ustr>, cx: &mut Context<Self>) {
+        self.java_runtime = component;
+        self.backend_handle.send(MessageToBackend::SetInstanceJavaRuntime {
+            id: self.instance_id,
+            component,
+        });
+        if self.jvm_binary_enabled {
+            self.jvm_binary_enabled = false;
+            self.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
+                id: self.instance_id,
+                jvm_binary: self.get_jvm_binary_configuration(),
+            });
+        }
+        self.refresh_profile_jvm(cx);
+        cx.notify();
+    }
+
     fn refresh_profile_info(&mut self, cx: &mut Context<Self>) {
         let (send, receive) = tokio::sync::oneshot::channel();
         self.backend_handle.send(MessageToBackend::GetInstanceProfileInfo {
@@ -1212,6 +1253,36 @@ impl InstanceSettingsSubpage {
 
     /// "Optimize launch (Java 25 AOT cache)": on by default; shows what the cache is doing in plain
     /// words, and why the launcher turned the option off.
+    /// "Open mod JARs read-only": the zipfs agent, on by default for Forge/NeoForge on Java 25+ on
+    /// Windows. Not shown for other loaders, which never get it.
+    fn render_zipfs_agent_setting(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let enabled = self.instance.read(cx).configuration.zipfs_agent_enabled();
+        h_flex()
+            .w_full()
+            .justify_between()
+            .gap(px(12.))
+            .child(
+                v_flex().flex_1().gap(px(3.)).child("Abrir los JAR de mods en solo lectura").child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(theme::INK_MUTED))
+                        .child("Arranque más rápido en Windows. Solo con Java 25 o superior."),
+                ),
+            )
+            .child(
+                YesNo::new("zipfs-agent")
+                    .checked(enabled)
+                    .on_click(cx.listener(|this, value: &bool, _, c| {
+                        this.backend_handle.send(MessageToBackend::SetInstanceZipfsAgent {
+                            id: this.instance_id,
+                            enabled: *value,
+                        });
+                        c.notify();
+                    })),
+            )
+            .into_any_element()
+    }
+
     fn render_aot_cache_setting(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let instance = self.instance.read(cx);
         let setting = instance.configuration.aot_cache.clone();
@@ -1283,14 +1354,106 @@ impl InstanceSettingsSubpage {
             .into_any_element()
     }
 
+    /// Whether the next game of this instance may run on Java 25, so the AOT cache setting is
+    /// shown: a pinned Java 25, the automatic Java when it was 25, or a custom java.exe (its version
+    /// is only known at Start; the launcher skips the cache there if it is not 25).
+    fn may_run_java25(&self, automatic_java: Option<u32>, jvm_binary_enabled: bool) -> bool {
+        if jvm_binary_enabled {
+            return true;
+        }
+        match self.java_runtime {
+            Some(component) => self
+                .java_runtimes
+                .iter()
+                .any(|runtime| runtime.component == component && runtime.major == 25),
+            None => automatic_java == Some(25),
+        }
+    }
+
+    /// "Automático": left click goes back to the launcher's choice; right click lists the
+    /// launcher's Java runtimes to pin one for this instance.
+    fn render_java_choice(&self, label: SharedString, jvm_binary_enabled: bool, cx: &mut Context<Self>) -> AnyElement {
+        let page = cx.entity().downgrade();
+        let runtimes = self.java_runtimes.clone();
+        let pinned = self.java_runtime;
+        let failed_major = self.runtime_state.2.as_ref().map(|fallback| fallback.major);
+        let instance_id = self.instance_id;
+        let backend_handle = self.backend_handle.clone();
+        div()
+            .id("java-automatic-menu")
+            .child(
+                crate::component::design::chip("java-automatic", label, !jvm_binary_enabled)
+                    .tooltip("Clic derecho: elegir otra Java del launcher")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        // Back from a custom java.exe to the launcher's Java; a pinned runtime stays.
+                        let pinned = this.java_runtime;
+                        this.set_java_runtime(pinned, cx);
+                    })),
+            )
+            .context_menu(move |menu, _, _| {
+                let automatic_page = page.clone();
+                let mut menu = menu
+                    .item(
+                        PopupMenuItem::new("Automático")
+                            .checked(pinned.is_none() && !jvm_binary_enabled)
+                            .on_click(move |_, _, cx| {
+                                let _ = automatic_page.update(cx, |this, cx| this.set_java_runtime(None, cx));
+                            }),
+                    )
+                    .separator();
+                if runtimes.is_empty() {
+                    menu = menu.item(PopupMenuItem::new("No se pudo leer la lista de Java").disabled(true));
+                }
+                // The profile's Java failed once and the launcher went back to Mojang's: try it again.
+                if let Some(major) = failed_major {
+                    let backend_handle = backend_handle.clone();
+                    menu = menu
+                        .item(PopupMenuItem::new(format!("Volver a probar la Java {major} del perfil")).on_click(
+                            move |_, _, _| {
+                                backend_handle.send(MessageToBackend::ClearInstanceJavaFallback { id: instance_id });
+                            },
+                        ))
+                        .separator();
+                }
+                for runtime in &runtimes {
+                    let item_page = page.clone();
+                    let component = runtime.component;
+                    let label = format!(
+                        "Java {} · {}{}",
+                        runtime.major,
+                        runtime.version,
+                        if runtime.installed { "" } else { " (se descargará)" }
+                    );
+                    menu = menu.item(
+                        PopupMenuItem::new(label)
+                            .checked(pinned == Some(component) && !jvm_binary_enabled)
+                            .on_click(move |_, _, cx| {
+                                let _ = item_page.update(cx, |this, cx| this.set_java_runtime(Some(component), cx));
+                            }),
+                    );
+                }
+                menu.min_w(px(240.))
+            })
+            .into_any_element()
+    }
+
     fn render_runtime_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let wrapper_command_enabled = self.wrapper_command_enabled;
         let jvm_flags_enabled = self.jvm_flags_enabled;
         let jvm_binary_enabled = self.jvm_binary_enabled;
         let automatic_java = self.profile_jvm_section.read(cx).automatic_java_major();
-        let automatic_label: SharedString = automatic_java
-            .map(|major| format!("Automático ({major})").into())
-            .unwrap_or_else(|| "Automático".into());
+        let pinned_java = self.java_runtime.map(|component| {
+            self.java_runtimes
+                .iter()
+                .find(|runtime| runtime.component == component)
+                .map_or_else(|| component.to_string(), |runtime| format!("Java {}", runtime.major))
+        });
+        let automatic_label: SharedString = match &pinned_java {
+            Some(java) => format!("{java} (fijada)").into(),
+            None => automatic_java
+                .map(|major| format!("Automático ({major})").into())
+                .unwrap_or_else(|| "Automático".into()),
+        };
         let content = v_flex()
             .w_full()
             .gap(px(16.))
@@ -1388,21 +1551,13 @@ impl InstanceSettingsSubpage {
                                 );
                             })),
                     )
-                    .child(
-                        crate::component::design::chip("java-automatic", automatic_label, !jvm_binary_enabled)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.jvm_binary_enabled = false;
-                                this.backend_handle.send(MessageToBackend::SetInstanceJvmBinary {
-                                    id: this.instance_id,
-                                    jvm_binary: this.get_jvm_binary_configuration(),
-                                });
-                                this.refresh_profile_jvm(cx);
-                                cx.notify();
-                            })),
-                    ),
+                    .child(self.render_java_choice(automatic_label, jvm_binary_enabled, cx)),
             )
-            .when(automatic_java == Some(25) && !jvm_binary_enabled, |d| {
+            .when(self.may_run_java25(automatic_java, jvm_binary_enabled), |d| {
                 d.child(self.render_aot_cache_setting(cx))
+            })
+            .when(cfg!(windows) && matches!(self.loader, Loader::Forge | Loader::NeoForge), |d| {
+                d.child(self.render_zipfs_agent_setting(cx))
             })
             .child(
                 DesignButton::new("advanced-settings")
@@ -1609,7 +1764,7 @@ impl InstanceSettingsSubpage {
     }
     fn render_actions_content(&mut self, _cx: &mut Context<Self>) -> AnyElement {
         let worlds = settings_panel_caption(
-            "Mundos compartidos",
+            "Archivos compartidos",
             "Las instancias de un grupo comparten lo que actives en sus ajustes.",
         )
         .when_some(self.save_group.as_ref(), |d, group| {
@@ -1620,16 +1775,36 @@ impl InstanceSettingsSubpage {
                     .child(format!("Grupo: {} ({} instancias)", group.name, group.member_count)),
             )
         })
-        .child(DesignButton::new("manage-save-groups").label("Gestionar grupo").on_click({
-            let id = self.instance_id;
-            let backend = self.backend_handle.clone();
-            move |_, window, cx| crate::modals::save_groups::open_save_groups(id, backend.clone(), window, cx)
-        }))
-        .child(DesignButton::new("manage-instance-global-sharing").label("Gestionar global").on_click({
-            let id = self.instance_id;
-            let backend = self.backend_handle.clone();
-            move |_, window, cx| crate::modals::global_sharing::open(id, backend.clone(), window, cx)
-        }));
+        .child(
+            DesignButton::new("manage-save-groups")
+                .label("Gestionar grupo")
+                .child(Icon::new(PandoraIcon::Users).size(px(14.)))
+                .on_click({
+                    let id = self.instance_id;
+                    let backend = self.backend_handle.clone();
+                    move |_, window, cx| crate::modals::save_groups::open_save_groups(id, backend.clone(), window, cx)
+                }),
+        )
+        .child(
+            DesignButton::new("manage-instance-global-sharing")
+                .label("Gestionar global")
+                .child(Icon::new(PandoraIcon::Globe).size(px(14.)))
+                .on_click({
+                    let id = self.instance_id;
+                    let backend = self.backend_handle.clone();
+                    move |_, window, cx| crate::modals::global_sharing::open(id, backend.clone(), window, cx)
+                }),
+        )
+        .child(
+            DesignButton::new("manage-instance-global-options")
+                .label("Gestionar opciones globales")
+                .child(Icon::new(PandoraIcon::SlidersVertical).size(px(14.)))
+                .on_click({
+                    let id = self.instance_id;
+                    let backend = self.backend_handle.clone();
+                    move |_, window, cx| crate::modals::global_options::open(id, backend.clone(), window, cx)
+                }),
+        );
         let mut inherited = settings_panel("Perfil heredado");
         let parent = self
             .profile_info

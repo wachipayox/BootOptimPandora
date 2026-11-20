@@ -46,10 +46,14 @@ pub(crate) fn get_sync_state(backend: &BackendState) -> SyncState {
             );
         }
     }
-    for path in schema::shared_data::GLOBAL_FOLDERS {
+    let named = schema::shared_data::GLOBAL_FOLDERS
+        .iter()
+        .map(|path| (path, false))
+        .chain(schema::shared_data::GLOBAL_FILES.iter().map(|path| (path, true)));
+    for (path, is_file) in named {
         targets.entry((*path).into()).or_insert(SyncTargetState {
             enabled: false,
-            is_file: false,
+            is_file,
             sync_count: 0,
             cannot_sync_count: 0,
             cannot_sync_instances: Vec::new(),

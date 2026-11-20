@@ -209,6 +209,7 @@ pub(crate) fn local_parent_delta(
     parent_applied_revision: Option<GlobalRevisionPin>,
     parent_config_settings: &[ManifestConfigSetting],
     parent_jvm_options: &[schema::profile_jvm::ManifestJvmOption],
+    parent_java_major: Option<u32>,
     parent_entries: Vec<EffectiveProfileEntry>,
 ) -> Result<ProfileRevisionDelta, String> {
     let lineage = ProfileLineage::from_local(parent_uuid, parent_lineage.global_ancestor.clone())
@@ -255,6 +256,7 @@ pub(crate) fn local_parent_delta(
         target_revision: parent_applied_revision,
         config_settings: parent_config_settings.to_vec(),
         jvm_options: parent_jvm_options.to_vec(),
+        java_major: parent_java_major,
         changes,
     })
 }
@@ -500,7 +502,8 @@ impl BackendState {
         };
         Ok((files(&current) != files(&latest)
             || rules(&current)? != rules(&latest)?
-            || current.jvm_options != latest.jvm_options)
+            || current.jvm_options != latest.jvm_options
+            || current.java_major != latest.java_major)
             .then(|| crate::cli_update_gate::GlobalUpdate {
                 name: profile.name.clone(),
                 revision_id: target.revision_id.clone(),
@@ -660,13 +663,15 @@ impl BackendState {
             parent_snapshot.branch.applied_revision.clone(),
             &parent_snapshot.branch.config_settings,
             &parent_snapshot.branch.jvm_options,
+            parent_snapshot.branch.java_major,
             entries,
         )?;
         let changed = !delta.changes.is_empty()
             || child_snapshot.branch.lineage != delta.lineage
             || child_snapshot.branch.applied_revision != delta.target_revision
             || child_snapshot.branch.config_settings != delta.config_settings
-            || child_snapshot.branch.jvm_options != delta.jvm_options;
+            || child_snapshot.branch.jvm_options != delta.jvm_options
+            || child_snapshot.branch.java_major != delta.java_major;
         let outcome = self.apply_persistent_profile_delta(id, &delta).map_err(|error| error.to_string())?;
         match outcome {
             crate::profile_layout_flow::ReconcileOutcome::Ready { .. } => {
@@ -729,7 +734,7 @@ mod tests {
         assert_eq!(first.len(), 2);
         let child_branch = ProfileBranchManifest::default();
         let initial_delta =
-            local_parent_delta(&child_branch, parent_uuid, &parent_branch.lineage, None, &[], &[], first.clone())
+            local_parent_delta(&child_branch, parent_uuid, &parent_branch.lineage, None, &[], &[], None, first.clone())
                 .unwrap();
         assert_eq!(initial_delta.changes.len(), 2);
         assert!(initial_delta.changes.iter().all(|change| matches!(change, ProfileDeltaChange::Upsert(_))));
@@ -751,6 +756,7 @@ mod tests {
             None,
             &[],
             &[],
+            None,
             updated,
         )
         .unwrap();

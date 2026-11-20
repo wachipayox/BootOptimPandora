@@ -785,6 +785,7 @@ impl BackendState {
 
         let mut instance_state = self.instance_state.write();
         let mut shared_files_to_publish = Vec::new();
+        let mut finished_global_options = Vec::new();
         for instance in instance_state.instances.iter_mut() {
             let status_before = instance.status();
             let mut killed = false;
@@ -844,20 +845,23 @@ impl BackendState {
                         aot_cache::ExitAction::Nothing | aot_cache::ExitAction::Discarded => {},
                     }
                 }
-                let Some(index) = instance.java25_starts.iter().position(|(started_pid, _)| *started_pid == pid) else {
+                let Some(index) =
+                    instance.profile_java_starts.iter().position(|(started_pid, _, _)| *started_pid == pid)
+                else {
                     continue;
                 };
-                let (_, started) = instance.java25_starts.swap_remove(index);
+                let (_, started, major) = instance.profile_java_starts.swap_remove(index);
                 if retried_without_cache {
                     continue;
                 }
                 if let Some(reason) = java_default::early_exit_reason(exit_code, lived(started)) {
-                    java_default::log_fallback(&java_default::JAVA_MAJOR.to_string(), &reason);
+                    java_default::log_fallback(major, &reason);
                     let recorded_unix_secs = SystemTime::now()
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .map_or(0, |elapsed| elapsed.as_secs());
                     instance.configuration.modify(|configuration| {
-                        configuration.java25_fallback = Some(schema::instance::Java25Fallback {
+                        configuration.java_fallback = Some(schema::instance::JavaFallback {
+                            major,
                             reason,
                             recorded_unix_secs,
                         });
@@ -865,7 +869,7 @@ impl BackendState {
                 }
             }
             let running: Vec<u32> = instance.processes.iter().map(|process| process.id()).collect();
-            instance.java25_starts.retain(|(pid, _)| running.contains(pid));
+            instance.profile_java_starts.retain(|(pid, _, _)| running.contains(pid));
 
             let mut closed: Vec<(u32, Option<i32>)> = Vec::new();
             instance.closing_processes.retain_mut(|(process, _)| match process.try_wait() {
@@ -967,7 +971,7 @@ impl BackendState {
                 .aot_runs
                 .iter()
                 .map(|(pid, _)| *pid)
-                .chain(instance.java25_starts.iter().map(|(pid, _)| *pid))
+                .chain(instance.profile_java_starts.iter().map(|(pid, _, _)| *pid))
                 .chain(instance.aot_retry_probe.as_ref().map(|(pid, _, _)| *pid))
                 .filter(|pid| alive.contains(pid) && !instance.jvm_error_dialogs.contains(pid))
                 .collect();
@@ -1075,6 +1079,13 @@ impl BackendState {
 
             if status_before != InstanceStatus::NotRunning && instance.status() == InstanceStatus::NotRunning {
                 shared_files_to_publish.push(instance.id);
+                if instance.configuration.get().global_options_pending {
+                    finished_global_options.push((
+                        instance.id,
+                        instance.dot_minecraft_path.clone(),
+                        instance.configuration.get().clone(),
+                    ));
+                }
             }
             if killed || instance.status() != status_before {
                 instance.update_session();
@@ -1118,6 +1129,13 @@ impl BackendState {
             }
         }
         any_process_alive |= !self.aot_create_requests.lock().is_empty();
+        drop(instance_state);
+
+        // An instance whose format was unknown before its first start: the game has written its
+        // options.txt now. Outside the instance lock, which the copy takes to clear the mark.
+        for (id, dot_minecraft, configuration) in finished_global_options {
+            self.copy_pending_global_options(id, &dot_minecraft, &configuration);
+        }
 
         self.quit_coordinator.set_can_quit(!any_process_alive);
     }
@@ -1360,6 +1378,91 @@ impl BackendState {
         probe.complete_required_observations();
         probe.mark_endpoint();
         probe
+    }
+
+    pub(crate) fn global_options_enabled(&self) -> bool {
+        !self.config.lock().get().global_options_disabled
+    }
+
+    /// The Java runtimes Mojang's manifest offers for this platform, newest major first, and
+    /// whether the launcher already downloaded each. Empty when the manifest cannot be read.
+    pub(crate) async fn java_runtimes(&self) -> Vec<bridge::message::JavaRuntimeChoice> {
+        let platform = crate::launch::java_runtime_platform();
+        let runtimes = match self.meta.fetch(crate::metadata::items::MojangJavaRuntimesMetadataItem).await {
+            Ok(runtimes) => runtimes,
+            Err(error) => {
+                log::warn!("Could not read the Java runtimes manifest: {error:?}");
+                return Vec::new();
+            },
+        };
+        let Some(runtime_platform) = runtimes.platforms.get(&platform) else {
+            return Vec::new();
+        };
+        let mut choices: Vec<_> = runtime_platform
+            .components
+            .iter()
+            .filter(|(name, _)| crate::fs::is_single_component_path_str(name.as_str()))
+            .filter_map(|(name, components)| {
+                let version = components.first()?.version.name;
+                let major = crate::launch::java_default::major_version(version.as_str())?;
+                let installed = self
+                    .directories
+                    .runtime_base_dir
+                    .join(name.as_str())
+                    .join(platform.as_str())
+                    .join("manifest.json")
+                    .is_file();
+                Some(bridge::message::JavaRuntimeChoice {
+                    component: *name,
+                    major,
+                    version,
+                    installed,
+                })
+            })
+            .collect();
+        choices.sort_by(|a, b| b.major.cmp(&a.major).then_with(|| a.component.as_str().cmp(b.component.as_str())));
+        choices
+    }
+
+    /// Copies the launcher-wide Minecraft settings into an instance still marked for them, and
+    /// clears the mark once its format was known.
+    pub(crate) fn copy_pending_global_options(
+        &self,
+        id: InstanceID,
+        dot_minecraft: &std::path::Path,
+        configuration: &schema::instance::InstanceConfiguration,
+    ) {
+        if !configuration.global_options_pending {
+            return;
+        }
+        let done = if !self.global_options_enabled() {
+            true
+        } else {
+            match crate::global_options::copy_into(
+                &self.directories.root_launcher_dir,
+                &self.directories.libraries_dir,
+                &crate::global_options::Target {
+                    dot_minecraft,
+                    minecraft_version: configuration.minecraft_version.as_str(),
+                    loader: configuration.loader,
+                },
+            ) {
+                Ok(schema::global_options::ApplyOutcome::NeedsDataVersion) => false,
+                Ok(outcome) => {
+                    log::info!("Copied global Minecraft settings into a new instance: {outcome:?}");
+                    true
+                },
+                Err(error) => {
+                    log::warn!("Unable to copy global Minecraft settings: {error}");
+                    false
+                },
+            }
+        };
+        if done && let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            instance
+                .configuration
+                .modify(|configuration| configuration.global_options_pending = false);
+        }
     }
 
     pub fn apply_syncing_to_instance(&self, id: InstanceID) {
@@ -1920,7 +2023,7 @@ impl BackendState {
         }
 
         return self
-            .create_instance_impl(&name, version, loader, icon, false, None)
+            .create_instance_impl(&name, version, loader, icon, false, None, false)
             .await
             .map(|(path, _)| path);
     }
@@ -1933,7 +2036,8 @@ impl BackendState {
         loader_version: Option<&str>,
         icon: Option<EmbeddedOrRaw>,
     ) -> Option<PathBuf> {
-        self.create_instance_impl(name, version, loader, icon, true, loader_version)
+        // A new instance from scratch starts with the launcher-wide Minecraft settings.
+        self.create_instance_impl(name, version, loader, icon, true, loader_version, true)
             .await
             .map(|(path, _)| path)
     }
@@ -1962,7 +2066,8 @@ impl BackendState {
                 }
             }
         }
-        self.create_instance_impl(&name, version, loader, None, false, loader_version).await
+        // So does a new instance of a global profile.
+        self.create_instance_impl(&name, version, loader, None, false, loader_version, true).await
     }
 
     async fn create_instance_impl(
@@ -1973,6 +2078,7 @@ impl BackendState {
         icon: Option<EmbeddedOrRaw>,
         publish_after_provision: bool,
         loader_version: Option<&str>,
+        global_options: bool,
     ) -> Option<(PathBuf, bool)> {
         log::info!("Creating instance {name}");
         if !crate::fs::is_single_component_path_str(&name) {
@@ -2012,6 +2118,9 @@ impl BackendState {
 
         let mut instance_info = InstanceConfiguration::new(version.into(), loader);
         instance_info.preferred_loader_version = loader_version.map(Into::into);
+        instance_info.global_options_pending = global_options
+            && self.global_options_enabled()
+            && crate::global_options::has_settings(&self.directories.root_launcher_dir);
 
         match icon {
             Some(EmbeddedOrRaw::Embedded(e)) => {

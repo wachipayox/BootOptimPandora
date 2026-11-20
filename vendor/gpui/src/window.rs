@@ -1214,7 +1214,13 @@ pub(crate) struct InputRateTracker {
     inputs_per_second: u32,
     sustain_until: Instant,
     sustain_duration: Duration,
+    /// Last mouse or keyboard event delivered to the window, whatever it caused.
+    last_input: Option<Instant>,
 }
+
+/// How long after an input event an inactive window still animates at full rate: covers the
+/// animations that input starts (smooth wheel scrolling, hover and press transitions).
+const INACTIVE_INPUT_FULL_RATE: Duration = Duration::from_secs(1);
 
 impl Default for InputRateTracker {
     fn default() -> Self {
@@ -1224,6 +1230,7 @@ impl Default for InputRateTracker {
             inputs_per_second: 60,
             sustain_until: Instant::now(),
             sustain_duration: Duration::from_secs(1),
+            last_input: None,
         }
     }
 }
@@ -1242,6 +1249,17 @@ impl InputRateTracker {
 
     pub fn is_high_rate(&self) -> bool {
         Instant::now() < self.sustain_until
+    }
+
+    /// Notes any input event, including wheel ticks that only queue a smooth scroll.
+    pub fn note_input(&mut self) {
+        self.last_input = Some(Instant::now());
+    }
+
+    /// Whether the window received input within `within` of `now`.
+    pub fn had_input_within(&self, now: Instant, within: Duration) -> bool {
+        self.last_input
+            .is_some_and(|last| now.saturating_duration_since(last) < within)
     }
 
     fn prune_old_timestamps(&mut self, now: Instant) {
@@ -1538,12 +1556,19 @@ impl Window {
 
                 // Throttle frame rate based on conditions:
                 // - Thermal pressure (Serious/Critical): cap to ~60fps
-                // - Inactive window (not focused): cap to ~30fps to save energy
+                // - Inactive window (not focused): cap to ~30fps to save energy, except shortly
+                //   after input reached it (wheel over an unfocused window keeps smooth scrolling
+                //   and hover transitions at full rate; idle animations stay capped)
                 let min_frame_interval = if request_frame_options.require_presentation
                     || (!request_frame_options.force_render && next_frame_callbacks.borrow().is_empty())
                 {
                     None
-                } else if !active.get() && !input_rate_tracker.borrow_mut().is_high_rate() {
+                } else if !active.get()
+                    && !input_rate_tracker.borrow_mut().is_high_rate()
+                    && !input_rate_tracker
+                        .borrow()
+                        .had_input_within(Instant::now(), INACTIVE_INPUT_FULL_RATE)
+                {
                     inactive_frame_interval
                 } else if let Some(ThermalState::Critical | ThermalState::Serious) = thermal_state {
                     Some(Duration::from_micros(16667))
@@ -4957,6 +4982,7 @@ impl Window {
         self.promote_external_drag_to_platform(&event, cx);
 
         let caused_invalidation = self.invalidator.update_count() > update_count_before;
+        self.input_rate_tracker.borrow_mut().note_input();
         if caused_invalidation {
             self.input_rate_tracker.borrow_mut().record_input();
         }

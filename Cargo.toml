@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/backend", "crates/bridge", "crates/reqwest_client", "crates/frontend", "crates/pandora_launcher", "crates/nbt", "crates/schema", "crates/auth"]
+members = ["crates/backend", "crates/launcher_artifact", "crates/setup_fetch", "crates/bridge", "crates/reqwest_client", "crates/frontend", "crates/pandora_launcher", "crates/nbt", "crates/schema", "crates/auth"]
 
 default-members = ["crates/pandora_launcher"]
 
@@ -14,6 +14,15 @@ lto = "thin"
 codegen-units = 1
 # Enable for more accurate flamegraphs
 # debug = true
+
+# The Windows setup's downloader (crates/setup_fetch): small, since the setup must stay under 10 MB.
+[profile.setup]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+debug = false
+strip = true
+panic = "abort"
 
 [profile.dev.package."*"]
 opt-level = 3
@@ -37,6 +46,7 @@ schema = { path = "crates/schema" }
 t = { path = "crates/t" }
 nbt = { path = "crates/nbt" }
 reqwest_client = { path = "crates/reqwest_client" }
+launcher_artifact = { path = "crates/launcher_artifact" }
 
 anyhow = "1.0.100"
 atomic-time = "0.1.5"

@@ -1,0 +1,57 @@
+{
+  "about": "Shared cases for profile.java_runtime (PROFILE_PROTOCOL.md, «Java del perfil»). Each client copies this file verbatim; its tests must accept, reject and resolve exactly the same. Valid on manifest schema_version 1-4.",
+  "accept": [
+    { "java_runtime": { "pc": { "source": "profile", "major": 25 } } },
+    { "java_runtime": { "pc": { "source": "mojang" } } },
+    { "java_runtime": { "android": { "source": "profile", "major": 21 } } },
+    { "java_runtime": { "pc": { "source": "profile", "major": 8 }, "android": { "source": "mojang" } } },
+    { "java_runtime": { "pc": { "source": "profile", "major": 99 } } }
+  ],
+  "reject": [
+    { "java_runtime": {}, "why": "empty object; omit the field to inherit" },
+    { "java_runtime": null, "why": "null is not an object" },
+    { "java_runtime": { "pc": null }, "why": "null platform" },
+    { "java_runtime": { "pc": { "source": "profile" } }, "why": "profile without major" },
+    { "java_runtime": { "pc": { "source": "profile", "major": 7 } }, "why": "major below 8" },
+    { "java_runtime": { "pc": { "source": "profile", "major": 100 } }, "why": "major above 99" },
+    { "java_runtime": { "pc": { "source": "profile", "major": 25.5 } }, "why": "major not an integer" },
+    { "java_runtime": { "pc": { "source": "profile", "major": "25" } }, "why": "major is a string" },
+    { "java_runtime": { "pc": { "source": "mojang", "major": 25 } }, "why": "mojang cannot carry major" },
+    { "java_runtime": { "pc": { "source": "system" } }, "why": "unknown source" },
+    { "java_runtime": { "pc": { "source": "profile", "major": 25, "component": "java-runtime-epsilon" } }, "why": "unknown key; components are chosen by the launcher" },
+    { "java_runtime": { "windows": { "source": "mojang" } }, "why": "unknown platform" }
+  ],
+  "resolve": [
+    {
+      "name": "nothing anywhere: Mojang",
+      "chain": [ { "profile_id": "profile_child" }, { "profile_id": "profile_root" } ],
+      "pc": { "source": "mojang" }, "android": { "source": "mojang" }
+    },
+    {
+      "name": "child inherits the mother's pc choice only",
+      "chain": [
+        { "profile_id": "profile_child" },
+        { "profile_id": "profile_root", "java_runtime": { "pc": { "source": "profile", "major": 25 } } }
+      ],
+      "pc": { "source": "profile", "major": 25, "from_profile_id": "profile_root" }, "android": { "source": "mojang" }
+    },
+    {
+      "name": "child returns to Mojang explicitly",
+      "chain": [
+        { "profile_id": "profile_child", "java_runtime": { "pc": { "source": "mojang" } } },
+        { "profile_id": "profile_root", "java_runtime": { "pc": { "source": "profile", "major": 25 } } }
+      ],
+      "pc": { "source": "mojang", "from_profile_id": "profile_child" }, "android": { "source": "mojang" }
+    },
+    {
+      "name": "platforms resolve independently through three levels",
+      "chain": [
+        { "profile_id": "profile_grandchild", "java_runtime": { "android": { "source": "profile", "major": 21 } } },
+        { "profile_id": "profile_child" },
+        { "profile_id": "profile_root", "java_runtime": { "pc": { "source": "profile", "major": 25 }, "android": { "source": "profile", "major": 17 } } }
+      ],
+      "pc": { "source": "profile", "major": 25, "from_profile_id": "profile_root" },
+      "android": { "source": "profile", "major": 21, "from_profile_id": "profile_grandchild" }
+    }
+  ]
+}

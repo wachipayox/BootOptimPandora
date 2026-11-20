@@ -306,4 +306,10 @@ impl Render for SyncingPage {
 }
 
 static NAMED_SYNC_TARGETS: Lazy<HashSet<&'static str>> =
-    Lazy::new(|| schema::shared_data::GLOBAL_FOLDERS.iter().copied().collect());
+    Lazy::new(|| {
+        schema::shared_data::GLOBAL_FOLDERS
+            .iter()
+            .chain(schema::shared_data::GLOBAL_FILES)
+            .copied()
+            .collect()
+    });

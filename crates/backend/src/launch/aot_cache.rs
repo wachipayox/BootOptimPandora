@@ -1,4 +1,4 @@
-//! JDK 25 AOT cache for Wachiland global-profile instances on PC.
+//! JDK 25 AOT cache for any instance whose game JVM is Java 25 (automatic, pinned or custom), on PC.
 //!
 //! The cache (JEP 483/514) is built in **two steps**:
 //!
@@ -89,8 +89,10 @@ pub(crate) enum Disabled {
 #[derive(Debug)]
 pub struct LaunchRequest {
     pub instance_root: PathBuf,
-    pub pin: GlobalRevisionPin,
-    /// [`mods_fingerprint`] of the committed profile entries (no filesystem scan).
+    /// The applied global profile revision, if the instance follows one.
+    pub pin: Option<GlobalRevisionPin>,
+    /// [`mods_fingerprint`] of the committed profile entries (no filesystem scan), or
+    /// [`mods_dir_fingerprint`] for an instance without a profile.
     pub mods_fingerprint: String,
     /// Another process of this instance is alive (a game or a `create` job): do not train.
     pub other_process_running: bool,
@@ -114,8 +116,6 @@ pub(crate) struct Facts<'a> {
     pub game_dir: &'a Path,
     /// `PATH` given to the game (natives directory appended).
     pub path_env: Option<OsString>,
-    pub jvm_binary_enabled: bool,
-    pub force_external_java: bool,
     pub sandbox: bool,
     pub wrapper_command: bool,
 }
@@ -296,6 +296,37 @@ pub(crate) fn jdk_identity(java_path: &Path) -> Option<(String, String)> {
 /// Major version of a `release` runtime version (`25.0.1+8-LTS` → 25).
 pub(crate) fn runtime_major(version: &str) -> Option<u32> {
     version.split(['.', '+', '-']).next()?.parse().ok()
+}
+
+/// Hash of the files directly in `mods/` (name, size, modification time) for an instance without a
+/// profile. One directory listing, no file is read. A missing folder gives a fixed value.
+pub(crate) fn mods_dir_fingerprint(mods_dir: &Path) -> String {
+    let mut files: Vec<(String, u64, u64)> = fs::read_dir(mods_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            metadata.is_file().then(|| {
+                let modified = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map_or(0, |elapsed| elapsed.as_secs());
+                (entry.file_name().to_string_lossy().into_owned(), metadata.len(), modified)
+            })
+        })
+        .collect();
+    files.sort();
+    let mut hasher = Sha256::new();
+    hasher.update(b"mods-dir-v1");
+    for (name, len, modified) in files {
+        hasher.update(name.as_bytes());
+        hasher.update([0]);
+        hasher.update(len.to_le_bytes());
+        hasher.update(modified.to_le_bytes());
+    }
+    hex::encode(hasher.finalize())
 }
 
 /// Hash of the profile's mod files (path and content hash) from the committed branch state. No
@@ -494,7 +525,7 @@ pub(crate) fn env_disabled() -> bool {
 }
 
 /// Pre-checks that need nothing from the disk.
-fn eligibility(request: &LaunchRequest, facts: &Facts) -> Result<(), Disabled> {
+fn eligibility(request: &LaunchRequest) -> Result<(), Disabled> {
     if env_disabled() {
         return Err(Disabled::Silent("disabled-by-environment"));
     }
@@ -504,15 +535,11 @@ fn eligibility(request: &LaunchRequest, facts: &Facts) -> Result<(), Disabled> {
     if request.skip_once {
         return Err(Disabled::Silent("retry-without-cache"));
     }
-    if facts.jvm_binary_enabled {
-        return Err(Disabled::Logged("custom-java-binary".into()));
-    }
-    if facts.force_external_java {
-        return Err(Disabled::Logged("forced-external-java".into()));
-    }
-    if facts.java_major != java_default::JAVA_MAJOR {
-        return Err(Disabled::Silent("java-not-25"));
-    }
+    Ok(())
+}
+
+/// Checks that are worth a log line, once the runtime is known to be Java 25.
+fn launch_eligibility(facts: &Facts) -> Result<(), Disabled> {
     if facts.sandbox {
         return Err(Disabled::Logged("sandbox".into()));
     }
@@ -690,19 +717,30 @@ pub(crate) fn prepare(request: &LaunchRequest, facts: &Facts) -> Prepared {
     }
 
     let result = (|| -> Result<(Decision, KeyInputs, String), Disabled> {
-        eligibility(request, facts)?;
-        let (version, jdk_hash) = identity.ok_or_else(|| Disabled::Logged("jdk-release-unreadable".into()))?;
+        eligibility(request)?;
+        // The runtime's own `release` file decides, so a custom java.exe of Java 25 qualifies too.
+        let Some((version, jdk_hash)) = identity.clone() else {
+            return Err(if facts.java_major == java_default::JAVA_MAJOR {
+                Disabled::Logged("jdk-release-unreadable".into())
+            } else {
+                Disabled::Silent("java-not-25")
+            });
+        };
         if runtime_major(&version) != Some(java_default::JAVA_MAJOR) {
             return Err(Disabled::Silent("java-not-25"));
         }
-        let classpath =
-            classpath_fingerprint(facts.classpath).ok_or_else(|| Disabled::Logged("classpath-unreadable".into()))?;
+        launch_eligibility(facts)?;
         let spec = command_spec(facts).ok_or_else(|| Disabled::Logged("non-unicode-launch-arguments".into()))?;
+        // The `-javaagent` JARs count like classpath JARs: their path stays the same when the launcher ships a
+        // new agent, so only the file itself shows that the cache was trained with another one.
+        let fingerprinted: Vec<PathBuf> = facts.classpath.iter().cloned().chain(javaagent_jars(&spec.args)).collect();
+        let classpath =
+            classpath_fingerprint(&fingerprinted).ok_or_else(|| Disabled::Logged("classpath-unreadable".into()))?;
         let inputs = KeyInputs {
             jdk: jdk_hash,
-            profile_id: request.pin.profile_id.clone(),
-            revision_id: request.pin.revision_id.clone(),
-            manifest_sha256: request.pin.manifest_sha256.clone(),
+            profile_id: request.pin.as_ref().map(|pin| pin.profile_id.clone()).unwrap_or_default(),
+            revision_id: request.pin.as_ref().map(|pin| pin.revision_id.clone()).unwrap_or_default(),
+            manifest_sha256: request.pin.as_ref().map(|pin| pin.manifest_sha256.clone()).unwrap_or_default(),
             mods: request.mods_fingerprint.clone(),
             classpath,
             jvm_args: jvm_args_fingerprint(&facts.jvm_args),
@@ -909,7 +947,13 @@ fn visible_windows(pid: u32) -> Option<VisibleWindows> {
             }
             BOOL(1)
         }
-        let mut search = Search { pid, found: VisibleWindows { game: false, jvm_error_dialog: false } };
+        let mut search = Search {
+            pid,
+            found: VisibleWindows {
+                game: false,
+                jvm_error_dialog: false,
+            },
+        };
         let _ = unsafe { EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize)) };
         Some(search.found)
     }
@@ -1054,25 +1098,33 @@ impl PendingCreate {
     }
 }
 
+/// The JAR of every `-javaagent:<jar>[=<options>]` argument, in order.
+fn javaagent_jars(args: &[String]) -> Vec<PathBuf> {
+    args.iter()
+        .filter_map(|arg| arg.strip_prefix("-javaagent:"))
+        .map(|spec| PathBuf::from(spec.split_once('=').map_or(spec, |(jar, _)| jar)))
+        .collect()
+}
+
 /// Boot class path entries that the `-javaagent` JARs of the game add with `Boot-Class-Path` in their
 /// manifest (the zipfs agent of #105 does). The training run records them as part of the boot class
 /// path, but the `create` step loads no agents, so without them the JVM refuses the configuration
 /// ("class path and/or module path are not compatible"). Relative entries are relative to the JAR.
 fn agent_boot_class_path(args: &[String]) -> Vec<PathBuf> {
     let mut entries = Vec::new();
-    for arg in args {
-        let Some(spec) = arg.strip_prefix("-javaagent:") else {
-            continue;
-        };
-        // `-javaagent:<jar>[=<options>]`
-        let jar = Path::new(spec.split_once('=').map_or(spec, |(jar, _)| jar));
+    for jar in javaagent_jars(args) {
+        let jar = jar.as_path();
         let Some(value) = manifest_attribute(jar, "Boot-Class-Path") else {
             continue;
         };
         let base = jar.parent().unwrap_or(Path::new(""));
         for entry in value.split_whitespace() {
             let entry = Path::new(entry);
-            entries.push(if entry.is_absolute() { entry.to_path_buf() } else { base.join(entry) });
+            entries.push(if entry.is_absolute() {
+                entry.to_path_buf()
+            } else {
+                base.join(entry)
+            });
         }
     }
     entries
@@ -1365,6 +1417,33 @@ mod tests {
     }
 
     #[test]
+    fn javaagent_jars_are_read_without_their_options() {
+        let args: Vec<String> = [
+            "-Xmx4g",
+            "-javaagent:C:/a/agent.jar=opt=1",
+            "-javaagent:C:/b/other.jar",
+            "-Dx=-javaagent:no",
+        ]
+        .iter()
+        .map(|arg| (*arg).to_owned())
+        .collect();
+        assert_eq!(
+            javaagent_jars(&args),
+            vec![PathBuf::from("C:/a/agent.jar"), PathBuf::from("C:/b/other.jar")]
+        );
+    }
+
+    #[test]
+    fn a_changed_agent_jar_changes_the_fingerprint() {
+        let root = TestRoot::new("agent-fingerprint");
+        let jar = root.0.join("agent.jar");
+        fs::write(&jar, b"old agent").unwrap();
+        let before = classpath_fingerprint(&[jar.clone()]).unwrap();
+        fs::write(&jar, b"the new agent").unwrap();
+        assert_ne!(classpath_fingerprint(&[jar]).unwrap(), before);
+    }
+
+    #[test]
     fn key_is_stable_and_changes_with_every_input() {
         let base = inputs();
         assert_eq!(base.key(), inputs().key());
@@ -1530,7 +1609,9 @@ mod tests {
         fs::create_dir_all(&agents).unwrap();
         let jar = agents.join("agent.jar");
         let mut writer = zip::ZipWriter::new(fs::File::create(&jar).unwrap());
-        writer.start_file("META-INF/MANIFEST.MF", zip::write::SimpleFileOptions::default()).unwrap();
+        writer
+            .start_file("META-INF/MANIFEST.MF", zip::write::SimpleFileOptions::default())
+            .unwrap();
         writer
             .write_all(b"Manifest-Version: 1.0\r\nPremain-Class: a.B\r\nBoot-Class-Path: age\r\n nt.jar lib/x.jar\r\n")
             .unwrap();
@@ -1813,7 +1894,10 @@ mod tests {
         assert_eq!(is_recording_after_close(&mut run, std::process::id()), cfg!(windows));
         run.had_window = false;
         fs::write(&profile, b"x").unwrap();
-        assert!(is_recording_after_close(&mut run, std::process::id()), "the profile file is always a signal");
+        assert!(
+            is_recording_after_close(&mut run, std::process::id()),
+            "the profile file is always a signal"
+        );
         assert!(!is_recording_after_close(&mut use_run(&dir, &inputs), std::process::id()));
     }
 
@@ -1874,8 +1958,6 @@ mod tests {
             jvm_args: vec![OsString::from("-Xmx8g")],
             game_dir,
             path_env: None,
-            jvm_binary_enabled: false,
-            force_external_java: false,
             sandbox: false,
             wrapper_command: false,
         }
@@ -1884,11 +1966,11 @@ mod tests {
     fn request(root: &TestRoot) -> LaunchRequest {
         LaunchRequest {
             instance_root: root.instance(),
-            pin: GlobalRevisionPin {
+            pin: Some(GlobalRevisionPin {
                 profile_id: "profile_wachiland-elite-beta".into(),
                 revision_id: "rev_1".into(),
                 manifest_sha256: "a".repeat(64),
-            },
+            }),
             mods_fingerprint: "mods".into(),
             other_process_running: false,
             skip_once: false,
@@ -1945,6 +2027,34 @@ mod tests {
     }
 
     #[test]
+    fn any_java_25_qualifies_without_a_profile_even_a_custom_binary() {
+        let root = TestRoot::new("custom-25");
+        let java = root.fake_jdk("25.0.2+10", 10);
+        let classpath = vec![root.jar("a.jar", 10)];
+        let mut request = request(&root);
+        request.pin = None;
+        let game_dir = root.instance();
+        // A custom java.exe is reported with the version's major (21); its `release` file says 25.
+        let mut custom = facts(&java, &classpath, &game_dir);
+        custom.java_major = 21;
+        assert_eq!(prepare(&request, &custom).flags[0], "-XX:AOTMode=record");
+    }
+
+    #[test]
+    fn mods_dir_fingerprint_follows_the_files_in_mods() {
+        let root = TestRoot::new("mods-dir");
+        let mods = root.instance().join("mods");
+        assert_eq!(mods_dir_fingerprint(&mods), mods_dir_fingerprint(&mods));
+        let empty = mods_dir_fingerprint(&mods);
+        fs::create_dir_all(&mods).unwrap();
+        fs::write(mods.join("a.jar"), b"one").unwrap();
+        let one = mods_dir_fingerprint(&mods);
+        assert_ne!(empty, one);
+        fs::write(mods.join("a.jar"), b"longer").unwrap();
+        assert_ne!(one, mods_dir_fingerprint(&mods));
+    }
+
+    #[test]
     fn prepare_changes_nothing_when_the_cache_does_not_apply() {
         let root = TestRoot::new("not-applicable");
         let java = root.fake_jdk("25.0.1+8-LTS", 10);
@@ -1953,9 +2063,6 @@ mod tests {
         let game_dir = root.instance();
 
         let cases: Vec<(&str, Box<dyn Fn(&mut Facts)>)> = vec![
-            ("custom java", Box::new(|f| f.jvm_binary_enabled = true)),
-            ("forced java", Box::new(|f| f.force_external_java = true)),
-            ("java 21", Box::new(|f| f.java_major = 21)),
             ("sandbox", Box::new(|f| f.sandbox = true)),
             ("wrapper command", Box::new(|f| f.wrapper_command = true)),
             (

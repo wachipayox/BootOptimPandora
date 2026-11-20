@@ -113,6 +113,22 @@ impl SettingsRoot {
         self.update_backend_configuration(cx);
     }
 
+    pub fn set_global_options(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.actual_backend_config.is_some() {
+            self.on_receive_backend_config = if self.temp_backend_config.is_some() {
+                OnReceiveBackendConfig::RequestAgainThenClearTemp
+            } else {
+                OnReceiveBackendConfig::ClearTemp
+            };
+            let pending = self
+                .temp_backend_config
+                .get_or_insert_with(|| self.actual_backend_config.clone().unwrap());
+            pending.global_options_disabled = !enabled;
+        }
+        self.backend_handle.send(MessageToBackend::SetGlobalOptions { enabled });
+        self.update_backend_configuration(cx);
+    }
+
     fn set_ignored_profile_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) -> bool {
         let paths = match IgnoredProfilePaths::normalized(paths) {
             Ok(paths) => paths,
@@ -752,27 +768,6 @@ fn create_settings(data: &DataEntities, window: &mut Window, cx: &mut App) -> Se
     if let SettingItemWidget::Any(widget) = language.widget {
         language.widget = SettingItemWidget::AnyWide(widget);
     }
-    let mut first_group = general.groups[0].clone();
-    let mut items = first_group.items.to_vec();
-    items.push(SettingItem {
-        widget: SettingItemWidget::AnyWide(Rc::new(|_, _| {
-            design::DesignButton::new("open-synchronization")
-                .label("Sincronización")
-                .on_click(|_, w, c| {
-                    crate::root::switch_page(
-                        crate::ui::PageType::Syncing,
-                        &[crate::ui::PageType::LauncherSettings],
-                        w,
-                        c,
-                    )
-                })
-                .into_any_element()
-        })),
-        ..Default::default()
-    });
-    first_group.items = items.into();
-    let groups = Rc::make_mut(&mut general.groups);
-    groups[0] = first_group;
 
     let mut general_groups = general.groups.to_vec();
     let mut theme_group = appearance.groups[2].clone();

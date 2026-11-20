@@ -43,6 +43,8 @@ and exits with an error on the same arguments. So the flag cannot be passed blin
   `java -XX:+UnlockDiagnosticVMOptions -XX:+PrintFlagsFinal -version` per JDK build (about 0.3 s), cached in memory and in
   `jvm-flag-probe.json` in the launcher folder, keyed by the hash of the runtime's `release` file and the size of
   `lib/modules`. A failed probe is not cached.
+- Update (PR #150): the condition is now any launch whose JVM is Java 25 (automatic, pinned or custom), whatever the
+  profile; the profile's Java comes from `profile.java_runtime` (README, Java section).
 - The decision is by code, not by version (the user's rule for patches on other software): a JVM that stops listing the flag
   is left alone. `[WBOMBO-COMPAT] ACTIVE|SKIPPED|FALLBACK project=Pandora mechanism=g1-time-based-heap-sizing-off mod=java@<version> ...`
   goes to `launcher.log`. `FALLBACK reason=flag-not-in-this-jvm` means Microsoft removed or renamed the flag (reopen this

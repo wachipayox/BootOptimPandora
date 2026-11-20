@@ -14,7 +14,7 @@ use std::{
 };
 
 use schema::{
-    instance::{InstanceConfiguration, Java25Fallback},
+    instance::{InstanceConfiguration, JavaFallback},
     profile_jvm::{self, JvmLaunchFacts, JvmPlanEntry, JvmPlanStatus, ManifestJvmOption},
 };
 
@@ -27,20 +27,22 @@ static LAST_JAVA_BY_GAME_DIR: LazyLock<Mutex<HashMap<PathBuf, (Option<u32>, Opti
 
 struct AutomaticJava {
     minecraft_version: ustr::Ustr,
-    fallback: Option<Java25Fallback>,
+    fallback: Option<JavaFallback>,
     major: u32,
 }
 static LAST_AUTOMATIC_JAVA: LazyLock<Mutex<HashMap<PathBuf, AutomaticJava>>> = LazyLock::new(Default::default);
 
 fn remember_automatic_java(configuration: &InstanceConfiguration, game_dir: &Path, source: &JavaRuntimeSource) {
+    // A pinned runtime is the player's choice, not the automatic one.
     if let JavaRuntimeSource::Mojang { major_version } = source
+        && configuration.java_runtime.is_none()
         && let Ok(mut last) = LAST_AUTOMATIC_JAVA.lock()
     {
         last.insert(
             game_dir.to_owned(),
             AutomaticJava {
                 minecraft_version: configuration.minecraft_version,
-                fallback: configuration.java25_fallback.clone(),
+                fallback: configuration.java_fallback.clone(),
                 major: *major_version,
             },
         );
@@ -52,7 +54,7 @@ fn automatic_java_major(configuration: &InstanceConfiguration, game_dir: &Path, 
         return None;
     }
     LAST_AUTOMATIC_JAVA.lock().ok()?.get(game_dir).and_then(|last| {
-        (last.minecraft_version == configuration.minecraft_version && last.fallback == configuration.java25_fallback)
+        (last.minecraft_version == configuration.minecraft_version && last.fallback == configuration.java_fallback)
             .then_some(last.major)
     })
 }
@@ -200,7 +202,8 @@ mod automatic_runtime_tests {
         configuration.minecraft_version = ustr::ustr("1.20.1");
         assert_eq!(automatic_java_major(&configuration, &directory, false), None);
         configuration.minecraft_version = ustr::ustr("1.21.1");
-        configuration.java25_fallback = Some(Java25Fallback {
+        configuration.java_fallback = Some(JavaFallback {
+            major: 25,
             reason: "test".into(),
             recorded_unix_secs: 1,
         });

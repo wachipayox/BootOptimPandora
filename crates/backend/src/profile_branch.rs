@@ -252,6 +252,10 @@ pub struct ProfileBranchManifest {
     /// read at Start without contacting the distribution service.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub jvm_options: Vec<schema::profile_jvm::ManifestJvmOption>,
+    /// The Java major the applied profile chain recommends on PC (`profile.java_runtime`), read at
+    /// Start without contacting the distribution service. `None` means Mojang's Java.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub java_major: Option<u32>,
 }
 
 impl ProfileBranchManifest {
@@ -342,6 +346,7 @@ pub struct ProfileRevisionDelta {
     pub target_revision: Option<GlobalRevisionPin>,
     pub config_settings: Vec<crate::distribution::ManifestConfigSetting>,
     pub jvm_options: Vec<schema::profile_jvm::ManifestJvmOption>,
+    pub java_major: Option<u32>,
     /// Revision-history delta only. Unchanged destinations must not be listed or verified.
     pub changes: Vec<ProfileDeltaChange>,
 }

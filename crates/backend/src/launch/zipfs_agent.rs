@@ -1,9 +1,12 @@
-//! Optional zipfs read-only Java agent for Wachiland profiles on Windows PCs.
+//! Optional zipfs read-only Java agent for Forge/NeoForge instances on Java 25+ on Windows PCs.
 //!
 //! The agent (BootOptim's `tools/zipfs-readonly-agent`) makes the JDK open plain `.jar` files under `mods/` and
 //! `libraries/` read-only, which avoids a per-open volume lookup in SecureJarHandler. It is passed as
-//! `-javaagent` only when the game runs on the Java 25 path that [`super::java_default`] selected, so the JVM is
-//! known to accept it.
+//! `-javaagent` for Forge and NeoForge (the loaders that open mod JARs through the zip file system) whenever the
+//! game JVM is Java 25 or newer (the agent uses the JDK 25 class-file API), whether the launcher chose it, the
+//! player pinned it or it is a custom java.exe, unless the instance setting or
+//! `WBOMBO_ZIPFS_AGENT` turns it off. Older Minecraft versions run on Java 8–21 and never get it. Any failure
+//! inside the agent leaves the JDK unchanged and is written to the status file.
 //!
 //! The JAR is embedded in the launcher (`zipfs-agent/zipfs-readonly-agent.jar`, with its source commit and
 //! SHA-256 in `zipfs-readonly-agent.jar.source`). At launch it is written to `agents/` when that file is missing
@@ -44,7 +47,10 @@ pub(crate) enum Decision {
 
 pub(crate) struct Inputs<'a> {
     pub windows: bool,
-    pub java25: bool,
+    /// The instance loader is Forge or NeoForge.
+    pub forge_like: bool,
+    /// The instance setting "Open mod JARs read-only" (on by default).
+    pub enabled_by_setting: bool,
     pub java_major: u32,
     pub agent_jar: &'a Path,
     pub status_file: &'a Path,
@@ -56,11 +62,14 @@ pub(crate) fn decide(inputs: &Inputs<'_>) -> Decision {
     if !inputs.windows {
         return Decision::Skip("not-windows");
     }
-    if !inputs.java25 {
-        return Decision::Skip("not-java25");
+    if !inputs.forge_like {
+        return Decision::Skip("not-forge-or-neoforge");
     }
     if inputs.java_major < MIN_JAVA_MAJOR {
         return Decision::Skip("java-major-below-25");
+    }
+    if !inputs.enabled_by_setting {
+        return Decision::Skip("disabled-by-setting");
     }
     if disabled(inputs.disable_value) {
         return Decision::Skip("disabled-by-env");
@@ -73,7 +82,8 @@ pub(crate) fn decide(inputs: &Inputs<'_>) -> Decision {
 
 /// JVM arguments for this launch, after making sure the embedded JAR is in `agents_dir`. Logs the decision.
 pub(crate) fn jvm_args(
-    java25: bool,
+    forge_like: bool,
+    enabled_by_setting: bool,
     java_major: u32,
     agents_dir: &Path,
     status_file: &Path,
@@ -82,7 +92,8 @@ pub(crate) fn jvm_args(
     let agent_jar = agents_dir.join(AGENT_JAR_NAME);
     let inputs = Inputs {
         windows: cfg!(windows),
-        java25,
+        forge_like,
+        enabled_by_setting,
         java_major,
         agent_jar: &agent_jar,
         status_file,
@@ -189,7 +200,8 @@ mod tests {
     fn inputs<'a>(jar: &'a Path, status: &'a Path) -> Inputs<'a> {
         Inputs {
             windows: true,
-            java25: true,
+            forge_like: true,
+            enabled_by_setting: true,
             java_major: 25,
             agent_jar: jar,
             status_file: status,
@@ -221,14 +233,35 @@ mod tests {
     }
 
     #[test]
-    fn skips_outside_windows_and_outside_java25() {
+    fn skips_outside_windows_and_outside_forge_or_neoforge() {
         let (jar, status) = (Path::new(JAR), Path::new(STATUS));
         let mut i = inputs(jar, status);
         i.windows = false;
         assert_eq!(decide(&i), Decision::Skip("not-windows"));
         let mut i = inputs(jar, status);
-        i.java25 = false;
-        assert_eq!(decide(&i), Decision::Skip("not-java25"));
+        i.forge_like = false;
+        assert_eq!(decide(&i), Decision::Skip("not-forge-or-neoforge"));
+    }
+
+    #[test]
+    fn instance_setting_turns_it_off_and_newer_javas_keep_it() {
+        let (jar, status) = (Path::new(JAR), Path::new(STATUS));
+        let mut i = inputs(jar, status);
+        i.enabled_by_setting = false;
+        assert_eq!(decide(&i), Decision::Skip("disabled-by-setting"));
+        let mut i = inputs(jar, status);
+        i.java_major = 26;
+        assert!(matches!(decide(&i), Decision::Use(_)));
+    }
+
+    #[test]
+    fn old_versions_on_java_8_to_21_never_get_it() {
+        let (jar, status) = (Path::new(JAR), Path::new(STATUS));
+        for major in [8, 16, 17, 21] {
+            let mut i = inputs(jar, status);
+            i.java_major = major;
+            assert_eq!(decide(&i), Decision::Skip("java-major-below-25"), "java {major}");
+        }
     }
 
     #[test]

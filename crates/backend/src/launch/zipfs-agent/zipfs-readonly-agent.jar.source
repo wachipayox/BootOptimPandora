@@ -1,6 +1,8 @@
 # Reference for the zipfs read-only agent embedded in the launcher with include_bytes!.
 # Rebuild from tools/zipfs-readonly-agent in BootOptim, then update source_commit and sha256 together.
+# JAR: CI artifact of the BootOptim#398 head 1dc9d43b (workflow run 42921688757); its
+# tools/zipfs-readonly-agent tree is identical to the merge commit below.
 source_repo=wachipayox/BootOptim
-source_branch=claude/zipfs-readonly-agent-remove-transformer
-source_commit=a93515c6ebce62691f9b98d30cbcfdcceb002fcc
-sha256=78b8700a15f77e7c363c2e73cd724d236104b70a54d3ae49f1a096b8aac7ecfe
+source_branch=agent/integration-current
+source_commit=63ed37247e7f1c91d2132eaef12adb8f2aea8866
+sha256=35a24cccc0ef6ae82530284fd4ecef1a286b28260c033d8840b18203f8b35a89

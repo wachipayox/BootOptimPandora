@@ -46,6 +46,7 @@ use crate::{
 pub struct InstanceContentSubpage {
     content_type: ContentType,
     instance: InstanceID,
+    instance_entry: WeakEntity<InstanceEntry>,
     instance_loader: Loader,
     instance_version: Ustr,
     instance_name: SharedString,
@@ -166,6 +167,7 @@ impl InstanceContentSubpage {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
+        let instance_entry = instance.downgrade();
         let instance = instance.read(cx);
         let instance_loader = instance.configuration.loader;
         let instance_version = instance.configuration.minecraft_version;
@@ -266,6 +268,7 @@ impl InstanceContentSubpage {
         Self {
             content_type,
             instance: instance_id,
+            instance_entry,
             instance_loader,
             instance_version,
             instance_name,
@@ -418,10 +421,26 @@ impl Render for InstanceContentSubpage {
                 }
                 menu.min_w(px(200.))
             });
+        let entry = self.instance_entry.clone();
+        let open_dot_minecraft = Button::new("open-dot-minecraft")
+            .ghost()
+            .h(px(36.))
+            .ml(px(12.))
+            .border_1()
+            .border_color(rgba(0xffffff33))
+            .icon(crate::icon::PandoraIcon::FolderOpen)
+            .label("Abrir .minecraft")
+            .on_click(move |_, w, c| {
+                if let Some(entry) = entry.upgrade() {
+                    let folder = entry.read(c).dot_minecraft_folder.clone();
+                    crate::open_folder(&folder, w, c);
+                }
+            });
         let bar = h_flex()
             .w_full()
             .gap(px(12.))
             .child(tabs)
+            .child(open_dot_minecraft)
             .child(div().flex_1())
             .child(sort)
             .child(design::text_field(&self.search).w(px(260.)).h(px(36.)));
