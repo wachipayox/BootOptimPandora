@@ -135,7 +135,7 @@ folder has a different name. The page says that the folder is only copied. A
 After installing, the installer runs the launcher headless:
 
 ```
-WachilandLauncher.exe --migrate-legacy <folder> --from-profile profile_wachiland-elite --migrate-name "Wachiland Elite" [--migrate-voxy]
+WachilandLauncher.exe --migrate-legacy <folder> --from-profile profile_welite --migrate-name "Wachiland Elite" [--migrate-voxy]
 ```
 
 `crates/backend/src/legacy_migration.rs` then:
