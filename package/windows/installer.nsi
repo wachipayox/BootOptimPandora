@@ -263,7 +263,7 @@ Var MigrateBrowse
 Var MigrateVoxyCheck
 
 ; The global profile that a migrated folder becomes an instance of.
-!define MIGRATION_PROFILE "profile_wachiland-elite"
+!define MIGRATION_PROFILE "profile_welite"
 !define MIGRATION_NAME "Wachiland Elite"
 
 !define MUI_WELCOMEPAGE_TITLE "$(welcomeTitle)"
